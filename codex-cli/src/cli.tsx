@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+import "dotenv/config";
+
+// Hack to suppress deprecation warnings (punycode)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(process as any).noDeprecation = true;
 
 import type { AppRollout } from "./app";
 import type { ApprovalPolicy } from "./approvals";
