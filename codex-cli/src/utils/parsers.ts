@@ -1,4 +1,3 @@
-import type { CommandReviewDetails } from "./agent/review.js";
 import type {
   ExecInput,
   ExecOutputMetadata,
