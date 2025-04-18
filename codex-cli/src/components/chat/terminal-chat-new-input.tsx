@@ -17,6 +17,7 @@ import {
   addToHistory,
 } from "../../utils/storage/command-history.js";
 import { clearTerminal, onExit } from "../../utils/terminal.js";
+import { printAndResetSessionSummary } from "../../utils/session-cost.js";
 import Spinner from "../vendor/ink-spinner.js";
 import { Box, Text, useApp, useInput, useStdin } from "ink";
 import { fileURLToPath } from "node:url";
@@ -286,7 +287,11 @@ export default function TerminalChatInput({
         setInput("");
         setSessionId("");
         setLastResponseId("");
+
+        // Clear screen then display session summary so the user sees it.
         clearTerminal();
+
+        printAndResetSessionSummary();
 
         // Emit a system message to confirm the clear action.  We *append*
         // it so Ink's <Static> treats it as new output and actually renders it.

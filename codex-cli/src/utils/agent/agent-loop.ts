@@ -11,6 +11,7 @@ import type { Reasoning } from "openai/resources.mjs";
 import { log, isLoggingEnabled } from "./log.js";
 import { OPENAI_BASE_URL, OPENAI_TIMEOUT_MS } from "../config.js";
 import { parseToolCallArguments } from "../parsers.js";
+import { ensureSessionTracker } from "../session-cost.js";
 import {
   ORIGIN,
   CLI_VERSION,
@@ -235,7 +236,18 @@ export class AgentLoop {
         instructions: instructions ?? "",
       } as AppConfig);
     this.additionalWritableRoots = additionalWritableRoots;
-    this.onItem = onItem;
+    // Capture usage for cost‑tracking before delegating to the caller‑supplied
+    // callback.  Wrapping here avoids repeating the bookkeeping logic across
+    // every UI surface.
+    this.onItem = (item: ResponseItem) => {
+      try {
+        ensureSessionTracker(this.model).addItems([item]);
+      } catch {
+        /* best‑effort – never block user‑visible updates */
+      }
+
+      onItem(item);
+    };
     this.onLoading = onLoading;
     this.getCommandConfirmation = getCommandConfirmation;
     this.onLastResponseId = onLastResponseId;
@@ -778,6 +790,27 @@ export class AgentLoop {
               }
               lastResponseId = event.response.id;
               this.onLastResponseId(event.response.id);
+
+              // Capture exact token usage for cost tracking when provided by
+              // the API. `responses.completed` events include a `usage` field
+              // with {input_tokens, output_tokens, total_tokens}. We record
+              // the total (or fallback to summing the parts if needed).
+              try {
+                const usage: unknown = (event as any).response?.usage;
+                if (usage && typeof usage === "object") {
+                  const u = usage as { total_tokens?: number; input_tokens?: number; output_tokens?: number };
+                  const tokens =
+                    u.total_tokens ??
+                    (typeof u.input_tokens === "number" && typeof u.output_tokens === "number"
+                      ? u.input_tokens + u.output_tokens
+                      : undefined);
+                  if (typeof tokens === "number" && tokens > 0) {
+                    ensureSessionTracker(this.model).addTokens(tokens);
+                  }
+                }
+              } catch {
+                /* best‑effort only */
+              }
             }
           }
         } catch (err: unknown) {
