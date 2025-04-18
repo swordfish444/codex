@@ -8,7 +8,11 @@ import {
   printAndResetSessionSummary,
 } from "../src/utils/session-cost.js";
 
-function makeMessage(id: string, role: "user" | "assistant", text: string): ResponseItem {
+function makeMessage(
+  id: string,
+  role: "user" | "assistant",
+  text: string,
+): ResponseItem {
   return {
     id,
     type: "message",
@@ -71,7 +75,9 @@ describe("printAndResetSessionSummary", () => {
 
     // Now inject an exact low token count and ensure it overrides
     tracker.addTokens(10);
-    expect(tracker.getTokensUsed()).toBe(heuristicTokens + (10 - heuristicTokens));
+    expect(tracker.getTokensUsed()).toBe(
+      heuristicTokens + (10 - heuristicTokens),
+    );
 
     const cost = tracker.getCostUSD();
     expect(cost).not.toBeNull();

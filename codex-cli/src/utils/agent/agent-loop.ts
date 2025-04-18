@@ -57,6 +57,13 @@ type AgentLoopParams = {
   onLastResponseId: (lastResponseId: string) => void;
 };
 
+type Usage = {
+  total_tokens?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+};
+type MaybeUsageEvent = { response?: { usage?: Usage } };
+
 export class AgentLoop {
   private model: string;
   private instructions?: string;
@@ -796,12 +803,17 @@ export class AgentLoop {
               // with {input_tokens, output_tokens, total_tokens}. We record
               // the total (or fallback to summing the parts if needed).
               try {
-                const usage: unknown = (event as any).response?.usage;
+                const usage = (event as MaybeUsageEvent).response?.usage;
                 if (usage && typeof usage === "object") {
-                  const u = usage as { total_tokens?: number; input_tokens?: number; output_tokens?: number };
+                  const u = usage as {
+                    total_tokens?: number;
+                    input_tokens?: number;
+                    output_tokens?: number;
+                  };
                   const tokens =
                     u.total_tokens ??
-                    (typeof u.input_tokens === "number" && typeof u.output_tokens === "number"
+                    (typeof u.input_tokens === "number" &&
+                    typeof u.output_tokens === "number"
                       ? u.input_tokens + u.output_tokens
                       : undefined);
                   if (typeof tokens === "number" && tokens > 0) {

@@ -55,7 +55,9 @@ export class SessionCostTracker {
     if (cost == null) {
       return `Session complete – approx. ${tokens} tokens used.`;
     }
-    return `Session complete – approx. ${tokens} tokens, $${cost.toFixed(4)} USD.`;
+    return `Session complete – approx. ${tokens} tokens, $${cost.toFixed(
+      4,
+    )} USD.`;
   }
 }
 

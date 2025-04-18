@@ -11,13 +11,13 @@ import { TerminalChatCommandReview } from "./terminal-chat-command-review.js";
 import { log, isLoggingEnabled } from "../../utils/agent/log.js";
 import { loadConfig } from "../../utils/config.js";
 import { createInputItem } from "../../utils/input-utils.js";
+import { printAndResetSessionSummary } from "../../utils/session-cost.js";
 import { setSessionId } from "../../utils/session.js";
 import {
   loadCommandHistory,
   addToHistory,
 } from "../../utils/storage/command-history.js";
 import { clearTerminal, onExit } from "../../utils/terminal.js";
-import { printAndResetSessionSummary } from "../../utils/session-cost.js";
 import Spinner from "../vendor/ink-spinner.js";
 import { Box, Text, useApp, useInput, useStdin } from "ink";
 import { fileURLToPath } from "node:url";

@@ -1,3 +1,5 @@
+/* eslint-disable no-irregular-whitespace */
+
 import type { ResponseItem } from "openai/resources/responses/responses.mjs";
 
 import { approximateTokensUsed } from "./approximate-tokens-used.js";
