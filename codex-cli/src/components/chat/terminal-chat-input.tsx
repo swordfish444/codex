@@ -468,8 +468,10 @@ export default function TerminalChatInput({
           // Remove trailing '@' sentinel from draft input
           setInput((prev) => (prev.endsWith("@") ? prev.slice(0, -1) : prev));
 
-          // Track attachment separately
-          setAttachedImages((prev) => [...prev, filePath]);
+          // Track attachment separately, but avoid duplicates
+          setAttachedImages((prev) =>
+            prev.includes(filePath) ? prev : [...prev, filePath],
+          );
 
           if (process.env.DEBUG_TCI) {
             // eslint-disable-next-line no-console

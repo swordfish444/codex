@@ -69,8 +69,8 @@ describe("Backspace deletes attached image", () => {
     await type(stdin, "@", flush);
     console.log('AFTER @', lastFrameStripped());
     await type(stdin, "\r", flush);
-    console.log('FRAME1', lastFrameStripped());
-    expect(lastFrameStripped()).toContain("bar.png");
+    const frame1 = lastFrameStripped();
+    expect(frame1.match(/bar\.png/g)?.length ?? 0).toBe(1);
 
     await type(stdin, "\x7f", flush);
 

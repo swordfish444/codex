@@ -44,6 +44,19 @@ export default function ImagePickerOverlay({
   // Keep track of currently highlighted item so <Enter> can act synchronously.
   const highlighted = useRef<PickerItem | null>(items[0] ?? null);
 
+  // Ensure we only invoke `onPick` / `onCancel` / `onChangeDir` once for the
+  // life‑time of the overlay.  Depending on the environment a single <Enter>
+  // key‑press can bubble through *three* different handlers (raw `data` event,
+  // `useInput`, plus `SelectInput`\'s `onSelect`).  Without this guard the
+  // parent component would receive duplicate attachments.
+  const actedRef = useRef(false);
+
+  function perform(action: () => void) {
+    if (actedRef.current) return;
+    actedRef.current = true;
+    action();
+  }
+
   // DEBUG: log all raw data when DEBUG_OVERLAY enabled (useful for tests)
   const { stdin: inkStdin } = useStdin();
   React.useEffect(() => {
@@ -68,19 +81,21 @@ export default function ImagePickerOverlay({
         const item = highlighted.current;
         if (!item) return;
 
-        if (item.value === "__UP__") {
-          onChangeDir(path.dirname(cwd));
-        } else if (item.label.endsWith("/")) {
-          onChangeDir(item.value);
-        } else {
-          onPick(item.value);
-        }
+        perform(() => {
+          if (item.value === "__UP__") {
+            onChangeDir(path.dirname(cwd));
+          } else if (item.label.endsWith("/")) {
+            onChangeDir(item.value);
+          } else {
+            onPick(item.value);
+          }
+        });
         return;
       }
 
       // ESC (\u001B) or Backspace (\x7f)
       if (str === "\u001b" || str === "\x7f") {
-        onCancel();
+        perform(onCancel);
       }
     }
     if (inkStdin) inkStdin.on('data', onData);
@@ -99,9 +114,9 @@ export default function ImagePickerOverlay({
       // eslint-disable-next-line no-console
       console.log('[overlay] root useInput', JSON.stringify(input), key.return);
     }
-    if (key.escape || key.backspace || input === "\u007f") {
+      if (key.escape || key.backspace || input === "\u007f") {
       if (process.env.DEBUG_OVERLAY) console.log('[overlay] cancel');
-      onCancel();
+      perform(onCancel);
     } else if (key.return) {
       // Act on the currently highlighted item synchronously so tests that
       // simulate a bare "\r" keypress without triggering SelectInput’s
@@ -117,13 +132,15 @@ export default function ImagePickerOverlay({
         console.log('[overlay] return on', item.label, item.value);
       }
 
-      if (item.value === "__UP__") {
-        onChangeDir(path.dirname(cwd));
-      } else if (item.label.endsWith("/")) {
-        onChangeDir(item.value);
-      } else {
-        onPick(item.value);
-      }
+      perform(() => {
+        if (item.value === "__UP__") {
+          onChangeDir(path.dirname(cwd));
+        } else if (item.label.endsWith("/")) {
+          onChangeDir(item.value);
+        } else {
+          onPick(item.value);
+        }
+      });
     }
     },
     { isActive: true },

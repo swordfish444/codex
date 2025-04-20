@@ -71,7 +71,8 @@ describe("Chat input attachment preview", () => {
     await type(stdin, "@", flush);
     await type(stdin, "\r", flush); // choose first
 
-    expect(lastFrameStripped()).toContain("foo.png");
+    const frame1 = lastFrameStripped();
+    expect(frame1.match(/foo\.png/g)?.length ?? 0).toBe(1);
 
     await type(stdin, "\x15", flush); // Ctrl+U
 
