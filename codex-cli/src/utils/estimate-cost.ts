@@ -1,5 +1,3 @@
-/* eslint-disable no-irregular-whitespace */
-
 /**
  * Cost‑estimation helpers for OpenAI responses.
  *
@@ -83,7 +81,7 @@ const detailedPriceMap: Record<string, TokenRates> = {
  * {@link detailedPriceMap}.
  */
 const blendedPriceMap: Record<string, number> = {
-  // GPT‑4 Turbo (Apr 2024)
+  // GPT‑4 Turbo (Apr 2024)
   "gpt-4-turbo": 0.01,
 
   // Legacy GPT‑4 8k / 32k context models
