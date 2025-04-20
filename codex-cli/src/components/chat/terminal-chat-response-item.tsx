@@ -1,3 +1,4 @@
+/* eslint-disable import/order */
 import type { TerminalRendererOptions } from "marked-terminal";
 import type {
   ResponseFunctionToolCallItem,
@@ -12,6 +13,7 @@ import { useTerminalSize } from "../../hooks/use-terminal-size";
 import { parseToolCall, parseToolCallOutput } from "../../utils/parsers";
 import chalk, { type ForegroundColorName } from "chalk";
 import { Box, Text } from "ink";
+import { imageFilenameByDataUrl } from "../../utils/input-utils.js";
 import { parse, setOptions } from "marked";
 import TerminalRenderer from "marked-terminal";
 import React, { useMemo } from "react";
@@ -117,7 +119,7 @@ function TerminalChatResponseMessage({
                 : c.type === "input_text"
                 ? c.text
                 : c.type === "input_image"
-                ? "<Image>"
+                ? imageFilenameByDataUrl.get(c.image_url as string) || "<Image>"
                 : c.type === "input_file"
                 ? c.filename
                 : "", // unknown content type
