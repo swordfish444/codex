@@ -13,7 +13,8 @@ vi.mock("../src/utils/input-utils.js", () => ({
 }));
 
 // mock external deps used inside chat input
-vi.mock("../../approvals.js", () => ({ isSafeCommand: () => null }));
+// Mock approval helper used by TerminalChatInput
+vi.mock("../src/approvals.js", () => ({ isSafeCommand: () => null }));
 vi.mock("../src/format-command.js", () => ({
   // Accept an array of command tokens and join them with spaces for display.
   formatCommandForDisplay: (c: Array<string>): string => c.join(" "),

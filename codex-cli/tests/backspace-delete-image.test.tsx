@@ -11,7 +11,7 @@ vi.mock("../src/utils/input-utils.js", () => ({
   createInputItem: vi.fn(async () => ({})),
   imageFilenameByDataUrl: new Map(),
 }));
-vi.mock("../../approvals.js", () => ({ isSafeCommand: () => null }));
+vi.mock("../src/approvals.js", () => ({ isSafeCommand: () => null }));
 vi.mock("../src/format-command.js", () => ({
   formatCommandForDisplay: (c: Array<string>): string => c.join(" "),
 }));

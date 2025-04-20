@@ -11,18 +11,20 @@ import { log, isLoggingEnabled } from "../../utils/agent/log.js";
 import { loadConfig } from "../../utils/config.js";
 import { createInputItem } from "../../utils/input-utils.js";
 import { setSessionId } from "../../utils/session.js";
+import { SLASH_COMMANDS, type SlashCommand } from "../../utils/slash-commands";
 import {
   loadCommandHistory,
   addToHistory,
 } from "../../utils/storage/command-history.js";
 import { clearTerminal, onExit } from "../../utils/terminal.js";
+
+// External UI components / Ink helpers
+import TextInput from "../vendor/ink-text-input.js";
+import { Box, Text, useApp, useInput, useStdin } from "ink";
 import { fileURLToPath } from "node:url";
 import React, { useCallback, useState, Fragment, useEffect } from "react";
 import path from "node:path";
 import fs from "fs/promises";
-import { Box, Text, useApp, useInput, useStdin } from "ink";
-import Spinner from "../vendor/ink-spinner.js";
-import TextInput from "../vendor/ink-text-input.js";
 import { useInterval } from "use-interval";
 
 // Internal imports
@@ -49,9 +51,12 @@ export default function TerminalChatInput({
   openModelOverlay,
   openApprovalOverlay,
   openHelpOverlay,
+  openDiffOverlay,
   onCompact,
   interruptAgent,
   active,
+  thinkingSeconds,
+  items = [],
 }: {
   isNew: boolean;
   loading: boolean;
@@ -69,10 +74,17 @@ export default function TerminalChatInput({
   openModelOverlay: () => void;
   openApprovalOverlay: () => void;
   openHelpOverlay: () => void;
+  openDiffOverlay: () => void;
   onCompact: () => void;
   interruptAgent: () => void;
   active: boolean;
+  thinkingSeconds: number;
+  // New: current conversation items so we can include them in bug reports
+  items?: Array<ResponseItem>;
 }): React.ReactElement {
+  // Slash command suggestion index
+  const [selectedSlashSuggestion, setSelectedSlashSuggestion] =
+    useState<number>(0);
   const app = useApp();
   //
   const [selectedSuggestion, setSelectedSuggestion] = useState<number>(0);
@@ -100,6 +112,7 @@ export default function TerminalChatInput({
   const [history, setHistory] = useState<Array<HistoryEntry>>([]);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [draftInput, setDraftInput] = useState<string>("");
+  const [skipNextSubmit, setSkipNextSubmit] = useState<boolean>(false);
 
   // ------------------------------------------------------------------
   // Fallback raw‑data listener (test environment)
@@ -161,17 +174,109 @@ export default function TerminalChatInput({
 
     loadHistory();
   }, []);
+  // Reset slash suggestion index when input prefix changes
+  useEffect(() => {
+    if (input.trim().startsWith("/")) {
+      setSelectedSlashSuggestion(0);
+    }
+  }, [input]);
 
   useInput(
     (_input, _key) => {
+      // Debugging helper: log every key/input if DEBUG_TCI env flag is set.
       if (process.env["DEBUG_TCI"]) {
         // eslint-disable-next-line no-console
         console.log("[TCI] useInput raw", JSON.stringify(_input), _key);
       }
 
-      // When image picker overlay is open delegate all keystrokes to it.
+      // When the image picker overlay is open delegate all keystrokes to it so
+      // users can navigate files without affecting the chat input.
       if (pickerCwd != null) {
-        return; // ignore here; overlay has its own handlers
+        return; // overlay has its own handlers
+      }
+
+      // Slash command navigation: up/down to select, Tab to cycle, Enter to run.
+      if (!confirmationPrompt && !loading && input.trim().startsWith("/")) {
+        const prefix = input.trim();
+        const matches = SLASH_COMMANDS.filter((cmd: SlashCommand) =>
+          cmd.command.startsWith(prefix),
+        );
+
+        if (matches.length > 0) {
+          if (_key.tab) {
+            // Cycle suggestions (shift+tab reverses the direction)
+            const len = matches.length;
+            const nextIdx = _key.shift
+              ? selectedSlashSuggestion <= 0
+                ? len - 1
+                : selectedSlashSuggestion - 1
+              : selectedSlashSuggestion >= len - 1
+              ? 0
+              : selectedSlashSuggestion + 1;
+            setSelectedSlashSuggestion(nextIdx);
+
+            const match = matches[nextIdx];
+            if (match) {
+              const cmd = match.command;
+              setInput(cmd);
+              setDraftInput(cmd);
+            }
+            return;
+          }
+
+          if (_key.upArrow) {
+            setSelectedSlashSuggestion((prev) =>
+              prev <= 0 ? matches.length - 1 : prev - 1,
+            );
+            return;
+          }
+
+          if (_key.downArrow) {
+            setSelectedSlashSuggestion((prev) =>
+              prev < 0 || prev >= matches.length - 1 ? 0 : prev + 1,
+            );
+            return;
+          }
+
+          if (_key.return) {
+            // Execute the currently selected slash command.
+            const cmdObj = matches[selectedSlashSuggestion];
+            if (cmdObj) {
+              const cmd = cmdObj.command;
+              // Clear current input and reset UI state.
+              setInput("");
+              setDraftInput("");
+              setSelectedSlashSuggestion(0);
+
+              switch (cmd) {
+                case "/history":
+                  openOverlay();
+                  break;
+                case "/help":
+                  openHelpOverlay();
+                  break;
+                case "/compact":
+                  onCompact();
+                  break;
+                case "/model":
+                  openModelOverlay();
+                  break;
+                case "/approval":
+                  openApprovalOverlay();
+                  break;
+                case "/diff":
+                  openDiffOverlay();
+                  break;
+                case "/bug":
+                  onSubmit(cmd);
+                  break;
+                default:
+                  break;
+              }
+            }
+            return;
+          }
+        }
       }
       if (!confirmationPrompt && !loading) {
         if (process.env["DEBUG_TCI"]) {
@@ -271,6 +376,16 @@ export default function TerminalChatInput({
   const onSubmit = useCallback(
     async (value: string) => {
       const inputValue = value.trim();
+      // If the user only entered a slash, do not send a chat message
+      if (inputValue === "/") {
+        setInput("");
+        return;
+      }
+      // Skip this submit if we just autocompleted a slash command
+      if (skipNextSubmit) {
+        setSkipNextSubmit(false);
+        return;
+      }
       if (!inputValue) {
         return;
       }
@@ -284,6 +399,12 @@ export default function TerminalChatInput({
       if (inputValue === "/help") {
         setInput("");
         openHelpOverlay();
+        return;
+      }
+
+      if (inputValue === "/diff") {
+        setInput("");
+        openDiffOverlay();
         return;
       }
 
@@ -357,6 +478,70 @@ export default function TerminalChatInput({
             ]);
           },
         );
+
+        return;
+      } else if (inputValue === "/bug") {
+        // Generate a GitHub bug report URL pre‑filled with session details
+        setInput("");
+
+        try {
+          // Dynamically import dependencies to avoid unnecessary bundle size
+          const [{ default: open }, os] = await Promise.all([
+            import("open"),
+            import("node:os"),
+          ]);
+
+          // Lazy import CLI_VERSION to avoid circular deps
+          const { CLI_VERSION } = await import("../../utils/session.js");
+
+          const { buildBugReportUrl } = await import(
+            "../../utils/bug-report.js"
+          );
+
+          const url = buildBugReportUrl({
+            items: items ?? [],
+            cliVersion: CLI_VERSION,
+            model: loadConfig().model ?? "unknown",
+            platform: [os.platform(), os.arch(), os.release()]
+              .map((s) => `\`${s}\``)
+              .join(" | "),
+          });
+
+          // Open the URL in the user's default browser
+          await open(url, { wait: false });
+
+          // Inform the user in the chat history
+          setItems((prev) => [
+            ...prev,
+            {
+              id: `bugreport-${Date.now()}`,
+              type: "message",
+              role: "system",
+              content: [
+                {
+                  type: "input_text",
+                  text: "📋 Opened browser to file a bug report. Please include any context that might help us fix the issue!",
+                },
+              ],
+            },
+          ]);
+        } catch (error) {
+          // If anything went wrong, notify the user
+          setItems((prev) => [
+            ...prev,
+            {
+              id: `bugreport-error-${Date.now()}`,
+              type: "message",
+              role: "system",
+              content: [
+                {
+                  type: "input_text",
+                  text: `⚠️ Failed to create bug report URL: ${error}`,
+                },
+              ],
+            },
+          ]);
+        }
 
         return;
       } else if (inputValue.startsWith("/")) {
@@ -497,9 +682,12 @@ export default function TerminalChatInput({
       openApprovalOverlay,
       openModelOverlay,
       openHelpOverlay,
+      openDiffOverlay,
       attachedImages,
-      history, // Add history to the dependency array
+      history,
       onCompact,
+      skipNextSubmit,
+      items,
     ],
   );
 
@@ -508,7 +696,11 @@ export default function TerminalChatInput({
       <TerminalChatCommandReview
         confirmationPrompt={confirmationPrompt}
         onReviewCommand={submitConfirmation}
+        // allow switching approval mode via 'v'
+        onSwitchApprovalMode={openApprovalOverlay}
         explanation={explanation}
+        // disable when input is inactive (e.g., overlay open)
+        isActive={active}
       />
     );
   }
@@ -570,6 +762,7 @@ export default function TerminalChatInput({
           <TerminalChatInputThinking
             onInterrupt={interruptAgent}
             active={active}
+            thinkingSeconds={thinkingSeconds}
           />
         ) : (
           <Box paddingX={1}>
@@ -606,6 +799,25 @@ export default function TerminalChatInput({
           </Box>
         )}
       </Box>
+      {/* Slash command autocomplete suggestions */}
+      {input.trim().startsWith("/") && (
+        <Box flexDirection="column" paddingX={2} marginBottom={1}>
+          {SLASH_COMMANDS.filter((cmd: SlashCommand) =>
+            cmd.command.startsWith(input.trim()),
+          ).map((cmd: SlashCommand, idx: number) => (
+            <Box key={cmd.command}>
+              <Text
+                backgroundColor={
+                  idx === selectedSlashSuggestion ? "blackBright" : undefined
+                }
+              >
+                <Text color="blueBright">{cmd.command}</Text>
+                <Text> {cmd.description}</Text>
+              </Text>
+            </Box>
+          ))}
+        </Box>
+      )}
       <Box paddingX={2} marginBottom={1}>
         <Text dimColor>
           {isNew && !input ? (
@@ -628,7 +840,15 @@ export default function TerminalChatInput({
             <>
               send q or ctrl+c to exit | send "/clear" to reset | send "/help"
               for commands | press enter to send
-              {contextLeftPercent < 25 && (
+              {contextLeftPercent > 25 && (
+                <>
+                  {" — "}
+                  <Text color={contextLeftPercent > 40 ? "green" : "yellow"}>
+                    {Math.round(contextLeftPercent)}% context left
+                  </Text>
+                </>
+              )}
+              {contextLeftPercent <= 25 && (
                 <>
                   {" — "}
                   <Text color="red">
@@ -648,12 +868,42 @@ export default function TerminalChatInput({
 function TerminalChatInputThinking({
   onInterrupt,
   active,
+  thinkingSeconds,
 }: {
   onInterrupt: () => void;
   active: boolean;
+  thinkingSeconds: number;
 }) {
-  const [dots, setDots] = useState("");
   const [awaitingConfirm, setAwaitingConfirm] = useState(false);
+  const [dots, setDots] = useState("");
+
+  // Animate ellipsis
+  useInterval(() => {
+    setDots((prev) => (prev.length < 3 ? prev + "." : ""));
+  }, 500);
+
+  // Spinner frames with embedded seconds
+  const ballFrames = [
+    "( ●    )",
+    "(  ●   )",
+    "(   ●  )",
+    "(    ● )",
+    "(     ●)",
+    "(    ● )",
+    "(   ●  )",
+    "(  ●   )",
+    "( ●    )",
+    "(●     )",
+  ];
+  const [frame, setFrame] = useState(0);
+
+  useInterval(() => {
+    setFrame((idx) => (idx + 1) % ballFrames.length);
+  }, 80);
+
+  // Keep the elapsed‑seconds text fixed while the ball animation moves.
+  const frameTemplate = ballFrames[frame] ?? ballFrames[0];
+  const frameWithSeconds = `${frameTemplate} ${thinkingSeconds}s`;
 
   // ---------------------------------------------------------------------
   // Raw stdin listener to catch the case where the terminal delivers two
@@ -701,10 +951,7 @@ function TerminalChatInputThinking({
     };
   }, [stdin, awaitingConfirm, onInterrupt, active, setRawMode]);
 
-  // Cycle the "Thinking…" animation dots.
-  useInterval(() => {
-    setDots((prev) => (prev.length < 3 ? prev + "." : ""));
-  }, 500);
+  // No local timer: the parent component supplies the elapsed time via props.
 
   // Listen for the escape key to allow the user to interrupt the current
   // operation. We require two presses within a short window (1.5s) to avoid
@@ -735,8 +982,11 @@ function TerminalChatInputThinking({
   return (
     <Box flexDirection="column" gap={1}>
       <Box gap={2}>
-        <Spinner type="ball" />
-        <Text>Thinking{dots}</Text>
+        <Text>{frameWithSeconds}</Text>
+        <Text>
+          Thinking
+          {dots}
+        </Text>
       </Box>
       {awaitingConfirm && (
         <Text dimColor>
