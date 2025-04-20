@@ -65,7 +65,7 @@ describe("Backspace deletes attached image", () => {
     process.chdir(TMP);
 
     const { stdin, flush, lastFrameStripped, cleanup } = renderTui(
-      React.createElement(TerminalChatInput, props())
+      React.createElement(TerminalChatInput, props()),
     );
 
     await flush();

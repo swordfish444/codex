@@ -84,7 +84,11 @@ export default function TerminalChatInput({
 
   if (process.env["DEBUG_TCI"]) {
     // eslint-disable-next-line no-console
-    console.log('[TCI] render stage', { input, pickerCwd, attachedCount: attachedImages.length });
+    console.log("[TCI] render stage", {
+      input,
+      pickerCwd,
+      attachedCount: attachedImages.length,
+    });
   }
   // Open picker when user finished typing '@'
   React.useEffect(() => {
@@ -115,7 +119,7 @@ export default function TerminalChatInput({
 
       if (process.env["DEBUG_TCI"]) {
         // eslint-disable-next-line no-console
-        console.log('[TCI] raw stdin', JSON.stringify(str));
+        console.log("[TCI] raw stdin", JSON.stringify(str));
       }
 
       if (str === "@" && pickerCwd == null) {
@@ -162,7 +166,7 @@ export default function TerminalChatInput({
     (_input, _key) => {
       if (process.env["DEBUG_TCI"]) {
         // eslint-disable-next-line no-console
-        console.log('[TCI] useInput raw', JSON.stringify(_input), _key);
+        console.log("[TCI] useInput raw", JSON.stringify(_input), _key);
       }
 
       // When image picker overlay is open delegate all keystrokes to it.
@@ -172,7 +176,7 @@ export default function TerminalChatInput({
       if (!confirmationPrompt && !loading) {
         if (process.env["DEBUG_TCI"]) {
           // eslint-disable-next-line no-console
-          console.log('useInput received', JSON.stringify(_input));
+          console.log("useInput received", JSON.stringify(_input));
         }
 
         // Open image picker when user types '@' and picker not already open.
@@ -227,7 +231,10 @@ export default function TerminalChatInput({
       }
 
       // Backspace on empty draft removes last attached image
-      if ((_key.backspace || _input === "\u007f") && attachedImages.length > 0) {
+      if (
+        (_key.backspace || _input === "\u007f") &&
+        attachedImages.length > 0
+      ) {
         if (input.length === 0) {
           setAttachedImages((prev) => prev.slice(0, -1));
         }
@@ -450,7 +457,11 @@ export default function TerminalChatInput({
                 text:
                   missingImages.length === 1
                     ? `Warning: image "${missingImages[0]}" not found and was not attached.`
-                    : `Warning: ${missingImages.length} images were not found and were skipped: ${missingImages.join(", ")}`,
+                    : `Warning: ${
+                        missingImages.length
+                      } images were not found and were skipped: ${missingImages.join(
+                        ", ",
+                      )}`,
               },
             ],
           },
@@ -520,7 +531,12 @@ export default function TerminalChatInput({
 
           if (process.env["DEBUG_TCI"]) {
             // eslint-disable-next-line no-console
-            console.log('[TCI] attached image added', filePath, 'total', attachedImages.length + 1);
+            console.log(
+              "[TCI] attached image added",
+              filePath,
+              "total",
+              attachedImages.length + 1,
+            );
           }
           setPickerCwd(null);
         }}
@@ -535,7 +551,7 @@ export default function TerminalChatInput({
     }
     if (process.env["DEBUG_TCI"]) {
       // eslint-disable-next-line no-console
-      console.log('[TCI] render AttachmentPreview', attachedImages);
+      console.log("[TCI] render AttachmentPreview", attachedImages);
     }
     return (
       <Box flexDirection="column" paddingX={1} marginBottom={1}>

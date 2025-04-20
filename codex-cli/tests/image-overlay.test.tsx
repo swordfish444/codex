@@ -47,7 +47,7 @@ describe("Image picker overlay", () => {
         onPick: () => {},
         onCancel: () => {},
         onChangeDir,
-      })
+      }),
     );
 
     await flush();
@@ -65,7 +65,7 @@ describe("Image picker overlay", () => {
         onPick,
         onCancel: () => {},
         onChangeDir: () => {},
-      })
+      }),
     );
     await flush();
     await type(stdin, "\r", flush);

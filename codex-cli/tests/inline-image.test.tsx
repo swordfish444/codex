@@ -5,7 +5,10 @@ import { renderTui } from "./ui-test-helpers.js";
 
 import TerminalInlineImage from "../src/components/chat/terminal-inline-image.js";
 import TerminalChatResponseItem from "../src/components/chat/terminal-chat-response-item.js";
-import { imageFilenameByDataUrl, createInputItem } from "../src/utils/input-utils.js";
+import {
+  imageFilenameByDataUrl,
+  createInputItem,
+} from "../src/utils/input-utils.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -14,11 +17,10 @@ import { imageFilenameByDataUrl, createInputItem } from "../src/utils/input-util
 import path from "node:path";
 import fs from "node:fs";
 
-
 describe("TerminalInlineImage fallback", () => {
   it("renders alt text in test env", () => {
     const { lastFrameStripped } = renderTui(
-      <TerminalInlineImage src={Buffer.from("abc")} alt="placeholder" />
+      <TerminalInlineImage src={Buffer.from("abc")} alt="placeholder" />,
     );
     expect(lastFrameStripped()).toContain("placeholder");
   });
@@ -42,9 +44,9 @@ describe("TerminalChatResponseItem image label", () => {
   it("shows filename", () => {
     const msg = fakeImageMessage("sample.png");
     const { lastFrameStripped } = renderTui(
-      <TerminalChatResponseItem item={msg as any} />
+      <TerminalChatResponseItem item={msg as any} />,
     );
-    expect(lastFrameStripped()).toContain("sample.png");
+    expect(lastFrameStripped()).toContain('<Image path="sample.png">');
   });
 });
 

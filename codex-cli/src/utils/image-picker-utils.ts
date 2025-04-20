@@ -28,7 +28,10 @@ export function getDirectoryItems(
   try {
     for (const entry of fs.readdirSync(cwd, { withFileTypes: true })) {
       if (entry.isDirectory()) {
-        dirs.push({ label: entry.name + "/", value: path.join(cwd, entry.name) });
+        dirs.push({
+          label: entry.name + "/",
+          value: path.join(cwd, entry.name),
+        });
       } else if (entry.isFile() && isImage(entry.name)) {
         files.push({ label: entry.name, value: path.join(cwd, entry.name) });
       }

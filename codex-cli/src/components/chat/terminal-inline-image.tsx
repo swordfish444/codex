@@ -9,6 +9,8 @@ export interface TerminalInlineImageProps {
 }
 
 // During tests or when terminal does not support images, fallback to alt.
-export default function TerminalInlineImage({ alt = "[image]" }: TerminalInlineImageProps): React.ReactElement {
+export default function TerminalInlineImage({
+  alt = "[image]",
+}: TerminalInlineImageProps): React.ReactElement {
   return <Text>{alt}</Text>;
 }

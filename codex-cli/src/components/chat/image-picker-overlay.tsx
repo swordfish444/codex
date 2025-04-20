@@ -1,7 +1,6 @@
 /* eslint-disable import/order */
 import path from "node:path";
 
-
 import { Box, Text, useInput, useStdin } from "ink";
 
 import SelectInput from "../select-input/select-input.js";
@@ -37,7 +36,7 @@ export default function ImagePickerOverlay({
 
   if (process.env["DEBUG_OVERLAY"]) {
     // eslint-disable-next-line no-console
-    console.log('[overlay] mount, items:', items.map((i) => i.label).join(','));
+    console.log("[overlay] mount, items:", items.map((i) => i.label).join(","));
   }
 
   // Keep track of currently highlighted item so <Enter> can act synchronously.
@@ -64,7 +63,7 @@ export default function ImagePickerOverlay({
     function onData(data: Buffer) {
       if (process.env["DEBUG_OVERLAY"]) {
         // eslint-disable-next-line no-console
-        console.log('[overlay] stdin data', JSON.stringify(data.toString()));
+        console.log("[overlay] stdin data", JSON.stringify(data.toString()));
       }
 
       // ink-testing-library pipes mocked input through `stdin.emit("data", …)`
@@ -117,48 +116,48 @@ export default function ImagePickerOverlay({
   // in the spec).
   useInput(
     (input, key) => {
-    if (process.env["DEBUG_OVERLAY"]) {
-      // eslint-disable-next-line no-console
-      console.log(
-        "[overlay] root useInput",
-        JSON.stringify(input),
-        key.return,
-      );
-    }
-
-    if (key.escape || key.backspace || input === "\u007f") {
       if (process.env["DEBUG_OVERLAY"]) {
         // eslint-disable-next-line no-console
-        console.log("[overlay] cancel");
-      }
-      perform(onCancel);
-    } else if (key.return) {
-      // Act on the currently highlighted item synchronously so tests that
-      // simulate a bare "\r" keypress without triggering SelectInput’s
-      // onSelect callback still work.  This mirrors <SelectInput>’s own
-      // behaviour but executing the logic here avoids having to depend on
-      // that implementation detail.
-
-      const item = highlighted.current;
-      if (!item) {
-        return;
+        console.log(
+          "[overlay] root useInput",
+          JSON.stringify(input),
+          key.return,
+        );
       }
 
-      if (process.env["DEBUG_OVERLAY"]) {
-        // eslint-disable-next-line no-console
-        console.log('[overlay] return on', item.label, item.value);
-      }
-
-      perform(() => {
-        if (item.value === "__UP__") {
-          onChangeDir(path.dirname(cwd));
-        } else if (item.label.endsWith("/")) {
-          onChangeDir(item.value);
-        } else {
-          onPick(item.value);
+      if (key.escape || key.backspace || input === "\u007f") {
+        if (process.env["DEBUG_OVERLAY"]) {
+          // eslint-disable-next-line no-console
+          console.log("[overlay] cancel");
         }
-      });
-    }
+        perform(onCancel);
+      } else if (key.return) {
+        // Act on the currently highlighted item synchronously so tests that
+        // simulate a bare "\r" keypress without triggering SelectInput’s
+        // onSelect callback still work.  This mirrors <SelectInput>’s own
+        // behaviour but executing the logic here avoids having to depend on
+        // that implementation detail.
+
+        const item = highlighted.current;
+        if (!item) {
+          return;
+        }
+
+        if (process.env["DEBUG_OVERLAY"]) {
+          // eslint-disable-next-line no-console
+          console.log("[overlay] return on", item.label, item.value);
+        }
+
+        perform(() => {
+          if (item.value === "__UP__") {
+            onChangeDir(path.dirname(cwd));
+          } else if (item.label.endsWith("/")) {
+            onChangeDir(item.value);
+          } else {
+            onPick(item.value);
+          }
+        });
+      }
     },
     { isActive: true },
   );

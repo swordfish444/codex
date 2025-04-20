@@ -119,7 +119,12 @@ function TerminalChatResponseMessage({
                 : c.type === "input_text"
                 ? c.text
                 : c.type === "input_image"
-                ? imageFilenameByDataUrl.get(c.image_url as string) || "<Image>"
+                ? (() => {
+                    const label = imageFilenameByDataUrl.get(
+                      c.image_url as string,
+                    );
+                    return label ? `<Image path="${label}">` : "<Image>";
+                  })()
                 : c.type === "input_file"
                 ? c.filename
                 : "", // unknown content type
