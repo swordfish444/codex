@@ -2,4 +2,3 @@
 // the existing test‑suite continue to resolve correctly at runtime.
 
 export * from "./image-picker-utils.ts";
-export { default } from "./image-picker-utils.ts";
