@@ -19,6 +19,7 @@ import { clearTerminal, onExit } from "../../utils/terminal.js";
 import { fileURLToPath } from "node:url";
 import React, { useCallback, useState, Fragment, useEffect } from "react";
 import path from "node:path";
+import fs from "fs/promises";
 import { Box, Text, useApp, useInput, useStdin } from "ink";
 import Spinner from "../vendor/ink-spinner.js";
 import TextInput from "../vendor/ink-text-input.js";
@@ -81,7 +82,7 @@ export default function TerminalChatInput({
   const [pickerCwd, setPickerCwd] = useState<string | null>(null);
   const [pickerRoot, setPickerRoot] = useState<string | null>(null);
 
-  if (process.env.DEBUG_TCI) {
+  if (process.env["DEBUG_TCI"]) {
     // eslint-disable-next-line no-console
     console.log('[TCI] render stage', { input, pickerCwd, attachedCount: attachedImages.length });
   }
@@ -102,7 +103,9 @@ export default function TerminalChatInput({
   const { stdin: inkStdin, setRawMode } = useStdin();
 
   React.useEffect(() => {
-    if (!active) return;
+    if (!active) {
+      return;
+    }
 
     // Ensure raw mode so we actually receive data events.
     setRawMode?.(true);
@@ -110,7 +113,7 @@ export default function TerminalChatInput({
     function onData(data: Buffer | string) {
       const str = Buffer.isBuffer(data) ? data.toString("utf8") : data;
 
-      if (process.env.DEBUG_TCI) {
+      if (process.env["DEBUG_TCI"]) {
         // eslint-disable-next-line no-console
         console.log('[TCI] raw stdin', JSON.stringify(str));
       }
@@ -140,8 +143,10 @@ export default function TerminalChatInput({
     }
 
     inkStdin?.on("data", onData);
-    return () => inkStdin?.off("data", onData);
-  }, [inkStdin, active, pickerCwd, attachedImages.length, input]);
+    return () => {
+      inkStdin?.off("data", onData);
+    };
+  }, [inkStdin, active, pickerCwd, attachedImages.length, input, setRawMode]);
 
   // Load command history on component mount
   useEffect(() => {
@@ -155,7 +160,7 @@ export default function TerminalChatInput({
 
   useInput(
     (_input, _key) => {
-      if (process.env.DEBUG_TCI) {
+      if (process.env["DEBUG_TCI"]) {
         // eslint-disable-next-line no-console
         console.log('[TCI] useInput raw', JSON.stringify(_input), _key);
       }
@@ -165,7 +170,7 @@ export default function TerminalChatInput({
         return; // ignore here; overlay has its own handlers
       }
       if (!confirmationPrompt && !loading) {
-        if (process.env.DEBUG_TCI) {
+        if (process.env["DEBUG_TCI"]) {
           // eslint-disable-next-line no-console
           console.log('useInput received', JSON.stringify(_input));
         }
@@ -409,8 +414,48 @@ export default function TerminalChatInput({
         images.push(...attachedImages);
       }
 
-      const inputItem = await createInputItem(text, images);
+      // Filter out images that no longer exist on disk.  Emit a system
+      // notification for any skipped files so the user is aware.
+      const existingImages: Array<string> = [];
+      const missingImages: Array<string> = [];
+
+      for (const filePath of images) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await fs.access(filePath);
+          existingImages.push(filePath);
+        } catch (err: unknown) {
+          const e = err as NodeJS.ErrnoException;
+          if (e?.code === "ENOENT") {
+            missingImages.push(filePath);
+          } else {
+            throw err;
+          }
+        }
+      }
+
+      const inputItem = await createInputItem(text, existingImages);
       submitInput([inputItem]);
+
+      if (missingImages.length > 0) {
+        setItems((prev) => [
+          ...prev,
+          {
+            id: `missing-images-${Date.now()}`,
+            type: "message",
+            role: "system",
+            content: [
+              {
+                type: "input_text",
+                text:
+                  missingImages.length === 1
+                    ? `Warning: image "${missingImages[0]}" not found and was not attached.`
+                    : `Warning: ${missingImages.length} images were not found and were skipped: ${missingImages.join(", ")}`,
+              },
+            ],
+          },
+        ]);
+      }
 
       // Get config for history persistence
       const config = loadConfig();
@@ -473,7 +518,7 @@ export default function TerminalChatInput({
             prev.includes(filePath) ? prev : [...prev, filePath],
           );
 
-          if (process.env.DEBUG_TCI) {
+          if (process.env["DEBUG_TCI"]) {
             // eslint-disable-next-line no-console
             console.log('[TCI] attached image added', filePath, 'total', attachedImages.length + 1);
           }
@@ -488,7 +533,7 @@ export default function TerminalChatInput({
     if (attachedImages.length === 0) {
       return null;
     }
-    if (process.env.DEBUG_TCI) {
+    if (process.env["DEBUG_TCI"]) {
       // eslint-disable-next-line no-console
       console.log('[TCI] render AttachmentPreview', attachedImages);
     }
@@ -523,8 +568,10 @@ export default function TerminalChatInput({
               showCursor
               value={input}
               onChange={(value) => {
-                // eslint-disable-next-line no-console
-                if (process.env.DEBUG_TCI) console.log('onChange', JSON.stringify(value));
+                if (process.env["DEBUG_TCI"]) {
+                  // eslint-disable-next-line no-console
+                  console.log("onChange", JSON.stringify(value));
+                }
                 // Detect trailing "@" to open image picker.
                 if (pickerCwd == null && value.endsWith("@")) {
                   // Open image picker immediately

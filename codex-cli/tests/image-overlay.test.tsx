@@ -12,14 +12,18 @@ vi.mock("../src/utils/input-utils.js", () => ({
 
 import ImagePickerOverlay from "../src/components/chat/image-picker-overlay.js";
 
-async function type(stdin, text, flush) {
+async function type(
+  stdin: NodeJS.WritableStream & { write(str: string): void },
+  text: string,
+  flush: () => Promise<void>,
+): Promise<void> {
   stdin.write(text);
   await flush();
 }
 
 describe("Image picker overlay", () => {
-  let TMP;
-  let CHILD;
+  let TMP: string;
+  let CHILD: string;
 
   beforeAll(() => {
     TMP = fs.mkdtempSync(path.join(process.cwd(), "overlay-test-"));

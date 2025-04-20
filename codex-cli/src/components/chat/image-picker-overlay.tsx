@@ -2,8 +2,7 @@
 import path from "node:path";
 
 
-import { Box, Text, useInput } from "ink";
-import { useStdin } from "ink";
+import { Box, Text, useInput, useStdin } from "ink";
 
 import SelectInput from "../select-input/select-input.js";
 
@@ -36,7 +35,7 @@ export default function ImagePickerOverlay({
     return getDirectoryItems(cwd, rootDir);
   }, [cwd, rootDir]);
 
-  if (process.env.DEBUG_OVERLAY) {
+  if (process.env["DEBUG_OVERLAY"]) {
     // eslint-disable-next-line no-console
     console.log('[overlay] mount, items:', items.map((i) => i.label).join(','));
   }
@@ -52,7 +51,9 @@ export default function ImagePickerOverlay({
   const actedRef = useRef(false);
 
   function perform(action: () => void) {
-    if (actedRef.current) return;
+    if (actedRef.current) {
+      return;
+    }
     actedRef.current = true;
     action();
   }
@@ -61,7 +62,7 @@ export default function ImagePickerOverlay({
   const { stdin: inkStdin } = useStdin();
   React.useEffect(() => {
     function onData(data: Buffer) {
-      if (process.env.DEBUG_OVERLAY) {
+      if (process.env["DEBUG_OVERLAY"]) {
         // eslint-disable-next-line no-console
         console.log('[overlay] stdin data', JSON.stringify(data.toString()));
       }
@@ -79,7 +80,9 @@ export default function ImagePickerOverlay({
       // ENTER / RETURN (\r or \n)
       if (str === "\r" || str === "\n") {
         const item = highlighted.current;
-        if (!item) return;
+        if (!item) {
+          return;
+        }
 
         perform(() => {
           if (item.value === "__UP__") {
@@ -98,11 +101,15 @@ export default function ImagePickerOverlay({
         perform(onCancel);
       }
     }
-    if (inkStdin) inkStdin.on('data', onData);
+    if (inkStdin) {
+      inkStdin.on("data", onData);
+    }
     return () => {
-      if (inkStdin) inkStdin.off('data', onData);
+      if (inkStdin) {
+        inkStdin.off("data", onData);
+      }
     };
-  }, [inkStdin]);
+  }, [inkStdin, cwd, onCancel, onChangeDir, onPick]);
 
   // Only listen for Escape/backspace at the overlay level; <Enter> is handled
   // by the SelectInput’s `onSelect` callback (it fires synchronously when the
@@ -110,12 +117,20 @@ export default function ImagePickerOverlay({
   // in the spec).
   useInput(
     (input, key) => {
-    if (process.env.DEBUG_OVERLAY) {
+    if (process.env["DEBUG_OVERLAY"]) {
       // eslint-disable-next-line no-console
-      console.log('[overlay] root useInput', JSON.stringify(input), key.return);
+      console.log(
+        "[overlay] root useInput",
+        JSON.stringify(input),
+        key.return,
+      );
     }
-      if (key.escape || key.backspace || input === "\u007f") {
-      if (process.env.DEBUG_OVERLAY) console.log('[overlay] cancel');
+
+    if (key.escape || key.backspace || input === "\u007f") {
+      if (process.env["DEBUG_OVERLAY"]) {
+        // eslint-disable-next-line no-console
+        console.log("[overlay] cancel");
+      }
       perform(onCancel);
     } else if (key.return) {
       // Act on the currently highlighted item synchronously so tests that
@@ -125,9 +140,11 @@ export default function ImagePickerOverlay({
       // that implementation detail.
 
       const item = highlighted.current;
-      if (!item) return;
+      if (!item) {
+        return;
+      }
 
-      if (process.env.DEBUG_OVERLAY) {
+      if (process.env["DEBUG_OVERLAY"]) {
         // eslint-disable-next-line no-console
         console.log('[overlay] return on', item.label, item.value);
       }

@@ -15,12 +15,17 @@ vi.mock("../src/utils/input-utils.js", () => ({
 // mock external deps used inside chat input
 vi.mock("../../approvals.js", () => ({ isSafeCommand: () => null }));
 vi.mock("../src/format-command.js", () => ({
-  formatCommandForDisplay: (c) => c.join(" "),
+  // Accept an array of command tokens and join them with spaces for display.
+  formatCommandForDisplay: (c: Array<string>): string => c.join(" "),
 }));
 
 import TerminalChatInput from "../src/components/chat/terminal-chat-input.js";
 
-async function type(stdin, text, flush) {
+async function type(
+  stdin: NodeJS.WritableStream & { write(str: string): void },
+  text: string,
+  flush: () => Promise<void>,
+): Promise<void> {
   stdin.write(text);
   await flush();
 }

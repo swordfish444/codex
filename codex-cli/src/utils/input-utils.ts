@@ -20,7 +20,23 @@ export async function createInputItem(
 
   for (const filePath of images) {
     /* eslint-disable no-await-in-loop */
-    const binary = await fs.readFile(filePath);
+    let binary: Buffer;
+    try {
+      binary = await fs.readFile(filePath);
+    } catch (err: unknown) {
+      // Gracefully skip files that no longer exist on disk.  This can happen
+      // when an image was attached earlier but has since been moved or
+      // deleted before the user submitted the prompt.  For any other error
+      // codes re‑throw so callers are still notified of unexpected issues
+      // (e.g. permission errors).
+      const e = err as NodeJS.ErrnoException;
+      if (e?.code === "ENOENT") {
+        // Skip silently – user will simply not include the missing image.
+        continue;
+      }
+      throw err as Error;
+    }
+
     const kind = await fileTypeFromBuffer(binary);
     /* eslint-enable no-await-in-loop */
     const encoded = binary.toString("base64");
