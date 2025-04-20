@@ -1,7 +1,11 @@
 import type { ResponseItem } from "openai/resources/responses/responses.mjs";
 
 import { approximateTokensUsed } from "./approximate-tokens-used.js";
-import { pricePerToken } from "./estimate-cost.js";
+import {
+  estimateCostFromUsage,
+  pricePerToken,
+  type UsageBreakdown,
+} from "./estimate-cost.js";
 
 /**
  * Simple accumulator for {@link ResponseItem}s that exposes aggregate token
@@ -10,7 +14,15 @@ import { pricePerToken } from "./estimate-cost.js";
 export class SessionCostTracker {
   private readonly model: string;
   private readonly items: Array<ResponseItem> = [];
-  private tokensUsed: number | null = null;
+
+  private tokensUsedPrecise: number | null = null;
+
+  /**
+   * Aggregated exact cost when we have detailed `usage` information from the
+   * OpenAI API.  Falls back to `null` when we only have the rough estimate
+   * path available.
+   */
+  private costPrecise: number | null = null;
 
   constructor(model: string) {
     this.model = model;
@@ -21,23 +33,50 @@ export class SessionCostTracker {
     this.items.push(...items);
   }
 
-  /** Add the exact number of tokens returned by the API usage object. */
+  /**
+   * Add a full usage breakdown as returned by the Responses API.  This gives
+   * us exact token counts and allows true‑to‑spec cost accounting that
+   * factors in cached tokens.
+   */
+  addUsage(usage: UsageBreakdown): void {
+    const tokens =
+      usage.total_tokens ??
+      (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
+
+    if (Number.isFinite(tokens) && tokens > 0) {
+      this.tokensUsedPrecise = (this.tokensUsedPrecise ?? 0) + tokens;
+    }
+
+    const cost = estimateCostFromUsage(usage, this.model);
+    if (cost != null) {
+      this.costPrecise = (this.costPrecise ?? 0) + cost;
+    }
+  }
+
+  /** Legacy helper for callers that only know the total token count. */
   addTokens(count: number): void {
     if (Number.isFinite(count) && count > 0) {
-      this.tokensUsed = (this.tokensUsed ?? 0) + count;
+      this.tokensUsedPrecise = (this.tokensUsedPrecise ?? 0) + count;
+      // We deliberately do *not* update costPrecise here – without a detailed
+      // breakdown we cannot know whether tokens were input/output/cached.  We
+      // therefore fall back to the blended rate during `getCostUSD()`.
     }
   }
 
   /** Approximate total token count so far. */
   getTokensUsed(): number {
-    if (this.tokensUsed != null) {
-      return this.tokensUsed;
+    if (this.tokensUsedPrecise != null) {
+      return this.tokensUsedPrecise;
     }
     return approximateTokensUsed(this.items);
   }
 
   /** Best‑effort USD cost estimate. Returns `null` when the model is unknown. */
   getCostUSD(): number | null {
+    if (this.costPrecise != null) {
+      return this.costPrecise;
+    }
+
     const per = pricePerToken(this.model);
     if (per == null) {
       return null;

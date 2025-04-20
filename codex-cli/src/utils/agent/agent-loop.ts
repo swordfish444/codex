@@ -1,6 +1,7 @@
 import type { ReviewDecision } from "./review.js";
 import type { ApplyPatchCommand, ApprovalPolicy } from "../../approvals.js";
 import type { AppConfig } from "../config.js";
+import type { UsageBreakdown } from "../estimate-cost.js";
 import type {
   ResponseFunctionToolCall,
   ResponseInputItem,
@@ -805,20 +806,9 @@ export class AgentLoop {
               try {
                 const usage = (event as MaybeUsageEvent).response?.usage;
                 if (usage && typeof usage === "object") {
-                  const u = usage as {
-                    total_tokens?: number;
-                    input_tokens?: number;
-                    output_tokens?: number;
-                  };
-                  const tokens =
-                    u.total_tokens ??
-                    (typeof u.input_tokens === "number" &&
-                    typeof u.output_tokens === "number"
-                      ? u.input_tokens + u.output_tokens
-                      : undefined);
-                  if (typeof tokens === "number" && tokens > 0) {
-                    ensureSessionTracker(this.model).addTokens(tokens);
-                  }
+                  ensureSessionTracker(this.model).addUsage(
+                    usage as unknown as UsageBreakdown,
+                  );
                 }
               } catch {
                 /* best‑effort only */
