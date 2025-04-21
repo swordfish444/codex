@@ -448,6 +448,15 @@ pnpm lint:fix
 pnpm format:fix
 ```
 
+### Debugging
+
+To debug the CLI with a visual debugger, do the following in the `codex-cli` folder:
+
+- Build: run `pnpm run build`, which will generate `cli.js.map` alongside `cli.js`
+- Run the CLI with `node --inspect-brk ./dist/cli.js` The program then waits until a debugger is attached before proceeding. Options:
+  - In VS Code, choose **Debug: Attach to Node Process** from the command palette and choose the option in the dropdown with debug port `9229` (likely the first option)
+  - Go to <chrome://inspect> in Chrome and find **localhost:9229** and click **trace**
+
 #### Nix Flake Development
 
 Prerequisite: Nix >= 2.4 with flakes enabled (`experimental-features = nix-command flakes` in `~/.config/nix/nix.conf`).
