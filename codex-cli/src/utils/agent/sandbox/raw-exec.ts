@@ -223,15 +223,42 @@ function createTruncatingCollector(
     if (hitLimit) {
       return;
     }
-    totalBytes += data.length;
-    for (let i = 0; i < data.length; i++) {
+    const dataLength = data.length;
+    let newlineCount = 0;
+    for (let i = 0; i < dataLength; i++) {
       if (data[i] === 0x0a) {
-        totalLines++;
+        newlineCount++;
       }
     }
-    if (totalBytes <= byteLimit && totalLines <= lineLimit) {
+    // If entire chunk fits within byte and line limits, take it whole
+    if (totalBytes + dataLength <= byteLimit && totalLines + newlineCount <= lineLimit) {
       chunks.push(data);
+      totalBytes += dataLength;
+      totalLines += newlineCount;
     } else {
+      // Otherwise, take a partial slice up to the first limit breach
+      const allowedBytes = byteLimit - totalBytes;
+      const allowedLines = lineLimit - totalLines;
+      let bytesTaken = 0;
+      let linesSeen = 0;
+      for (let i = 0; i < dataLength; i++) {
+        if (bytesTaken === allowedBytes) {
+          break;
+        }
+        const byte = data[i];
+        if (byte === 0x0a) {
+          if (linesSeen === allowedLines) {
+            break;
+          }
+          linesSeen++;
+        }
+        bytesTaken++;
+      }
+      if (bytesTaken > 0) {
+        chunks.push(data.slice(0, bytesTaken));
+        totalBytes += bytesTaken;
+        totalLines += linesSeen;
+      }
       hitLimit = true;
     }
   });
