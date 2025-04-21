@@ -54,6 +54,7 @@ const cli = meow(
   Options
     -h, --help                      Show usage and exit
     -m, --model <model>             Model to use for completions (default: o4-mini)
+    -p, --provider <provider>       Provider to use for completions (default: openai)
     -i, --image <path>              Path(s) to image files to include as input
     -v, --view <rollout>            Inspect a previously saved rollout instead of starting a session
     -q, --quiet                     Non-interactive mode that only prints the assistant's final output
@@ -190,7 +191,7 @@ _codex() {
 }
 _codex`,
     fish: `# fish completion for codex
-complete -c codex -a '(_fish_complete_path)' -d 'file path'`,
+complete -c codex -a '(__fish_complete_path)' -d 'file path'`,
   };
   const script = scripts[shell];
   if (!script) {
