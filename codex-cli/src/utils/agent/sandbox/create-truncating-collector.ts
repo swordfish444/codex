@@ -1,0 +1,72 @@
+/**
+ * Creates a collector that accumulates data Buffers from a stream up to
+ * specified byte and line limits. After either limit is exceeded, further
+ * data is ignored.
+ */
+export function createTruncatingCollector(
+  stream: NodeJS.ReadableStream,
+  byteLimit: number = MAX_OUTPUT_BYTES,
+  lineLimit: number = MAX_OUTPUT_LINES,
+) {
+  const chunks: Array<Buffer> = [];
+  let totalBytes = 0;
+  let totalLines = 0;
+  let hitLimit = false;
+
+  stream?.on("data", (data: Buffer) => {
+    if (hitLimit) {
+      return;
+    }
+    const dataLength = data.length;
+    let newlineCount = 0;
+    for (let i = 0; i < dataLength; i++) {
+      if (data[i] === 0x0a) {
+        newlineCount++;
+      }
+    }
+    // If entire chunk fits within byte and line limits, take it whole
+    if (
+      totalBytes + dataLength <= byteLimit &&
+      totalLines + newlineCount <= lineLimit
+    ) {
+      chunks.push(data);
+      totalBytes += dataLength;
+      totalLines += newlineCount;
+    } else {
+      // Otherwise, take a partial slice up to the first limit breach
+      const allowedBytes = byteLimit - totalBytes;
+      const allowedLines = lineLimit - totalLines;
+      let bytesTaken = 0;
+      let linesSeen = 0;
+      for (let i = 0; i < dataLength; i++) {
+        if (bytesTaken === allowedBytes) {
+          break;
+        }
+        const byte = data[i];
+        if (byte === 0x0a) {
+          if (linesSeen === allowedLines) {
+            break;
+          }
+          linesSeen++;
+        }
+        bytesTaken++;
+      }
+      if (bytesTaken > 0) {
+        chunks.push(data.slice(0, bytesTaken));
+        totalBytes += bytesTaken;
+        totalLines += linesSeen;
+      }
+      hitLimit = true;
+    }
+  });
+
+  return {
+    getString() {
+      return Buffer.concat(chunks).toString("utf8");
+    },
+    /** True if either byte or line limit was exceeded */
+    get hit(): boolean {
+      return hitLimit;
+    },
+  };
+}
