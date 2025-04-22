@@ -87,7 +87,7 @@ export function parseToolCallArguments(
   }
 
   // @ts-expect-error timeout and workdir may not exist on json.
-  const { timeout, workdir } = json;
+  const { timeout } = json;
   return {
     cmd: commandArray,
     workdir: undefined,
