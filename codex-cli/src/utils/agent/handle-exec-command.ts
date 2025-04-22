@@ -219,7 +219,7 @@ async function execCommand(
     try {
       await access(workdir);
     } catch (e) {
-      log(`EXEC workdir=${workdir} not found, use process.cwd() instead`);
+      log(`EXEC workdir=${workdir} not found, using process.cwd() instead`);
       workdir = process.cwd();
     }
   }

@@ -639,17 +639,13 @@ export class AgentLoop {
                     type: "object",
                     properties: {
                       command: { type: "array", items: { type: "string" } },
-                      workdir: {
-                        type: "string",
-                        description: "The working directory for the command.",
-                      },
                       timeout: {
                         type: "number",
                         description:
                           "The maximum time to wait for the command to complete in milliseconds.",
                       },
                     },
-                    required: ["command", "workdir", "timeout"],
+                    required: ["command", "timeout"],
                     additionalProperties: false,
                   },
                 },
@@ -975,17 +971,13 @@ export class AgentLoop {
                           type: "array",
                           items: { type: "string" },
                         },
-                        workdir: {
-                          type: "string",
-                          description: "The working directory for the command.",
-                        },
                         timeout: {
                           type: "number",
                           description:
                             "The maximum time to wait for the command to complete in milliseconds.",
                         },
                       },
-                      required: ["command"],
+                      required: ["command", "timeout"],
                       additionalProperties: false,
                     },
                   },

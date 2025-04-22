@@ -90,7 +90,7 @@ export function parseToolCallArguments(
   const { timeout, workdir } = json;
   return {
     cmd: commandArray,
-    workdir: typeof workdir === "string" ? workdir : undefined,
+    workdir: undefined,
     timeoutInMillis: typeof timeout === "number" ? timeout : undefined,
   };
 }
