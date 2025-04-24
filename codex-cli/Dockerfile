@@ -20,7 +20,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   less \
   man-db \
   procps \
-  sudo \
   unzip \
   ripgrep \
   zsh \
@@ -50,7 +49,5 @@ RUN npm install -g codex.tgz \
 # Copy and set up firewall script
 COPY scripts/init_firewall.sh /usr/local/bin/
 USER root
-RUN chmod +x /usr/local/bin/init_firewall.sh && \
-  echo "node ALL=(root) NOPASSWD: /usr/local/bin/init_firewall.sh" > /etc/sudoers.d/node-firewall && \
-  chmod 0440 /etc/sudoers.d/node-firewall
+RUN chmod +x /usr/local/bin/init_firewall.sh
 USER node
