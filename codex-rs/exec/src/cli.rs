@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, ArgAction};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -15,6 +15,10 @@ pub struct Cli {
     /// Allow running Codex outside a Git repository.
     #[arg(long = "skip-git-repo-check", default_value_t = false)]
     pub skip_git_repo_check: bool,
+
+    /// Disable server-side response storage (omits previous_response_id and controls store flag)
+    #[arg(long = "disable-response-storage", action = ArgAction::SetTrue, default_value_t = false)]
+    pub disable_response_storage: bool,
 
     /// Initial instructions for the agent.
     pub prompt: Option<String>,

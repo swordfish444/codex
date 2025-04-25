@@ -29,15 +29,20 @@ use crate::flags::OPENAI_API_BASE;
 use crate::flags::OPENAI_REQUEST_MAX_RETRIES;
 use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS;
 use crate::flags::OPENAI_TIMEOUT_MS;
-use crate::models::ResponseInputItem;
 use crate::models::ResponseItem;
 use crate::util::backoff;
 
+/// API request payload for a single model turn
 #[derive(Default, Debug, Clone)]
 pub struct Prompt {
-    pub input: Vec<ResponseInputItem>,
+    /// Conversation context input items
+    pub input: Vec<ResponseItem>,
+    /// Optional previous response ID (when storage is enabled)
     pub prev_id: Option<String>,
+    /// Optional initial instructions (only sent on first turn)
     pub instructions: Option<String>,
+    /// Whether to store response on server side (disable_response_storage = !store)
+    pub store: bool,
 }
 
 #[derive(Debug)]
@@ -51,14 +56,16 @@ struct Payload<'a> {
     model: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     instructions: Option<&'a String>,
-    input: &'a Vec<ResponseInputItem>,
+    input: &'a Vec<ResponseItem>,
     tools: &'a [Tool],
     tool_choice: &'static str,
     parallel_tool_calls: bool,
     reasoning: Option<Reasoning>,
     #[serde(skip_serializing_if = "Option::is_none")]
     previous_response_id: Option<String>,
-    stream: bool,
+    store: bool,
+    /// Stream responses via SSE
+    pub stream: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -152,6 +159,8 @@ impl ModelClient {
                 generate_summary: None,
             }),
             previous_response_id: prompt.prev_id.clone(),
+            // store response on server side when enabled
+            store: prompt.store,
             stream: true,
         };
 
