@@ -3,7 +3,11 @@ use crossterm::event::KeyEvent;
 
 pub(crate) enum AppEvent {
     CodexEvent(Event),
+
+    Scroll(i32),
+
     Redraw,
+
     KeyEvent(KeyEvent),
     /// Request to exit the application gracefully.
     ExitRequest,
