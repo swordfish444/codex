@@ -38,6 +38,8 @@ jobs:
     defaults:
       run:
         working-directory: codex-rs
+    env:
+      CARGO_HOME: ${{ runner.os == 'Windows' && format('{0}\\.cargo', env.USERPROFILE) || format('{0}/.cargo', env.HOME) }}
 
     strategy:
       fail-fast: false
@@ -65,10 +67,10 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
+            ${{ env.CARGO_HOME }}/bin/
+            ${{ env.CARGO_HOME }}/registry/index/
+            ${{ env.CARGO_HOME }}/registry/cache/
+            ${{ env.CARGO_HOME }}/git/db/
             ${{ github.workspace }}/codex-rs/target/
           key: cargo-${{ matrix.runner }}-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
 
