@@ -63,8 +63,9 @@ impl ChatWidget<'_> {
         let app_event_tx_clone = app_event_tx.clone();
         // Create the Codex asynchronously so the UI loads as quickly as possible.
         tokio::spawn(async move {
+            // Initialize session; storage enabled by default
             let (codex, session_event, _ctrl_c) =
-                match init_codex(approval_policy, sandbox_policy, model).await {
+                match init_codex(approval_policy, sandbox_policy, false, model).await {
                     Ok(vals) => vals,
                     Err(e) => {
                         // TODO(mbolin): This error needs to be surfaced to the user.
