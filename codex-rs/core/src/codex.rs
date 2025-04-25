@@ -55,6 +55,7 @@ use crate::safety::assess_command_safety;
 use crate::safety::assess_patch_safety;
 use crate::safety::SafetyCheck;
 use crate::util::backoff;
+use crate::zdr_transcript::ZdrTranscript;
 
 /// The high-level interface to the Codex system.
 /// It operates as a queue pair where you send submissions and receive events.
@@ -193,6 +194,9 @@ impl Recorder {
 /// Context for an initialized model agent
 ///
 /// A session has at most 1 running task at a time, and can be interrupted by user input.
+/// Context for an initialized model agent
+///
+/// A session has at most 1 running task at a time, and can be interrupted by user input.
 struct Session {
     client: ModelClient,
     tx_event: Sender<Event>,
@@ -201,6 +205,9 @@ struct Session {
     instructions: Option<String>,
     approval_policy: AskForApproval,
     sandbox_policy: SandboxPolicy,
+    /// When true, omit `previous_response_id` in requests and send full context
+    disable_response_storage: bool,
+    /// Additional writable roots for sandbox execution
     writable_roots: Mutex<Vec<PathBuf>>,
 
     state: Mutex<State>,
@@ -214,6 +221,7 @@ struct State {
     previous_response_id: Option<String>,
     pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
     pending_input: Vec<ResponseInputItem>,
+    zdr_transcript: Option<ZdrTranscript>,
 }
 
 impl Session {
@@ -399,6 +407,7 @@ impl State {
         Self {
             approved_commands: self.approved_commands.clone(),
             previous_response_id: self.previous_response_id.clone(),
+            zdr_transcript: self.zdr_transcript.clone(),
             ..Default::default()
         }
     }
@@ -489,6 +498,7 @@ async fn submission_loop(
                 instructions,
                 approval_policy,
                 sandbox_policy,
+                disable_response_storage,
             } => {
                 let model = model.unwrap_or_else(|| OPENAI_DEFAULT_MODEL.to_string());
                 info!(model, "Configuring session");
@@ -500,7 +510,14 @@ async fn submission_loop(
                         sess.abort();
                         sess.state.lock().unwrap().partial_clone()
                     }
-                    None => State::default(),
+                    None => State {
+                        zdr_transcript: if disable_response_storage {
+                            Some(ZdrTranscript::new())
+                        } else {
+                            None
+                        },
+                        ..Default::default()
+                    },
                 };
 
                 // update session
@@ -511,6 +528,7 @@ async fn submission_loop(
                     instructions,
                     approval_policy,
                     sandbox_policy,
+                    disable_response_storage,
                     writable_roots: Mutex::new(get_writable_roots()),
                     state: Mutex::new(state),
                 }));
@@ -592,12 +610,21 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
         let pending_input = sess.get_pending_input();
         turn_input.splice(0..0, pending_input);
 
+        // If sess.state.transcript.is_some(), it should be written back into
+        // the prompt.
         match run_turn(&sess, sub_id.clone(), turn_input).await {
             Ok(turn_output) => {
                 if turn_output.is_empty() {
                     debug!("Turn completed");
                     break;
                 }
+
+                if let Some(transcript) = sess.state.lock().unwrap().zdr_transcript.as_mut() {
+                    for item in &turn_output {
+                        transcript.add_item(item.clone());
+                    }
+                }
+
                 turn_input = turn_output;
             }
             Err(e) => {
@@ -626,19 +653,26 @@ async fn run_turn(
     sub_id: String,
     input: Vec<ResponseInputItem>,
 ) -> CodexResult<Vec<ResponseInputItem>> {
+    // Decide whether to use server-side storage (previous_response_id) or disable it
     let prev_id = {
         let state = sess.state.lock().unwrap();
-        state.previous_response_id.clone()
+        if sess.disable_response_storage {
+            None
+        } else {
+            state.previous_response_id.clone()
+        }
     };
 
     let instructions = match prev_id {
         Some(_) => None,
         None => sess.instructions.clone(),
     };
+    // Build prompt payload, including store flag
     let prompt = Prompt {
         input,
         prev_id,
         instructions,
+        store: !sess.disable_response_storage,
     };
 
     let mut retries = 0;
