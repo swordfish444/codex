@@ -15,8 +15,10 @@ use tokio::sync::Notify;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::error::SandboxErr;
+use crate::protocol::SandboxPolicy;
 
 /// Maximum we keep for each stream (100 KiB).
+/// TODO(ragona) this should be reduced
 const MAX_STREAM_OUTPUT: usize = 100 * 1024;
 
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
@@ -55,8 +57,9 @@ async fn exec_linux(
     params: ExecParams,
     writable_roots: &[PathBuf],
     ctrl_c: Arc<Notify>,
+    sandbox_policy: SandboxPolicy,
 ) -> Result<RawExecToolCallOutput> {
-    crate::linux::exec_linux(params, writable_roots, ctrl_c).await
+    crate::linux::exec_linux(params, writable_roots, ctrl_c, sandbox_policy).await
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -64,6 +67,7 @@ async fn exec_linux(
     _params: ExecParams,
     _writable_roots: &[PathBuf],
     _ctrl_c: Arc<Notify>,
+    _sandbox_policy: SandboxPolicy,
 ) -> Result<RawExecToolCallOutput> {
     Err(CodexErr::Io(io::Error::new(
         io::ErrorKind::InvalidInput,
@@ -76,6 +80,7 @@ pub async fn process_exec_tool_call(
     sandbox_type: SandboxType,
     writable_roots: &[PathBuf],
     ctrl_c: Arc<Notify>,
+    sandbox_policy: SandboxPolicy,
 ) -> Result<ExecToolCallOutput> {
     let start = Instant::now();
 
@@ -98,7 +103,9 @@ pub async fn process_exec_tool_call(
             )
             .await
         }
-        SandboxType::LinuxSeccomp => exec_linux(params, writable_roots, ctrl_c).await,
+        SandboxType::LinuxSeccomp => {
+            exec_linux(params, writable_roots, ctrl_c, sandbox_policy).await
+        }
     };
     let duration = start.elapsed();
     match raw_output_result {
@@ -199,9 +206,17 @@ pub async fn exec(
         if let Some(dir) = &workdir {
             cmd.current_dir(dir);
         }
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        cmd.kill_on_drop(true);
-        cmd.spawn()?
+
+        // Do not create a file descriptor for stdin because otherwise some
+        // commands may hang forever waiting for input. For example, ripgrep has
+        // a heuristic where it may try to read from stdin as explained here:
+        // https://github.com/BurntSushi/ripgrep/blob/e2362d4d5185d02fa857bf381e7bd52e66fafc73/crates/core/flags/hiargs.rs#L1101-L1103
+        cmd.stdin(Stdio::null());
+
+        cmd.stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()?
     };
 
     let stdout_handle = tokio::spawn(read_capped(
