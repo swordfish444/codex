@@ -55,6 +55,7 @@ use crate::safety::assess_command_safety;
 use crate::safety::assess_patch_safety;
 use crate::safety::SafetyCheck;
 use crate::util::backoff;
+use crate::zdr_transcript::ZdrTranscript;
 
 /// The high-level interface to the Codex system.
 /// It operates as a queue pair where you send submissions and receive events.
@@ -214,6 +215,7 @@ struct State {
     previous_response_id: Option<String>,
     pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
     pending_input: Vec<ResponseInputItem>,
+    zdr_transcript: Option<ZdrTranscript>,
 }
 
 impl Session {
@@ -399,6 +401,7 @@ impl State {
         Self {
             approved_commands: self.approved_commands.clone(),
             previous_response_id: self.previous_response_id.clone(),
+            zdr_transcript: self.zdr_transcript.clone(),
             ..Default::default()
         }
     }
@@ -489,6 +492,7 @@ async fn submission_loop(
                 instructions,
                 approval_policy,
                 sandbox_policy,
+                disable_response_storage,
             } => {
                 let model = model.unwrap_or_else(|| OPENAI_DEFAULT_MODEL.to_string());
                 info!(model, "Configuring session");
@@ -500,7 +504,14 @@ async fn submission_loop(
                         sess.abort();
                         sess.state.lock().unwrap().partial_clone()
                     }
-                    None => State::default(),
+                    None => State {
+                        zdr_transcript: if disable_response_storage {
+                            Some(ZdrTranscript::new())
+                        } else {
+                            None
+                        },
+                        ..Default::default()
+                    },
                 };
 
                 // update session
@@ -587,10 +598,23 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
         return;
     }
 
-    let mut turn_input = vec![ResponseInputItem::from(input)];
+    let mut pending_response_input: Vec<ResponseInputItem> = vec![ResponseInputItem::from(input)];
     loop {
-        let pending_input = sess.get_pending_input();
-        turn_input.splice(0..0, pending_input);
+        let mut turn_input: Vec<ResponseItem> =
+            if let Some(transcript) = &sess.state.lock().unwrap().zdr_transcript {
+                // If we are using ZDR, we need to send the transcript with every turn.
+                transcript.contents()
+            } else {
+                Vec::new()
+            };
+
+        turn_input.extend(pending_response_input.drain(..).map(ResponseItem::from));
+
+        // Note that pending_input would be something like a message the user
+        // submitted through the UI while the model was running. Though the UI
+        // may support this, the model might not.
+        let pending_input = sess.get_pending_input().into_iter().map(ResponseItem::from);
+        turn_input.extend(pending_input);
 
         match run_turn(&sess, sub_id.clone(), turn_input).await {
             Ok(turn_output) => {
@@ -598,7 +622,17 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
                     debug!("Turn completed");
                     break;
                 }
-                turn_input = turn_output;
+
+                if let Some(transcript) = sess.state.lock().unwrap().zdr_transcript.as_mut() {
+                    let num_added = transcript.record_items(turn_output.iter().map(|i| &i.item));
+                    if num_added == 0 {
+                        debug!("Turn completed");
+                        break;
+                    }
+                }
+
+                pending_response_input =
+                    turn_output.into_iter().filter_map(|i| i.response).collect();
             }
             Err(e) => {
                 info!("Turn error: {e:#}");
@@ -624,11 +658,15 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
 async fn run_turn(
     sess: &Session,
     sub_id: String,
-    input: Vec<ResponseInputItem>,
-) -> CodexResult<Vec<ResponseInputItem>> {
-    let prev_id = {
+    input: Vec<ResponseItem>,
+) -> CodexResult<Vec<ProcessedResponseItem>> {
+    // Decide whether to use server-side storage (previous_response_id) or disable it
+    let (prev_id, store) = {
         let state = sess.state.lock().unwrap();
-        state.previous_response_id.clone()
+        (
+            state.previous_response_id.clone(),
+            state.zdr_transcript.is_none(),
+        )
     };
 
     let instructions = match prev_id {
@@ -639,6 +677,7 @@ async fn run_turn(
         input,
         prev_id,
         instructions,
+        store,
     };
 
     let mut retries = 0;
@@ -676,11 +715,20 @@ async fn run_turn(
     }
 }
 
+/// When the model is prompted, it returns a stream of events. Some of these
+/// events map to a `ResponseItem`. A `ResponseItem` may need to be
+/// "handled" such that it produces a `ResponseInputItem` that needs to be
+/// sent back to the model on the next turn.
+struct ProcessedResponseItem {
+    item: ResponseItem,
+    response: Option<ResponseInputItem>,
+}
+
 async fn try_run_turn(
     sess: &Session,
     sub_id: &str,
     prompt: &Prompt,
-) -> CodexResult<Vec<ResponseInputItem>> {
+) -> CodexResult<Vec<ProcessedResponseItem>> {
     let mut stream = sess.client.clone().stream(prompt).await?;
 
     // Buffer all the incoming messages from the stream first, then execute them.
@@ -694,9 +742,8 @@ async fn try_run_turn(
     for event in input {
         match event {
             ResponseEvent::OutputItemDone(item) => {
-                if let Some(item) = handle_response_item(sess, sub_id, item).await? {
-                    output.push(item);
-                }
+                let response = handle_response_item(sess, sub_id, item.clone()).await?;
+                output.push(ProcessedResponseItem { item, response });
             }
             ResponseEvent::Completed { response_id } => {
                 let mut state = sess.state.lock().unwrap();

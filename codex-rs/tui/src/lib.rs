@@ -106,6 +106,7 @@ fn run_ratatui_app(
         approval_policy,
         sandbox_policy: sandbox,
         model,
+        disable_response_storage,
         ..
     } = cli;
 
@@ -119,6 +120,7 @@ fn run_ratatui_app(
         show_git_warning,
         images,
         model,
+        disable_response_storage,
     );
 
     // Bridge log receiver into the AppEvent channel so latest log lines update the UI.
