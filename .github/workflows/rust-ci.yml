@@ -5,6 +5,7 @@ on:
       - main
     paths:
       - "codex-rs/**"
+      - ".github/**"
   push:
     branches:
       - main
