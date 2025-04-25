@@ -37,6 +37,7 @@ impl App<'_> {
         show_git_warning: bool,
         initial_images: Vec<std::path::PathBuf>,
         model: Option<String>,
+        disable_response_storage: bool,
     ) -> Self {
         let (app_event_tx, app_event_rx) = channel();
 
@@ -70,6 +71,7 @@ impl App<'_> {
             initial_prompt.clone(),
             initial_images,
             model,
+            disable_response_storage,
         );
 
         let app_state = if show_git_warning {
