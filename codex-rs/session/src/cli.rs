@@ -8,6 +8,7 @@
 //! The `create` command therefore has mutually exclusive sub-commands so the appropriate
 //! arguments can be forwarded to the underlying agent binaries.
 
+use crate::meta::{AgentCli, SessionMeta};
 use crate::spawn;
 use crate::store;
 use anyhow::Context;
@@ -142,31 +143,44 @@ impl CreateCmd {
         // bubbling up the error to the caller.
         // -----------------------------------------------------------------
 
-        let spawn_result: Result<(u32, Option<String>, store::SessionKind)> = (|| match self.agent {
+        // Capture the child PID *and* the full CLI config so we can persist it
+        // in the metadata file.
+        let spawn_result: Result<(
+            u32,                       // pid
+            Option<String>,            // prompt preview
+            store::SessionKind,        // kind
+            AgentCli,                  // full CLI config
+        )> = (|| match self.agent {
             AgentKind::Exec(cmd) => {
                 let args = build_exec_args(&cmd.exec_cli);
                 let child = spawn::spawn_exec(&paths, &args)?;
+
                 let preview = cmd.exec_cli.prompt.as_ref().map(|p| truncate_preview(p));
+
                 Ok((
                     child.id().unwrap_or_default(),
                     preview,
                     store::SessionKind::Exec,
+                    AgentCli::Exec(cmd.exec_cli.clone()),
                 ))
             }
             #[cfg(unix)]
             AgentKind::Repl(cmd) => {
                 let args = build_repl_args(&cmd.repl_cli);
                 let child = spawn::spawn_repl(&paths, &args)?;
+
                 let preview = cmd.repl_cli.prompt.as_ref().map(|p| truncate_preview(p));
+
                 Ok((
                     child.id().unwrap_or_default(),
                     preview,
                     store::SessionKind::Repl,
+                    AgentCli::Repl(cmd.repl_cli.clone()),
                 ))
             }
         })();
 
-        let (pid, prompt_preview, kind) = match spawn_result {
+        let (pid, prompt_preview, kind, cli_cfg) = match spawn_result {
             Ok(tuple) => tuple,
             Err(err) => {
                 // Best effort clean-up – ignore failures so we don't mask the
@@ -177,13 +191,9 @@ impl CreateCmd {
         };
 
         // Persist metadata **after** the process has been spawned so we can record its PID.
-        let meta = store::SessionMeta {
-            id: id.clone(),
-            pid,
-            kind,
-            created_at: chrono::Utc::now(),
-            prompt_preview,
-        };
+        // Persist metadata **after** the process has been spawned so we can record its PID.
+        let meta = SessionMeta::new(id.clone(), pid, kind, cli_cfg, prompt_preview);
+
         store::write_meta(&paths, &meta)?;
 
         println!("{id}");

@@ -8,6 +8,8 @@
 pub mod cli; // public so main.rs can access it.
 mod spawn; // process creation helpers
 pub mod store; // on-disk bookkeeping (public for tests)
+pub mod meta; // richer on-disk metadata envelope
+pub mod build; // build-time information helpers
 
 pub use cli::Cli;
 

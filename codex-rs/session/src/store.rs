@@ -6,8 +6,11 @@
 
 use anyhow::Context;
 use anyhow::Result;
-use serde::Deserialize;
-use serde::Serialize;
+
+// The rich metadata envelope lives in its own module so other parts of the
+// crate can import it without pulling in the whole `store` implementation.
+use crate::meta::SessionMeta;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -74,16 +77,9 @@ fn base_dir() -> Result<PathBuf> {
     Ok(home.join(".codex").join("sessions"))
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SessionMeta {
-    pub id: String,
-    pub pid: u32,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    #[serde(default)]
-    pub kind: SessionKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_preview: Option<String>,
-}
+// Keep the original `SessionKind` enum here so we don't need a breaking change
+// in all call-sites.  The enum is re-exported so other modules (e.g. the newly
+// added `meta` module) can still rely on the single source of truth.
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]

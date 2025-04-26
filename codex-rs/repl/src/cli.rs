@@ -2,10 +2,16 @@ use clap::ArgAction;
 use clap::Parser;
 use codex_core::ApprovalModeCliArg;
 use codex_core::SandboxModeCliArg;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Command‑line arguments.
-#[derive(Debug, Parser)]
+/// Command-line interface for the interactive `codex-repl` agent.
+///
+/// Making the struct serialisable allows us to persist the full configuration
+/// inside the session metadata so we can inspect the exact flags that were
+/// used to launch the session at a later time.
+#[derive(Debug, Parser, Clone, Serialize, Deserialize)]
 #[command(
     author,
     version,

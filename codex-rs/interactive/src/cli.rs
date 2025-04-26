@@ -1,9 +1,10 @@
 use clap::Parser;
 use codex_core::ApprovalModeCliArg;
 use codex_core::SandboxModeCliArg;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone, Serialize, Deserialize)]
 #[command(version)]
 pub struct Cli {
     /// Optional image(s) to attach to the initial prompt.
