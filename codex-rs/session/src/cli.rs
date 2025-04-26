@@ -134,28 +134,26 @@ impl CreateCmd {
         // bubbling up the error to the caller.
         // -----------------------------------------------------------------
 
-        let spawn_result: Result<(u32, Option<String>, store::SessionKind)> = (|| {
-            match self.agent {
-                AgentKind::Exec(cmd) => {
-                    let args = build_exec_args(&cmd.exec_cli);
-                    let child = spawn::spawn_exec(&paths, &args)?;
-                    let preview = cmd.exec_cli.prompt.as_ref().map(|p| truncate_preview(p));
-                    Ok((
-                        child.id().unwrap_or_default(),
-                        preview,
-                        store::SessionKind::Exec,
-                    ))
-                }
-                AgentKind::Repl(cmd) => {
-                    let args = build_repl_args(&cmd.repl_cli);
-                    let child = spawn::spawn_repl(&paths, &args)?;
-                    let preview = cmd.repl_cli.prompt.as_ref().map(|p| truncate_preview(p));
-                    Ok((
-                        child.id().unwrap_or_default(),
-                        preview,
-                        store::SessionKind::Repl,
-                    ))
-                }
+        let spawn_result: Result<(u32, Option<String>, store::SessionKind)> = (|| match self.agent {
+            AgentKind::Exec(cmd) => {
+                let args = build_exec_args(&cmd.exec_cli);
+                let child = spawn::spawn_exec(&paths, &args)?;
+                let preview = cmd.exec_cli.prompt.as_ref().map(|p| truncate_preview(p));
+                Ok((
+                    child.id().unwrap_or_default(),
+                    preview,
+                    store::SessionKind::Exec,
+                ))
+            }
+            AgentKind::Repl(cmd) => {
+                let args = build_repl_args(&cmd.repl_cli);
+                let child = spawn::spawn_repl(&paths, &args)?;
+                let preview = cmd.repl_cli.prompt.as_ref().map(|p| truncate_preview(p));
+                Ok((
+                    child.id().unwrap_or_default(),
+                    preview,
+                    store::SessionKind::Repl,
+                ))
             }
         })();
 
@@ -475,7 +473,7 @@ impl LogsCmd {
 
         let file = tokio::fs::File::open(target).await?;
 
-            if self.follow {
+        if self.follow {
             // ------------------------------------------------------------------
             // Improved `--follow` implementation (tail -f semantics)
             //
@@ -486,8 +484,11 @@ impl LogsCmd {
             // 2. Keep retrying after EOF so the behaviour matches the familiar
             //    `tail -f` utility.
 
-            use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
-            use tokio::time::{sleep, Duration};
+            use tokio::io::AsyncBufReadExt;
+            use tokio::io::AsyncSeekExt;
+            use tokio::io::BufReader;
+            use tokio::time::sleep;
+            use tokio::time::Duration;
 
             // Jump to EOF before we start reading so we don't emit historical
             // data.  Ignore errors from `seek` on special files – in that case

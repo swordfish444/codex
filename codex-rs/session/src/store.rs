@@ -206,8 +206,8 @@ pub async fn kill_session(id: &str) -> Result<()> {
     // Load meta.json – we need the PID written at spawn time.
     let bytes = std::fs::read(&paths.meta)
         .with_context(|| format!("could not read metadata for session '{id}'"))?;
-    let meta: SessionMeta = serde_json::from_slice(&bytes)
-        .context("failed to deserialize session metadata")?;
+    let meta: SessionMeta =
+        serde_json::from_slice(&bytes).context("failed to deserialize session metadata")?;
 
     let pid_u32 = meta.pid;
 
@@ -219,8 +219,11 @@ pub async fn kill_session(id: &str) -> Result<()> {
 
     #[cfg(windows)]
     fn is_alive(pid: u32) -> bool {
-        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, GetExitCodeProcess};
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::System::Threading::GetExitCodeProcess;
+        use windows_sys::Win32::System::Threading::OpenProcess;
+        use windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
         const STILL_ACTIVE: u32 = 259;
 
         unsafe {
@@ -265,7 +268,7 @@ pub async fn kill_session(id: &str) -> Result<()> {
     {
         use windows_sys::Win32::System::Console::GenerateConsoleCtrlEvent;
         const CTRL_BREAK_EVENT: u32 = 1; // Using BREAK instead of C for detached groups.
-        // The process group id on Windows *is* the pid that we passed to CREATE_NEW_PROCESS_GROUP.
+                                         // The process group id on Windows *is* the pid that we passed to CREATE_NEW_PROCESS_GROUP.
         unsafe {
             GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid_u32);
         }
@@ -309,8 +312,11 @@ pub async fn kill_session(id: &str) -> Result<()> {
 
         #[cfg(windows)]
         {
-            use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-            use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+            use windows_sys::Win32::Foundation::CloseHandle;
+            use windows_sys::Win32::Foundation::HANDLE;
+            use windows_sys::Win32::System::Threading::OpenProcess;
+            use windows_sys::Win32::System::Threading::TerminateProcess;
+            use windows_sys::Win32::System::Threading::PROCESS_TERMINATE;
 
             unsafe {
                 let handle: HANDLE = OpenProcess(PROCESS_TERMINATE, 0, pid_u32);
