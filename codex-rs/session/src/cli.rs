@@ -451,10 +451,27 @@ impl LogsCmd {
         let file = tokio::fs::File::open(target).await?;
 
         if self.follow {
+            // ------------------------------------------------------------------
+            // Corrected `--follow` implementation (tail -f semantics)
+            //
+            // The previous version exited as soon as EOF was reached because
+            // `lines.next_line()` returned `None`.  We now mimic the behaviour
+            // of `tail -f` by sleeping for a short interval and retrying the
+            // read when EOF is encountered.  The loop continues until the
+            // program is terminated (Ctrl-C, SIGINT, …).
+
             use tokio::io::AsyncBufReadExt;
+            use tokio::time::{sleep, Duration};
+
             let mut lines = tokio::io::BufReader::new(file).lines();
-            while let Some(line) = lines.next_line().await? {
-                println!("{line}");
+            loop {
+                match lines.next_line().await? {
+                    Some(l) => println!("{l}"),
+                    None => {
+                        // EOF – wait a little and retry.
+                        sleep(Duration::from_millis(100)).await;
+                    }
+                }
             }
         } else {
             tokio::io::copy(
