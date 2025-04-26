@@ -59,8 +59,6 @@ pub enum SessionKind {
     Exec,
     /// Line-oriented interactive session – `codex-repl`.
     Repl,
-    /// Full terminal-UI session (crossterm / ratatui) – `codex-tui`.
-    Tui,
 }
 
 impl Default for SessionKind {

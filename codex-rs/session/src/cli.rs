@@ -56,7 +56,6 @@ impl Cli {
             Commands::Delete(x) => x.run().await,
             Commands::Logs(x) => x.run().await,
             Commands::List(x) => x.run().await,
-            Commands::Mux(x) => x.run().await,
         }
     }
 }
@@ -74,9 +73,7 @@ enum Commands {
     /// List all known sessions.
     List(ListCmd),
 
-    /// Internal helper process: PTY multiplexer daemon (hidden).
-    #[command(hide = true, name = "__mux")]
-    Mux(MuxCmd),
+    // (previous mux variant removed)
 }
 
 // -----------------------------------------------------------------------------
@@ -90,8 +87,6 @@ enum AgentKind {
     /// Interactive Read-Eval-Print-Loop agent.
     Repl(ReplCreateCmd),
 
-    /// Full-screen Terminal User Interface agent.
-    Tui(TuiCreateCmd),
 }
 
 #[derive(Args)]
@@ -116,11 +111,6 @@ pub struct ReplCreateCmd {
     repl_cli: codex_repl::Cli,
 }
 
-#[derive(Args)]
-pub struct TuiCreateCmd {
-    #[clap(flatten)]
-    tui_cli: codex_tui::Cli,
-}
 
 impl CreateCmd {
     pub async fn run(self) -> Result<()> {
@@ -146,12 +136,6 @@ impl CreateCmd {
                 let preview = cmd.repl_cli.prompt.as_ref().map(|p| truncate_preview(p));
                 (child.id().unwrap_or_default(), preview, store::SessionKind::Repl)
             }
-            AgentKind::Tui(cmd) => {
-                let args = build_tui_args(&cmd.tui_cli);
-                let child = spawn::spawn_tui(&paths, &args).await?;
-                let preview = cmd.tui_cli.prompt.as_ref().map(|p| truncate_preview(p));
-                (child.id().unwrap_or_default(), preview, store::SessionKind::Tui)
-            }
         };
 
         // Persist metadata **after** the process has been spawned so we can record its PID.
@@ -169,29 +153,7 @@ impl CreateCmd {
     }
 }
 
-// -----------------------------------------------------------------------------
-// internal mux helper sub-command (hidden)
-
-#[derive(Args)]
-pub struct MuxCmd {
-    /// Raw PTY master file descriptor passed from the parent process.
-    #[arg(long)]
-    fd: i32,
-
-    /// Path to the Unix-domain socket that clients attach to.
-    #[arg(long)]
-    sock: std::path::PathBuf,
-
-    /// Path to the binary stdout log file.
-    #[arg(long)]
-    log: std::path::PathBuf,
-}
-
-impl MuxCmd {
-    pub async fn run(self) -> Result<()> {
-        crate::spawn::mux_main(self.fd, self.sock, self.log).await
-    }
-}
+// (mux helper removed)
 
 fn truncate_preview(p: &str) -> String {
     let slice: String = p.chars().take(40).collect();
@@ -315,61 +277,6 @@ fn build_repl_args(cli: &codex_repl::Cli) -> Vec<String> {
 // For the first implementation we forward only a minimal subset of options that
 // are already handled in the REPL helper above.  Future work can extend this
 // with the full flag surface.
-fn build_tui_args(cli: &codex_tui::Cli) -> Vec<String> {
-    let mut args = Vec::new();
-
-    // Positional prompt argument (optional) – must be last.
-
-    if let Some(model) = &cli.model {
-        args.push("--model".into());
-        args.push(model.clone());
-    }
-
-    for img in &cli.images {
-        args.push("--image".into());
-        args.push(img.to_string_lossy().into_owned());
-    }
-
-    if cli.skip_git_repo_check {
-        args.push("--skip-git-repo-check".into());
-    }
-
-    if cli.disable_response_storage {
-        args.push("--disable-response-storage".into());
-    }
-
-    // Approval + sandbox policies
-    args.push("--ask-for-approval".into());
-    args.push(match cli.approval_policy {
-        codex_core::ApprovalModeCliArg::OnFailure => "on-failure".into(),
-        codex_core::ApprovalModeCliArg::UnlessAllowListed => "unless-allow-listed".into(),
-        codex_core::ApprovalModeCliArg::Never => "never".into(),
-    });
-
-    args.push("--sandbox".into());
-    args.push(match cli.sandbox_policy {
-        codex_core::SandboxModeCliArg::NetworkRestricted => "network-restricted".into(),
-        codex_core::SandboxModeCliArg::FileWriteRestricted => "file-write-restricted".into(),
-        codex_core::SandboxModeCliArg::NetworkAndFileWriteRestricted =>
-            "network-and-file-write-restricted".into(),
-        codex_core::SandboxModeCliArg::DangerousNoRestrictions =>
-            "dangerous-no-restrictions".into(),
-    });
-
-    // Convenience flags
-    if cli.full_auto {
-        args.push("--full-auto".into());
-    }
-    if cli.suggest {
-        args.push("--suggest".into());
-    }
-
-    if let Some(prompt) = &cli.prompt {
-        args.push(prompt.clone());
-    }
-
-    args
-}
 
 // -----------------------------------------------------------------------------
 // attach
@@ -389,18 +296,7 @@ impl AttachCmd {
         let id = store::resolve_selector(&self.id)?;
         let paths = store::paths_for(&id)?;
 
-        // Load meta in order to decide which attach strategy to use.
-        let meta_bytes = std::fs::read(&paths.meta)?;
-        let meta: store::SessionMeta = serde_json::from_slice(&meta_bytes)?;
-
-        match meta.kind {
-            store::SessionKind::Exec | store::SessionKind::Repl => {
-                self.attach_line_oriented(&id, &paths).await
-            }
-            store::SessionKind::Tui => {
-                self.attach_tui(&paths).await
-            }
-        }
+        self.attach_line_oriented(&id, &paths).await
     }
 
     // ------------------------------------------------------------------
@@ -457,77 +353,7 @@ impl AttachCmd {
         Ok(())
     }
 
-    // ------------------------------------------------------------------
-    // TUI attach: raw byte forwarding over unix socket
-    async fn attach_tui(&self, paths: &store::Paths) -> Result<()> {
-        #[cfg(unix)]
-        {
-            use crossterm::{execute, terminal};
-            use tokio::io;
-            use tokio::net::UnixStream;
-
-            // RAII guard for raw mode + alternate screen.
-            struct TermGuard;
-            impl TermGuard {
-                fn new() -> anyhow::Result<Self> {
-                    execute!(std::io::stdout(), terminal::EnterAlternateScreen)?;
-                    terminal::enable_raw_mode()?;
-                    Ok(Self)
-                }
-            }
-            impl Drop for TermGuard {
-                fn drop(&mut self) {
-                    let _ = terminal::disable_raw_mode();
-                    let _ = execute!(std::io::stdout(), terminal::LeaveAlternateScreen);
-                }
-            }
-
-            let _term = TermGuard::new()?;
-
-            let sock_path = paths.dir.join("sock");
-            if !sock_path.exists() {
-                anyhow::bail!(
-                    "tui session socket not found ({}). Is the session fully initialised?",
-                    sock_path.display()
-                );
-            }
-
-            // Connect to session socket.
-            let stream = UnixStream::connect(&sock_path).await?;
-            let (mut reader, mut writer) = stream.into_split();
-
-            let mut stdin = tokio::io::stdin();
-            let mut stdout = tokio::io::stdout();
-
-            let mut to_stdout = tokio::spawn(async move {
-                let _ = io::copy(&mut reader, &mut stdout).await;
-            });
-
-            let mut to_socket = tokio::spawn(async move {
-                let _ = io::copy(&mut stdin, &mut writer).await;
-            });
-
-            // Wait for either direction, then abort the other.
-            tokio::select! {
-                _ = &mut to_stdout => {
-                    to_socket.abort();
-                }
-                _ = &mut to_socket => {
-                    to_stdout.abort();
-                }
-            }
-
-            let _ = to_stdout.await;
-            let _ = to_socket.await;
-
-            Ok(())
-        }
-
-        #[cfg(not(unix))]
-        {
-            anyhow::bail!("tui sessions are only supported on Unix at the moment");
-        }
-    }
+    // (TUI attach removed)
 }
 
 // -----------------------------------------------------------------------------
