@@ -18,8 +18,9 @@ pub struct Cli {
     pub model: Option<String>,
 
     /// Configure when the model requires human approval before executing a command.
-    #[arg(long = "ask-for-approval", short = 'a', value_enum, default_value_t = ApprovalModeCliArg::OnFailure)]
-    pub approval_policy: ApprovalModeCliArg,
+    /// Overrides the value in ~/.codex/config.toml if provided.
+    #[arg(long = "ask-for-approval", short = 'a', value_enum)]
+    pub approval_policy: Option<ApprovalModeCliArg>,
 
     /// Configure the process restrictions when a command is executed.
     ///

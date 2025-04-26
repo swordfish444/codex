@@ -3,6 +3,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use codex_core::codex_wrapper::init_codex;
+use codex_core::config::{Config, ConfigOverrides};
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
@@ -64,18 +65,20 @@ impl ChatWidget<'_> {
         let app_event_tx_clone = app_event_tx.clone();
         // Create the Codex asynchronously so the UI loads as quickly as possible.
         tokio::spawn(async move {
-            // Initialize session; storage enabled by default
+            // Load config and initialize session
+            let overrides = ConfigOverrides { model: model.clone(), ..Default::default() };
+            let config = Config::load_with_overrides(overrides);
             let (codex, session_event, _ctrl_c) = match init_codex(
+                config,
                 approval_policy,
                 sandbox_policy,
                 disable_response_storage,
-                model,
             )
             .await
             {
                 Ok(vals) => vals,
                 Err(e) => {
-                    // TODO(mbolin): This error needs to be surfaced to the user.
+                    // TODO: surface this error to the user.
                     tracing::error!("failed to initialize codex: {e}");
                     return;
                 }

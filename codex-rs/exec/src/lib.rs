@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 pub use cli::Cli;
 use codex_core::codex_wrapper;
-use codex_core::protocol::AskForApproval;
+use codex_core::config::Config;
+use codex_core::config::ConfigOverrides;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::FileChange;
@@ -47,15 +48,19 @@ pub async fn run_main(cli: Cli) -> anyhow::Result<()> {
         std::process::exit(1);
     }
 
-    // TODO(mbolin): We are reworking the CLI args right now, so this will
-    // likely come from a new --execution-policy arg.
-    let approval_policy = AskForApproval::Never;
+    // Load configuration and determine approval policy
+    let overrides = ConfigOverrides {
+        model: model.clone(),
+        ..Default::default()
+    };
+    let config = Config::load_with_overrides(overrides);
+    let approval_policy = config.approval_policy;
     let sandbox_policy = SandboxPolicy::NetworkAndFileWriteRestricted;
     let (codex_wrapper, event, ctrl_c) = codex_wrapper::init_codex(
+        config,
         approval_policy,
         sandbox_policy,
         disable_response_storage,
-        model,
     )
     .await?;
     let codex = Arc::new(codex_wrapper);
