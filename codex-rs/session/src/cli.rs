@@ -2,8 +2,8 @@
 //!
 //! The session manager can spawn two different Codex agent flavors:
 //!
-//! * `codex-exec` -- non-interactive batch agent (legacy behaviour)
-//! * `codex-repl` -- interactive REPL that requires user input after launch
+//! * `codex-exec` -- non-interactive single turn agent
+//! * `codex-repl` -- basic stdin/out REPL that can request user input after launch
 //!
 //! The `create` command therefore has mutually exclusive sub-commands so the appropriate
 //! arguments can be forwarded to the underlying agent binaries.
@@ -19,13 +19,11 @@ use clap::Parser;
 use clap::Subcommand;
 use nanoid::nanoid;
 
-// -----------------------------------------------------------------------------
 // Platform-specific imports
 
 #[cfg(unix)]
-use codex_repl as _; // Ensures the dependency is only required on Unix.
-#[allow(unused_imports)]
-use serde::Serialize; // still needed for table print rows in tests
+use codex_repl as _;
+use serde::Serialize;
 
 /// A human-friendly representation of a byte count (e.g. 1.4M).
 pub fn human_bytes(b: u64) -> String {
@@ -43,9 +41,6 @@ pub fn human_bytes(b: u64) -> String {
         format!("{}B", b)
     }
 }
-
-// -----------------------------------------------------------------------------
-// Top-level CLI definition
 
 #[derive(Parser)]
 #[command(
@@ -81,11 +76,7 @@ enum Commands {
     Logs(LogsCmd),
     /// List all known sessions.
     List(ListCmd),
-    // (previous mux variant removed)
 }
-
-// -----------------------------------------------------------------------------
-// create
 
 #[derive(Subcommand)]
 enum AgentKind {
@@ -128,23 +119,19 @@ impl CreateCmd {
         };
 
         let paths = store::paths_for(&id)?;
-        // -----------------------------------------------------------------
+
         // Prepare session directory *before* spawning the agent so stdout/
         // stderr redirection works even when the child process itself fails
         // immediately.
-        // -----------------------------------------------------------------
-
         store::prepare_dirs(&paths)?;
 
-        // -----------------------------------------------------------------
         // Spawn underlying agent.
         //
         // IMPORTANT: If the spawn call fails we end up with an empty (or
         // almost empty) directory inside ~/.codex/sessions/.  To avoid
         // confusing stale entries we attempt to purge the directory before
         // bubbling up the error to the caller.
-        // -----------------------------------------------------------------
-
+        //
         // Capture the child PID *and* the full CLI config so we can persist it
         // in the metadata file.
         let spawn_result: Result<(
@@ -193,7 +180,6 @@ impl CreateCmd {
         };
 
         // Persist metadata **after** the process has been spawned so we can record its PID.
-        // Persist metadata **after** the process has been spawned so we can record its PID.
         let meta = SessionMeta::new(id.clone(), pid, kind, argv, prompt_preview);
 
         store::write_meta(&paths, &meta)?;
@@ -202,8 +188,6 @@ impl CreateCmd {
         Ok(())
     }
 }
-
-// (mux helper removed)
 
 fn truncate_preview(p: &str) -> String {
     let slice: String = p.chars().take(40).collect();
@@ -254,8 +238,6 @@ fn build_exec_args(cli: &codex_exec::Cli) -> Vec<String> {
 #[cfg(unix)]
 fn build_repl_args(cli: &codex_repl::Cli) -> Vec<String> {
     let mut args = Vec::new();
-
-    // Positional prompt argument (optional) -- needs to be *last* so push it later.
 
     if let Some(model) = &cli.model {
         args.push("--model".into());
@@ -322,14 +304,6 @@ fn build_repl_args(cli: &codex_repl::Cli) -> Vec<String> {
     args
 }
 
-// Build argument vector for spawning `codex-tui`.
-// For the first implementation we forward only a minimal subset of options that
-// are already handled in the REPL helper above.  Future work can extend this
-// with the full flag surface.
-
-// -----------------------------------------------------------------------------
-// attach
-
 #[derive(Args)]
 pub struct AttachCmd {
     /// Session selector (index, id or prefix) to attach to.
@@ -348,8 +322,6 @@ impl AttachCmd {
         self.attach_line_oriented(&id, &paths).await
     }
 
-    // ------------------------------------------------------------------
-    // Original FIFO based attach (exec / repl)
     async fn attach_line_oriented(&self, id: &str, paths: &store::Paths) -> Result<()> {
         use tokio::io::AsyncBufReadExt;
         use tokio::io::AsyncWriteExt;
@@ -368,14 +340,8 @@ impl AttachCmd {
             .await
             .with_context(|| format!("failed to open stdin pipe for session '{id}'"))?;
 
-        // ------------------------------------------------------------------
         // Log tailing setup
         //
-        // The original implementation always tailed *stdout* only.  Honour the
-        // `--stderr` flag so users can observe an interactive agent’s error
-        // stream as well.  When the flag is **not** supplied we keep the
-        // previous behaviour for backwards-compatibility.
-
         // Always open stdout so the select! branches below stay simple.
         let file_out = tokio::fs::File::open(&paths.stdout).await?;
         let mut reader_out = tokio::io::BufReader::new(file_out).lines();
@@ -394,8 +360,7 @@ impl AttachCmd {
 
         loop {
             tokio::select! {
-                // ------------------------------------------------------------------
-                // User supplied input (stdin → session stdin pipe)
+                // User supplied input (stdin -> session stdin pipe)
                 line = stdin_lines.next_line() => {
                     match line? {
                         Some(mut l) => {
@@ -403,8 +368,8 @@ impl AttachCmd {
                             pipe.write_all(l.as_bytes()).await?;
                             pipe.flush().await?;
                         }
+                        // Ctrl-D -- end of interactive input
                         None => {
-                    // Ctrl-D -- end of interactive input
                             break;
                         }
                     }
