@@ -5,8 +5,8 @@ import { Box, Text, useInput, useStdin } from "ink";
 
 import SelectInput from "../select-input/select-input.js";
 
-import { getDirectoryItems } from "../../utils/image-picker-utils.js";
-import type { PickerItem } from "../../utils/image-picker-utils.js";
+import { getDirectoryItems } from "../../utils/image-picker-utils";
+import type { PickerItem } from "../../utils/image-picker-utils";
 import React, { useMemo, useRef } from "react";
 
 interface Props {

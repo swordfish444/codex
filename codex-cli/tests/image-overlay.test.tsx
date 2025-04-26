@@ -10,7 +10,7 @@ vi.mock("../src/utils/input-utils.js", () => ({
   imageFilenameByDataUrl: new Map(),
 }));
 
-import ImagePickerOverlay from "../src/components/chat/image-picker-overlay.js";
+import ImagePickerOverlay from "../src/components/chat/image-picker-overlay";
 
 async function type(
   stdin: NodeJS.WritableStream & { write(str: string): void },

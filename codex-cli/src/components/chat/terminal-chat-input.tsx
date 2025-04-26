@@ -29,7 +29,7 @@ import { useInterval } from "use-interval";
 
 // Internal imports
 // Image picker overlay triggered by "@" sentinel
-import ImagePickerOverlay from "./image-picker-overlay.js";
+import ImagePickerOverlay from "./image-picker-overlay";
 
 const suggestions = [
   "explain this codebase to me",
