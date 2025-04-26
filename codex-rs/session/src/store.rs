@@ -46,8 +46,21 @@ pub struct SessionMeta {
     pub id: String,
     pub pid: u32,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default)]
+    pub kind: SessionKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_preview: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionKind {
+    Exec,
+    Repl,
+}
+
+impl Default for SessionKind {
+    fn default() -> Self { SessionKind::Exec }
 }
 
 /// Create the on-disk directory structure and write metadata + empty log files.

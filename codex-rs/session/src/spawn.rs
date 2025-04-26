@@ -85,7 +85,6 @@ pub fn spawn_repl(paths: &Paths, repl_args: &[String]) -> Result<Child> {
     {
         use std::io;
         use std::os::unix::ffi::OsStrExt;
-        use std::os::unix::fs::OpenOptionsExt;
 
         // Ensure the FIFO exists (create with 600 permissions).
         if !paths.stdin.exists() {

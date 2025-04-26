@@ -119,18 +119,18 @@ impl CreateCmd {
         store::prepare_dirs(&paths)?;
 
         // Spawn underlying agent
-        let (pid, prompt_preview): (u32, Option<String>) = match self.agent {
+        let (pid, prompt_preview, kind): (u32, Option<String>, store::SessionKind) = match self.agent {
             AgentKind::Exec(cmd) => {
                 let args = build_exec_args(&cmd.exec_cli);
                 let child = spawn::spawn_exec(&paths, &args)?;
                 let preview = cmd.exec_cli.prompt.as_ref().map(|p| truncate_preview(p));
-                (child.id().unwrap_or_default(), preview)
+                (child.id().unwrap_or_default(), preview, store::SessionKind::Exec)
             }
             AgentKind::Repl(cmd) => {
                 let args = build_repl_args(&cmd.repl_cli);
                 let child = spawn::spawn_repl(&paths, &args)?;
                 let preview = cmd.repl_cli.prompt.as_ref().map(|p| truncate_preview(p));
-                (child.id().unwrap_or_default(), preview)
+                (child.id().unwrap_or_default(), preview, store::SessionKind::Repl)
             }
         };
 
@@ -138,6 +138,7 @@ impl CreateCmd {
         let meta = store::SessionMeta {
             id: id.clone(),
             pid,
+            kind,
             created_at: chrono::Utc::now(),
             prompt_preview,
         };
@@ -420,6 +421,7 @@ pub struct StatusRow {
     pub idx: usize,
     pub id: String,
     pub pid: u32,
+    pub kind: String,
     pub status: String,
     pub created: String,
     pub prompt: String,
@@ -462,6 +464,7 @@ impl ListCmd {
                     idx,
                     id: m.id,
                     pid: m.pid,
+                    kind: format!("{:?}", m.kind).to_lowercase(),
                     status: status.into(),
                     created: m.created_at.to_rfc3339(),
                     prompt: m.prompt_preview.unwrap_or_default(),
@@ -486,12 +489,12 @@ pub fn print_table(rows: &[StatusRow]) -> Result<()> {
     use tabwriter::TabWriter;
 
     let mut tw = TabWriter::new(Vec::new()).padding(2);
-    writeln!(tw, "#\tID\tPID\tSTATUS\tOUT\tERR\tCREATED\tPROMPT")?;
+    writeln!(tw, "#\tID\tPID\tTYPE\tSTATUS\tOUT\tERR\tCREATED\tPROMPT")?;
     for r in rows {
         writeln!(
             tw,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            r.idx, r.id, r.pid, r.status, r.out, r.err, r.created, r.prompt
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            r.idx, r.id, r.pid, r.kind, r.status, r.out, r.err, r.created, r.prompt
         )?;
     }
     let out = String::from_utf8(tw.into_inner()?)?;
