@@ -7,9 +7,6 @@ use std::fs::OpenOptions;
 use tokio::process::Child;
 use tokio::process::Command;
 
-// -----------------------------------------------------------------------------
-// Internal helpers
-
 /// Open (and create if necessary) the log files that stdout / stderr of the
 /// spawned agent will be redirected to.
 fn open_log_files(paths: &Paths) -> Result<(std::fs::File, std::fs::File)> {
@@ -38,9 +35,6 @@ fn base_command(bin: &str, paths: &Paths) -> Result<Command> {
 
     Ok(cmd)
 }
-
-// -----------------------------------------------------------------------------
-// exec -- non-interactive batch agent
 
 pub fn spawn_exec(paths: &Paths, exec_args: &[String]) -> Result<Child> {
     #[cfg(unix)]
@@ -85,9 +79,6 @@ pub fn spawn_exec(paths: &Paths, exec_args: &[String]) -> Result<Child> {
         Ok(child)
     }
 }
-
-// -----------------------------------------------------------------------------
-// repl -- interactive FIFO stdin
 
 pub fn spawn_repl(paths: &Paths, repl_args: &[String]) -> Result<Child> {
     #[cfg(unix)]

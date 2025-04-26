@@ -223,9 +223,7 @@ pub async fn kill_session(id: &str) -> Result<()> {
         );
     }
 
-    //---------------------------------------------------------------------
     // Step 1 -- send graceful termination.
-    //---------------------------------------------------------------------
 
     #[cfg(unix)]
     {
@@ -259,9 +257,7 @@ pub async fn kill_session(id: &str) -> Result<()> {
         tokio::time::sleep(poll_interval).await;
     }
 
-    //---------------------------------------------------------------------
     // Step 2 -- force kill if necessary.
-    //---------------------------------------------------------------------
 
     if still_running {
         #[cfg(unix)]
