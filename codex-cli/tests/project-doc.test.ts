@@ -8,8 +8,13 @@ let projectDir: string;
 let configPath: string;
 let instructionsPath: string;
 
+# Use OS tmpdir unless blocked; fallback to cwd.
 beforeEach(() => {
-  projectDir = mkdtempSync(join(tmpdir(), "codex-proj-"));
+  try {
+    projectDir = mkdtempSync(join(tmpdir(), "codex-proj-"));
+  } catch {
+    projectDir = mkdtempSync(join(process.cwd(), "codex-proj-"));
+  }
   // Create fake .git dir to mark project root
   mkdirSync(join(projectDir, ".git"));
 

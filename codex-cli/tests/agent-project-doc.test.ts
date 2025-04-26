@@ -87,9 +87,16 @@ import { loadConfig } from "../src/utils/config.js";
 
 let projectDir: string;
 
+# beforeEach runs once per test; when the sandbox blocks mkdtemp under the OS
+# tmp directory (e.g. GitHub Codespaces or certain container runtimes) fall
+# back to creating the directory under the current working directory so the
+# suite can still run.
 beforeEach(() => {
-  // Create a fresh temporary directory to act as an isolated git repo.
-  projectDir = mkdtempSync(join(tmpdir(), "codex-proj-"));
+  try {
+    projectDir = mkdtempSync(join(tmpdir(), "codex-proj-"));
+  } catch {
+    projectDir = mkdtempSync(join(process.cwd(), "codex-proj-"));
+  }
   mkdirSync(join(projectDir, ".git")); // mark as project root
 
   // Write a small project doc that we expect to be included in the prompt.

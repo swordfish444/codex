@@ -21,7 +21,9 @@ import { clearTerminal, onExit } from "../../utils/terminal.js";
 // External UI components / Ink helpers
 import TextInput from "../vendor/ink-text-input.js";
 import { Box, Text, useApp, useInput, useStdin } from "ink";
-import { fileURLToPath } from "node:url";
+
+// Image path detection helper
+import { extractImagePaths } from "../../utils/image-detector.js";
 import React, { useCallback, useState, Fragment, useEffect } from "react";
 import path from "node:path";
 import fs from "fs/promises";
@@ -572,39 +574,29 @@ export default function TerminalChatInput({
         }
       }
 
-      // detect image file paths for dynamic inclusion
-      const images: Array<string> = [];
-      let text = inputValue;
-      // markdown-style image syntax: ![alt](path)
-      text = text.replace(/!\[[^\]]*?\]\(([^)]+)\)/g, (_m, p1: string) => {
-        images.push(p1.startsWith("file://") ? fileURLToPath(p1) : p1);
-        return "";
-      });
-      // quoted file paths ending with common image extensions (e.g. '/path/to/img.png')
-      text = text.replace(
-        /['"]([^'"]+?\.(?:png|jpe?g|gif|bmp|webp|svg))['"]/gi,
-        (_m, p1: string) => {
-          images.push(p1.startsWith("file://") ? fileURLToPath(p1) : p1);
-          return "";
-        },
-      );
-      // bare file paths ending with common image extensions
-      text = text.replace(
-        // eslint-disable-next-line no-useless-escape
-        /\b(?:\.[\/\\]|[\/\\]|[A-Za-z]:[\/\\])?[\w-]+(?:[\/\\][\w-]+)*\.(?:png|jpe?g|gif|bmp|webp|svg)\b/gi,
-        (match: string) => {
-          images.push(
-            match.startsWith("file://") ? fileURLToPath(match) : match,
-          );
-          return "";
-        },
-      );
-      text = text.trim();
+      // Extract image paths from the final draft *once*, right before submit.
+      const { paths: dropped, text } = extractImagePaths(inputValue);
 
-      // Merge images detected from text with those explicitly attached via picker.
-      if (attachedImages.length > 0) {
-        images.push(...attachedImages);
+      // Merge any newly-detected images into state so the preview updates
+      // immediately.  Also deduplicate against existing attachments.
+      if (dropped.length > 0) {
+        setAttachedImages((prev) => {
+          const merged = [...prev];
+          for (const p of dropped) {
+            if (!merged.includes(p)) {
+              merged.push(p);
+            }
+          }
+          return merged;
+        });
       }
+
+      // Build the list we will actually attach to the outgoing message.  We
+      // cannot rely on the state update above having flushed yet, so combine
+      // the previous value with the new drops locally.
+      const images: Array<string> = Array.from(
+        new Set([...attachedImages, ...dropped]),
+      );
 
       // Filter out images that no longer exist on disk.  Emit a system
       // notification for any skipped files so the user is aware.
@@ -776,11 +768,35 @@ export default function TerminalChatInput({
               }
               showCursor
               value={input}
-              onChange={(value) => {
+              onChange={(rawValue) => {
+                let value = rawValue; // will be replaced after extraction
+
+                // --------------------------------------------------------
+                // Detect freshly-dropped image paths _while the user is
+                // editing_ so the attachment preview updates instantly.
+                // --------------------------------------------------------
+
+                const { paths: newlyDropped, text: cleaned } = extractImagePaths(rawValue);
+
+                value = cleaned; // do not trim spaces – preserve exact typing
+
+                if (newlyDropped.length > 0) {
+                  setAttachedImages((prev) => {
+                    const merged = [...prev];
+                    for (const p of newlyDropped) {
+                      if (!merged.includes(p)) {
+                        merged.push(p);
+                      }
+                    }
+                    return merged;
+                  });
+                }
+
                 if (process.env["DEBUG_TCI"]) {
                   // eslint-disable-next-line no-console
-                  console.log("onChange", JSON.stringify(value));
+                  console.log("onChange", JSON.stringify(value), newlyDropped);
                 }
+
                 // Detect trailing "@" to open image picker.
                 if (pickerCwd == null && value.endsWith("@")) {
                   // Open image picker immediately
