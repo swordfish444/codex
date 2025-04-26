@@ -16,6 +16,12 @@ use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
+
+// -----------------------------------------------------------------------------
+// Platform-specific imports
+
+#[cfg(unix)]
+use codex_repl as _; // Ensures the dependency is only required on Unix.
 use serde::Serialize;
 
 /// A human-friendly representation of a byte count (e.g. 1.4M).
@@ -84,6 +90,7 @@ enum AgentKind {
     Exec(ExecCreateCmd),
 
     /// Interactive Read-Eval-Print-Loop agent.
+    #[cfg(unix)]
     Repl(ReplCreateCmd),
 }
 
@@ -103,6 +110,7 @@ pub struct ExecCreateCmd {
     exec_cli: codex_exec::Cli,
 }
 
+#[cfg(unix)]
 #[derive(Args)]
 pub struct ReplCreateCmd {
     #[clap(flatten)]
@@ -145,6 +153,7 @@ impl CreateCmd {
                     store::SessionKind::Exec,
                 ))
             }
+            #[cfg(unix)]
             AgentKind::Repl(cmd) => {
                 let args = build_repl_args(&cmd.repl_cli);
                 let child = spawn::spawn_repl(&paths, &args)?;
@@ -232,6 +241,7 @@ fn build_exec_args(cli: &codex_exec::Cli) -> Vec<String> {
     args
 }
 
+#[cfg(unix)]
 fn build_repl_args(cli: &codex_repl::Cli) -> Vec<String> {
     let mut args = Vec::new();
 
