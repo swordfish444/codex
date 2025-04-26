@@ -24,14 +24,6 @@ tokio = { version = "1", features = [
 ] }
 tracing = { version = "0.1.41", features = ["log"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-
-# --- additions for PTY/TUI support ---
-
-# Raw terminal handling when attaching to TUI sessions
-
-# PTY helpers (unix only)
-
-# new dependencies for session management
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -39,8 +31,7 @@ serde_json = "1"
 dirs = "5"
 sysinfo = "0.29"
 tabwriter = "1.3"
-serde_yaml = "0.9"
-names = "0.14"
+names = { version = "0.14", default-features = false }
 
 # unix-only process helpers
 nix = { version = "0.27", default-features = false, features = ["process", "signal", "term", "fs"] }

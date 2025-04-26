@@ -8,7 +8,6 @@
 //! The `create` command therefore has mutually exclusive sub-commands so the appropriate
 //! arguments can be forwarded to the underlying agent binaries.
 
-use crate::meta::AgentCli;
 use crate::meta::SessionMeta;
 use crate::spawn;
 use crate::store;
@@ -25,7 +24,8 @@ use clap::ValueEnum;
 
 #[cfg(unix)]
 use codex_repl as _; // Ensures the dependency is only required on Unix.
-use serde::Serialize;
+#[allow(unused_imports)]
+use serde::Serialize; // still needed for table print rows in tests
 
 /// A human-friendly representation of a byte count (e.g. 1.4M).
 pub fn human_bytes(b: u64) -> String {
@@ -151,7 +151,7 @@ impl CreateCmd {
             u32,                // pid
             Option<String>,     // prompt preview
             store::SessionKind, // kind
-            AgentCli,           // full CLI config
+            Vec<String>,        // raw argv used to spawn the agent
         )> = (|| match self.agent {
             AgentKind::Exec(cmd) => {
                 let args = build_exec_args(&cmd.exec_cli);
@@ -163,7 +163,7 @@ impl CreateCmd {
                     child.id().unwrap_or_default(),
                     preview,
                     store::SessionKind::Exec,
-                    AgentCli::Exec(cmd.exec_cli.clone()),
+                    args.clone(),
                 ))
             }
             #[cfg(unix)]
@@ -177,12 +177,12 @@ impl CreateCmd {
                     child.id().unwrap_or_default(),
                     preview,
                     store::SessionKind::Repl,
-                    AgentCli::Repl(cmd.repl_cli.clone()),
+                    args.clone(),
                 ))
             }
         })();
 
-        let (pid, prompt_preview, kind, cli_cfg) = match spawn_result {
+        let (pid, prompt_preview, kind, argv) = match spawn_result {
             Ok(tuple) => tuple,
             Err(err) => {
                 // Best effort clean-up – ignore failures so we don't mask the
@@ -194,7 +194,7 @@ impl CreateCmd {
 
         // Persist metadata **after** the process has been spawned so we can record its PID.
         // Persist metadata **after** the process has been spawned so we can record its PID.
-        let meta = SessionMeta::new(id.clone(), pid, kind, cli_cfg, prompt_preview);
+        let meta = SessionMeta::new(id.clone(), pid, kind, argv, prompt_preview);
 
         store::write_meta(&paths, &meta)?;
 
@@ -476,9 +476,6 @@ impl DeleteCmd {
 pub struct LogsCmd {
     id: String,
 
-    #[arg(short, long)]
-    follow: bool,
-
     #[arg(long)]
     stderr: bool,
 }
@@ -495,66 +492,22 @@ impl LogsCmd {
 
         let file = tokio::fs::File::open(target).await?;
 
-        if self.follow {
-            // ------------------------------------------------------------------
-            // Improved `--follow` implementation (tail -f semantics)
-            //
-            // 1. Start at *the end* of the file so we only stream *new* output
-            //    that appears after the command has been issued.  This avoids
-            //    re-printing potentially huge log histories when the user is
-            //    solely interested in live updates.
-            // 2. Keep retrying after EOF so the behaviour matches the familiar
-            //    `tail -f` utility.
-
-            use tokio::io::AsyncBufReadExt;
-            use tokio::io::AsyncSeekExt;
-            use tokio::io::BufReader;
-            use tokio::time::sleep;
-            use tokio::time::Duration;
-
-            // Jump to EOF before we start reading so we don't emit historical
-            // data.  Ignore errors from `seek` on special files – in that case
-            // we just fall back to the normal behaviour.
-            let mut file = file;
-            let _ = file.seek(std::io::SeekFrom::End(0)).await;
-
-            let mut lines = BufReader::new(file).lines();
-            loop {
-                match lines.next_line().await? {
-                    Some(l) => println!("{l}"),
-                    None => {
-                        // EOF – wait a little and retry.
-                        sleep(Duration::from_millis(100)).await;
-                    }
-                }
-            }
-        } else {
-            tokio::io::copy(
-                &mut tokio::io::BufReader::new(file),
-                &mut tokio::io::stdout(),
-            )
-            .await?;
-        }
+        // Stream the complete file to stdout.  Users can pipe to `tail -f`,
+        // `less +F`, etc. if they only want live updates.
+        tokio::io::copy(
+            &mut tokio::io::BufReader::new(file),
+            &mut tokio::io::stdout(),
+        )
+        .await?;
         Ok(())
     }
 }
 
 // -----------------------------------------------------------------------------
-// list
-
-#[derive(Copy, Clone, ValueEnum, Debug)]
-enum OutputFormat {
-    Table,
-    Json,
-    Yaml,
-}
+// list – newest-first overview of all sessions
 
 #[derive(Args)]
-pub struct ListCmd {
-    /// Output format (default: table).
-    #[arg(short = 'o', long = "output", value_enum, default_value_t = OutputFormat::Table)]
-    output: OutputFormat,
-}
+pub struct ListCmd {}
 
 #[derive(Serialize)]
 #[allow(missing_docs)]
@@ -615,11 +568,7 @@ impl ListCmd {
             })
             .collect();
 
-        match self.output {
-            OutputFormat::Table => print_table(&rows)?,
-            OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&rows)?),
-            OutputFormat::Yaml => println!("{}", serde_yaml::to_string(&rows)?),
-        }
+        print_table(&rows)?;
 
         Ok(())
     }

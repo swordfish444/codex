@@ -208,38 +208,18 @@ pub async fn kill_session(id: &str) -> Result<()> {
 
     let pid_u32 = meta.pid;
 
-    // Helper – check if the original *leader* process is still around.
-    #[cfg(unix)]
-    fn is_alive(pid: libc::pid_t) -> bool {
-        unsafe { libc::kill(pid, 0) == 0 }
-    }
-
-    #[cfg(windows)]
+    // Helper – cross-platform liveness probe based on the `sysinfo` crate.
     fn is_alive(pid: u32) -> bool {
-        use windows_sys::Win32::Foundation::CloseHandle;
-        use windows_sys::Win32::Foundation::HANDLE;
-        use windows_sys::Win32::System::Threading::GetExitCodeProcess;
-        use windows_sys::Win32::System::Threading::OpenProcess;
-        use windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
-        const STILL_ACTIVE: u32 = 259;
+        use sysinfo::PidExt;
+        use sysinfo::SystemExt;
 
-        unsafe {
-            let handle: HANDLE = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-            if handle == 0 {
-                return false;
-            }
-            let mut exit_code: u32 = 0;
-            let ok = GetExitCodeProcess(handle, &mut exit_code as *mut _);
-            CloseHandle(handle);
-            ok != 0 && exit_code == STILL_ACTIVE
-        }
+        let mut sys = sysinfo::System::new();
+        sys.refresh_process(sysinfo::Pid::from_u32(pid));
+        sys.process(sysinfo::Pid::from_u32(pid)).is_some()
     }
 
     // If the process is already gone we bail out so the caller knows the session
     // directory might need manual clean-up.
-    #[cfg(unix)]
-    let mut still_running = is_alive(pid_u32 as libc::pid_t);
-    #[cfg(windows)]
     let mut still_running = is_alive(pid_u32);
 
     if !still_running {
@@ -277,19 +257,9 @@ pub async fn kill_session(id: &str) -> Result<()> {
 
     let start = std::time::Instant::now();
     while start.elapsed() < grace_period {
-        #[cfg(unix)]
-        {
-            if !is_alive(pid_u32 as libc::pid_t) {
-                still_running = false;
-                break;
-            }
-        }
-        #[cfg(windows)]
-        {
-            if !is_alive(pid_u32) {
-                still_running = false;
-                break;
-            }
+        if !is_alive(pid_u32) {
+            still_running = false;
+            break;
         }
         tokio::time::sleep(poll_interval).await;
     }

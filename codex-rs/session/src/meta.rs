@@ -1,10 +1,12 @@
-//! Rich on-disk session metadata envelope.
+//! Lightweight on-disk session metadata.
 //!
-//! The file is written as `meta.json` inside every session directory so users
-//! (and other tools) can inspect how a particular session was started even
-//! months later.  Keeping the full CLI invocation together with a few extra
-//! bits of contextual information (like the git commit of the build) makes
-//! debugging and reproducibility significantly easier.
+//! The metadata is persisted as `meta.json` inside each session directory so
+//! users – or other tooling – can inspect **how** a session was started even
+//! months later.  Instead of serialising the full, typed CLI structs (which
+//! would force every agent crate to depend on `serde`) we only keep the raw
+//! argument vector that was passed to the spawned process.  This keeps the
+//! public API surface minimal while still giving us reproducibility – a
+//! session can always be re-spawned with `codex <args…>`.
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -13,78 +15,59 @@ use serde::Serialize;
 
 use crate::store::SessionKind;
 
-/// The CLI configuration that was used to launch the underlying agent.
-///
-/// Depending on the chosen agent flavour (`codex-exec` vs `codex-repl`) the
-/// contained configuration differs.  We use an *externally tagged* enum so
-/// the JSON clearly states which variant was used while still keeping the
-/// nested structure as-is.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "agent", rename_all = "lowercase")]
-pub enum AgentCli {
-    /// Non-interactive batch agent.
-    Exec(codex_exec::Cli),
+/// JSON envelope version.  Bump when the structure changes in a
+/// backwards-incompatible way.
+pub const CURRENT_VERSION: u8 = 2;
 
-    /// Interactive REPL agent (only available on Unix-like systems).
-    #[cfg(unix)]
-    Repl(codex_repl::Cli),
-}
-
-/// Versioned envelope that is persisted to disk.
-///
-/// A monotonically increasing `version` field allows us to evolve the schema
-/// over time while still being able to parse *older* files.
+/// Persisted session metadata.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SessionMeta {
-    /// Unique identifier – also doubles as the directory name.
+    /// Unique identifier (also doubles as directory name).
     pub id: String,
 
-    /// Process ID of the *leader* process belonging to the session.
+    /// Leader process id (PID).
     pub pid: u32,
 
     /// Whether the session is an `exec` or `repl` one.
     pub kind: SessionKind,
 
-    /// Complete CLI configuration that was used to spawn the agent.
-    pub cli: AgentCli,
+    /// Raw command-line arguments that were used to spawn the agent
+    /// (`codex-exec …` or `codex-repl …`).
+    pub argv: Vec<String>,
 
-    /// Short preview of the natural-language prompt (if present).
+    /// Short preview of the user prompt (if any).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_preview: Option<String>,
 
     /// Wall-clock timestamp when the session was created.
     pub created_at: DateTime<Utc>,
 
-    /// Git commit hash of the `codex-rs` build that produced this file.
+    /// Git commit hash of the build that produced this file.
     pub codex_commit: String,
 
-    /// Schema version so we can migrate later.
+    /// Schema version (see [`CURRENT_VERSION`]).
     pub version: u8,
 }
 
 impl SessionMeta {
-    /// Bump this whenever the structure changes in a backwards-incompatible
-    /// way.
-    pub const CURRENT_VERSION: u8 = 1;
-
-    /// Convenience constructor.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: String,
         pid: u32,
         kind: SessionKind,
-        cli: AgentCli,
+        argv: Vec<String>,
         prompt_preview: Option<String>,
     ) -> Self {
         Self {
             id,
             pid,
             kind,
-            cli,
+            argv,
             prompt_preview,
             created_at: Utc::now(),
             codex_commit: crate::build::git_sha().to_owned(),
-            version: Self::CURRENT_VERSION,
+            version: CURRENT_VERSION,
         }
     }
 }
+

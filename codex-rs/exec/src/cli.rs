@@ -1,13 +1,9 @@
 use clap::Parser;
-use serde::Deserialize;
-use serde::Serialize;
 use std::path::PathBuf;
 
 /// Command-line interface for the non-interactive `codex-exec` agent.
 ///
-/// The struct needs to be serialisable so the full invocation can be stored
-/// in the on-disk session `meta.json` for later introspection.
-#[derive(Parser, Debug, Clone, Serialize, Deserialize)]
+#[derive(Parser, Debug, Clone)]
 #[command(version)]
 pub struct Cli {
     /// Optional image(s) to attach to the initial prompt.
