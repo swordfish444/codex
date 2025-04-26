@@ -462,9 +462,27 @@ impl AttachCmd {
     async fn attach_tui(&self, paths: &store::Paths) -> Result<()> {
         #[cfg(unix)]
         {
-            use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-            use tokio::io::{self};
+            use crossterm::{execute, terminal};
+            use tokio::io;
             use tokio::net::UnixStream;
+
+            // RAII guard for raw mode + alternate screen.
+            struct TermGuard;
+            impl TermGuard {
+                fn new() -> anyhow::Result<Self> {
+                    execute!(std::io::stdout(), terminal::EnterAlternateScreen)?;
+                    terminal::enable_raw_mode()?;
+                    Ok(Self)
+                }
+            }
+            impl Drop for TermGuard {
+                fn drop(&mut self) {
+                    let _ = terminal::disable_raw_mode();
+                    let _ = execute!(std::io::stdout(), terminal::LeaveAlternateScreen);
+                }
+            }
+
+            let _term = TermGuard::new()?;
 
             let sock_path = paths.dir.join("sock");
             if !sock_path.exists() {
@@ -474,34 +492,34 @@ impl AttachCmd {
                 );
             }
 
-            // Put local terminal in raw mode – undone automatically at drop.
-            enable_raw_mode()?;
-
-            // Connect to the session socket.
+            // Connect to session socket.
             let stream = UnixStream::connect(&sock_path).await?;
             let (mut reader, mut writer) = stream.into_split();
 
             let mut stdin = tokio::io::stdin();
             let mut stdout = tokio::io::stdout();
 
-            // Two independent tasks: socket → stdout and stdin → socket.
-            let to_stdout = tokio::spawn(async move {
-                io::copy(&mut reader, &mut stdout).await
+            let mut to_stdout = tokio::spawn(async move {
+                let _ = io::copy(&mut reader, &mut stdout).await;
             });
 
-            let to_socket = tokio::spawn(async move {
-                io::copy(&mut stdin, &mut writer).await
+            let mut to_socket = tokio::spawn(async move {
+                let _ = io::copy(&mut stdin, &mut writer).await;
             });
 
-            let res = tokio::select! {
-                r = to_stdout => r?,
-                r = to_socket => r?,
-            };
+            // Wait for either direction, then abort the other.
+            tokio::select! {
+                _ = &mut to_stdout => {
+                    to_socket.abort();
+                }
+                _ = &mut to_socket => {
+                    to_stdout.abort();
+                }
+            }
 
-            disable_raw_mode()?;
+            let _ = to_stdout.await;
+            let _ = to_socket.await;
 
-            // Propagate I/O errors if any.
-            res?;
             Ok(())
         }
 
