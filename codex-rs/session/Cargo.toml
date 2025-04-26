@@ -45,7 +45,7 @@ serde_yaml = "0.9"
 names = "0.14"
 
 # unix-only process helpers
-nix = { version = "0.27", default-features = false, features = ["process", "signal", "term"] }
+nix = { version = "0.27", default-features = false, features = ["process", "signal", "term", "fs"] }
 
 # Re-use the codex-exec library for its CLI definition
 codex_exec = { package = "codex-exec", path = "../exec" }

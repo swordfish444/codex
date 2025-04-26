@@ -56,6 +56,7 @@ impl Cli {
             Commands::Delete(x) => x.run().await,
             Commands::Logs(x) => x.run().await,
             Commands::List(x) => x.run().await,
+            Commands::Mux(x) => x.run().await,
         }
     }
 }
@@ -72,6 +73,10 @@ enum Commands {
     Logs(LogsCmd),
     /// List all known sessions.
     List(ListCmd),
+
+    /// Internal helper process: PTY multiplexer daemon (hidden).
+    #[command(hide = true, name = "__mux")]
+    Mux(MuxCmd),
 }
 
 // -----------------------------------------------------------------------------
@@ -143,7 +148,7 @@ impl CreateCmd {
             }
             AgentKind::Tui(cmd) => {
                 let args = build_tui_args(&cmd.tui_cli);
-                let child = spawn::spawn_tui(&paths, &args)?;
+                let child = spawn::spawn_tui(&paths, &args).await?;
                 let preview = cmd.tui_cli.prompt.as_ref().map(|p| truncate_preview(p));
                 (child.id().unwrap_or_default(), preview, store::SessionKind::Tui)
             }
@@ -161,6 +166,30 @@ impl CreateCmd {
 
         println!("{id}");
         Ok(())
+    }
+}
+
+// -----------------------------------------------------------------------------
+// internal mux helper sub-command (hidden)
+
+#[derive(Args)]
+pub struct MuxCmd {
+    /// Raw PTY master file descriptor passed from the parent process.
+    #[arg(long)]
+    fd: i32,
+
+    /// Path to the Unix-domain socket that clients attach to.
+    #[arg(long)]
+    sock: std::path::PathBuf,
+
+    /// Path to the binary stdout log file.
+    #[arg(long)]
+    log: std::path::PathBuf,
+}
+
+impl MuxCmd {
+    pub async fn run(self) -> Result<()> {
+        crate::spawn::mux_main(self.fd, self.sock, self.log).await
     }
 }
 
