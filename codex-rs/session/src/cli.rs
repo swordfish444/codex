@@ -325,15 +325,34 @@ impl AttachCmd {
             .await
             .with_context(|| format!("failed to open stdin pipe for session '{id}'"))?;
 
-        // Open stdout / stderr for tailing.
+        // ------------------------------------------------------------------
+        // Log tailing setup
+        //
+        // The original implementation always tailed *stdout* only.  Honour the
+        // `--stderr` flag so users can observe an interactive agent’s error
+        // stream as well.  When the flag is **not** supplied we keep the
+        // previous behaviour for backwards-compatibility.
+
+        // Always open stdout so the select! branches below stay simple.
         let file_out = tokio::fs::File::open(&paths.stdout).await?;
         let mut reader_out = tokio::io::BufReader::new(file_out).lines();
+
+        // Conditionally open stderr if the user asked for it.  Keeping the
+        // reader in an `Option` allows us to reuse the same select! loop – the
+        // helper future simply parks forever when stderr is disabled.
+        let mut reader_err = if self.stderr {
+            let file_err = tokio::fs::File::open(&paths.stderr).await?;
+            Some(tokio::io::BufReader::new(file_err).lines())
+        } else {
+            None
+        };
 
         let mut stdin_lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
 
         loop {
             tokio::select! {
-                // User supplied input
+                // ------------------------------------------------------------------
+                // User supplied input (stdin → session stdin pipe)
                 line = stdin_lines.next_line() => {
                     match line? {
                         Some(mut l) => {
@@ -342,16 +361,41 @@ impl AttachCmd {
                             pipe.flush().await?;
                         }
                         None => {
-                            // Ctrl-D
+                            // Ctrl-D – end of interactive input
                             break;
                         }
                     }
                 }
+
+                // ------------------------------------------------------------------
                 // stdout updates
                 out_line = reader_out.next_line() => {
                     match out_line? {
                         Some(l) => println!("{l}"),
                         None => sleep(Duration::from_millis(200)).await,
+                    }
+                }
+
+                // ------------------------------------------------------------------
+                // stderr updates (optional)
+                //
+                // To keep `tokio::select!` happy we always supply a branch – when the
+                // user did *not* request stderr we hand it a future that will never
+                // finish (pending forever).  This avoids `Option` juggling within the
+                // select! macro.
+                err_line = async {
+                    if let Some(reader) = &mut reader_err {
+                        reader.next_line().await
+                    } else {
+                        // Never resolves – equivalent to `futures::future::pending()`
+                        std::future::pending().await
+                    }
+                } => {
+                    if let Some(line) = err_line? {
+                        // Use a visible prefix so users can distinguish the streams.
+                        println!("[stderr] {line}");
+                    } else {
+                        sleep(Duration::from_millis(200)).await;
                     }
                 }
             }
