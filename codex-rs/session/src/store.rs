@@ -92,7 +92,6 @@ pub enum SessionKind {
     Repl,
 }
 
-
 /// Create the on-disk directory structure and write metadata + empty log files.
 /// Create directory & empty log files. Does **not** write metadata; caller should write that
 /// once the child process has actually been spawned so we can record its PID.

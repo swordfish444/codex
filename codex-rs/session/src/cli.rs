@@ -192,10 +192,7 @@ impl CreateCmd {
 fn truncate_preview(p: &str) -> String {
     // 1. Remove anything that is not printable (ASCII control chars, newlines
     //    etc.).
-    let cleaned: String = p
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect();
+    let cleaned: String = p.chars().filter(|c| !c.is_control()).collect();
 
     // 2. Truncate to 40 code-points.
     let slice: String = cleaned.chars().take(40).collect();
