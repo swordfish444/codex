@@ -475,20 +475,27 @@ impl LogsCmd {
 
         let file = tokio::fs::File::open(target).await?;
 
-        if self.follow {
+            if self.follow {
             // ------------------------------------------------------------------
-            // Corrected `--follow` implementation (tail -f semantics)
+            // Improved `--follow` implementation (tail -f semantics)
             //
-            // The previous version exited as soon as EOF was reached because
-            // `lines.next_line()` returned `None`.  We now mimic the behaviour
-            // of `tail -f` by sleeping for a short interval and retrying the
-            // read when EOF is encountered.  The loop continues until the
-            // program is terminated (Ctrl-C, SIGINT, …).
+            // 1. Start at *the end* of the file so we only stream *new* output
+            //    that appears after the command has been issued.  This avoids
+            //    re-printing potentially huge log histories when the user is
+            //    solely interested in live updates.
+            // 2. Keep retrying after EOF so the behaviour matches the familiar
+            //    `tail -f` utility.
 
-            use tokio::io::AsyncBufReadExt;
+            use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
             use tokio::time::{sleep, Duration};
 
-            let mut lines = tokio::io::BufReader::new(file).lines();
+            // Jump to EOF before we start reading so we don't emit historical
+            // data.  Ignore errors from `seek` on special files – in that case
+            // we just fall back to the normal behaviour.
+            let mut file = file;
+            let _ = file.seek(std::io::SeekFrom::End(0)).await;
+
+            let mut lines = BufReader::new(file).lines();
             loop {
                 match lines.next_line().await? {
                     Some(l) => println!("{l}"),
