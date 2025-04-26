@@ -150,8 +150,145 @@ pub fn resolve_selector(sel: &str) -> Result<String> {
 ///
 /// NOTE: Full PID accounting is a future improvement; for now the function
 /// simply returns `Ok(())` so the `delete` command doesn’t fail.
-pub async fn kill_session(_id: &str) -> Result<()> {
-    // TODO: record PID at spawn time and terminate here.
+/// Attempt to terminate the process (group) that belongs to the given session id.
+///
+/// Behaviour
+/// 1. A *graceful* `SIGTERM` (or `CTRL-BREAK` on Windows) is sent to the **process group**
+///    that was created when the agent was spawned (`setsid` / `CREATE_NEW_PROCESS_GROUP`).
+/// 2. We wait for a short grace period so the process can exit cleanly.
+/// 3. If the process (identified by the original PID) is still alive we force-kill it
+///    with `SIGKILL` (or the Win32 `TerminateProcess` API).
+/// 4. The function is **idempotent** – calling it again when the session is already
+///    terminated returns an error (`Err(AlreadyDead)`) so callers can decide whether
+///    they still need to clean up the directory (`store::purge`).
+///
+/// NOTE: only a very small amount of asynchronous work is required (the sleeps between
+/// TERM → KILL).  We keep the function `async` so the public signature stays unchanged.
+pub async fn kill_session(id: &str) -> Result<()> {
+    use std::time::Duration;
+
+    // Resolve paths and read metadata so we know the target PID.
+    let paths = paths_for(id)?;
+
+    // Load meta.json – we need the PID written at spawn time.
+    let bytes = std::fs::read(&paths.meta)
+        .with_context(|| format!("could not read metadata for session '{id}'"))?;
+    let meta: SessionMeta = serde_json::from_slice(&bytes)
+        .context("failed to deserialize session metadata")?;
+
+    let pid_u32 = meta.pid;
+
+    // Helper – check if the original *leader* process is still around.
+    #[cfg(unix)]
+    fn is_alive(pid: libc::pid_t) -> bool {
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    #[cfg(windows)]
+    fn is_alive(pid: u32) -> bool {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, GetExitCodeProcess};
+        const STILL_ACTIVE: u32 = 259;
+
+        unsafe {
+            let handle: HANDLE = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle == 0 {
+                return false;
+            }
+            let mut exit_code: u32 = 0;
+            let ok = GetExitCodeProcess(handle, &mut exit_code as *mut _);
+            CloseHandle(handle);
+            ok != 0 && exit_code == STILL_ACTIVE
+        }
+    }
+
+    // If the process is already gone we bail out so the caller knows the session
+    // directory might need manual clean-up.
+    #[cfg(unix)]
+    let mut still_running = is_alive(pid_u32 as libc::pid_t);
+    #[cfg(windows)]
+    let mut still_running = is_alive(pid_u32);
+
+    if !still_running {
+        anyhow::bail!(
+            "session process (PID {pid_u32}) is not running – directory cleanup still required"
+        );
+    }
+
+    //---------------------------------------------------------------------
+    // Step 1 – send graceful termination.
+    //---------------------------------------------------------------------
+
+    #[cfg(unix)]
+    {
+        // Negative PID = process-group.
+        let pgid = -(pid_u32 as i32);
+        unsafe {
+            libc::kill(pgid, libc::SIGTERM);
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Console::GenerateConsoleCtrlEvent;
+        const CTRL_BREAK_EVENT: u32 = 1; // Using BREAK instead of C for detached groups.
+        // The process group id on Windows *is* the pid that we passed to CREATE_NEW_PROCESS_GROUP.
+        unsafe {
+            GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid_u32);
+        }
+    }
+
+    // Give the process up to 2 seconds to exit.
+    let grace_period = Duration::from_secs(2);
+    let poll_interval = Duration::from_millis(100);
+
+    let start = std::time::Instant::now();
+    while start.elapsed() < grace_period {
+        #[cfg(unix)]
+        {
+            if !is_alive(pid_u32 as libc::pid_t) {
+                still_running = false;
+                break;
+            }
+        }
+        #[cfg(windows)]
+        {
+            if !is_alive(pid_u32) {
+                still_running = false;
+                break;
+            }
+        }
+        tokio::time::sleep(poll_interval).await;
+    }
+
+    //---------------------------------------------------------------------
+    // Step 2 – force kill if necessary.
+    //---------------------------------------------------------------------
+
+    if still_running {
+        #[cfg(unix)]
+        {
+            let pgid = -(pid_u32 as i32);
+            unsafe {
+                libc::kill(pgid, libc::SIGKILL);
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+            use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+            unsafe {
+                let handle: HANDLE = OpenProcess(PROCESS_TERMINATE, 0, pid_u32);
+                if handle != 0 {
+                    TerminateProcess(handle, 1);
+                    CloseHandle(handle);
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
