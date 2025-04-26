@@ -7,4 +7,3 @@
 pub fn git_sha() -> &'static str {
     env!("GIT_SHA")
 }
-

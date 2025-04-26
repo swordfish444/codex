@@ -1,5 +1,6 @@
 use clap::Parser;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use std::path::PathBuf;
 
 /// Command-line interface for the non-interactive `codex-exec` agent.

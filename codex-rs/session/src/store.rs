@@ -10,7 +10,8 @@ use anyhow::Result;
 // The rich metadata envelope lives in its own module so other parts of the
 // crate can import it without pulling in the whole `store` implementation.
 use crate::meta::SessionMeta;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]

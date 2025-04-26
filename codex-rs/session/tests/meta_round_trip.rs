@@ -1,7 +1,8 @@
 //! Simple round-trip test that serialises a freshly constructed `SessionMeta`
 //! and deserialises it back to ensure the schema is self-consistent.
 
-use codex_session::meta::{AgentCli, SessionMeta};
+use codex_session::meta::AgentCli;
+use codex_session::meta::SessionMeta;
 use codex_session::store::SessionKind;
 
 #[test]
@@ -33,4 +34,3 @@ fn meta_round_trip() {
     assert_eq!(de.pid, 42);
     assert!(matches!(de.cli, AgentCli::Exec(_)));
 }
-

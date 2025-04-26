@@ -5,7 +5,8 @@ use clap::ValueEnum;
 
 use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPolicy;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
 #[value(rename_all = "kebab-case")]

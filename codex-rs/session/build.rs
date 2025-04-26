@@ -16,4 +16,3 @@ fn main() {
 
     println!("cargo:rustc-env=GIT_SHA={git_sha}");
 }
-

@@ -1,7 +1,8 @@
 use clap::Parser;
 use codex_core::ApprovalModeCliArg;
 use codex_core::SandboxModeCliArg;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone, Serialize, Deserialize)]

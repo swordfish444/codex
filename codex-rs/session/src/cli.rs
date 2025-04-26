@@ -8,7 +8,8 @@
 //! The `create` command therefore has mutually exclusive sub-commands so the appropriate
 //! arguments can be forwarded to the underlying agent binaries.
 
-use crate::meta::{AgentCli, SessionMeta};
+use crate::meta::AgentCli;
+use crate::meta::SessionMeta;
 use crate::spawn;
 use crate::store;
 use anyhow::Context;
@@ -146,10 +147,10 @@ impl CreateCmd {
         // Capture the child PID *and* the full CLI config so we can persist it
         // in the metadata file.
         let spawn_result: Result<(
-            u32,                       // pid
-            Option<String>,            // prompt preview
-            store::SessionKind,        // kind
-            AgentCli,                  // full CLI config
+            u32,                // pid
+            Option<String>,     // prompt preview
+            store::SessionKind, // kind
+            AgentCli,           // full CLI config
         )> = (|| match self.agent {
             AgentKind::Exec(cmd) => {
                 let args = build_exec_args(&cmd.exec_cli);
