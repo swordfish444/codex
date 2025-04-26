@@ -72,7 +72,6 @@ enum Commands {
     Logs(LogsCmd),
     /// List all known sessions.
     List(ListCmd),
-
     // (previous mux variant removed)
 }
 
@@ -86,7 +85,6 @@ enum AgentKind {
 
     /// Interactive Read-Eval-Print-Loop agent.
     Repl(ReplCreateCmd),
-
 }
 
 #[derive(Args)]
@@ -111,7 +109,6 @@ pub struct ReplCreateCmd {
     repl_cli: codex_repl::Cli,
 }
 
-
 impl CreateCmd {
     pub async fn run(self) -> Result<()> {
         let id = match &self.id {
@@ -123,20 +120,29 @@ impl CreateCmd {
         store::prepare_dirs(&paths)?;
 
         // Spawn underlying agent
-        let (pid, prompt_preview, kind): (u32, Option<String>, store::SessionKind) = match self.agent {
-            AgentKind::Exec(cmd) => {
-                let args = build_exec_args(&cmd.exec_cli);
-                let child = spawn::spawn_exec(&paths, &args)?;
-                let preview = cmd.exec_cli.prompt.as_ref().map(|p| truncate_preview(p));
-                (child.id().unwrap_or_default(), preview, store::SessionKind::Exec)
-            }
-            AgentKind::Repl(cmd) => {
-                let args = build_repl_args(&cmd.repl_cli);
-                let child = spawn::spawn_repl(&paths, &args)?;
-                let preview = cmd.repl_cli.prompt.as_ref().map(|p| truncate_preview(p));
-                (child.id().unwrap_or_default(), preview, store::SessionKind::Repl)
-            }
-        };
+        let (pid, prompt_preview, kind): (u32, Option<String>, store::SessionKind) =
+            match self.agent {
+                AgentKind::Exec(cmd) => {
+                    let args = build_exec_args(&cmd.exec_cli);
+                    let child = spawn::spawn_exec(&paths, &args)?;
+                    let preview = cmd.exec_cli.prompt.as_ref().map(|p| truncate_preview(p));
+                    (
+                        child.id().unwrap_or_default(),
+                        preview,
+                        store::SessionKind::Exec,
+                    )
+                }
+                AgentKind::Repl(cmd) => {
+                    let args = build_repl_args(&cmd.repl_cli);
+                    let child = spawn::spawn_repl(&paths, &args)?;
+                    let preview = cmd.repl_cli.prompt.as_ref().map(|p| truncate_preview(p));
+                    (
+                        child.id().unwrap_or_default(),
+                        preview,
+                        store::SessionKind::Repl,
+                    )
+                }
+            };
 
         // Persist metadata **after** the process has been spawned so we can record its PID.
         let meta = store::SessionMeta {
@@ -304,7 +310,8 @@ impl AttachCmd {
     async fn attach_line_oriented(&self, id: &str, paths: &store::Paths) -> Result<()> {
         use tokio::io::AsyncBufReadExt;
         use tokio::io::AsyncWriteExt;
-        use tokio::time::{sleep, Duration};
+        use tokio::time::sleep;
+        use tokio::time::Duration;
 
         // Ensure stdin pipe exists.
         if !paths.stdin.exists() {

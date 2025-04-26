@@ -62,7 +62,9 @@ pub enum SessionKind {
 }
 
 impl Default for SessionKind {
-    fn default() -> Self { SessionKind::Exec }
+    fn default() -> Self {
+        SessionKind::Exec
+    }
 }
 
 /// Create the on-disk directory structure and write metadata + empty log files.

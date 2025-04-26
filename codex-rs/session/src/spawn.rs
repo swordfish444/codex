@@ -1,9 +1,11 @@
 //! Spawn detached Codex agent processes for exec and repl sessions.
 
 use crate::store::Paths;
-use anyhow::{Context, Result};
+use anyhow::Context;
+use anyhow::Result;
 use std::fs::OpenOptions;
-use tokio::process::{Child, Command};
+use tokio::process::Child;
+use tokio::process::Command;
 
 // -----------------------------------------------------------------------------
 // exec – non-interactive batch agent
@@ -130,4 +132,3 @@ pub fn spawn_repl(paths: &Paths, repl_args: &[String]) -> Result<Child> {
         anyhow::bail!("codex-repl sessions are not supported on Windows yet");
     }
 }
-
