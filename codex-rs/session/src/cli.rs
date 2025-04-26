@@ -185,10 +185,22 @@ impl CreateCmd {
     }
 }
 
+/// Sanitize a prompt snippet so it is safe to embed in `meta.json`.  Control
+/// characters and new-lines are removed; the resulting string is truncated to
+/// at most 40 visible code-points so extremely long prompts do not blow up the
+/// listing output.
 fn truncate_preview(p: &str) -> String {
-    let slice: String = p.chars().take(40).collect();
-    if p.len() > 40 {
-        format!("{}...", slice)
+    // 1. Remove anything that is not printable (ASCII control chars, newlines
+    //    etc.).
+    let cleaned: String = p
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
+
+    // 2. Truncate to 40 code-points.
+    let slice: String = cleaned.chars().take(40).collect();
+    if cleaned.chars().count() > 40 {
+        format!("{slice}…")
     } else {
         slice
     }
