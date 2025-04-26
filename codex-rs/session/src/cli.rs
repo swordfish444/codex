@@ -1,30 +1,20 @@
-//! CLI command definitions and implementation.
+//! CLI command definitions and implementation for `codex-session`.
+//!
+//! The session manager can spawn two different Codex agent flavors:
+//!
+//! * `codex-exec` – non-interactive batch agent (legacy behaviour)
+//! * `codex-repl` – interactive REPL that requires user input after launch
+//!
+//! The `create` command therefore has mutually exclusive sub-commands so the appropriate
+//! arguments can be forwarded to the underlying agent binaries.
 
 use crate::{spawn, store};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
-#[derive(Parser)]
-#[command(name = "codex-session", about = "Manage codex-exec background sessions")]
-pub struct Cli {
-    #[command(subcommand)]
-    cmd: Commands,
-}
-
-impl Cli {
-    pub async fn dispatch(self) -> Result<()> {
-        match self.cmd {
-            Commands::Create(x) => x.run().await,
-            Commands::Delete(x) => x.run().await,
-            Commands::Logs(x) => x.run().await,
-            Commands::Exec(x) => x.run().await,
-            Commands::List(x) => x.run().await,
-        }
-    }
-}
-
-fn human_bytes(b: u64) -> String {
+/// A human-friendly representation of a byte count (e.g. 1.4M).
+pub fn human_bytes(b: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
     const GB: f64 = MB * 1024.0;
@@ -40,17 +30,53 @@ fn human_bytes(b: u64) -> String {
     }
 }
 
+// -----------------------------------------------------------------------------
+// Top-level CLI definition
+
+#[derive(Parser)]
+#[command(name = "codex-session", about = "Manage background Codex agent sessions")]
+pub struct Cli {
+    #[command(subcommand)]
+    cmd: Commands,
+}
+
+impl Cli {
+    pub async fn dispatch(self) -> Result<()> {
+        match self.cmd {
+            Commands::Create(x) => x.run().await,
+            Commands::Attach(x) => x.run().await,
+            Commands::Delete(x) => x.run().await,
+            Commands::Logs(x) => x.run().await,
+            Commands::List(x) => x.run().await,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
+    /// Spawn a new background session.
     Create(CreateCmd),
+    /// Attach the current terminal to a running interactive session.
+    Attach(AttachCmd),
+    /// Terminate a session and remove its on-disk state.
     Delete(DeleteCmd),
+    /// Show (and optionally follow) the stdout / stderr logs of a session.
     Logs(LogsCmd),
-    Exec(ExecCmd),
+    /// List all known sessions.
     List(ListCmd),
 }
 
 // -----------------------------------------------------------------------------
 // create
+
+#[derive(Subcommand)]
+enum AgentKind {
+    /// Non-interactive execution agent.
+    Exec(ExecCreateCmd),
+
+    /// Interactive Read-Eval-Print-Loop agent.
+    Repl(ReplCreateCmd),
+}
 
 #[derive(Args)]
 pub struct CreateCmd {
@@ -58,43 +84,60 @@ pub struct CreateCmd {
     #[arg(long)]
     id: Option<String>,
 
-    /// Flags passed through to codex-exec.
+    #[command(subcommand)]
+    agent: AgentKind,
+}
+
+#[derive(Args)]
+pub struct ExecCreateCmd {
     #[clap(flatten)]
     exec_cli: codex_exec::Cli,
 }
 
+#[derive(Args)]
+pub struct ReplCreateCmd {
+    #[clap(flatten)]
+    repl_cli: codex_repl::Cli,
+}
+
 impl CreateCmd {
     pub async fn run(self) -> Result<()> {
-        let id = match self.id {
-            Some(id) => id,
+        let id = match &self.id {
+            Some(explicit) => explicit.clone(),
             None => generate_session_id()?,
         };
 
         let paths = store::paths_for(&id)?;
         store::prepare_dirs(&paths)?;
 
-        let exec_args = build_exec_args(&self.exec_cli);
+        // Spawn underlying agent
+        let (pid, prompt_preview): (u32, Option<String>) = match self.agent {
+            AgentKind::Exec(cmd) => {
+                let args = build_exec_args(&cmd.exec_cli);
+                let child = spawn::spawn_exec(&paths, &args)?;
+                let preview = cmd
+                    .exec_cli
+                    .prompt
+                    .as_ref()
+                    .map(|p| truncate_preview(p));
+                (child.id().unwrap_or_default(), preview)
+            }
+            AgentKind::Repl(cmd) => {
+                let args = build_repl_args(&cmd.repl_cli);
+                let child = spawn::spawn_repl(&paths, &args)?;
+                let preview = cmd
+                    .repl_cli
+                    .prompt
+                    .as_ref()
+                    .map(|p| truncate_preview(p));
+                (child.id().unwrap_or_default(), preview)
+            }
+        };
 
-        // Preview first 40 printable chars of prompt for status listing
-        let prompt_preview = self
-            .exec_cli
-            .prompt
-            .as_ref()
-            .map(|p| {
-                let slice: String = p.chars().take(40).collect();
-                if p.len() > 40 {
-                    format!("{}…", slice)
-                } else {
-                    slice
-                }
-            });
-
-        // Spawn process
-        let child = spawn::spawn_agent(&paths, &exec_args)?;
-
+        // Persist metadata **after** the process has been spawned so we can record its PID.
         let meta = store::SessionMeta {
             id: id.clone(),
-            pid: child.id().unwrap_or_default(),
+            pid,
             created_at: chrono::Utc::now(),
             prompt_preview,
         };
@@ -102,6 +145,15 @@ impl CreateCmd {
 
         println!("{id}");
         Ok(())
+    }
+}
+
+fn truncate_preview(p: &str) -> String {
+    let slice: String = p.chars().take(40).collect();
+    if p.len() > 40 {
+        format!("{}…", slice)
+    } else {
+        slice
     }
 }
 
@@ -142,6 +194,141 @@ fn build_exec_args(cli: &codex_exec::Cli) -> Vec<String> {
     }
 
     args
+}
+
+fn build_repl_args(cli: &codex_repl::Cli) -> Vec<String> {
+    let mut args = Vec::new();
+
+    // Positional prompt argument (optional) – needs to be *last* so push it later.
+
+    if let Some(model) = &cli.model {
+        args.push("--model".into());
+        args.push(model.clone());
+    }
+
+    for img in &cli.images {
+        args.push("--image".into());
+        args.push(img.to_string_lossy().into_owned());
+    }
+
+    if cli.no_ansi {
+        args.push("--no-ansi".into());
+    }
+
+    // Verbose flag is additive (-v -vv …).
+    for _ in 0..cli.verbose {
+        args.push("-v".into());
+    }
+
+    // Approval + sandbox policies
+    args.push("--ask-for-approval".into());
+    args.push(match cli.approval_policy {
+        codex_core::ApprovalModeCliArg::OnFailure => "on-failure".into(),
+        codex_core::ApprovalModeCliArg::UnlessAllowListed => "unless-allow-listed".into(),
+        codex_core::ApprovalModeCliArg::Never => "never".into(),
+    });
+
+    args.push("--sandbox".into());
+    args.push(match cli.sandbox_policy {
+        codex_core::SandboxModeCliArg::NetworkRestricted => "network-restricted".into(),
+        codex_core::SandboxModeCliArg::FileWriteRestricted => "file-write-restricted".into(),
+        codex_core::SandboxModeCliArg::NetworkAndFileWriteRestricted => "network-and-file-write-restricted".into(),
+        codex_core::SandboxModeCliArg::DangerousNoRestrictions => "dangerous-no-restrictions".into(),
+    });
+
+    if cli.allow_no_git_exec {
+        args.push("--allow-no-git-exec".into());
+    }
+
+    if cli.disable_response_storage {
+        args.push("--disable-response-storage".into());
+    }
+
+    if let Some(path) = &cli.record_submissions {
+        args.push("--record-submissions".into());
+        args.push(path.to_string_lossy().into_owned());
+    }
+
+    if let Some(path) = &cli.record_events {
+        args.push("--record-events".into());
+        args.push(path.to_string_lossy().into_owned());
+    }
+
+    // Finally positional prompt argument.
+    if let Some(prompt) = &cli.prompt {
+        args.push(prompt.clone());
+    }
+
+    args
+}
+
+// -----------------------------------------------------------------------------
+// attach
+
+#[derive(Args)]
+pub struct AttachCmd {
+    /// Session selector (index, id or prefix) to attach to.
+    id: String,
+
+    /// Also print stderr stream in addition to stdout.
+    #[arg(long)]
+    stderr: bool,
+}
+
+impl AttachCmd {
+    pub async fn run(self) -> Result<()> {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        use tokio::time::{sleep, Duration};
+
+        let id = store::resolve_selector(&self.id)?;
+        let paths = store::paths_for(&id)?;
+
+        // Ensure stdin pipe exists.
+        if !paths.stdin.exists() {
+            anyhow::bail!("session '{id}' is not interactive (stdin pipe missing)");
+        }
+
+        // Open writer to the session's stdin pipe.
+        let mut pipe = tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&paths.stdin)
+            .await
+            .with_context(|| format!("failed to open stdin pipe for session '{id}'"))?;
+
+        // Open stdout / stderr for tailing.
+        let file_out = tokio::fs::File::open(&paths.stdout).await?;
+        let mut reader_out = tokio::io::BufReader::new(file_out).lines();
+
+        let mut stdin_lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+
+        loop {
+            tokio::select! {
+                // User supplied input
+                line = stdin_lines.next_line() => {
+                    match line? {
+                        Some(mut l) => {
+                            l.push('\n');
+                            pipe.write_all(l.as_bytes()).await?;
+                            pipe.flush().await?;
+                        }
+                        None => {
+                            // Ctrl-D
+                            break;
+                        }
+                    }
+                }
+                // stdout updates
+                out_line = reader_out.next_line() => {
+                    match out_line? {
+                        Some(l) => println!("{l}"),
+                        None => sleep(Duration::from_millis(200)).await,
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -190,26 +377,13 @@ impl LogsCmd {
                 println!("{line}");
             }
         } else {
-            tokio::io::copy(&mut tokio::io::BufReader::new(file), &mut tokio::io::stdout()).await?;
+            tokio::io::copy(
+                &mut tokio::io::BufReader::new(file),
+                &mut tokio::io::stdout(),
+            )
+            .await?;
         }
         Ok(())
-    }
-}
-
-// -----------------------------------------------------------------------------
-// exec (TODO)
-
-#[derive(Args)]
-pub struct ExecCmd {
-    id: String,
-    #[arg(trailing_var_arg = true)]
-    cmd: Vec<String>,
-}
-
-impl ExecCmd {
-    pub async fn run(self) -> Result<()> {
-        let _id = store::resolve_selector(&self.id)?;
-        anyhow::bail!("exec inside session not implemented yet");
     }
 }
 
@@ -217,29 +391,35 @@ impl ExecCmd {
 // list
 
 #[derive(Copy, Clone, ValueEnum, Debug)]
-enum OutputFormat { Table, Json, Yaml }
+enum OutputFormat {
+    Table,
+    Json,
+    Yaml,
+}
 
 #[derive(Args)]
 pub struct ListCmd {
+    /// Output format (default: table).
     #[arg(short = 'o', long = "output", value_enum, default_value_t = OutputFormat::Table)]
     output: OutputFormat,
 }
 
 #[derive(Serialize)]
-struct StatusRow {
-    idx: usize,
-    id: String,
-    pid: u32,
-    status: String,
-    created: String,
-    prompt: String,
-    out: String,
-    err: String,
+#[allow(missing_docs)]
+pub struct StatusRow {
+    pub idx: usize,
+    pub id: String,
+    pub pid: u32,
+    pub status: String,
+    pub created: String,
+    pub prompt: String,
+    pub out: String,
+    pub err: String,
 }
 
 impl ListCmd {
     pub async fn run(self) -> Result<()> {
-        use sysinfo::{SystemExt, PidExt};
+        use sysinfo::{PidExt, SystemExt};
 
         let metas = store::list_sessions_sorted()?;
 
@@ -258,7 +438,6 @@ impl ListCmd {
                     "exited"
                 };
 
-                // file sizes
                 let paths = store::paths_for(&m.id).ok();
                 let (out, err) = if let Some(p) = &paths {
                     let osz = std::fs::metadata(&p.stdout).map(|m| m.len()).unwrap_or(0);
@@ -291,7 +470,7 @@ impl ListCmd {
     }
 }
 
-fn print_table(rows: &[StatusRow]) -> Result<()> {
+pub fn print_table(rows: &[StatusRow]) -> Result<()> {
     use std::io::Write;
     use tabwriter::TabWriter;
 

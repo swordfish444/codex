@@ -1,4 +1,8 @@
-//! Session bookkeeping – on-disk layout and simple helpers.
+//! Session bookkeeping helpers.
+//!
+//! A session lives in `~/.codex/sessions/<id>/` and contains:
+//! * stdout.log / stderr.log       - redirect of agent io
+//! * meta.json                     - small struct saved by `write_meta`.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -9,16 +13,22 @@ pub struct Paths {
     pub dir: PathBuf,
     pub stdout: PathBuf,
     pub stderr: PathBuf,
+    /// Named pipe used for interactive stdin when the session runs a `codex-repl` agent.
+    ///
+    /// The file is **only** created for repl sessions.  Exec sessions ignore the path.
+    pub stdin: PathBuf,
     pub meta: PathBuf,
 }
 
 /// Calculate canonical paths for the given session ID.
 pub fn paths_for(id: &str) -> Result<Paths> {
+    // No IO here. Only build the paths.
     let dir = base_dir()?.join(id);
     Ok(Paths {
         dir: dir.clone(),
         stdout: dir.join("stdout.log"),
         stderr: dir.join("stderr.log"),
+        stdin: dir.join("stdin.pipe"),
         meta: dir.join("meta.json"),
     })
 }
@@ -42,6 +52,7 @@ pub struct SessionMeta {
 /// Create directory & empty log files. Does **not** write metadata; caller should write that
 /// once the child process has actually been spawned so we can record its PID.
 pub fn prepare_dirs(paths: &Paths) -> Result<()> {
+    // Called before spawn to make sure log files already exist.
     std::fs::create_dir_all(&paths.dir)?;
 
     for p in [&paths.stdout, &paths.stderr] {
@@ -54,6 +65,7 @@ pub fn prepare_dirs(paths: &Paths) -> Result<()> {
 }
 
 pub fn write_meta(paths: &Paths, meta: &SessionMeta) -> Result<()> {
+    // Persist metadata after successful spawn so we can record PID.
     std::fs::write(&paths.meta, serde_json::to_vec_pretty(meta)?)?;
     Ok(())
 }
@@ -77,6 +89,7 @@ pub fn list_sessions() -> Result<Vec<SessionMeta>> {
 }
 
 /// List sessions sorted by newest first (created_at desc).
+/// Newest-first list (created_at descending).
 pub fn list_sessions_sorted() -> Result<Vec<SessionMeta>> {
     let mut v = list_sessions()?;
     v.sort_by(|a, b| b.created_at.cmp(&a.created_at));
@@ -89,6 +102,7 @@ pub fn list_sessions_sorted() -> Result<Vec<SessionMeta>> {
 /// 1. Pure integer ⇒ index into newest-first list (0 = most recent)
 /// 2. Otherwise try exact id match, then unique prefix match.
 pub fn resolve_selector(sel: &str) -> Result<String> {
+    // Accept index, full id, or unique prefix.
     let list = list_sessions_sorted()?;
 
     // numeric index
