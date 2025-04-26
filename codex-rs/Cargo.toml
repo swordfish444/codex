@@ -9,5 +9,6 @@ members = [
     "execpolicy",
     "interactive",
     "repl",
+    "session",
     "tui",
 ]
