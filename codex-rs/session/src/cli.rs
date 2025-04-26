@@ -84,6 +84,9 @@ enum AgentKind {
 
     /// Interactive Read-Eval-Print-Loop agent.
     Repl(ReplCreateCmd),
+
+    /// Full-screen Terminal User Interface agent.
+    Tui(TuiCreateCmd),
 }
 
 #[derive(Args)]
@@ -106,6 +109,12 @@ pub struct ExecCreateCmd {
 pub struct ReplCreateCmd {
     #[clap(flatten)]
     repl_cli: codex_repl::Cli,
+}
+
+#[derive(Args)]
+pub struct TuiCreateCmd {
+    #[clap(flatten)]
+    tui_cli: codex_tui::Cli,
 }
 
 impl CreateCmd {
@@ -131,6 +140,12 @@ impl CreateCmd {
                 let child = spawn::spawn_repl(&paths, &args)?;
                 let preview = cmd.repl_cli.prompt.as_ref().map(|p| truncate_preview(p));
                 (child.id().unwrap_or_default(), preview, store::SessionKind::Repl)
+            }
+            AgentKind::Tui(cmd) => {
+                let args = build_tui_args(&cmd.tui_cli);
+                let child = spawn::spawn_tui(&paths, &args)?;
+                let preview = cmd.tui_cli.prompt.as_ref().map(|p| truncate_preview(p));
+                (child.id().unwrap_or_default(), preview, store::SessionKind::Tui)
             }
         };
 
@@ -267,6 +282,66 @@ fn build_repl_args(cli: &codex_repl::Cli) -> Vec<String> {
     args
 }
 
+// Build argument vector for spawning `codex-tui`.
+// For the first implementation we forward only a minimal subset of options that
+// are already handled in the REPL helper above.  Future work can extend this
+// with the full flag surface.
+fn build_tui_args(cli: &codex_tui::Cli) -> Vec<String> {
+    let mut args = Vec::new();
+
+    // Positional prompt argument (optional) – must be last.
+
+    if let Some(model) = &cli.model {
+        args.push("--model".into());
+        args.push(model.clone());
+    }
+
+    for img in &cli.images {
+        args.push("--image".into());
+        args.push(img.to_string_lossy().into_owned());
+    }
+
+    if cli.skip_git_repo_check {
+        args.push("--skip-git-repo-check".into());
+    }
+
+    if cli.disable_response_storage {
+        args.push("--disable-response-storage".into());
+    }
+
+    // Approval + sandbox policies
+    args.push("--ask-for-approval".into());
+    args.push(match cli.approval_policy {
+        codex_core::ApprovalModeCliArg::OnFailure => "on-failure".into(),
+        codex_core::ApprovalModeCliArg::UnlessAllowListed => "unless-allow-listed".into(),
+        codex_core::ApprovalModeCliArg::Never => "never".into(),
+    });
+
+    args.push("--sandbox".into());
+    args.push(match cli.sandbox_policy {
+        codex_core::SandboxModeCliArg::NetworkRestricted => "network-restricted".into(),
+        codex_core::SandboxModeCliArg::FileWriteRestricted => "file-write-restricted".into(),
+        codex_core::SandboxModeCliArg::NetworkAndFileWriteRestricted =>
+            "network-and-file-write-restricted".into(),
+        codex_core::SandboxModeCliArg::DangerousNoRestrictions =>
+            "dangerous-no-restrictions".into(),
+    });
+
+    // Convenience flags
+    if cli.full_auto {
+        args.push("--full-auto".into());
+    }
+    if cli.suggest {
+        args.push("--suggest".into());
+    }
+
+    if let Some(prompt) = &cli.prompt {
+        args.push(prompt.clone());
+    }
+
+    args
+}
+
 // -----------------------------------------------------------------------------
 // attach
 
@@ -282,13 +357,29 @@ pub struct AttachCmd {
 
 impl AttachCmd {
     pub async fn run(self) -> Result<()> {
-        use tokio::io::AsyncBufReadExt;
-        use tokio::io::AsyncWriteExt;
-        use tokio::time::sleep;
-        use tokio::time::Duration;
-
         let id = store::resolve_selector(&self.id)?;
         let paths = store::paths_for(&id)?;
+
+        // Load meta in order to decide which attach strategy to use.
+        let meta_bytes = std::fs::read(&paths.meta)?;
+        let meta: store::SessionMeta = serde_json::from_slice(&meta_bytes)?;
+
+        match meta.kind {
+            store::SessionKind::Exec | store::SessionKind::Repl => {
+                self.attach_line_oriented(&id, &paths).await
+            }
+            store::SessionKind::Tui => {
+                self.attach_tui(&paths).await
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Original FIFO based attach (exec / repl)
+    async fn attach_line_oriented(&self, id: &str, paths: &store::Paths) -> Result<()> {
+        use tokio::io::AsyncBufReadExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio::time::{sleep, Duration};
 
         // Ensure stdin pipe exists.
         if !paths.stdin.exists() {
@@ -335,6 +426,60 @@ impl AttachCmd {
         }
 
         Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // TUI attach: raw byte forwarding over unix socket
+    async fn attach_tui(&self, paths: &store::Paths) -> Result<()> {
+        #[cfg(unix)]
+        {
+            use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+            use tokio::io::{self};
+            use tokio::net::UnixStream;
+
+            let sock_path = paths.dir.join("sock");
+            if !sock_path.exists() {
+                anyhow::bail!(
+                    "tui session socket not found ({}). Is the session fully initialised?",
+                    sock_path.display()
+                );
+            }
+
+            // Put local terminal in raw mode – undone automatically at drop.
+            enable_raw_mode()?;
+
+            // Connect to the session socket.
+            let stream = UnixStream::connect(&sock_path).await?;
+            let (mut reader, mut writer) = stream.into_split();
+
+            let mut stdin = tokio::io::stdin();
+            let mut stdout = tokio::io::stdout();
+
+            // Two independent tasks: socket → stdout and stdin → socket.
+            let to_stdout = tokio::spawn(async move {
+                io::copy(&mut reader, &mut stdout).await
+            });
+
+            let to_socket = tokio::spawn(async move {
+                io::copy(&mut stdin, &mut writer).await
+            });
+
+            let res = tokio::select! {
+                r = to_stdout => r?,
+                r = to_socket => r?,
+            };
+
+            disable_raw_mode()?;
+
+            // Propagate I/O errors if any.
+            res?;
+            Ok(())
+        }
+
+        #[cfg(not(unix))]
+        {
+            anyhow::bail!("tui sessions are only supported on Unix at the moment");
+        }
     }
 }
 

@@ -55,8 +55,12 @@ pub struct SessionMeta {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionKind {
+    /// Non-interactive batch session – `codex-exec`.
     Exec,
+    /// Line-oriented interactive session – `codex-repl`.
     Repl,
+    /// Full terminal-UI session (crossterm / ratatui) – `codex-tui`.
+    Tui,
 }
 
 impl Default for SessionKind {

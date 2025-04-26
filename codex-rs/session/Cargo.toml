@@ -25,6 +25,14 @@ tokio = { version = "1", features = [
 tracing = { version = "0.1.41", features = ["log"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
+# --- additions for PTY/TUI support ---
+bytes = "1.5"
+
+# Raw terminal handling when attaching to TUI sessions
+crossterm = "0.27"
+
+# PTY helpers (unix only)
+
 # new dependencies for session management
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -37,16 +45,15 @@ serde_yaml = "0.9"
 names = "0.14"
 
 # unix-only process helpers
-nix = { version = "0.27", optional = true, default-features = false, features = ["process"] }
-libc = { version = "0.2", optional = true }
+nix = { version = "0.27", default-features = false, features = ["process", "signal", "term"] }
 
 # Re-use the codex-exec library for its CLI definition
 codex_exec = { package = "codex-exec", path = "../exec" }
 codex_repl = { package = "codex-repl", path = "../repl" }
+codex_tui = { package = "codex-tui", path = "../tui" }
 
 [dev-dependencies]
 tempfile = "3"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.27", default-features = false, features = ["process"] }
 libc = "0.2"
