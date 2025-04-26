@@ -47,17 +47,13 @@ enum Commands {
 
 #[derive(Args)]
 pub struct CreateCmd {
-    /// A custom session identifier. When omitted, a random UUIDv4 is used.
+    /// Session identifier.  Generates a random UUIDv4 when omitted.
     #[arg(long)]
     id: Option<String>,
 
-    /// Path to the `codex-exec` binary. Defaults to relying on $PATH.
-    #[arg(long, default_value = "codex-exec")]
-    exec: String,
-
-    /// If set, terminate the agent when the CLI process exits ("attached" mode).
-    #[arg(long)]
-    kill_on_drop: bool,
+    /// All flags following `create` are forwarded to `codex-exec`.
+    #[clap(flatten)]
+    exec_cli: codex_exec::Cli,
 }
 
 impl CreateCmd {
@@ -75,22 +71,44 @@ impl CreateCmd {
         let paths = store::paths_for(&id)?;
         store::materialise(&paths, &meta)?;
 
-        // Spawn the background agent and immediately detach.
-        let mut child = spawn::spawn_agent(&self.exec, &id, &paths, self.kill_on_drop)?;
+        // Convert exec_cli back into a Vec<String> so we can forward them verbatim.
+        let exec_args = build_exec_args(&self.exec_cli);
 
-        if self.kill_on_drop {
-            // Hold the handle for the lifetime of the CLI; when we drop at the end of
-            // `run()` the agent will be terminated by the `kill_on_drop` setting.
-            tokio::spawn(async move {
-                let _ = child.wait().await;
-            });
-        }
-
-        // When not in kill_on_drop mode we *immediately* drop the handle so the agent can
-        // outlive us.
+        // Spawn the background agent and immediately detach – we never hold on to the
+        // Child handle.
+        let _child = spawn::spawn_agent(&paths, &exec_args)?;
         println!("{id}");
         Ok(())
     }
+}
+
+/// Re-serialize a `codex_exec::Cli` struct back into the exact CLI args.
+fn build_exec_args(cli: &codex_exec::Cli) -> Vec<String> {
+    let mut args = Vec::new();
+
+    for path in &cli.images {
+        args.push("--image".to_string());
+        args.push(path.to_string_lossy().into_owned());
+    }
+
+    if let Some(model) = &cli.model {
+        args.push("--model".to_string());
+        args.push(model.clone());
+    }
+
+    if cli.skip_git_repo_check {
+        args.push("--skip-git-repo-check".to_string());
+    }
+
+    if cli.disable_response_storage {
+        args.push("--disable-response-storage".to_string());
+    }
+
+    if let Some(prompt) = &cli.prompt {
+        args.push(prompt.clone());
+    }
+
+    args
 }
 
 // -----------------------------------------------------------------------------
@@ -141,7 +159,7 @@ impl LogsCmd {
         let file = tokio::fs::File::open(target).await?;
 
         if self.follow {
-            let mut reader = tokio::io::BufReader::new(file);
+            let reader = tokio::io::BufReader::new(file);
             let mut lines = reader.lines();
             while let Some(line) = lines.next_line().await? {
                 println!("{line}");

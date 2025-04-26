@@ -1,80 +1,75 @@
-//! Cross-platform helper to spawn a detached `codex-exec` agent.
+//! Cross-platform helper to spawn a fully-detached `codex-exec` process.
 
 use crate::store::Paths;
 use anyhow::{Context, Result};
 use std::fs::OpenOptions;
 use tokio::process::{Child, Command};
 
-#[cfg(unix)]
-pub fn spawn_agent(exec: &str, id: &str, paths: &Paths, kill_on_drop: bool) -> Result<Child> {
-use std::io;
+/// Spawn `codex-exec` with `exec_args`, redirecting stdio to the per-session log files and
+/// detaching the process group so it survives the parent CLI.
+pub fn spawn_agent(paths: &Paths, exec_args: &[String]) -> Result<Child> {
+    #[cfg(unix)]
+    {
+        use std::io;
 
-    // Prepare stdio handles first.
-    let stdin = OpenOptions::new().read(true).open("/dev/null")?;
-    let stdout = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&paths.stdout)?;
-    let stderr = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&paths.stderr)?;
+        // Prepare stdio handles first.
+        let stdin = OpenOptions::new().read(true).open("/dev/null")?;
+        let stdout = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&paths.stdout)?;
+        let stderr = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&paths.stderr)?;
 
-    let mut cmd = Command::new(exec);
-    cmd.arg("--job").arg(id)
-        .stdin(stdin)
-        .stdout(stdout)
-        .stderr(stderr);
+        let mut cmd = Command::new("codex-exec");
+        cmd.args(exec_args)
+            .stdin(stdin)
+            .stdout(stdout)
+            .stderr(stderr);
 
-    if kill_on_drop {
-        cmd.kill_on_drop(true);
-    }
-
-    // Detach: make a new session and ignore SIGHUP.
-    unsafe {
-        cmd.pre_exec(|| {
-            unsafe {
-                // setsid(2)
+        // Detach from the controlling terminal: setsid + ignore SIGHUP.
+        // SAFETY: calling an `unsafe` method (`pre_exec`).  Runs in the parent process right
+        // before fork; the closure then executes in the child.
+        unsafe {
+            cmd.pre_exec(|| {
                 if libc::setsid() == -1 {
                     return Err(io::Error::last_os_error());
                 }
                 libc::signal(libc::SIGHUP, libc::SIG_IGN);
-            }
-            Ok(())
-        });
+                Ok(())
+            });
+        }
+
+        let child = cmd.spawn().context("failed to spawn codex-exec")?;
+        return Ok(child);
     }
 
-    let child = cmd.spawn().context("failed to spawn agent")?;
-    Ok(child)
-}
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
 
-#[cfg(windows)]
-pub fn spawn_agent(exec: &str, id: &str, paths: &Paths, kill_on_drop: bool) -> Result<Child> {
-    use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
 
-    const DETACHED_PROCESS: u32 = 0x00000008;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        let stdout = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&paths.stdout)?;
+        let stderr = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&paths.stderr)?;
 
-    let stdout = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&paths.stdout)?;
-    let stderr = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&paths.stderr)?;
+        let mut cmd = Command::new("codex-exec");
+        cmd.args(exec_args)
+            .stdin(std::process::Stdio::null())
+            .stdout(stdout)
+            .stderr(stderr)
+            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
 
-    let mut cmd = Command::new(exec);
-    cmd.arg("--job").arg(id)
-        .stdin(std::process::Stdio::null())
-        .stdout(stdout)
-        .stderr(stderr)
-        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-
-    if kill_on_drop {
-        cmd.kill_on_drop(true);
+        let child = cmd.spawn().context("failed to spawn codex-exec")?;
+        return Ok(child);
     }
-
-    let child = cmd.spawn().context("failed to spawn agent")?;
-    Ok(child)
 }
