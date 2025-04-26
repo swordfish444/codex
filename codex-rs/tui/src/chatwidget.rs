@@ -3,12 +3,12 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use codex_core::codex_wrapper::init_codex;
+use codex_core::config::Config;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
-use codex_core::protocol::SandboxPolicy;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
@@ -46,12 +46,10 @@ enum InputFocus {
 
 impl ChatWidget<'_> {
     pub(crate) fn new(
-        approval_policy: AskForApproval,
-        sandbox_policy: SandboxPolicy,
+        config: Config,
         app_event_tx: Sender<AppEvent>,
         initial_prompt: Option<String>,
         initial_images: Vec<std::path::PathBuf>,
-        model: Option<String>,
         disable_response_storage: bool,
     ) -> Self {
         let (codex_op_tx, mut codex_op_rx) = unbounded_channel::<Op>();
@@ -61,25 +59,19 @@ impl ChatWidget<'_> {
         // initialised.
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
+        let approval_policy = config.approval_policy;
         let app_event_tx_clone = app_event_tx.clone();
         // Create the Codex asynchronously so the UI loads as quickly as possible.
         tokio::spawn(async move {
-            // Initialize session; storage enabled by default
-            let (codex, session_event, _ctrl_c) = match init_codex(
-                approval_policy,
-                sandbox_policy,
-                disable_response_storage,
-                model,
-            )
-            .await
-            {
-                Ok(vals) => vals,
-                Err(e) => {
-                    // TODO(mbolin): This error needs to be surfaced to the user.
-                    tracing::error!("failed to initialize codex: {e}");
-                    return;
-                }
-            };
+            let (codex, session_event, _ctrl_c) =
+                match init_codex(config, disable_response_storage).await {
+                    Ok(vals) => vals,
+                    Err(e) => {
+                        // TODO: surface this error to the user.
+                        tracing::error!("failed to initialize codex: {e}");
+                        return;
+                    }
+                };
 
             // Forward the captured `SessionInitialized` event that was consumed
             // inside `init_codex()` so it can be rendered in the UI.
