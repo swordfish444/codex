@@ -34,6 +34,8 @@ pub struct SessionMeta {
     pub id: String,
     pub pid: u32,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_preview: Option<String>,
 }
 
 /// Create the on-disk directory structure and write metadata + empty log files.
@@ -72,6 +74,42 @@ pub fn list_sessions() -> Result<Vec<SessionMeta>> {
         }
     }
     Ok(res)
+}
+
+/// List sessions sorted by newest first (created_at desc).
+pub fn list_sessions_sorted() -> Result<Vec<SessionMeta>> {
+    let mut v = list_sessions()?;
+    v.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(v)
+}
+
+/// Resolve a user-supplied selector to a concrete session id.
+///
+/// Rules:
+/// 1. Pure integer ⇒ index into newest-first list (0 = most recent)
+/// 2. Otherwise try exact id match, then unique prefix match.
+pub fn resolve_selector(sel: &str) -> Result<String> {
+    let list = list_sessions_sorted()?;
+
+    // numeric index
+    if let Ok(idx) = sel.parse::<usize>() {
+        return list.get(idx)
+            .map(|m| m.id.clone())
+            .context(format!("no session at index {idx}"));
+    }
+
+    // exact match
+    if let Some(m) = list.iter().find(|m| m.id == sel) {
+        return Ok(m.id.clone());
+    }
+
+    // unique prefix match
+    let mut matches: Vec<&SessionMeta> = list.iter().filter(|m| m.id.starts_with(sel)).collect();
+    match matches.len() {
+        1 => Ok(matches.remove(0).id.clone()),
+        0 => anyhow::bail!("no session matching '{sel}'"),
+        _ => anyhow::bail!("selector '{sel}' is ambiguous ({} matches)", matches.len()),
+    }
 }
 
 /// Send a polite termination request to the session’s process.
