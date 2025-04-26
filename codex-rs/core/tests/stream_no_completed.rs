@@ -3,7 +3,8 @@
 
 use std::time::Duration;
 
-use codex_core::protocol::AskForApproval;
+use codex_core::config::Config;
+use codex_core::config::ConfigOverrides;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
 use codex_core::protocol::SandboxPolicy;
@@ -70,13 +71,14 @@ async fn retries_on_early_close() {
 
     let codex = Codex::spawn(std::sync::Arc::new(tokio::sync::Notify::new())).unwrap();
 
+    let config = Config::load_with_overrides(ConfigOverrides::default());
     codex
         .submit(Submission {
             id: "init".into(),
             op: Op::ConfigureSession {
-                model: None,
+                model: config.model,
                 instructions: None,
-                approval_policy: AskForApproval::OnFailure,
+                approval_policy: config.approval_policy,
                 sandbox_policy: SandboxPolicy::NetworkAndFileWriteRestricted,
                 disable_response_storage: false,
             },
