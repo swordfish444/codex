@@ -80,12 +80,19 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum AgentKind {
-    /// Non-interactive execution agent.
-    Exec(ExecCreateCmd),
+    /// Non-interactive execution agent (`codex-exec`).
+    Exec(codex_exec::Cli),
 
-    /// Interactive Read-Eval-Print-Loop agent.
+    /// Line-oriented interactive agent (`codex-repl`).
     #[cfg(unix)]
-    Repl(ReplCreateCmd),
+    Repl(codex_repl::Cli),
+
+    // On non-Unix targets we still include a private variant so the enum shape
+    // remains identical - callers don’t need `cfg` on their match arms.
+    #[cfg(not(unix))]
+    #[allow(dead_code)]
+    #[clap(skip)]
+    Repl,
 }
 
 #[derive(Args)]
@@ -96,19 +103,6 @@ pub struct CreateCmd {
 
     #[command(subcommand)]
     agent: AgentKind,
-}
-
-#[derive(Args)]
-pub struct ExecCreateCmd {
-    #[clap(flatten)]
-    exec_cli: codex_exec::Cli,
-}
-
-#[cfg(unix)]
-#[derive(Args)]
-pub struct ReplCreateCmd {
-    #[clap(flatten)]
-    repl_cli: codex_repl::Cli,
 }
 
 impl CreateCmd {
@@ -140,11 +134,11 @@ impl CreateCmd {
             store::SessionKind, // kind
             Vec<String>,        // raw argv used to spawn the agent
         )> = (|| match self.agent {
-            AgentKind::Exec(cmd) => {
-                let args = build_exec_args(&cmd.exec_cli);
+            AgentKind::Exec(ref cli) => {
+                let args = build_exec_args(cli);
                 let child = spawn::spawn_exec(&paths, &args)?;
 
-                let preview = cmd.exec_cli.prompt.as_ref().map(|p| truncate_preview(p));
+                let preview = cli.prompt.as_ref().map(|p| truncate_preview(p));
 
                 Ok((
                     child.id().unwrap_or_default(),
@@ -154,11 +148,11 @@ impl CreateCmd {
                 ))
             }
             #[cfg(unix)]
-            AgentKind::Repl(cmd) => {
-                let args = build_repl_args(&cmd.repl_cli);
+            AgentKind::Repl(ref cli) => {
+                let args = build_repl_args(cli);
                 let child = spawn::spawn_repl(&paths, &args)?;
 
-                let preview = cmd.repl_cli.prompt.as_ref().map(|p| truncate_preview(p));
+                let preview = cli.prompt.as_ref().map(|p| truncate_preview(p));
 
                 Ok((
                     child.id().unwrap_or_default(),
@@ -167,6 +161,8 @@ impl CreateCmd {
                     args.clone(),
                 ))
             }
+            #[cfg(not(unix))]
+            AgentKind::Repl => unreachable!(),
         })();
 
         let (pid, prompt_preview, kind, argv) = match spawn_result {
