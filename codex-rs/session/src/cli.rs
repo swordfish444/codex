@@ -14,6 +14,7 @@ use crate::spawn;
 use crate::store;
 use anyhow::Context;
 use anyhow::Result;
+use chrono::SecondsFormat;
 use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
@@ -606,7 +607,7 @@ impl ListCmd {
                     pid: m.pid,
                     kind: format!("{:?}", m.kind).to_lowercase(),
                     status: status.into(),
-                    created: m.created_at.to_rfc3339(),
+                    created: m.created_at.to_rfc3339_opts(SecondsFormat::Secs, true),
                     prompt: m.prompt_preview.unwrap_or_default(),
                     out,
                     err,
