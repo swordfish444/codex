@@ -23,7 +23,24 @@ pub struct Paths {
 }
 
 /// Calculate canonical paths for the given session ID.
+/// Build a [`Paths`] struct for a given session identifier.
+///
+/// The function validates the input to avoid path-traversal attacks or
+/// accidental creation of nested directories.  Only the following ASCII
+/// characters are accepted:
+///
+/// * `A–Z`, `a–z`, `0–9`
+/// * underscore (`_`)
+/// * hyphen (`-`)
+///
+/// Any other byte – especially path separators such as `/` or `\` – results
+/// in an error.
+///
+/// Keeping the validation local to this helper ensures that *all* call-sites
+/// (CLI, library, tests) get the same guarantees.
 pub fn paths_for(id: &str) -> Result<Paths> {
+    validate_id(id)?;
+
     // No IO here. Only build the paths.
     let dir = base_dir()?.join(id);
     Ok(Paths {
@@ -33,6 +50,22 @@ pub fn paths_for(id: &str) -> Result<Paths> {
         stdin: dir.join("stdin.pipe"),
         meta: dir.join("meta.json"),
     })
+}
+
+/// Internal helper: ensure the supplied session id is well-formed.
+fn validate_id(id: &str) -> Result<()> {
+    if id.is_empty() {
+        anyhow::bail!("session id must not be empty");
+    }
+
+    for b in id.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-' => {}
+            _ => anyhow::bail!("invalid character in session id: {:?}", b as char),
+        }
+    }
+
+    Ok(())
 }
 
 fn base_dir() -> Result<PathBuf> {
