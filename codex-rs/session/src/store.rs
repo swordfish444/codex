@@ -26,7 +26,7 @@ pub fn paths_for(id: &str) -> Result<Paths> {
 fn base_dir() -> Result<PathBuf> {
     // ~/.codex/sessions
     let home = dirs::home_dir().context("could not resolve home directory")?;
-    Ok(home.join("codex").join("sessions"))
+    Ok(home.join(".codex").join("sessions"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
