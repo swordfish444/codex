@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 
-import { estimateCostUSD } from "../src/utils/estimate-cost.js";
+import {
+  estimateCostUSD,
+  estimateCostFromUsage,
+} from "../src/utils/estimate-cost.js";
 import { SessionCostTracker } from "../src/utils/session-cost.js";
 import type { ResponseItem } from "openai/resources/responses/responses.mjs";
 
@@ -35,6 +38,22 @@ describe("estimateCostUSD", () => {
       "gpt-3.5-turbo",
     );
     expect(cost2!).toBeGreaterThan(cost!);
+  });
+
+  test("cost calculation honours cached input token discount", () => {
+    const usage = {
+      input_tokens: 1000,
+      input_tokens_details: { cached_tokens: 600 },
+      output_tokens: 500,
+      total_tokens: 1500,
+    } as any; // simple literal structure for test
+
+    const cost = estimateCostFromUsage(usage, "gpt-4.1");
+
+    // Expected: (1000-600)*0.000002 + 600*0.0000005 + 500*0.000008
+    const expected = 400 * 0.000002 + 600 * 0.0000005 + 500 * 0.000008;
+    expect(cost).not.toBeNull();
+    expect(cost!).toBeCloseTo(expected, 8);
   });
 });
 
