@@ -5,8 +5,8 @@
 //! This library is thin: it only re-exports the clap CLI and helpers so
 //! the binary can stay small and unit tests can call into pure Rust APIs.
 
-pub mod cli;   // public so main.rs can access it.
-mod spawn;     // process creation helpers
+pub mod cli; // public so main.rs can access it.
+mod spawn; // process creation helpers
 pub mod store; // on-disk bookkeeping (public for tests)
 
 pub use cli::Cli;

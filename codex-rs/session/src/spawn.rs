@@ -6,9 +6,11 @@
 //! its standard input which later `codex-session attach` commands can open for writing.
 
 use crate::store::Paths;
-use anyhow::{Context, Result};
+use anyhow::Context;
+use anyhow::Result;
 use std::fs::OpenOptions;
-use tokio::process::{Child, Command};
+use tokio::process::Child;
+use tokio::process::Command;
 
 /// Spawn a `codex-exec` agent.
 pub fn spawn_exec(paths: &Paths, exec_args: &[String]) -> Result<Child> {
@@ -82,8 +84,8 @@ pub fn spawn_repl(paths: &Paths, repl_args: &[String]) -> Result<Child> {
     #[cfg(unix)]
     {
         use std::io;
-        use std::os::unix::fs::OpenOptionsExt;
         use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::OpenOptionsExt;
 
         // Ensure the FIFO exists (create with 600 permissions).
         if !paths.stdin.exists() {

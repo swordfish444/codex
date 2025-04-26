@@ -4,8 +4,10 @@
 //! * stdout.log / stderr.log       - redirect of agent io
 //! * meta.json                     - small struct saved by `write_meta`.
 
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use anyhow::Context;
+use anyhow::Result;
+use serde::Deserialize;
+use serde::Serialize;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -107,7 +109,8 @@ pub fn resolve_selector(sel: &str) -> Result<String> {
 
     // numeric index
     if let Ok(idx) = sel.parse::<usize>() {
-        return list.get(idx)
+        return list
+            .get(idx)
             .map(|m| m.id.clone())
             .context(format!("no session at index {idx}"));
     }

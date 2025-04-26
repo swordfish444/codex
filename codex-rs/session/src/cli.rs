@@ -8,9 +8,14 @@
 //! The `create` command therefore has mutually exclusive sub-commands so the appropriate
 //! arguments can be forwarded to the underlying agent binaries.
 
-use crate::{spawn, store};
-use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use crate::spawn;
+use crate::store;
+use anyhow::Context;
+use anyhow::Result;
+use clap::Args;
+use clap::Parser;
+use clap::Subcommand;
+use clap::ValueEnum;
 use serde::Serialize;
 
 /// A human-friendly representation of a byte count (e.g. 1.4M).
@@ -34,7 +39,10 @@ pub fn human_bytes(b: u64) -> String {
 // Top-level CLI definition
 
 #[derive(Parser)]
-#[command(name = "codex-session", about = "Manage background Codex agent sessions")]
+#[command(
+    name = "codex-session",
+    about = "Manage background Codex agent sessions"
+)]
 pub struct Cli {
     #[command(subcommand)]
     cmd: Commands,
@@ -115,21 +123,13 @@ impl CreateCmd {
             AgentKind::Exec(cmd) => {
                 let args = build_exec_args(&cmd.exec_cli);
                 let child = spawn::spawn_exec(&paths, &args)?;
-                let preview = cmd
-                    .exec_cli
-                    .prompt
-                    .as_ref()
-                    .map(|p| truncate_preview(p));
+                let preview = cmd.exec_cli.prompt.as_ref().map(|p| truncate_preview(p));
                 (child.id().unwrap_or_default(), preview)
             }
             AgentKind::Repl(cmd) => {
                 let args = build_repl_args(&cmd.repl_cli);
                 let child = spawn::spawn_repl(&paths, &args)?;
-                let preview = cmd
-                    .repl_cli
-                    .prompt
-                    .as_ref()
-                    .map(|p| truncate_preview(p));
+                let preview = cmd.repl_cli.prompt.as_ref().map(|p| truncate_preview(p));
                 (child.id().unwrap_or_default(), preview)
             }
         };
@@ -232,8 +232,12 @@ fn build_repl_args(cli: &codex_repl::Cli) -> Vec<String> {
     args.push(match cli.sandbox_policy {
         codex_core::SandboxModeCliArg::NetworkRestricted => "network-restricted".into(),
         codex_core::SandboxModeCliArg::FileWriteRestricted => "file-write-restricted".into(),
-        codex_core::SandboxModeCliArg::NetworkAndFileWriteRestricted => "network-and-file-write-restricted".into(),
-        codex_core::SandboxModeCliArg::DangerousNoRestrictions => "dangerous-no-restrictions".into(),
+        codex_core::SandboxModeCliArg::NetworkAndFileWriteRestricted => {
+            "network-and-file-write-restricted".into()
+        }
+        codex_core::SandboxModeCliArg::DangerousNoRestrictions => {
+            "dangerous-no-restrictions".into()
+        }
     });
 
     if cli.allow_no_git_exec {
@@ -277,8 +281,10 @@ pub struct AttachCmd {
 
 impl AttachCmd {
     pub async fn run(self) -> Result<()> {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-        use tokio::time::{sleep, Duration};
+        use tokio::io::AsyncBufReadExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio::time::sleep;
+        use tokio::time::Duration;
 
         let id = store::resolve_selector(&self.id)?;
         let paths = store::paths_for(&id)?;
@@ -366,7 +372,11 @@ impl LogsCmd {
     pub async fn run(self) -> Result<()> {
         let id = store::resolve_selector(&self.id)?;
         let paths = store::paths_for(&id)?;
-        let target = if self.stderr { &paths.stderr } else { &paths.stdout };
+        let target = if self.stderr {
+            &paths.stderr
+        } else {
+            &paths.stdout
+        };
 
         let file = tokio::fs::File::open(target).await?;
 
@@ -419,7 +429,8 @@ pub struct StatusRow {
 
 impl ListCmd {
     pub async fn run(self) -> Result<()> {
-        use sysinfo::{PidExt, SystemExt};
+        use sysinfo::PidExt;
+        use sysinfo::SystemExt;
 
         let metas = store::list_sessions_sorted()?;
 
@@ -477,7 +488,11 @@ pub fn print_table(rows: &[StatusRow]) -> Result<()> {
     let mut tw = TabWriter::new(Vec::new()).padding(2);
     writeln!(tw, "#\tID\tPID\tSTATUS\tOUT\tERR\tCREATED\tPROMPT")?;
     for r in rows {
-        writeln!(tw, "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", r.idx, r.id, r.pid, r.status, r.out, r.err, r.created, r.prompt)?;
+        writeln!(
+            tw,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            r.idx, r.id, r.pid, r.status, r.out, r.err, r.created, r.prompt
+        )?;
     }
     let out = String::from_utf8(tw.into_inner()?)?;
     print!("{out}");
