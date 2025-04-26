@@ -62,21 +62,21 @@ impl CreateCmd {
             .id
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-        // Persist basic metadata & directory skeleton *before* spawning the process.
-        let meta = store::SessionMeta {
-            id: id.clone(),
-            created_at: chrono::Utc::now(),
-        };
-
         let paths = store::paths_for(&id)?;
-        store::materialise(&paths, &meta)?;
+        store::prepare_dirs(&paths)?;
 
-        // Convert exec_cli back into a Vec<String> so we can forward them verbatim.
         let exec_args = build_exec_args(&self.exec_cli);
 
-        // Spawn the background agent and immediately detach – we never hold on to the
-        // Child handle.
-        let _child = spawn::spawn_agent(&paths, &exec_args)?;
+        // Spawn the background agent and immediately detach.
+        let child = spawn::spawn_agent(&paths, &exec_args)?;
+
+        // Record metadata (with PID) *after* successful spawn.
+        let meta = store::SessionMeta {
+            id: id.clone(),
+            pid: child.id().unwrap_or_default(),
+            created_at: chrono::Utc::now(),
+        };
+        store::write_meta(&paths, &meta)?;
         println!("{id}");
         Ok(())
     }
@@ -200,10 +200,34 @@ pub struct ListCmd;
 
 impl ListCmd {
     pub async fn run(self) -> Result<()> {
+        use comfy_table::{Cell, Table};
+        use sysinfo::{SystemExt, Pid, PidExt};
+
         let sessions = store::list_sessions()?;
+        let mut sys = sysinfo::System::new_all();
+        sys.refresh_processes();
+
+        let mut table = Table::new();
+        table.set_header(["ID", "PID", "STATUS", "CREATED"]);
+
         for meta in sessions {
-            println!("{}\t{}", meta.id, meta.created_at);
+            let status: &str = if meta.pid == 0 {
+                "unknown"
+            } else if sys.process(Pid::from_u32(meta.pid)).is_some() {
+                "running"
+            } else {
+                "exited"
+            };
+
+            table.add_row([
+                Cell::new(&meta.id),
+                Cell::new(meta.pid),
+                Cell::new(status),
+                Cell::new(meta.created_at.to_rfc3339()),
+            ]);
         }
+
+        println!("{table}");
         Ok(())
     }
 }

@@ -1,7 +1,6 @@
 //! Session bookkeeping – on-disk layout and simple helpers.
 
 use anyhow::{Context, Result};
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -25,32 +24,35 @@ pub fn paths_for(id: &str) -> Result<Paths> {
 }
 
 fn base_dir() -> Result<PathBuf> {
-    let dirs = ProjectDirs::from("dev", "codex", "codex-session")
-        .context("unable to resolve data directory")?;
-    Ok(dirs.data_dir().to_owned())
+    // ~/.codex/sessions
+    let home = dirs::home_dir().context("could not resolve home directory")?;
+    Ok(home.join("codex").join("sessions"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SessionMeta {
     pub id: String,
+    pub pid: u32,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Create the on-disk directory structure and write metadata + empty log files.
-pub fn materialise(paths: &Paths, meta: &SessionMeta) -> Result<()> {
+/// Create directory & empty log files. Does **not** write metadata; caller should write that
+/// once the child process has actually been spawned so we can record its PID.
+pub fn prepare_dirs(paths: &Paths) -> Result<()> {
     std::fs::create_dir_all(&paths.dir)?;
 
-    // Metadata (pretty-printed for manual inspection).
-    std::fs::write(&paths.meta, serde_json::to_vec_pretty(meta)?)?;
-
-    // Touch stdout/stderr so they exist even before the agent writes.
     for p in [&paths.stdout, &paths.stderr] {
         std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(p)?;
     }
+    Ok(())
+}
 
+pub fn write_meta(paths: &Paths, meta: &SessionMeta) -> Result<()> {
+    std::fs::write(&paths.meta, serde_json::to_vec_pretty(meta)?)?;
     Ok(())
 }
 
