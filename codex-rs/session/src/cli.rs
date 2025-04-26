@@ -80,19 +80,12 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum AgentKind {
-    /// Non-interactive execution agent (`codex-exec`).
-    Exec(codex_exec::Cli),
+    /// Non-interactive execution agent.
+    Exec(ExecCreateCmd),
 
-    /// Line-oriented interactive agent (`codex-repl`).
+    /// Interactive Read-Eval-Print-Loop agent.
     #[cfg(unix)]
-    Repl(codex_repl::Cli),
-
-    // On non-Unix targets we still include a private variant so the enum shape
-    // remains identical - callers don’t need `cfg` on their match arms.
-    #[cfg(not(unix))]
-    #[allow(dead_code)]
-    #[clap(skip)]
-    Repl,
+    Repl(ReplCreateCmd),
 }
 
 #[derive(Args)]
@@ -103,6 +96,19 @@ pub struct CreateCmd {
 
     #[command(subcommand)]
     agent: AgentKind,
+}
+
+#[derive(Args)]
+pub struct ExecCreateCmd {
+    #[clap(flatten)]
+    exec_cli: codex_exec::Cli,
+}
+
+#[cfg(unix)]
+#[derive(Args)]
+pub struct ReplCreateCmd {
+    #[clap(flatten)]
+    repl_cli: codex_repl::Cli,
 }
 
 impl CreateCmd {
@@ -134,11 +140,11 @@ impl CreateCmd {
             store::SessionKind, // kind
             Vec<String>,        // raw argv used to spawn the agent
         )> = (|| match self.agent {
-            AgentKind::Exec(ref cli) => {
-                let args = build_exec_args(cli);
+            AgentKind::Exec(cmd) => {
+                let args = build_exec_args(&cmd.exec_cli);
                 let child = spawn::spawn_exec(&paths, &args)?;
 
-                let preview = cli.prompt.as_ref().map(|p| truncate_preview(p));
+                let preview = cmd.exec_cli.prompt.as_ref().map(|p| truncate_preview(p));
 
                 Ok((
                     child.id().unwrap_or_default(),
@@ -148,11 +154,11 @@ impl CreateCmd {
                 ))
             }
             #[cfg(unix)]
-            AgentKind::Repl(ref cli) => {
-                let args = build_repl_args(cli);
+            AgentKind::Repl(cmd) => {
+                let args = build_repl_args(&cmd.repl_cli);
                 let child = spawn::spawn_repl(&paths, &args)?;
 
-                let preview = cli.prompt.as_ref().map(|p| truncate_preview(p));
+                let preview = cmd.repl_cli.prompt.as_ref().map(|p| truncate_preview(p));
 
                 Ok((
                     child.id().unwrap_or_default(),
@@ -161,8 +167,6 @@ impl CreateCmd {
                     args.clone(),
                 ))
             }
-            #[cfg(not(unix))]
-            AgentKind::Repl => unreachable!(),
         })();
 
         let (pid, prompt_preview, kind, argv) = match spawn_result {
@@ -185,19 +189,10 @@ impl CreateCmd {
     }
 }
 
-/// Sanitize a prompt snippet so it is safe to embed in `meta.json`.  Control
-/// characters and new-lines are removed; the resulting string is truncated to
-/// at most 40 visible code-points so extremely long prompts do not blow up the
-/// listing output.
 fn truncate_preview(p: &str) -> String {
-    // 1. Remove anything that is not printable (ASCII control chars, newlines
-    //    etc.).
-    let cleaned: String = p.chars().filter(|c| !c.is_control()).collect();
-
-    // 2. Truncate to 40 code-points.
-    let slice: String = cleaned.chars().take(40).collect();
-    if cleaned.chars().count() > 40 {
-        format!("{slice}…")
+    let slice: String = p.chars().take(40).collect();
+    if p.len() > 40 {
+        format!("{}...", slice)
     } else {
         slice
     }
@@ -380,7 +375,6 @@ impl AttachCmd {
                     }
                 }
 
-                // ------------------------------------------------------------------
                 // stdout updates
                 out_line = reader_out.next_line() => {
                     match out_line? {
@@ -389,7 +383,6 @@ impl AttachCmd {
                     }
                 }
 
-                // ------------------------------------------------------------------
                 // stderr updates (optional)
                 //
                 // To keep `tokio::select!` happy we always supply a branch -- when the
@@ -416,12 +409,7 @@ impl AttachCmd {
 
         Ok(())
     }
-
-    // (TUI attach removed)
 }
-
-// -----------------------------------------------------------------------------
-// delete
 
 #[derive(Args)]
 pub struct DeleteCmd {
@@ -436,9 +424,6 @@ impl DeleteCmd {
         Ok(())
     }
 }
-
-// -----------------------------------------------------------------------------
-// logs
 
 #[derive(Args)]
 pub struct LogsCmd {
@@ -470,9 +455,6 @@ impl LogsCmd {
         Ok(())
     }
 }
-
-// -----------------------------------------------------------------------------
-// list -- newest-first overview of all sessions
 
 #[derive(Args)]
 pub struct ListCmd {}
