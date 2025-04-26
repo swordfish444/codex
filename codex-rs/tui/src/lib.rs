@@ -4,6 +4,8 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use app::App;
+use codex_core::config::Config;
+use codex_core::config::ConfigOverrides;
 use codex_core::util::is_inside_git_repo;
 use log_layer::TuiLogLayer;
 use std::fs::OpenOptions;
@@ -113,26 +115,29 @@ fn run_ratatui_app(
     let mut terminal = tui::init()?;
     terminal.clear()?;
 
+    // Load configuration and support CLI overrides.
     let Cli {
         prompt,
         images,
-        approval_policy,
-        sandbox_policy: sandbox,
+        approval_policy: cli_approval,
+        sandbox_policy,
         model,
         disable_response_storage,
         ..
     } = cli;
-
-    let approval_policy = approval_policy.into();
-    let sandbox_policy = sandbox.into();
+    // Apply CLI overrides and load merged configuration
+    let overrides = ConfigOverrides {
+        model: model.clone(),
+        approval_policy: cli_approval.map(Into::into),
+        sandbox_policy: sandbox_policy.map(Into::into),
+    };
+    let config = Config::load_with_overrides(overrides);
 
     let mut app = App::new(
-        approval_policy,
-        sandbox_policy,
+        config,
         prompt,
         show_git_warning,
         images,
-        model,
         disable_response_storage,
     );
 

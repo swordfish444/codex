@@ -1,32 +1,60 @@
-use std::path::PathBuf;
-
+use crate::flags::OPENAI_DEFAULT_MODEL;
+use crate::protocol::AskForApproval;
+use crate::protocol::SandboxPolicy;
 use dirs::home_dir;
 use serde::Deserialize;
+use std::path::PathBuf;
 
-/// Embedded fallback instructions that mirror the TypeScript CLI’s default system prompt. These
-/// are compiled into the binary so a clean install behaves correctly even if the user has not
-/// created `~/.codex/instructions.md`.
+/// Embedded fallback instructions that mirror the TypeScript CLI’s default
+/// system prompt. These are compiled into the binary so a clean install behaves
+/// correctly even if the user has not created `~/.codex/instructions.md`.
 const EMBEDDED_INSTRUCTIONS: &str = include_str!("../prompt.md");
 
+/// Application configuration loaded from disk and merged with overrides.
 #[derive(Default, Deserialize, Debug, Clone)]
 pub struct Config {
-    pub model: Option<String>,
+    /// Optional override of model selection.
+    #[serde(default = "default_model")]
+    pub model: String,
+    /// Default approval policy for executing commands.
+    #[serde(default)]
+    pub approval_policy: AskForApproval,
+    #[serde(default)]
+    pub sandbox_policy: SandboxPolicy,
+    /// System instructions.
     pub instructions: Option<String>,
 }
 
+/// Optional overrides for user configuration (e.g., from CLI flags).
+#[derive(Default, Debug, Clone)]
+pub struct ConfigOverrides {
+    pub model: Option<String>,
+    pub approval_policy: Option<AskForApproval>,
+    pub sandbox_policy: Option<SandboxPolicy>,
+}
+
 impl Config {
-    /// Load ~/.codex/config.toml and ~/.codex/instructions.md (if present).
-    /// Returns `None` if neither file exists.
-    pub fn load() -> Option<Self> {
+    /// Load configuration, optionally applying overrides (CLI flags). Merges
+    /// ~/.codex/config.toml, ~/.codex/instructions.md, embedded defaults, and
+    /// any values provided in `overrides` (highest precedence).
+    pub fn load_with_overrides(overrides: ConfigOverrides) -> Self {
         let mut cfg: Config = Self::load_from_toml().unwrap_or_default();
 
-        // Highest precedence → user‑provided ~/.codex/instructions.md (if present)
-        // Fallback           → embedded default instructions baked into the binary
-
+        // Instructions: user-provided instructions.md > embedded default.
         cfg.instructions =
             Self::load_instructions().or_else(|| Some(EMBEDDED_INSTRUCTIONS.to_string()));
 
-        Some(cfg)
+        // Apply overrides.
+        if let Some(model) = overrides.model {
+            cfg.model = model;
+        }
+        if let Some(policy) = overrides.approval_policy {
+            cfg.approval_policy = policy;
+        }
+        if let Some(policy) = overrides.sandbox_policy {
+            cfg.sandbox_policy = policy;
+        }
+        cfg
     }
 
     fn load_from_toml() -> Option<Self> {
@@ -41,6 +69,10 @@ impl Config {
         p.push("instructions.md");
         std::fs::read_to_string(&p).ok()
     }
+}
+
+fn default_model() -> String {
+    OPENAI_DEFAULT_MODEL.to_string()
 }
 
 /// Returns the path to the Codex configuration directory, which is `~/.codex`.
