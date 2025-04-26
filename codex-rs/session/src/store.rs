@@ -82,20 +82,16 @@ fn base_dir() -> Result<PathBuf> {
 // in all call-sites.  The enum is re-exported so other modules (e.g. the newly
 // added `meta` module) can still rely on the single source of truth.
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionKind {
     /// Non-interactive batch session -- `codex-exec`.
+    #[default]
     Exec,
     /// Line-oriented interactive session -- `codex-repl`.
     Repl,
 }
 
-impl Default for SessionKind {
-    fn default() -> Self {
-        SessionKind::Exec
-    }
-}
 
 /// Create the on-disk directory structure and write metadata + empty log files.
 /// Create directory & empty log files. Does **not** write metadata; caller should write that

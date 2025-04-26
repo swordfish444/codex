@@ -67,7 +67,7 @@ pub fn spawn_exec(paths: &Paths, exec_args: &[String]) -> Result<Child> {
         }
 
         let child = cmd.spawn().context("failed to spawn codex-exec")?;
-        return Ok(child);
+        Ok(child)
     }
 
     #[cfg(windows)]

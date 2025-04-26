@@ -32,7 +32,7 @@ pub struct SessionMeta {
     pub kind: SessionKind,
 
     /// Raw command-line arguments that were used to spawn the agent
-    /// (`codex-exec …` or `codex-repl …`).
+    /// (`codex-exec ...` or `codex-repl ...`).
     pub argv: Vec<String>,
 
     /// Short preview of the user prompt (if any).
