@@ -1,12 +1,12 @@
 //! Lightweight on-disk session metadata.
 //!
 //! The metadata is persisted as `meta.json` inside each session directory so
-//! users – or other tooling – can inspect **how** a session was started even
+//! users -- or other tooling -- can inspect **how** a session was started even
 //! months later.  Instead of serialising the full, typed CLI structs (which
 //! would force every agent crate to depend on `serde`) we only keep the raw
 //! argument vector that was passed to the spawned process.  This keeps the
-//! public API surface minimal while still giving us reproducibility – a
-//! session can always be re-spawned with `codex <args…>`.
+//! public API surface minimal while still giving us reproducibility -- a
+//! session can always be re-spawned with `codex <args...>`.
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -70,4 +70,3 @@ impl SessionMeta {
         }
     }
 }
-

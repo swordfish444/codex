@@ -40,7 +40,7 @@ fn base_command(bin: &str, paths: &Paths) -> Result<Command> {
 }
 
 // -----------------------------------------------------------------------------
-// exec – non-interactive batch agent
+// exec -- non-interactive batch agent
 
 pub fn spawn_exec(paths: &Paths, exec_args: &[String]) -> Result<Child> {
     #[cfg(unix)]
@@ -51,7 +51,7 @@ pub fn spawn_exec(paths: &Paths, exec_args: &[String]) -> Result<Child> {
         cmd.args(exec_args);
 
         // Replace the `stdin` that `base_command` configured (null) with
-        // `/dev/null` opened for reading – keeps the previous behaviour while
+        // `/dev/null` opened for reading -- keeps the previous behaviour while
         // still leveraging the common helper.
         let stdin = OpenOptions::new().read(true).open("/dev/null")?;
         cmd.stdin(stdin);
@@ -87,7 +87,7 @@ pub fn spawn_exec(paths: &Paths, exec_args: &[String]) -> Result<Child> {
 }
 
 // -----------------------------------------------------------------------------
-// repl – interactive FIFO stdin
+// repl -- interactive FIFO stdin
 
 pub fn spawn_repl(paths: &Paths, repl_args: &[String]) -> Result<Child> {
     #[cfg(unix)]

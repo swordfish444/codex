@@ -33,11 +33,11 @@ pub struct Paths {
 /// accidental creation of nested directories.  Only the following ASCII
 /// characters are accepted:
 ///
-/// * `A–Z`, `a–z`, `0–9`
+/// * `A-Z`, `a-z`, `0-9`
 /// * underscore (`_`)
 /// * hyphen (`-`)
 ///
-/// Any other byte – especially path separators such as `/` or `\` – results
+/// Any other byte -- especially path separators such as `/` or `\\` -- results
 /// in an error.
 ///
 /// Keeping the validation local to this helper ensures that *all* call-sites
@@ -85,9 +85,9 @@ fn base_dir() -> Result<PathBuf> {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionKind {
-    /// Non-interactive batch session – `codex-exec`.
+    /// Non-interactive batch session -- `codex-exec`.
     Exec,
-    /// Line-oriented interactive session – `codex-repl`.
+    /// Line-oriented interactive session -- `codex-repl`.
     Repl,
 }
 
@@ -188,7 +188,7 @@ pub fn resolve_selector(sel: &str) -> Result<String> {
 /// 2. We wait for a short grace period so the process can exit cleanly.
 /// 3. If the process (identified by the original PID) is still alive we force-kill it
 ///    with `SIGKILL` (or the Win32 `TerminateProcess` API).
-/// 4. The function is **idempotent** – calling it again when the session is already
+/// 4. The function is **idempotent** -- calling it again when the session is already
 ///    terminated returns an error (`Err(AlreadyDead)`) so callers can decide whether
 ///    they still need to clean up the directory (`store::purge`).
 ///
@@ -200,7 +200,7 @@ pub async fn kill_session(id: &str) -> Result<()> {
     // Resolve paths and read metadata so we know the target PID.
     let paths = paths_for(id)?;
 
-    // Load meta.json – we need the PID written at spawn time.
+    // Load meta.json -- we need the PID written at spawn time.
     let bytes = std::fs::read(&paths.meta)
         .with_context(|| format!("could not read metadata for session '{id}'"))?;
     let meta: SessionMeta =
@@ -208,7 +208,7 @@ pub async fn kill_session(id: &str) -> Result<()> {
 
     let pid_u32 = meta.pid;
 
-    // Helper – cross-platform liveness probe based on the `sysinfo` crate.
+    // Helper -- cross-platform liveness probe based on the `sysinfo` crate.
     fn is_alive(pid: u32) -> bool {
         use sysinfo::PidExt;
         use sysinfo::SystemExt;
@@ -224,12 +224,12 @@ pub async fn kill_session(id: &str) -> Result<()> {
 
     if !still_running {
         anyhow::bail!(
-            "session process (PID {pid_u32}) is not running – directory cleanup still required"
+            "session process (PID {pid_u32}) is not running -- directory cleanup still required"
         );
     }
 
     //---------------------------------------------------------------------
-    // Step 1 – send graceful termination.
+    // Step 1 -- send graceful termination.
     //---------------------------------------------------------------------
 
     #[cfg(unix)]
@@ -265,7 +265,7 @@ pub async fn kill_session(id: &str) -> Result<()> {
     }
 
     //---------------------------------------------------------------------
-    // Step 2 – force kill if necessary.
+    // Step 2 -- force kill if necessary.
     //---------------------------------------------------------------------
 
     if still_running {

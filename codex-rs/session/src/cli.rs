@@ -2,8 +2,8 @@
 //!
 //! The session manager can spawn two different Codex agent flavors:
 //!
-//! * `codex-exec` – non-interactive batch agent (legacy behaviour)
-//! * `codex-repl` – interactive REPL that requires user input after launch
+//! * `codex-exec` -- non-interactive batch agent (legacy behaviour)
+//! * `codex-repl` -- interactive REPL that requires user input after launch
 //!
 //! The `create` command therefore has mutually exclusive sub-commands so the appropriate
 //! arguments can be forwarded to the underlying agent binaries.
@@ -17,7 +17,7 @@ use chrono::SecondsFormat;
 use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
-use clap::ValueEnum;
+use nanoid::nanoid;
 
 // -----------------------------------------------------------------------------
 // Platform-specific imports
@@ -185,7 +185,7 @@ impl CreateCmd {
         let (pid, prompt_preview, kind, argv) = match spawn_result {
             Ok(tuple) => tuple,
             Err(err) => {
-                // Best effort clean-up – ignore failures so we don't mask the
+                // Best effort clean-up -- ignore failures so we don't mask the
                 // original spawn error.
                 let _ = store::purge(&id);
                 return Err(err);
@@ -208,19 +208,17 @@ impl CreateCmd {
 fn truncate_preview(p: &str) -> String {
     let slice: String = p.chars().take(40).collect();
     if p.len() > 40 {
-        format!("{}…", slice)
+        format!("{}...", slice)
     } else {
         slice
     }
 }
 
 fn generate_session_id() -> Result<String> {
-    let mut generator = names::Generator::with_naming(names::Name::Numbered);
     loop {
-        let candidate = generator.next().unwrap();
-        let paths = store::paths_for(&candidate)?;
-        if !paths.dir.exists() {
-            return Ok(candidate);
+        let id = nanoid!(8);
+        if !store::paths_for(&id)?.dir.exists() {
+            return Ok(id);
         }
     }
 }
@@ -257,7 +255,7 @@ fn build_exec_args(cli: &codex_exec::Cli) -> Vec<String> {
 fn build_repl_args(cli: &codex_repl::Cli) -> Vec<String> {
     let mut args = Vec::new();
 
-    // Positional prompt argument (optional) – needs to be *last* so push it later.
+    // Positional prompt argument (optional) -- needs to be *last* so push it later.
 
     if let Some(model) = &cli.model {
         args.push("--model".into());
@@ -273,7 +271,7 @@ fn build_repl_args(cli: &codex_repl::Cli) -> Vec<String> {
         args.push("--no-ansi".into());
     }
 
-    // Verbose flag is additive (-v -vv …).
+    // Verbose flag is additive (-v -vv ...).
     for _ in 0..cli.verbose {
         args.push("-v".into());
     }
@@ -383,7 +381,7 @@ impl AttachCmd {
         let mut reader_out = tokio::io::BufReader::new(file_out).lines();
 
         // Conditionally open stderr if the user asked for it.  Keeping the
-        // reader in an `Option` allows us to reuse the same select! loop – the
+        // reader in an `Option` allows us to reuse the same select! loop -- the
         // helper future simply parks forever when stderr is disabled.
         let mut reader_err = if self.stderr {
             let file_err = tokio::fs::File::open(&paths.stderr).await?;
@@ -406,7 +404,7 @@ impl AttachCmd {
                             pipe.flush().await?;
                         }
                         None => {
-                            // Ctrl-D – end of interactive input
+                    // Ctrl-D -- end of interactive input
                             break;
                         }
                     }
@@ -424,7 +422,7 @@ impl AttachCmd {
                 // ------------------------------------------------------------------
                 // stderr updates (optional)
                 //
-                // To keep `tokio::select!` happy we always supply a branch – when the
+                // To keep `tokio::select!` happy we always supply a branch -- when the
                 // user did *not* request stderr we hand it a future that will never
                 // finish (pending forever).  This avoids `Option` juggling within the
                 // select! macro.
@@ -432,7 +430,7 @@ impl AttachCmd {
                     if let Some(reader) = &mut reader_err {
                         reader.next_line().await
                     } else {
-                        // Never resolves – equivalent to `futures::future::pending()`
+                        // Never resolves -- equivalent to `futures::future::pending()`
                         std::future::pending().await
                     }
                 } => {
@@ -504,7 +502,7 @@ impl LogsCmd {
 }
 
 // -----------------------------------------------------------------------------
-// list – newest-first overview of all sessions
+// list -- newest-first overview of all sessions
 
 #[derive(Args)]
 pub struct ListCmd {}
