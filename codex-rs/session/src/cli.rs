@@ -117,32 +117,57 @@ impl CreateCmd {
         };
 
         let paths = store::paths_for(&id)?;
+        // -----------------------------------------------------------------
+        // Prepare session directory *before* spawning the agent so stdout/
+        // stderr redirection works even when the child process itself fails
+        // immediately.
+        // -----------------------------------------------------------------
+
         store::prepare_dirs(&paths)?;
 
-        // Spawn underlying agent
-        let (pid, prompt_preview, kind): (u32, Option<String>, store::SessionKind) =
+        // -----------------------------------------------------------------
+        // Spawn underlying agent.
+        //
+        // IMPORTANT: If the spawn call fails we end up with an empty (or
+        // almost empty) directory inside ~/.codex/sessions/.  To avoid
+        // confusing stale entries we attempt to purge the directory before
+        // bubbling up the error to the caller.
+        // -----------------------------------------------------------------
+
+        let spawn_result: Result<(u32, Option<String>, store::SessionKind)> = (|| {
             match self.agent {
                 AgentKind::Exec(cmd) => {
                     let args = build_exec_args(&cmd.exec_cli);
                     let child = spawn::spawn_exec(&paths, &args)?;
                     let preview = cmd.exec_cli.prompt.as_ref().map(|p| truncate_preview(p));
-                    (
+                    Ok((
                         child.id().unwrap_or_default(),
                         preview,
                         store::SessionKind::Exec,
-                    )
+                    ))
                 }
                 AgentKind::Repl(cmd) => {
                     let args = build_repl_args(&cmd.repl_cli);
                     let child = spawn::spawn_repl(&paths, &args)?;
                     let preview = cmd.repl_cli.prompt.as_ref().map(|p| truncate_preview(p));
-                    (
+                    Ok((
                         child.id().unwrap_or_default(),
                         preview,
                         store::SessionKind::Repl,
-                    )
+                    ))
                 }
-            };
+            }
+        })();
+
+        let (pid, prompt_preview, kind) = match spawn_result {
+            Ok(tuple) => tuple,
+            Err(err) => {
+                // Best effort clean-up – ignore failures so we don't mask the
+                // original spawn error.
+                let _ = store::purge(&id);
+                return Err(err);
+            }
+        };
 
         // Persist metadata **after** the process has been spawned so we can record its PID.
         let meta = store::SessionMeta {
