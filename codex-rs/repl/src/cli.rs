@@ -85,12 +85,10 @@ impl Cli {
             args.push("--no-ansi".into());
         }
 
-        // Verbose flag is additive (-v -vv ...).
         for _ in 0..self.verbose {
             args.push("-v".into());
         }
 
-        // Approval + sandbox policies
         args.push("--ask-for-approval".into());
         args.push(
             self.approval_policy
@@ -127,7 +125,6 @@ impl Cli {
             args.push(path.to_string_lossy().into_owned());
         }
 
-        // Finally positional prompt argument.
         if let Some(prompt) = &self.prompt {
             args.push(prompt.clone());
         }

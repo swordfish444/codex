@@ -573,7 +573,6 @@ dependencies = [
  "codex-core",
  "owo-colors 4.2.0",
  "rand 0.9.1",
- "serde",
  "tokio",
  "tracing",
  "tracing-subscriber",
