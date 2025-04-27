@@ -17,31 +17,12 @@ use chrono::SecondsFormat;
 use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
-
-// Platform-specific imports
-
-#[cfg(unix)]
-use codex_repl as _;
 use petname::Generator;
 use petname::Petnames;
 use serde::Serialize;
 
-/// A human-friendly representation of a byte count (e.g. 1.4M).
-pub fn human_bytes(b: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
-    let f = b as f64;
-    if f >= GB {
-        format!("{:.1}G", f / GB)
-    } else if f >= MB {
-        format!("{:.1}M", f / MB)
-    } else if f >= KB {
-        format!("{:.1}K", f / KB)
-    } else {
-        format!("{}B", b)
-    }
-}
+#[cfg(unix)]
+use codex_repl as _;
 
 #[derive(Parser)]
 #[command(
@@ -397,6 +378,8 @@ impl ListCmd {
         let mut sys = sysinfo::System::new();
         sys.refresh_processes();
 
+        let bytes_formatter = humansize::make_format(humansize::DECIMAL);
+
         let rows: Vec<StatusRow> = metas
             .into_iter()
             .enumerate()
@@ -413,7 +396,7 @@ impl ListCmd {
                 let (out, err) = if let Some(p) = &paths {
                     let osz = std::fs::metadata(&p.stdout).map(|m| m.len()).unwrap_or(0);
                     let esz = std::fs::metadata(&p.stderr).map(|m| m.len()).unwrap_or(0);
-                    (human_bytes(osz), human_bytes(esz))
+                    (bytes_formatter(osz), bytes_formatter(esz))
                 } else {
                     ("-".into(), "-".into())
                 };
