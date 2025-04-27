@@ -2,8 +2,8 @@
 //!
 //! The session manager can spawn two different Codex agent flavors:
 //!
-//! * `codex-exec` -- non-interactive single turn agent
-//! * `codex-repl` -- basic stdin/out REPL that can request user input after launch
+//! * `codex-exec` -- non-interactive single-turn agent
+//! * `codex-repl` -- interactive multi-turn agent
 //!
 //! The `create` command therefore has mutually exclusive sub-commands so the appropriate
 //! arguments can be forwarded to the underlying agent binaries.
@@ -142,7 +142,7 @@ impl CreateCmd {
             Vec<String>,        // raw argv used to spawn the agent
         )> = (|| match self.agent {
             AgentKind::Exec(cmd) => {
-                let args = build_exec_args(&cmd.exec_cli);
+                let args = cmd.exec_cli.to_args();
                 let child = spawn::spawn_exec(&paths, &args)?;
 
                 let preview = cmd.exec_cli.prompt.as_ref().map(|p| truncate_preview(p));
@@ -156,7 +156,7 @@ impl CreateCmd {
             }
             #[cfg(unix)]
             AgentKind::Repl(cmd) => {
-                let args = build_repl_args(&cmd.repl_cli);
+                let args = cmd.repl_cli.to_args();
                 let child = spawn::spawn_repl(&paths, &args)?;
 
                 let preview = cmd.repl_cli.prompt.as_ref().map(|p| truncate_preview(p));
@@ -216,103 +216,6 @@ fn generate_session_id() -> Result<String> {
             return Ok(id);
         }
     }
-}
-
-fn build_exec_args(cli: &codex_exec::Cli) -> Vec<String> {
-    let mut args = Vec::new();
-
-    for img in &cli.images {
-        args.push("--image".into());
-        args.push(img.to_string_lossy().into_owned());
-    }
-
-    if let Some(model) = &cli.model {
-        args.push("--model".into());
-        args.push(model.clone());
-    }
-
-    if cli.skip_git_repo_check {
-        args.push("--skip-git-repo-check".into());
-    }
-
-    if cli.disable_response_storage {
-        args.push("--disable-response-storage".into());
-    }
-
-    if let Some(prompt) = &cli.prompt {
-        args.push(prompt.clone());
-    }
-
-    args
-}
-
-#[cfg(unix)]
-fn build_repl_args(cli: &codex_repl::Cli) -> Vec<String> {
-    let mut args = Vec::new();
-
-    if let Some(model) = &cli.model {
-        args.push("--model".into());
-        args.push(model.clone());
-    }
-
-    for img in &cli.images {
-        args.push("--image".into());
-        args.push(img.to_string_lossy().into_owned());
-    }
-
-    if cli.no_ansi {
-        args.push("--no-ansi".into());
-    }
-
-    // Verbose flag is additive (-v -vv ...).
-    for _ in 0..cli.verbose {
-        args.push("-v".into());
-    }
-
-    // Approval + sandbox policies
-    args.push("--ask-for-approval".into());
-    args.push(match cli.approval_policy {
-        codex_core::ApprovalModeCliArg::OnFailure => "on-failure".into(),
-        codex_core::ApprovalModeCliArg::UnlessAllowListed => "unless-allow-listed".into(),
-        codex_core::ApprovalModeCliArg::Never => "never".into(),
-    });
-
-    args.push("--sandbox".into());
-    args.push(match cli.sandbox_policy {
-        codex_core::SandboxModeCliArg::NetworkRestricted => "network-restricted".into(),
-        codex_core::SandboxModeCliArg::FileWriteRestricted => "file-write-restricted".into(),
-        codex_core::SandboxModeCliArg::NetworkAndFileWriteRestricted => {
-            "network-and-file-write-restricted".into()
-        }
-        codex_core::SandboxModeCliArg::DangerousNoRestrictions => {
-            "dangerous-no-restrictions".into()
-        }
-    });
-
-    if cli.allow_no_git_exec {
-        args.push("--allow-no-git-exec".into());
-    }
-
-    if cli.disable_response_storage {
-        args.push("--disable-response-storage".into());
-    }
-
-    if let Some(path) = &cli.record_submissions {
-        args.push("--record-submissions".into());
-        args.push(path.to_string_lossy().into_owned());
-    }
-
-    if let Some(path) = &cli.record_events {
-        args.push("--record-events".into());
-        args.push(path.to_string_lossy().into_owned());
-    }
-
-    // Finally positional prompt argument.
-    if let Some(prompt) = &cli.prompt {
-        args.push(prompt.clone());
-    }
-
-    args
 }
 
 #[derive(Args)]

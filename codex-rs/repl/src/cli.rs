@@ -1,5 +1,6 @@
 use clap::ArgAction;
 use clap::Parser;
+use clap::ValueEnum;
 use codex_core::ApprovalModeCliArg;
 use codex_core::SandboxModeCliArg;
 use std::path::PathBuf;
@@ -62,4 +63,74 @@ pub struct Cli {
     /// Record events into file as JSON
     #[arg(short = 'E', long)]
     pub record_events: Option<PathBuf>,
+}
+
+impl Cli {
+    /// This is effectively the opposite of Clap; we want the ability to take
+    /// a structured `Cli` object, and then pass it to a binary as argv[].
+    pub fn to_args(&self) -> Vec<String> {
+        let mut args = vec![];
+
+        if let Some(model) = &self.model {
+            args.push("--model".into());
+            args.push(model.clone());
+        }
+
+        for img in &self.images {
+            args.push("--image".into());
+            args.push(img.to_string_lossy().into_owned());
+        }
+
+        if self.no_ansi {
+            args.push("--no-ansi".into());
+        }
+
+        // Verbose flag is additive (-v -vv ...).
+        for _ in 0..self.verbose {
+            args.push("-v".into());
+        }
+
+        // Approval + sandbox policies
+        args.push("--ask-for-approval".into());
+        args.push(
+            self.approval_policy
+                .to_possible_value()
+                .expect("foo")
+                .get_name()
+                .to_string(),
+        );
+
+        args.push("--sandbox".into());
+        args.push(
+            self.sandbox_policy
+                .to_possible_value()
+                .expect("foo")
+                .get_name()
+                .to_string(),
+        );
+
+        if self.allow_no_git_exec {
+            args.push("--allow-no-git-exec".into());
+        }
+
+        if self.disable_response_storage {
+            args.push("--disable-response-storage".into());
+        }
+
+        if let Some(path) = &self.record_submissions {
+            args.push("--record-submissions".into());
+            args.push(path.to_string_lossy().into_owned());
+        }
+
+        if let Some(path) = &self.record_events {
+            args.push("--record-events".into());
+            args.push(path.to_string_lossy().into_owned());
+        }
+
+        // Finally positional prompt argument.
+        if let Some(prompt) = &self.prompt {
+            args.push(prompt.clone());
+        }
+        args
+    }
 }

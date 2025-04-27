@@ -25,3 +25,35 @@ pub struct Cli {
     /// Initial instructions for the agent.
     pub prompt: Option<String>,
 }
+
+impl Cli {
+    /// This is effectively the opposite of Clap; we want the ability to take
+    /// a structured `Cli` object, and then pass it to a binary as argv[].
+    pub fn to_args(&self) -> Vec<String> {
+        let mut args = Vec::new();
+
+        for img in &self.images {
+            args.push("--image".into());
+            args.push(img.to_string_lossy().into_owned());
+        }
+
+        if let Some(model) = &self.model {
+            args.push("--model".into());
+            args.push(model.clone());
+        }
+
+        if self.skip_git_repo_check {
+            args.push("--skip-git-repo-check".into());
+        }
+
+        if self.disable_response_storage {
+            args.push("--disable-response-storage".into());
+        }
+
+        if let Some(prompt) = &self.prompt {
+            args.push(prompt.clone());
+        }
+
+        args
+    }
+}
