@@ -150,6 +150,15 @@ export default function TerminalChatInput({
       // even though the real TTY environment works fine.  Mirroring the
       // behaviour for the raw data path keeps production logic untouched
       // while ensuring the unit tests observe the same outcome.
+      // Ctrl+G (0x07) – clear only attached images, keep draft text intact.
+      if (str === "\x07" && attachedImages.length > 0) {
+        setAttachedImages([]);
+        return; // prevent further handling
+      }
+
+      // Ctrl+U (0x15) – traditional “clear line”. We allow Ink's TextInput
+      // default behaviour to wipe the draft, but we ALSO clear attachments so
+      // the two stay in sync.
       if (str === "\x15" && attachedImages.length > 0) {
         setAttachedImages([]);
       }
@@ -198,7 +207,10 @@ export default function TerminalChatInput({
       }
 
       // Slash command navigation: up/down to select, Tab to cycle, Enter to run.
-      if (!confirmationPrompt && !loading && input.trim().startsWith("/")) {
+      const trimmedSlash = input.trim();
+      const isSlashCmd = /^[\/][a-zA-Z]+$/.test(trimmedSlash);
+
+      if (!confirmationPrompt && !loading && isSlashCmd) {
         const prefix = input.trim();
         const matches = SLASH_COMMANDS.filter((cmd: SlashCommand) =>
           cmd.command.startsWith(prefix),
@@ -739,7 +751,7 @@ export default function TerminalChatInput({
     }
     return (
       <Box flexDirection="column" paddingX={1} marginBottom={1}>
-        <Text color="gray">attached images (ctrl+u to clear):</Text>
+        <Text color="gray">attached images (ctrl+g to clear):</Text>
         {attachedImages.map((p, i) => (
           <Text key={i} color="cyan">{`❯ ${path.basename(p)}`}</Text>
         ))}
@@ -769,7 +781,8 @@ export default function TerminalChatInput({
               showCursor
               value={input}
               onChange={(rawValue) => {
-                let value = rawValue; // will be replaced after extraction
+                // Strip any raw control-G char so it never shows up.
+                let value = rawValue.replace(/\x07/g, "");
 
                 // --------------------------------------------------------
                 // Detect freshly-dropped image paths _while the user is
@@ -778,7 +791,14 @@ export default function TerminalChatInput({
 
                 const { paths: newlyDropped, text: cleaned } = extractImagePaths(rawValue);
 
-                value = cleaned; // do not trim spaces – preserve exact typing
+                value = cleaned;
+
+                // If the extraction removed everything (e.g., user only pasted
+                // a file path followed by a space) we don’t want to leave a
+                // dangling "/ " or other whitespace artefacts in the draft.
+                if (value.trim().length === 0) {
+                  value = "";
+                }
 
                 if (newlyDropped.length > 0) {
                   setAttachedImages((prev) => {
@@ -816,7 +836,12 @@ export default function TerminalChatInput({
         )}
       </Box>
       {/* Slash command autocomplete suggestions */}
-      {input.trim().startsWith("/") && (
+      {(() => {
+        const trimmed = input.trim();
+        const showSlash =
+          trimmed.startsWith("/") && /^[\/][a-zA-Z]+$/.test(trimmed);
+        return showSlash;
+      })() && (
         <Box flexDirection="column" paddingX={2} marginBottom={1}>
           {SLASH_COMMANDS.filter((cmd: SlashCommand) =>
             cmd.command.startsWith(input.trim()),

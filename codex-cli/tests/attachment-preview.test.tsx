@@ -80,7 +80,7 @@ describe("Chat input attachment preview", () => {
     const frame1 = lastFrameStripped();
     expect(frame1.match(/foo\.png/g)?.length ?? 0).toBe(1);
 
-    await type(stdin, "\x15", flush); // Ctrl+U
+    await type(stdin, "\x07", flush); // Ctrl+G (clear images only)
 
     expect(lastFrameStripped()).not.toContain("foo.png");
 

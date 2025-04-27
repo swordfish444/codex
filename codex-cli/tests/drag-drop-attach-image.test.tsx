@@ -13,7 +13,8 @@ import { renderTui } from "./ui-test-helpers.js";
 // Mocks – keep in sync with other TerminalChatInput UI tests
 // ---------------------------------------------------------------------------
 
-const createInputItemMock = vi.fn(async (_text: string, _imgs: Array<string>) => ({}));
+// mock without type annotations to avoid Vitest transform TS errors in JS test
+const createInputItemMock = vi.fn(async () => ({}));
 
 vi.mock("../src/utils/input-utils.js", () => ({
   createInputItem: createInputItemMock,
@@ -100,8 +101,34 @@ describe("Drag-and-drop image attachment", () => {
 
     // createInputItem should have been called with the dropped image path
     expect(createInputItemMock).toHaveBeenCalled();
-    const lastCall = createInputItemMock.mock.calls.at(-1);
+    const calls = createInputItemMock.mock.calls;
+    const lastCall = calls[calls.length - 1];
     expect(lastCall?.[1]).toEqual(["dropped.png"]);
+
+    cleanup();
+    process.chdir(orig);
+  });
+
+  it("does NOT show slash-command overlay for absolute paths", async () => {
+    const orig = process.cwd();
+    process.chdir(TMP);
+
+    const { stdin, flush, lastFrameStripped, cleanup } = renderTui(
+      React.createElement(TerminalChatInput, props()),
+    );
+
+    await flush();
+
+    // absolute path starting with '/'
+    const absPath = path.join(TMP, "dropped.png");
+    await type(stdin, `${absPath} `, flush);
+    await flush();
+
+    const frame = lastFrameStripped();
+
+    // Should contain attachment preview but NOT typical slash-command suggestion like "/help"
+    expect(frame).toContain("dropped.png");
+    expect(frame).not.toContain("/help");
 
     cleanup();
     process.chdir(orig);

@@ -70,5 +70,11 @@ export function extractImagePaths(input: string): ExtractResult {
     return "";
   });
 
+  // Remove any leftover leading slash that was immediately followed by the
+  // matched path (e.g. "/Users/foo.png → '/ '" after replacement). We only
+  // strip it when it's followed by whitespace or end-of-string so normal
+  // typing like "/help" is untouched.
+  text = text.replace(/(^|\s)\/(?=\s|$)/g, "$1");
+
   return { paths, text };
 }
