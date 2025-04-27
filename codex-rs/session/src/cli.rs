@@ -17,12 +17,13 @@ use chrono::SecondsFormat;
 use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
-use nanoid::nanoid;
 
 // Platform-specific imports
 
 #[cfg(unix)]
 use codex_repl as _;
+use petname::Generator;
+use petname::Petnames;
 use serde::Serialize;
 
 /// A human-friendly representation of a byte count (e.g. 1.4M).
@@ -198,9 +199,17 @@ fn truncate_preview(p: &str) -> String {
     }
 }
 
+/// Generate a new unique session identifier.
+///
+/// We use the `petname` crate to create short, memorable names consisting of
+/// two random words separated by a dash (e.g. "autumn-panda").  In the rare
+/// event of a collision with an existing session directory we retry until we
+/// find an unused ID.
 fn generate_session_id() -> Result<String> {
+    let mut shortnames = Petnames::default();
+    shortnames.retain(|s| s.len() <= 5);
     loop {
-        let id = nanoid!(8);
+        let id = shortnames.generate_one(2, "-").context("failed to generate session ID")?;
         if !store::paths_for(&id)?.dir.exists() {
             return Ok(id);
         }

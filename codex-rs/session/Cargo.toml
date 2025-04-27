@@ -33,7 +33,8 @@ sysinfo = "0.29"
 tabwriter = "1.3"
 names = { version = "0.14", default-features = false }
 nix = { version = "0.27", default-features = false, features = ["process", "signal", "term", "fs"] }
-nanoid = "0.4.0"
+petname = "2.0.2"
+rand = "0.9.1"
 
 # Re-use the codex-exec library for its CLI definition
 codex_exec = { package = "codex-exec", path = "../exec" }
