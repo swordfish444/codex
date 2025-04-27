@@ -23,10 +23,3 @@ pub fn ignore_sighup() -> nix::Result<()> {
     // SAFETY: Installing the built-in `SIG_IGN` handler is always safe.
     unsafe { nix_signal(Signal::SIGHUP, SigHandler::SigIgn) }.map(|_| ())
 }
-
-#[cfg(not(unix))]
-#[allow(clippy::unused_io_amount)]
-pub fn ignore_sighup() -> std::io::Result<()> {
-    // No-op on non-Unix platforms.
-    Ok(())
-}
