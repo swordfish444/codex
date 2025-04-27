@@ -8,8 +8,8 @@
 pub mod build;
 pub mod cli;
 pub mod meta;
-mod spawn;
 mod sig;
+mod spawn;
 pub mod store;
 
 pub use cli::Cli;

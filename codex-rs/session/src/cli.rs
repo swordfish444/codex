@@ -381,8 +381,8 @@ impl GetCmd {
         // We *could* just write the file contents as-is but parsing + re-serialising guarantees
         // the output is valid and nicely formatted even when the on-disk representation ever
         // switches away from pretty-printed JSON.
-        let meta: SessionMeta = serde_json::from_slice(&bytes)
-            .context("failed to deserialize session metadata")?;
+        let meta: SessionMeta =
+            serde_json::from_slice(&bytes).context("failed to deserialize session metadata")?;
 
         let pretty = serde_json::to_string_pretty(&meta)?;
         println!("{pretty}");

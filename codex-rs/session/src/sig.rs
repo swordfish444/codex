@@ -4,7 +4,11 @@
 //! in particular `spawn.rs` — entirely `unsafe`-free.
 
 #[cfg(unix)]
-use nix::sys::signal::{signal as nix_signal, SigHandler, Signal};
+use nix::sys::signal::signal as nix_signal;
+#[cfg(unix)]
+use nix::sys::signal::SigHandler;
+#[cfg(unix)]
+use nix::sys::signal::Signal;
 
 /// Safely ignore `SIGHUP` for the current process.
 ///
@@ -26,4 +30,3 @@ pub fn ignore_sighup() -> std::io::Result<()> {
     // No-op on non-Unix platforms.
     Ok(())
 }
-

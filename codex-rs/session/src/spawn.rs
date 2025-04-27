@@ -7,21 +7,14 @@ use std::fs::OpenOptions;
 use tokio::process::Child;
 use tokio::process::Command;
 
-// -------------------------------------------------------------------------
-// Additional (Unix-only) imports to replace the former unsafe `libc` calls.
-// These are guarded by `cfg(unix)` so Windows builds are completely unaffected.
-// -------------------------------------------------------------------------
 #[cfg(unix)]
-use command_group::AsyncCommandGroup; // provides `group_spawn` for tokio::process::Command
-
+use command_group::AsyncCommandGroup;
 #[cfg(unix)]
-use nix::{
-    errno::Errno,
-    sys::{
-        stat::Mode,
-    },
-    unistd::mkfifo,
-};
+use nix::errno::Errno;
+#[cfg(unix)]
+use nix::sys::stat::Mode;
+#[cfg(unix)]
+use nix::unistd::mkfifo;
 
 /// Open (and create if necessary) the log files that stdout / stderr of the
 /// spawned agent will be redirected to.
@@ -55,34 +48,20 @@ fn base_command(bin: &str, paths: &Paths) -> Result<Command> {
 pub fn spawn_exec(paths: &Paths, exec_args: &[String]) -> Result<Child> {
     #[cfg(unix)]
     {
-        // -----------------------------------------------------------------
-        // UNIX IMPLEMENTATION (now 100 % safe)
-        // -----------------------------------------------------------------
-
         // Build the base command and add the user-supplied arguments.
         let mut cmd = base_command("codex-exec", paths)?;
         cmd.args(exec_args);
 
-        // Replace the `stdin` that `base_command` configured (null) with
-        // `/dev/null` opened for reading – keeps the previous behaviour while
-        // still leveraging the common helper.
+        // exec is non-interactive, use /dev/null for stdin.
         let stdin = OpenOptions::new().read(true).open("/dev/null")?;
         cmd.stdin(stdin);
 
-        // Spawn the child as a *process group* / new session leader.
-        // `group_spawn()` internally performs the traditional
-        //   1. `fork()`
-        //   2. `setsid()`
-        //   3. `execvp()`
-        // sequence that we previously had to code manually via an unsafe
-        // `pre_exec` closure.
+        // Spawn the child as a process group / new session leader.
         let child = cmd
-            .group_spawn() // <- safe wrapper from the `command-group` crate
+            .group_spawn()
             .context("failed to spawn codex-exec")?
-            .into_inner(); // convert AsyncGroupChild -> tokio::process::Child
+            .into_inner();
 
-        // Ignore SIGHUP in the parent, mirroring the behaviour of the previous
-        // unsafe `libc::signal` call.
         crate::sig::ignore_sighup()?;
 
         Ok(child)
@@ -107,10 +86,6 @@ pub fn spawn_exec(paths: &Paths, exec_args: &[String]) -> Result<Child> {
 pub fn spawn_repl(paths: &Paths, repl_args: &[String]) -> Result<Child> {
     #[cfg(unix)]
     {
-        // -----------------------------------------------------------------
-        // UNIX IMPLEMENTATION (now 100 % safe)
-        // -----------------------------------------------------------------
-
         // Ensure a FIFO exists at `paths.stdin` with permissions rw-------
         if !paths.stdin.exists() {
             if let Err(e) = mkfifo(&paths.stdin, Mode::from_bits_truncate(0o600)) {
@@ -139,7 +114,6 @@ pub fn spawn_repl(paths: &Paths, repl_args: &[String]) -> Result<Child> {
             .context("failed to spawn codex-repl")?
             .into_inner();
 
-        // Ignore SIGHUP as before.
         crate::sig::ignore_sighup()?;
 
         Ok(child)
