@@ -6,10 +6,10 @@
 //! the binary can stay small and unit tests can call into pure Rust APIs.
 
 pub mod build;
-pub mod cli; // public so main.rs can access it.
-pub mod meta; // richer on-disk metadata envelope
-mod spawn; // process creation helpers
-pub mod store; // on-disk bookkeeping (public for tests) // build-time information helpers
+pub mod cli;
+pub mod meta;
+mod spawn;
+pub mod store;
 
 pub use cli::Cli;
 

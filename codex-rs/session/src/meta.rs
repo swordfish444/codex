@@ -17,7 +17,7 @@ use crate::store::SessionKind;
 
 /// JSON envelope version.  Bump when the structure changes in a
 /// backwards-incompatible way.
-pub const CURRENT_VERSION: u8 = 2;
+pub const CURRENT_VERSION: u8 = 1;
 
 /// Persisted session metadata.
 #[derive(Debug, Serialize, Deserialize)]
