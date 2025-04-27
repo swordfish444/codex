@@ -42,6 +42,7 @@ impl Cli {
             Commands::Delete(x) => x.run().await,
             Commands::Logs(x) => x.run().await,
             Commands::List(x) => x.run().await,
+            Commands::Get(x) => x.run().await,
         }
     }
 }
@@ -58,6 +59,9 @@ enum Commands {
     Logs(LogsCmd),
     /// List all known sessions.
     List(ListCmd),
+
+    /// Print the raw metadata JSON for a session.
+    Get(GetCmd),
 }
 
 #[derive(Subcommand)]
@@ -353,6 +357,39 @@ impl LogsCmd {
 
 #[derive(Args)]
 pub struct ListCmd {}
+
+// -----------------------------------------------------------------------------
+// get – print metadata
+// -----------------------------------------------------------------------------
+
+#[derive(Args)]
+pub struct GetCmd {
+    /// Session selector (index, id or prefix) to print metadata for.
+    id: String,
+}
+
+impl GetCmd {
+    pub async fn run(self) -> Result<()> {
+        // Re-use the same selector resolution that `attach`, `delete`, … use so users can refer
+        // to sessions by index or prefix.
+        let id = store::resolve_selector(&self.id)?;
+        let paths = store::paths_for(&id)?;
+
+        let bytes = std::fs::read(&paths.meta)
+            .with_context(|| format!("failed to read metadata for session '{id}'"))?;
+
+        // We *could* just write the file contents as-is but parsing + re-serialising guarantees
+        // the output is valid and nicely formatted even when the on-disk representation ever
+        // switches away from pretty-printed JSON.
+        let meta: SessionMeta = serde_json::from_slice(&bytes)
+            .context("failed to deserialize session metadata")?;
+
+        let pretty = serde_json::to_string_pretty(&meta)?;
+        println!("{pretty}");
+
+        Ok(())
+    }
+}
 
 #[derive(Serialize)]
 #[allow(missing_docs)]
