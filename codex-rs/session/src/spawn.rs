@@ -45,6 +45,7 @@ fn base_command(bin: &str, paths: &Paths) -> Result<Command> {
     Ok(cmd)
 }
 
+#[allow(dead_code)]
 pub fn spawn_exec(paths: &Paths, exec_args: &[String]) -> Result<Child> {
     #[cfg(unix)]
     {
@@ -69,8 +70,6 @@ pub fn spawn_exec(paths: &Paths, exec_args: &[String]) -> Result<Child> {
 
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-
         const DETACHED_PROCESS: u32 = 0x00000008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
 
@@ -83,44 +82,37 @@ pub fn spawn_exec(paths: &Paths, exec_args: &[String]) -> Result<Child> {
     }
 }
 
+#[cfg(unix)]
 pub fn spawn_repl(paths: &Paths, repl_args: &[String]) -> Result<Child> {
-    #[cfg(unix)]
-    {
-        // Ensure a FIFO exists at `paths.stdin` with permissions rw-------
-        if !paths.stdin.exists() {
-            if let Err(e) = mkfifo(&paths.stdin, Mode::from_bits_truncate(0o600)) {
-                // If the FIFO already exists we silently accept, just as the
-                // previous implementation did.
-                if e != Errno::EEXIST {
-                    return Err(std::io::Error::from(e)).context("mkfifo failed");
-                }
+    // Ensure a FIFO exists at `paths.stdin` with permissions rw-------
+    if !paths.stdin.exists() {
+        if let Err(e) = mkfifo(&paths.stdin, Mode::from_bits_truncate(0o600)) {
+            // If the FIFO already exists we silently accept, just as the
+            // previous implementation did.
+            if e != Errno::EEXIST {
+                return Err(std::io::Error::from(e)).context("mkfifo failed");
             }
         }
-
-        // Open the FIFO for *both* reading and writing so we don't deadlock
-        // when there is no writer yet (mimics the previous behaviour).
-        let stdin = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&paths.stdin)?;
-
-        // Build the command.
-        let mut cmd = base_command("codex-repl", paths)?;
-        cmd.args(repl_args).stdin(stdin);
-
-        // Detached spawn.
-        let child = cmd
-            .group_spawn()
-            .context("failed to spawn codex-repl")?
-            .into_inner();
-
-        crate::sig::ignore_sighup()?;
-
-        Ok(child)
     }
 
-    #[cfg(windows)]
-    {
-        anyhow::bail!("codex-repl sessions are not supported on Windows yet");
-    }
+    // Open the FIFO for *both* reading and writing so we don't deadlock
+    // when there is no writer yet (mimics the previous behaviour).
+    let stdin = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&paths.stdin)?;
+
+    // Build the command.
+    let mut cmd = base_command("codex-repl", paths)?;
+    cmd.args(repl_args).stdin(stdin);
+
+    // Detached spawn.
+    let child = cmd
+        .group_spawn()
+        .context("failed to spawn codex-repl")?
+        .into_inner();
+
+    crate::sig::ignore_sighup()?;
+
+    Ok(child)
 }
