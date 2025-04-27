@@ -209,7 +209,9 @@ fn generate_session_id() -> Result<String> {
     let mut shortnames = Petnames::default();
     shortnames.retain(|s| s.len() <= 5);
     loop {
-        let id = shortnames.generate_one(2, "-").context("failed to generate session ID")?;
+        let id = shortnames
+            .generate_one(2, "-")
+            .context("failed to generate session ID")?;
         if !store::paths_for(&id)?.dir.exists() {
             return Ok(id);
         }
