@@ -1,4 +1,8 @@
 mod cli;
+mod console_writer;
+mod event_processor;
+
+use std::io::IsTerminal;
 use std::sync::Arc;
 
 pub use cli::Cli;
@@ -8,19 +12,42 @@ use codex_core::config::ConfigOverrides;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
-use codex_core::protocol::FileChange;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
 use codex_core::util::is_inside_git_repo;
+use console_writer::AnsiConsoleWriter;
+use console_writer::ConsoleWriter;
+use console_writer::PlainConsoleWriter;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 pub async fn run_main(cli: Cli) -> anyhow::Result<()> {
+    let Cli {
+        images,
+        model,
+        sandbox_policy,
+        skip_git_repo_check,
+        disable_response_storage,
+        color,
+        prompt,
+    } = cli;
+
+    if !skip_git_repo_check && !is_inside_git_repo() {
+        eprintln!("Not inside a Git repo and --skip-git-repo-check was not specified.");
+        std::process::exit(1);
+    }
+
+    let stdout = std::io::stdout();
+    let allow_ansi = match color {
+        cli::Color::Always => true,
+        cli::Color::Never => false,
+        cli::Color::Auto => stdout.is_terminal(),
+    };
+
     // TODO(mbolin): Take a more thoughtful approach to logging.
     let default_level = "error";
-    let allow_ansi = true;
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
@@ -31,27 +58,15 @@ pub async fn run_main(cli: Cli) -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .try_init();
 
-    let Cli {
-        images,
-        model,
-        sandbox_policy,
-        skip_git_repo_check,
-        disable_response_storage,
-        prompt,
-        ..
-    } = cli;
-
-    if !skip_git_repo_check && !is_inside_git_repo() {
-        eprintln!("Not inside a Git repo and --skip-git-repo-check was not specified.");
-        std::process::exit(1);
-    } else if images.is_empty() && prompt.is_none() {
-        eprintln!("No images or prompt specified.");
-        std::process::exit(1);
-    }
+    let writer: Box<dyn ConsoleWriter> = if allow_ansi {
+        Box::new(AnsiConsoleWriter::new(stdout))
+    } else {
+        Box::new(PlainConsoleWriter::new(stdout))
+    };
 
     // Load configuration and determine approval policy
     let overrides = ConfigOverrides {
-        model: model.clone(),
+        model,
         // This CLI is intended to be headless and has no affordances for asking
         // the user for approval.
         approval_policy: Some(AskForApproval::Never),
@@ -85,7 +100,6 @@ pub async fn run_main(cli: Cli) -> anyhow::Result<()> {
                     res = codex.next_event() => match res {
                         Ok(event) => {
                             debug!("Received event: {event:?}");
-                            process_event(&event);
                             if let Err(e) = tx.send(event) {
                                 error!("Error sending event: {e:?}");
                                 break;
@@ -116,101 +130,18 @@ pub async fn run_main(cli: Cli) -> anyhow::Result<()> {
         }
     }
 
-    if let Some(prompt) = prompt {
-        // Send the prompt.
-        let items: Vec<InputItem> = vec![InputItem::Text { text: prompt }];
-        let initial_prompt_task_id = codex.submit(Op::UserInput { items }).await?;
-        info!("Sent prompt with event ID: {initial_prompt_task_id}");
-        while let Some(event) = rx.recv().await {
-            if event.id == initial_prompt_task_id && matches!(event.msg, EventMsg::TaskComplete) {
-                break;
-            }
+    // Send the prompt.
+    let items: Vec<InputItem> = vec![InputItem::Text { text: prompt }];
+    let initial_prompt_task_id = codex.submit(Op::UserInput { items }).await?;
+    info!("Sent prompt with event ID: {initial_prompt_task_id}");
+
+    let mut event_processor = event_processor::EventProcessor::new(writer);
+    while let Some(event) = rx.recv().await {
+        event_processor.process_event(&event);
+        if event.id == initial_prompt_task_id && matches!(event.msg, EventMsg::TaskComplete) {
+            break;
         }
     }
 
     Ok(())
-}
-
-fn process_event(event: &Event) {
-    let Event { id, msg } = event;
-    match msg {
-        EventMsg::Error { message } => {
-            println!("Error: {message}");
-        }
-        EventMsg::BackgroundEvent { .. } => {
-            // Ignore these for now.
-        }
-        EventMsg::TaskStarted => {
-            println!("Task started: {id}");
-        }
-        EventMsg::TaskComplete => {
-            println!("Task complete: {id}");
-        }
-        EventMsg::AgentMessage { message } => {
-            println!("Agent message: {message}");
-        }
-        EventMsg::ExecCommandBegin {
-            call_id,
-            command,
-            cwd,
-        } => {
-            println!("exec('{call_id}'): {:?} in {cwd}", command);
-        }
-        EventMsg::ExecCommandEnd {
-            call_id,
-            stdout,
-            stderr,
-            exit_code,
-        } => {
-            let output = if *exit_code == 0 { stdout } else { stderr };
-            let truncated_output = output.lines().take(5).collect::<Vec<_>>().join("\n");
-            println!("exec('{call_id}') exited {exit_code}:\n{truncated_output}");
-        }
-        EventMsg::PatchApplyBegin {
-            call_id,
-            auto_approved,
-            changes,
-        } => {
-            let changes = changes
-                .iter()
-                .map(|(path, change)| {
-                    format!("{} {}", format_file_change(change), path.to_string_lossy())
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            println!("apply_patch('{call_id}') auto_approved={auto_approved}:\n{changes}");
-        }
-        EventMsg::PatchApplyEnd {
-            call_id,
-            stdout,
-            stderr,
-            success,
-        } => {
-            let (exit_code, output) = if *success { (0, stdout) } else { (1, stderr) };
-            let truncated_output = output.lines().take(5).collect::<Vec<_>>().join("\n");
-            println!("apply_patch('{call_id}') exited {exit_code}:\n{truncated_output}");
-        }
-        EventMsg::ExecApprovalRequest { .. } => {
-            // Should we exit?
-        }
-        EventMsg::ApplyPatchApprovalRequest { .. } => {
-            // Should we exit?
-        }
-        _ => {
-            // Ignore event.
-        }
-    }
-}
-
-fn format_file_change(change: &FileChange) -> &'static str {
-    match change {
-        FileChange::Add { .. } => "A",
-        FileChange::Delete => "D",
-        FileChange::Update {
-            move_path: Some(_), ..
-        } => "R",
-        FileChange::Update {
-            move_path: None, ..
-        } => "M",
-    }
 }
