@@ -35,6 +35,8 @@ const TIMEOUT_CODE: i32 = 64;
 
 const MACOS_SEATBELT_READONLY_POLICY: &str = include_str!("seatbelt_readonly_policy.sbpl");
 
+const MACOS_PATH_TO_SEATBELT_EXECUTABLE: &str = "/usr/bin/sandbox-exec";
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct ExecParams {
     pub command: Vec<String>,
@@ -186,7 +188,7 @@ pub fn create_seatbelt_command(
     };
 
     let mut seatbelt_command: Vec<String> = vec![
-        "sandbox-exec".to_string(),
+        MACOS_PATH_TO_SEATBELT_EXECUTABLE.to_string(),
         "-p".to_string(),
         full_policy.to_string(),
     ];
