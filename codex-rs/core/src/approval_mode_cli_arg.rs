@@ -8,7 +8,7 @@ use crate::protocol::SandboxPolicy;
 use serde::Deserialize;
 use serde::Serialize;
 
-#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, ValueEnum, Serialize, Deserialize)]
 #[value(rename_all = "kebab-case")]
 pub enum ApprovalModeCliArg {
     /// Run all commands without asking for user approval.
@@ -26,7 +26,7 @@ pub enum ApprovalModeCliArg {
     Never,
 }
 
-#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, ValueEnum, Serialize, Deserialize)]
 #[value(rename_all = "kebab-case")]
 pub enum SandboxModeCliArg {
     /// Network syscalls will be blocked
