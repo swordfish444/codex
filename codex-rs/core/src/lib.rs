@@ -13,8 +13,10 @@ pub mod error;
 pub mod exec;
 mod flags;
 mod is_safe_command;
+// Expose the Linux-specific sandbox utilities to other crates (e.g. the CLI)
+// behind an OS guard so they are only available when compiling for Linux.
 #[cfg(target_os = "linux")]
-mod linux;
+pub mod linux;
 mod models;
 pub mod protocol;
 mod safety;
