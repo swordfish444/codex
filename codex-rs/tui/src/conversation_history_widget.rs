@@ -48,11 +48,11 @@ impl ConversationHistoryWidget {
                 self.scroll_down(1);
                 true
             }
-            KeyCode::PageUp | KeyCode::Char('b') | KeyCode::Char('u') | KeyCode::Char('U') => {
+            KeyCode::PageUp | KeyCode::Char('b') => {
                 self.scroll_page_up();
                 true
             }
-            KeyCode::PageDown | KeyCode::Char(' ') | KeyCode::Char('d') | KeyCode::Char('D') => {
+            KeyCode::PageDown | KeyCode::Char(' ') => {
                 self.scroll_page_down();
                 true
             }
