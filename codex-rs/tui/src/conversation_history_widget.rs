@@ -238,7 +238,7 @@ impl WidgetRef for ConversationHistoryWidget {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let (title, border_style) = if self.has_input_focus {
             (
-                "Messages (↑/↓ or j/k = line,  b/u = PgUp, space/d = PgDn)",
+                "Messages (↑/↓ or j/k = line,  b/space = page)",
                 Style::default().fg(Color::LightYellow),
             )
         } else {
