@@ -69,17 +69,21 @@ describe.each([
     if (flag) {
       /* behaviour when ZDR is *on* */
       expect(payload).not.toHaveProperty("previous_response_id");
-      payload.input?.forEach((m: any) =>
-        expect(m.store === undefined ? false : m.store).toBe(false),
-      );
+      if (payload.input) {
+        payload.input.forEach((m: any) =>
+          expect(m.store === undefined ? false : m.store).toBe(false),
+        );
+      }
     } else {
       /* behaviour when ZDR is *off* */
       expect(payload).toHaveProperty("previous_response_id");
-      payload.input?.forEach((m: any) => {
-        if ("store" in m) {
-          expect(m.store).not.toBe(false);
-        }
-      });
+      if (payload.input) {
+        payload.input.forEach((m: any) => {
+          if ("store" in m) {
+            expect(m.store).not.toBe(false);
+          }
+        });
+      }
     }
   });
 });
