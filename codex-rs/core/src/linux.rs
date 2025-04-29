@@ -32,14 +32,13 @@ use tokio::sync::Notify;
 
 pub async fn exec_linux(
     params: ExecParams,
-    writable_roots: &[PathBuf],
     ctrl_c: Arc<Notify>,
     sandbox_policy: SandboxPolicy,
 ) -> Result<RawExecToolCallOutput> {
     // Allow READ on /
     // Allow WRITE on /dev/null
     let ctrl_c_copy = ctrl_c.clone();
-    let writable_roots_copy = writable_roots.to_vec();
+    let writable_roots = sandbox_policy.get_writable_roots();
 
     // Isolate thread to run the sandbox from
     let tool_call_output = std::thread::spawn(move || {
