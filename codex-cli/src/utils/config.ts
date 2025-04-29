@@ -365,7 +365,7 @@ export const loadConfig = (
     instructions: combinedInstructions,
     notify: storedConfig.notify === true,
     approvalMode: storedConfig.approvalMode,
-    disableResponseStorage: storedConfig.disableResponseStorage ?? false,
+    disableResponseStorage: storedConfig.disableResponseStorage === true,
   };
 
   // -----------------------------------------------------------------------

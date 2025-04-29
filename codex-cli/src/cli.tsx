@@ -168,6 +168,7 @@ const cli = meow(
 
       disableResponseStorage: {
         type: "boolean",
+        default: undefined,
         description:
           "Disable server-side response storage (sends full conversation context with every request)",
       },
@@ -297,7 +298,7 @@ config = {
   disableResponseStorage:
     cli.flags.disableResponseStorage !== undefined
       ? Boolean(cli.flags.disableResponseStorage)
-      : config.disableResponseStorage,
+      : (config.disableResponseStorage ?? false),
 };
 
 // Check for updates after loading config. This is important because we write state file in
