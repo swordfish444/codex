@@ -480,6 +480,7 @@ export const saveConfig = (
     provider: config.provider,
     providers: config.providers,
     approvalMode: config.approvalMode,
+    disableResponseStorage: config.disableResponseStorage,
   };
 
   // Add history settings if they exist
