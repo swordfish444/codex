@@ -175,7 +175,6 @@ const cli = meow(
 
       disableResponseStorage: {
         type: "boolean",
-        default: undefined,
         description:
           "Disable server-side response storage (sends full conversation context with every request)",
       },
