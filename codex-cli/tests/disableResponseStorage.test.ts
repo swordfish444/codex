@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -17,7 +17,7 @@ describe("disableResponseStorage persistence", () => {
   beforeAll(() => {
     // mkdir -p ~/.codex inside the sandbox
     rmSync(codexDir, { recursive: true, force: true });
-    require("fs").mkdirSync(codexDir, { recursive: true });
+    mkdirSync(codexDir, { recursive: true });
 
     // seed YAML with ZDR enabled
     writeFileSync(yamlPath, "model: o4-mini\ndisableResponseStorage: true\n");

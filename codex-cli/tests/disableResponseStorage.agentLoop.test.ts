@@ -58,7 +58,8 @@ describe.each([
     await loop.run([
       {
         type: "message",
-        content: [{ type: "text", text: "hello" }],
+        role: "user",
+        content: [{ type: "input_text", text: "hello" }],
       },
     ]);
 
@@ -69,23 +70,17 @@ describe.each([
     if (flag) {
       /* behaviour when ZDR is *on* */
       expect(payload).not.toHaveProperty("previous_response_id");
-      if (payload.input) {
-        payload.input.forEach((m: any) =>
-          expect(m.store === undefined ? false : m.store).toBe(false),
-        );
-      }
+      payload.input?.forEach((m: any) =>
+        expect(m.store === undefined ? false : m.store).toBe(false),
+      );
     } else {
       /* behaviour when ZDR is *off* */
       expect(payload).toHaveProperty("previous_response_id");
-      if (payload.input) {
-        // first user message is usually non-stored; assistant messages will be stored
-        // so here we just assert the property is not forcibly set to false
-        payload.input.forEach((m: any) => {
-          if ("store" in m) {
-            expect(m.store).not.toBe(false);
-          }
-        });
-      }
+      payload.input?.forEach((m: any) => {
+        if ("store" in m) {
+          expect(m.store).not.toBe(false);
+        }
+      });
     }
   });
 });
