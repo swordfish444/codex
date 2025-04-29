@@ -265,14 +265,11 @@ mod tests_linux {
             timeout_ms: Some(2_000),
         };
 
-        let result = process_exec_tool_call(
-            params,
-            SandboxType::LinuxSeccomp,
-            &[],
-            Arc::new(Notify::new()),
-            SandboxPolicy::NetworkRestricted,
-        )
-        .await;
+        let sandbox_policy = SandboxPolicy::new_read_only_policy();
+        let ctrl_c = Arc::new(Notify::new());
+        let result =
+            process_exec_tool_call(params, SandboxType::LinuxSeccomp, ctrl_c, &sandbox_policy)
+                .await;
 
         let (exit_code, stdout, stderr) = match result {
             Ok(output) => (output.exit_code, output.stdout, output.stderr),
