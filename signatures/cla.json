@@ -935,6 +935,14 @@
       "created_at": "2025-04-29T08:43:32Z",
       "repoId": 965415649,
       "pullRequestNo": 722
+    },
+    {
+      "name": "hata6502",
+      "id": 7702653,
+      "comment_id": 2839129712,
+      "created_at": "2025-04-29T14:23:10Z",
+      "repoId": 965415649,
+      "pullRequestNo": 730
     }
   ]
 }
