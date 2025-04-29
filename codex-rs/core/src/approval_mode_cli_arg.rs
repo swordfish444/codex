@@ -23,6 +23,15 @@ pub enum ApprovalModeCliArg {
     /// Execution failures are immediately returned to the model.
     Never,
 }
+impl From<ApprovalModeCliArg> for AskForApproval {
+    fn from(value: ApprovalModeCliArg) -> Self {
+        match value {
+            ApprovalModeCliArg::OnFailure => AskForApproval::OnFailure,
+            ApprovalModeCliArg::UnlessAllowListed => AskForApproval::UnlessAllowListed,
+            ApprovalModeCliArg::Never => AskForApproval::Never,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 #[value(rename_all = "kebab-case")]
@@ -37,25 +46,8 @@ pub enum SandboxModeCliArg {
     DangerousNoRestrictions,
 }
 
-impl From<ApprovalModeCliArg> for AskForApproval {
-    fn from(value: ApprovalModeCliArg) -> Self {
-        match value {
-            ApprovalModeCliArg::OnFailure => AskForApproval::OnFailure,
-            ApprovalModeCliArg::UnlessAllowListed => AskForApproval::UnlessAllowListed,
-            ApprovalModeCliArg::Never => AskForApproval::Never,
-        }
-    }
-}
-
-impl From<SandboxModeCliArg> for SandboxPolicy {
-    fn from(value: SandboxModeCliArg) -> Self {
-        match value {
-            SandboxModeCliArg::NetworkRestricted => SandboxPolicy::NetworkRestricted,
-            SandboxModeCliArg::FileWriteRestricted => SandboxPolicy::FileWriteRestricted,
-            SandboxModeCliArg::NetworkAndFileWriteRestricted => {
-                SandboxPolicy::NetworkAndFileWriteRestricted
-            }
-            SandboxModeCliArg::DangerousNoRestrictions => SandboxPolicy::DangerousNoRestrictions,
-        }
+impl From<Vec<SandboxModeCliArg>> for SandboxPolicy {
+    fn from(value: Vec<SandboxModeCliArg>) -> Self {
+        unimplemented!("need to convert {value:?}");
     }
 }

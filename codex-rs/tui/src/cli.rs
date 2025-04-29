@@ -1,3 +1,4 @@
+use clap::ArgAction;
 use clap::Parser;
 use codex_core::ApprovalModeCliArg;
 use codex_core::SandboxModeCliArg;
@@ -21,11 +22,11 @@ pub struct Cli {
     #[arg(long = "ask-for-approval", short = 'a')]
     pub approval_policy: Option<ApprovalModeCliArg>,
 
-    /// Configure the process restrictions when a command is executed.
+    /// Configure the sandbox permissions when executed an untrusted command.
     ///
     /// Uses OS-specific sandboxing tools; Seatbelt on OSX, landlock+seccomp on Linux.
-    #[arg(long = "sandbox", short = 's')]
-    pub sandbox_policy: Option<SandboxModeCliArg>,
+    #[arg(long = "sandbox", short = 's', action = ArgAction::Append)]
+    pub sandbox_policy: Vec<SandboxModeCliArg>,
 
     /// Allow running Codex outside a Git repository.
     #[arg(long = "skip-git-repo-check", default_value_t = false)]
