@@ -5,7 +5,6 @@
 
 use codex_core::protocol::SandboxPolicy;
 use std::os::unix::process::ExitStatusExt;
-use std::path::PathBuf;
 use std::process;
 use std::process::Command;
 use std::process::ExitStatus;
@@ -15,7 +14,6 @@ use std::process::ExitStatus;
 pub(crate) fn run_landlock(
     command: Vec<String>,
     sandbox_policy: SandboxPolicy,
-    writable_roots: Vec<PathBuf>,
 ) -> anyhow::Result<()> {
     if command.is_empty() {
         anyhow::bail!("command args are empty");
@@ -25,11 +23,12 @@ pub(crate) fn run_landlock(
     let handle = std::thread::spawn(move || -> anyhow::Result<ExitStatus> {
         // Apply sandbox policies inside this thread so only the child inherits
         // them, not the entire CLI process.
-        if sandbox_policy.is_network_restricted() {
+        if !sandbox_policy.has_full_network_access() {
             codex_core::linux::install_network_seccomp_filter_on_current_thread()?;
         }
 
-        if sandbox_policy.is_file_write_restricted() {
+        if !sandbox_policy.has_full_disk_write_access() {
+            let writable_roots = sandbox_policy.get_writable_roots();
             codex_core::linux::install_filesystem_landlock_rules_on_current_thread(writable_roots)?;
         }
 

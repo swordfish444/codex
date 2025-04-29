@@ -32,14 +32,13 @@ use tokio::sync::Notify;
 
 pub async fn exec_linux(
     params: ExecParams,
-    writable_roots: &[PathBuf],
     ctrl_c: Arc<Notify>,
-    sandbox_policy: SandboxPolicy,
+    sandbox_policy: &SandboxPolicy,
 ) -> Result<RawExecToolCallOutput> {
     // Allow READ on /
     // Allow WRITE on /dev/null
     let ctrl_c_copy = ctrl_c.clone();
-    let writable_roots_copy = writable_roots.to_vec();
+    let sandbox_policy = sandbox_policy.clone();
 
     // Isolate thread to run the sandbox from
     let tool_call_output = std::thread::spawn(move || {
@@ -49,12 +48,13 @@ pub async fn exec_linux(
             .expect("Failed to create runtime");
 
         rt.block_on(async {
-            if sandbox_policy.is_network_restricted() {
+            if !sandbox_policy.has_full_network_access() {
                 install_network_seccomp_filter_on_current_thread()?;
             }
 
-            if sandbox_policy.is_file_write_restricted() {
-                install_filesystem_landlock_rules_on_current_thread(writable_roots_copy)?;
+            if !sandbox_policy.has_full_disk_write_access() {
+                let writable_roots = sandbox_policy.get_writable_roots();
+                install_filesystem_landlock_rules_on_current_thread(writable_roots)?;
             }
 
             exec(params, ctrl_c_copy).await
@@ -184,15 +184,14 @@ mod tests_linux {
             workdir: None,
             timeout_ms: Some(timeout_ms),
         };
-        let res = process_exec_tool_call(
-            params,
-            SandboxType::LinuxSeccomp,
-            writable_roots,
-            Arc::new(Notify::new()),
-            SandboxPolicy::NetworkAndFileWriteRestricted,
-        )
-        .await
-        .unwrap();
+
+        let sandbox_policy =
+            SandboxPolicy::new_read_only_policy_with_writable_roots(writable_roots);
+        let ctrl_c = Arc::new(Notify::new());
+        let res =
+            process_exec_tool_call(params, SandboxType::LinuxSeccomp, ctrl_c, &sandbox_policy)
+                .await
+                .unwrap();
 
         if res.exit_code != 0 {
             println!("stdout:\n{}", res.stdout);
