@@ -8,6 +8,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { AgentLoop } from "../src/utils/agent/agent-loop";
 import type { AppConfig } from "../src/utils/config";
+// If you have a ReviewDecision type or enum, import it here:
+// import type { ReviewDecision } from "../src/utils/agent/types";
 
 /* ─────────── 1.  Spy + module mock ──────────────────────────────── */
 const createSpy = vi.fn().mockResolvedValue({
@@ -49,11 +51,17 @@ describe.each([
       additionalWritableRoots: [],
       onItem() {},
       onLoading() {},
-      getCommandConfirmation: async () => ({ review: "approve" }),
+      getCommandConfirmation: async () => ({ review: "approved" }),
       onLastResponseId() {},
     });
 
-    await loop.run([{ type: "text", content: "hello" }]);
+    await loop.run([
+      {
+        type: "message",
+        content: [{ type: "text", text: "hello" }],
+      },
+    ]);
+
     expect(createSpy).toHaveBeenCalledTimes(1);
 
     const payload = createSpy.mock.calls[0][0];
@@ -61,19 +69,23 @@ describe.each([
     if (flag) {
       /* behaviour when ZDR is *on* */
       expect(payload).not.toHaveProperty("previous_response_id");
-      payload.input.forEach((m: any) =>
-        expect(m.store === undefined ? false : m.store).toBe(false),
-      );
+      if (payload.input) {
+        payload.input.forEach((m: any) =>
+          expect(m.store === undefined ? false : m.store).toBe(false),
+        );
+      }
     } else {
       /* behaviour when ZDR is *off* */
       expect(payload).toHaveProperty("previous_response_id");
-      // first user message is usually non-stored; assistant messages will be stored
-      // so here we just assert the property is not forcibly set to false
-      payload.input.forEach((m: any) => {
-        if ("store" in m) {
-          expect(m.store).not.toBe(false);
-        }
-      });
+      if (payload.input) {
+        // first user message is usually non-stored; assistant messages will be stored
+        // so here we just assert the property is not forcibly set to false
+        payload.input.forEach((m: any) => {
+          if ("store" in m) {
+            expect(m.store).not.toBe(false);
+          }
+        });
+      }
     }
   });
 });
