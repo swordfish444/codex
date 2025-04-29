@@ -38,7 +38,8 @@ pub fn run_main(cli: Cli) -> std::io::Result<()> {
         let overrides = ConfigOverrides {
             model: cli.model.clone(),
             approval_policy: cli.approval_policy.map(Into::into),
-            sandbox_policy: cli.sandbox_policy.map(Into::into),
+            // FIXME(mbolin): How should this work?
+            sandbox_policy: None,
             disable_response_storage: if cli.disable_response_storage {
                 Some(true)
             } else {
