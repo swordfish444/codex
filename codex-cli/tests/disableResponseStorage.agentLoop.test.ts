@@ -8,6 +8,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { AgentLoop } from "../src/utils/agent/agent-loop";
 import type { AppConfig } from "../src/utils/config";
+import type { ReviewDecision } from "../src/utils/agent/types";
 // If you have a ReviewDecision type or enum, import it here:
 // import type { ReviewDecision } from "../src/utils/agent/types";
 
@@ -51,7 +52,9 @@ describe.each([
       additionalWritableRoots: [],
       onItem() {},
       onLoading() {},
-      getCommandConfirmation: async () => ({ review: "approved" }),
+      getCommandConfirmation: async () => ({
+        review: "approved" as ReviewDecision,
+      }),
       onLastResponseId() {},
     });
 
@@ -70,17 +73,21 @@ describe.each([
     if (flag) {
       /* behaviour when ZDR is *on* */
       expect(payload).not.toHaveProperty("previous_response_id");
-      payload.input?.forEach((m: any) =>
-        expect(m.store === undefined ? false : m.store).toBe(false),
-      );
+      if (payload.input) {
+        payload.input.forEach((m: any) =>
+          expect(m.store === undefined ? false : m.store).toBe(false),
+        );
+      }
     } else {
       /* behaviour when ZDR is *off* */
       expect(payload).toHaveProperty("previous_response_id");
-      payload.input?.forEach((m: any) => {
-        if ("store" in m) {
-          expect(m.store).not.toBe(false);
-        }
-      });
+      if (payload.input) {
+        payload.input.forEach((m: any) => {
+          if ("store" in m) {
+            expect(m.store).not.toBe(false);
+          }
+        });
+      }
     }
   });
 });
