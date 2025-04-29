@@ -64,15 +64,19 @@ describe.each([
 
     expect(createSpy).toHaveBeenCalledTimes(1);
 
-    const payload: any = createSpy.mock.calls[0][0];
+    const call = createSpy.mock.calls[0];
+    if (!call) {
+      throw new Error("Expected createSpy to have been called at least once");
+    }
+    const payload: any = call[0];
 
     if (flag) {
       /* behaviour when ZDR is *on* */
       expect(payload).not.toHaveProperty("previous_response_id");
       if (payload.input) {
-        payload.input.forEach((m: any) =>
-          expect(m.store === undefined ? false : m.store).toBe(false),
-        );
+        payload.input.forEach((m: any) => {
+          expect(m.store === undefined ? false : m.store).toBe(false);
+        });
       }
     } else {
       /* behaviour when ZDR is *off* */
