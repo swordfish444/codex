@@ -15,7 +15,6 @@ use std::process::ExitStatus;
 pub(crate) fn run_landlock(
     command: Vec<String>,
     sandbox_policy: SandboxPolicy,
-    writable_roots: Vec<PathBuf>,
 ) -> anyhow::Result<()> {
     if command.is_empty() {
         anyhow::bail!("command args are empty");
@@ -30,6 +29,7 @@ pub(crate) fn run_landlock(
         }
 
         if sandbox_policy.is_file_write_restricted() {
+            let writable_roots = sandbox_policy.get_writable_roots();
             codex_core::linux::install_filesystem_landlock_rules_on_current_thread(writable_roots)?;
         }
 
