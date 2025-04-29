@@ -32,14 +32,13 @@ use tokio::sync::Notify;
 
 pub async fn exec_linux(
     params: ExecParams,
-    writable_roots: &[PathBuf],
     ctrl_c: Arc<Notify>,
-    sandbox_policy: SandboxPolicy,
+    sandbox_policy: &SandboxPolicy,
 ) -> Result<RawExecToolCallOutput> {
     // Allow READ on /
     // Allow WRITE on /dev/null
     let ctrl_c_copy = ctrl_c.clone();
-    let writable_roots_copy = writable_roots.to_vec();
+    let sandbox_policy = sandbox_policy.clone();
 
     // Isolate thread to run the sandbox from
     let tool_call_output = std::thread::spawn(move || {
@@ -49,12 +48,13 @@ pub async fn exec_linux(
             .expect("Failed to create runtime");
 
         rt.block_on(async {
-            if sandbox_policy.is_network_restricted() {
+            if !sandbox_policy.has_full_network_access() {
                 install_network_seccomp_filter_on_current_thread()?;
             }
 
-            if sandbox_policy.is_file_write_restricted() {
-                install_filesystem_landlock_rules_on_current_thread(writable_roots_copy)?;
+            if !sandbox_policy.has_full_disk_write_access() {
+                let writable_roots = sandbox_policy.get_writable_roots();
+                install_filesystem_landlock_rules_on_current_thread(writable_roots)?;
             }
 
             exec(params, ctrl_c_copy).await
