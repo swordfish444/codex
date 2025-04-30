@@ -12,7 +12,7 @@ describe("extractImagePaths", () => {
   });
 
   it("detects quoted image", () => {
-    const { paths, text } = extractImagePaths("drag \"baz.jpg\" here");
+    const { paths, text } = extractImagePaths('drag "baz.jpg" here');
     expect(paths).toEqual(["baz.jpg"]);
     expect(text).toBe("drag  here");
   });

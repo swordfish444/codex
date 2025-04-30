@@ -7,8 +7,7 @@ import { fileURLToPath } from "node:url";
 // found.
 // ---------------------------------------------------------------------------
 
-const IMAGE_EXT_REGEX =
-  "(?:png|jpe?g|gif|bmp|webp|svg)"; // deliberately kept simple
+const IMAGE_EXT_REGEX = "(?:png|jpe?g|gif|bmp|webp|svg)"; // deliberately kept simple
 
 // Pattern helpers – compiled lazily so the whole file can be tree-shaken if
 // unused by a particular build target.
@@ -21,14 +20,14 @@ function compileRegexes() {
     return;
   }
 
-  MARKDOWN_LINK_RE = /!\[[^\]]*?\]\(([^)]+)\)/g; // capture path inside ()
-  QUOTED_PATH_RE = new RegExp(
-    `[\'\"]([^\'\"]+?\.${IMAGE_EXT_REGEX})[\'\"]`,
-    "gi",
-  );
-  // eslint-disable-next-line no-useless-escape
+  // Capture path inside markdown image link e.g. ![alt](path)
+  MARKDOWN_LINK_RE = /!\[[^\]]*?\]\(([^)]+)\)/g;
+  // Any quoted image path – single or double quotes
+  QUOTED_PATH_RE = new RegExp(`["']([^"']+?[.]${IMAGE_EXT_REGEX})["']`, "gi");
+  // Bare image paths appearing in text. Handles absolute, relative, and
+  // Windows drive-letter paths.
   BARE_PATH_RE = new RegExp(
-    `\\b(?:\\.[\\/\\\\]|[\\/\\\\]|[A-Za-z]:[\\/\\\\])?[\\w-]+(?:[\\/\\\\][\\w-]+)*\\.${IMAGE_EXT_REGEX}\\b`,
+    `(?:\\.[/\\\\]|[/\\\\]|[A-Za-z]:[/\\\\])?[\\w-]+(?:[/\\\\][\\w-]+)*.${IMAGE_EXT_REGEX}`,
     "gi",
   );
 }

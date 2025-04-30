@@ -6,8 +6,7 @@ import {
 } from "../src/utils/check-updates.js";
 import { execFile } from "node:child_process";
 import { join } from "node:path";
-import { CONFIG_DIR } from "src/utils/config.js";
-import { beforeEach } from "node:test";
+import { CONFIG_DIR } from "../src/utils/config.js";
 
 vi.mock("which", () => ({
   default: vi.fn(() => "/usr/local/bin/npm"),
@@ -35,6 +34,9 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
       throw new Error("ENOENT");
     }
     return memfs[path];
+  },
+  writeFile: async (path: string, data: string) => {
+    memfs[path] = data;
   },
 }));
 
@@ -88,8 +90,9 @@ describe("Check for updates", () => {
     memfs[codexStatePath] = JSON.stringify({
       lastUpdateCheck: new Date("2000-01-01T00:00:00Z").toUTCString(),
     });
-    await checkForUpdates();
-    // Spy on console.log to capture output
+    // Spy on console.log to capture output BEFORE calling the checker so we
+    // capture the very first message that is printed when an update is
+    // detected.
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     await checkForUpdates();
     expect(logSpy).toHaveBeenCalled();
@@ -107,8 +110,6 @@ describe("Check for updates", () => {
     memfs[codexStatePath] = JSON.stringify({
       lastUpdateCheck: new Date().toUTCString(),
     });
-    await checkForUpdates();
-    // Spy on console.log to capture output
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     await checkForUpdates();
     expect(logSpy).not.toHaveBeenCalled();

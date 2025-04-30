@@ -13,13 +13,32 @@ import { renderTui } from "./ui-test-helpers.js";
 // Mocks – keep in sync with other TerminalChatInput UI tests
 // ---------------------------------------------------------------------------
 
-// mock without type annotations to avoid Vitest transform TS errors in JS test
-const createInputItemMock = vi.fn(async () => ({}));
+// We need to capture a reference to the mocked `createInputItem` function so we
+// can make assertions later in the test, _and_ respect Vitest’s requirement
+// that any variables used inside the `vi.mock` factory are already defined at
+// the time the factory is hoisted.  To satisfy both constraints we:
+//   1. Declare the variable with `let` (so it’s hoisted), **without** assigning
+//      a value yet.
+//   2. Inside the factory, create the mock with `vi.fn()` and assign it to the
+//      outer-scoped variable before returning it.
+// This avoids the “there was an error when mocking a module” failure that
+// occurs when a factory closes over an uninitialised top-level `const`.
 
-vi.mock("../src/utils/input-utils.js", () => ({
-  createInputItem: createInputItemMock,
-  imageFilenameByDataUrl: new Map(),
-}));
+// Using `var` ensures the binding is hoisted, so it exists (as `undefined`) at
+// the time the `vi.mock` factory runs. We re-assign it inside the factory.
+// eslint-disable-next-line no-var
+var createInputItemMock!: ReturnType<typeof vi.fn>;
+
+vi.mock("../src/utils/input-utils.js", () => {
+  // Initialise the mock lazily inside the factory so the reference is valid
+  // when the module is evaluated.
+  createInputItemMock = vi.fn(async () => ({}));
+
+  return {
+    createInputItem: createInputItemMock,
+    imageFilenameByDataUrl: new Map(),
+  };
+});
 vi.mock("../src/approvals.js", () => ({ isSafeCommand: () => null }));
 vi.mock("../src/format-command.js", () => ({
   formatCommandForDisplay: (c: Array<string>): string => c.join(" "),
@@ -53,6 +72,8 @@ function props() {
     interruptAgent: () => {},
     active: true,
     onCompact: () => {},
+    openDiffOverlay: () => {},
+    thinkingSeconds: 0,
   };
 }
 
@@ -70,7 +91,7 @@ describe("Drag-and-drop image attachment", () => {
   });
 
   it("moves pasted path to attachment preview", async () => {
-    process.env.DEBUG_TCI = "1";
+    process.env["DEBUG_TCI"] = "1";
     const orig = process.cwd();
     process.chdir(TMP);
 
@@ -90,8 +111,7 @@ describe("Drag-and-drop image attachment", () => {
     // setState inside the onChange handler.
     await flush();
 
-    let frame = lastFrameStripped();
-
+    const frame = lastFrameStripped();
 
     expect(frame.match(/dropped\.png/g)?.length ?? 0).toBe(1);
 
@@ -101,9 +121,9 @@ describe("Drag-and-drop image attachment", () => {
 
     // createInputItem should have been called with the dropped image path
     expect(createInputItemMock).toHaveBeenCalled();
-    const calls = createInputItemMock.mock.calls;
-    const lastCall = calls[calls.length - 1];
-    expect(lastCall?.[1]).toEqual(["dropped.png"]);
+    const calls: Array<Array<unknown>> = createInputItemMock.mock.calls as any;
+    const lastCall = calls[calls.length - 1] as Array<unknown>;
+    expect(lastCall?.[1 as number]).toEqual(["dropped.png"]);
 
     cleanup();
     process.chdir(orig);

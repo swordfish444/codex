@@ -141,9 +141,19 @@ export default class TextBuffer {
       process.env["EDITOR"] ??
       (process.platform === "win32" ? "notepad" : "vi");
 
-    // Prepare a temporary file with the current contents.  We use mkdtempSync
-    // to obtain an isolated directory and avoid name collisions.
-    const tmpDir = fs.mkdtempSync(pathMod.join(os.tmpdir(), "codex-edit-"));
+    // Prepare a temporary file with the current contents. We use mkdtempSync
+    // to obtain an isolated directory and avoid name collisions. Similar to
+    // other parts of the codebase we occasionally run inside restricted
+    // environments (e.g. GitHub Codespaces) where the OS-level tmp directory
+    // is not writable. In that case fall back to creating the directory under
+    // the current working directory so the workflow still functions.
+
+    let tmpDir: string;
+    try {
+      tmpDir = fs.mkdtempSync(pathMod.join(os.tmpdir(), "codex-edit-"));
+    } catch {
+      tmpDir = fs.mkdtempSync(pathMod.join(process.cwd(), "codex-edit-"));
+    }
     const filePath = pathMod.join(tmpDir, "buffer.txt");
 
     fs.writeFileSync(filePath, this.getText(), "utf8");

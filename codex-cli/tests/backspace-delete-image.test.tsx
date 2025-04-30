@@ -44,6 +44,8 @@ function props() {
     interruptAgent: () => {},
     active: true,
     onCompact: () => {},
+    openDiffOverlay: () => {},
+    thinkingSeconds: 0,
   };
 }
 

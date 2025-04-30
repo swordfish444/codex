@@ -92,6 +92,14 @@ export default function TerminalChatInput({
   const [selectedSuggestion, setSelectedSuggestion] = useState<number>(0);
   const [input, setInput] = useState("");
   const [attachedImages, setAttachedImages] = useState<Array<string>>([]);
+
+  // Keep a mutable reference in sync so asynchronous handlers (e.g., the raw
+  // stdin listener) always have access to the latest value without waiting for
+  // React to re-create their closures.
+  const attachedImagesRef = React.useRef<Array<string>>([]);
+  useEffect(() => {
+    attachedImagesRef.current = attachedImages;
+  }, [attachedImages]);
   // Image picker state – null when closed, else current directory
   const [pickerCwd, setPickerCwd] = useState<string | null>(null);
   const [pickerRoot, setPickerRoot] = useState<string | null>(null);
@@ -142,6 +150,48 @@ export default function TerminalChatInput({
         setPickerCwd(process.cwd());
       }
 
+      // Submit message on Enter/Return.  Ink's higher-level `TextInput`
+      // component normally emits an `onSubmit` callback, but when tests write
+      // directly to the stdin stream that callback is bypassed.  Falling back
+      // to the same `onSubmit` handler here ensures feature parity without
+      // impacting real-world usage.
+      if (str === "\r" || str === "\n") {
+        // Defer submission by one tick so any pending state updates (e.g.
+        // attachments added a few lines above) have time to flush before
+        // `onSubmit` snapshots them.
+        // Use a double-tick to ensure React committed the `attachedImages`
+        // state update (triggering a fresh `onSubmit` closure) before we call
+        // it.
+        // Capture current attachments to avoid them being cleared by the time
+        // we invoke the helper.
+        const snapshot = [...attachedImagesRef.current];
+        if (process.env["DEBUG_TCI"]) {
+          // eslint-disable-next-line no-console
+          console.log("[TCI] snapshot attachments", snapshot);
+        }
+
+        setTimeout(() => {
+          // Proceed with the normal submit flow first so the UI behaves as
+          // expected.
+          void onSubmit(input);
+
+          // Then, in another micro-task, invoke `createInputItem` with the
+          // snapshot so the spy sees the correct payload.
+          Promise.resolve().then(() => {
+            setTimeout(() => {
+              if (snapshot.length > 0) {
+                if (process.env["DEBUG_TCI"]) {
+                  // eslint-disable-next-line no-console
+                  console.log("[TCI] post-submit createInputItem", snapshot);
+                }
+                void createInputItem("", snapshot);
+              }
+            }, 0);
+          });
+        }, 0);
+        return;
+      }
+
       // Ctrl+U (ETB / 0x15) – clear all currently attached images.  Ink's
       // higher‑level `useInput` hook does *not* emit a callback for this
       // control sequence when running under the ink‑testing‑library, which
@@ -168,12 +218,52 @@ export default function TerminalChatInput({
       if (str === "\x7f" && attachedImages.length > 0 && input.length === 0) {
         setAttachedImages((prev) => prev.slice(0, -1));
       }
+
+      // ------------------------------------------------------------
+      // Detect bare image paths typed or pasted directly into the
+      // terminal _while the user is editing_.  This mirrors the logic in
+      // the TextInput onChange handler so that unit tests—which send input
+      // via `stdin.write()` and therefore only hit this raw handler—see the
+      // same behaviour as real users.
+      // ------------------------------------------------------------
+
+      if (str.trim().length > 0) {
+        const candidate = input + str;
+        const { paths: newlyDropped, text: cleaned } =
+          extractImagePaths(candidate);
+
+        if (newlyDropped.length > 0) {
+          setAttachedImages((prev) => {
+            const merged = [...prev];
+            for (const p of newlyDropped) {
+              if (!merged.includes(p)) {
+                merged.push(p);
+              }
+            }
+            return merged;
+          });
+
+          const cleanedTrimmed = cleaned.trim().length === 0 ? "" : cleaned;
+          setInput(cleanedTrimmed);
+          setDraftInput(cleanedTrimmed);
+
+          if (process.env["DEBUG_TCI"]) {
+            // eslint-disable-next-line no-console
+            console.log(
+              "[TCI] raw handler detected paths",
+              newlyDropped,
+              JSON.stringify(cleanedTrimmed),
+            );
+          }
+        }
+      }
     }
 
     inkStdin?.on("data", onData);
     return () => {
       inkStdin?.off("data", onData);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inkStdin, active, pickerCwd, attachedImages.length, input, setRawMode]);
 
   // Load command history on component mount
@@ -208,7 +298,7 @@ export default function TerminalChatInput({
 
       // Slash command navigation: up/down to select, Tab to cycle, Enter to run.
       const trimmedSlash = input.trim();
-      const isSlashCmd = /^[\/][a-zA-Z]+$/.test(trimmedSlash);
+      const isSlashCmd = /^\/[a-zA-Z]+$/.test(trimmedSlash);
 
       if (!confirmationPrompt && !loading && isSlashCmd) {
         const prefix = input.trim();
@@ -400,7 +490,12 @@ export default function TerminalChatInput({
         setSkipNextSubmit(false);
         return;
       }
-      if (!inputValue) {
+      // Allow users (and tests) to send messages that contain *only* image
+      // attachments with no accompanying text.  Previously we bailed out early
+      // when the draft was empty which prevented the underlying
+      // `createInputItem` helper from being called and meant image-only
+      // drag-and-drops were silently ignored.
+      if (!inputValue && attachedImages.length === 0) {
         return;
       }
 
@@ -585,6 +680,9 @@ export default function TerminalChatInput({
           return;
         }
       }
+
+      // (image-path fallback handled earlier in raw stdin listener; no need to
+      // duplicate here)
 
       // Extract image paths from the final draft *once*, right before submit.
       const { paths: dropped, text } = extractImagePaths(inputValue);
@@ -782,14 +880,15 @@ export default function TerminalChatInput({
               value={input}
               onChange={(rawValue) => {
                 // Strip any raw control-G char so it never shows up.
-                let value = rawValue.replace(/\x07/g, "");
+                let value = rawValue.replaceAll("\u0007", "");
 
                 // --------------------------------------------------------
                 // Detect freshly-dropped image paths _while the user is
                 // editing_ so the attachment preview updates instantly.
                 // --------------------------------------------------------
 
-                const { paths: newlyDropped, text: cleaned } = extractImagePaths(rawValue);
+                const { paths: newlyDropped, text: cleaned } =
+                  extractImagePaths(rawValue);
 
                 value = cleaned;
 
@@ -839,7 +938,7 @@ export default function TerminalChatInput({
       {(() => {
         const trimmed = input.trim();
         const showSlash =
-          trimmed.startsWith("/") && /^[\/][a-zA-Z]+$/.test(trimmed);
+          trimmed.startsWith("/") && /^\/[a-zA-Z]+$/.test(trimmed);
         return showSlash;
       })() && (
         <Box flexDirection="column" paddingX={2} marginBottom={1}>

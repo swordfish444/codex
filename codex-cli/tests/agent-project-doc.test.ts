@@ -87,10 +87,10 @@ import { loadConfig } from "../src/utils/config.js";
 
 let projectDir: string;
 
-# beforeEach runs once per test; when the sandbox blocks mkdtemp under the OS
-# tmp directory (e.g. GitHub Codespaces or certain container runtimes) fall
-# back to creating the directory under the current working directory so the
-# suite can still run.
+// beforeEach runs once per test; when the sandbox blocks mkdtemp under the OS
+// tmp directory (e.g. GitHub Codespaces or certain container runtimes) falls
+// back to creating the directory under the current working directory so the
+// suite can still run.
 beforeEach(() => {
   try {
     projectDir = mkdtempSync(join(tmpdir(), "codex-proj-"));

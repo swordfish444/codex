@@ -8,7 +8,7 @@ let projectDir: string;
 let configPath: string;
 let instructionsPath: string;
 
-# Use OS tmpdir unless blocked; fallback to cwd.
+// Use OS tmpdir unless blocked; fallback to cwd.
 beforeEach(() => {
   try {
     projectDir = mkdtempSync(join(tmpdir(), "codex-proj-"));
