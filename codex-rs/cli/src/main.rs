@@ -97,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
                 full_auto,
             }) => {
                 let sandbox_policy = create_sandbox_policy(full_auto, sandbox);
-                landlock::run_landlock(command, sandbox_policy)?;
+                codex_cli::landlock::run_landlock(command, sandbox_policy)?;
             }
             #[cfg(not(target_os = "linux"))]
             DebugCommand::Landlock(_) => {
