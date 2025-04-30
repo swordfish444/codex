@@ -9,14 +9,14 @@ name: rust-release
 on:
   push:
     tags:
-      - "rust-v.*.*.*"
+      - "rust-v*.*.*"
 
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
 
 env:
-  TAG_REGEX: '^rust-v\.[0-9]+\.[0-9]+\.[0-9]+$'
+  TAG_REGEX: '^rust-v[0-9]+\.[0-9]+\.[0-9]+$'
 
 jobs:
   tag-check:
