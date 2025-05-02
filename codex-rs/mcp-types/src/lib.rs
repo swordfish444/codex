@@ -10,6 +10,9 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::convert::TryFrom;
 
+pub const MCP_SCHEMA_VERSION: &str = "2025-03-26";
+pub const JSONRPC_VERSION: &str = "2.0";
+
 /// Paired request/response types for the Model Context Protocol (MCP).
 pub trait ModelContextProtocolRequest {
     const METHOD: &'static str;
@@ -21,6 +24,10 @@ pub trait ModelContextProtocolRequest {
 pub trait ModelContextProtocolNotification {
     const METHOD: &'static str;
     type Params: DeserializeOwned + Serialize + Send + Sync + 'static;
+}
+
+fn default_jsonrpc() -> String {
+    JSONRPC_VERSION.to_owned()
 }
 
 /// Optional annotations for the client. The client can use annotations to inform how objects are used or displayed
@@ -370,6 +377,8 @@ pub type JSONRPCBatchResponse = Vec<JSONRPCBatchResponseItem>;
 pub struct JSONRPCError {
     pub error: JSONRPCErrorError,
     pub id: RequestId,
+    #[serde(rename = "jsonrpc", default = "default_jsonrpc")]
+    pub jsonrpc: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -394,6 +403,8 @@ pub enum JSONRPCMessage {
 /// A notification which does not expect a response.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct JSONRPCNotification {
+    #[serde(rename = "jsonrpc", default = "default_jsonrpc")]
+    pub jsonrpc: String,
     pub method: String,
     pub params: Option<serde_json::Value>,
 }
@@ -402,6 +413,8 @@ pub struct JSONRPCNotification {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct JSONRPCRequest {
     pub id: RequestId,
+    #[serde(rename = "jsonrpc", default = "default_jsonrpc")]
+    pub jsonrpc: String,
     pub method: String,
     pub params: Option<serde_json::Value>,
 }
@@ -410,6 +423,8 @@ pub struct JSONRPCRequest {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct JSONRPCResponse {
     pub id: RequestId,
+    #[serde(rename = "jsonrpc", default = "default_jsonrpc")]
+    pub jsonrpc: String,
     pub result: Result,
 }
 
