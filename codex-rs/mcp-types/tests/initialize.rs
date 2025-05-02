@@ -30,6 +30,7 @@ fn deserialize_initialize_request() {
     };
 
     let expected_req = JSONRPCRequest {
+        jsonrpc: JSONRPC_VERSION.into(),
         id: RequestId::Integer(1),
         method: "initialize".into(),
         params: Some(json!({

@@ -13,6 +13,8 @@ from pathlib import Path
 # Helper first so it is defined when other functions call it.
 from typing import Any, Literal
 
+SCHEMA_VERSION = "2025-03-26"
+JSONRPC_VERSION = "2.0"
 
 STANDARD_DERIVE = "#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]\n"
 
@@ -30,7 +32,7 @@ def main() -> int:
     num_args = len(sys.argv)
     if num_args == 1:
         schema_file = (
-            Path(__file__).resolve().parent / "schema" / "2025-03-26" / "schema.json"
+            Path(__file__).resolve().parent / "schema" / SCHEMA_VERSION / "schema.json"
         )
     elif num_args == 2:
         schema_file = Path(sys.argv[1])
@@ -61,6 +63,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::convert::TryFrom;
 
+pub const MCP_SCHEMA_VERSION: &str = "{SCHEMA_VERSION}";
+pub const JSONRPC_VERSION: &str = "{JSONRPC_VERSION}";
+
 /// Paired request/response types for the Model Context Protocol (MCP).
 pub trait ModelContextProtocolRequest {
     const METHOD: &'static str;
@@ -73,6 +78,8 @@ pub trait ModelContextProtocolNotification {
     const METHOD: &'static str;
     type Params: DeserializeOwned + Serialize + Send + Sync + 'static;
 }
+
+fn default_jsonrpc() -> String {{ JSONRPC_VERSION.to_owned() }}
 
 """
     ]
@@ -245,10 +252,6 @@ class StructField:
     serde: str | None = None
 
     def append(self, out: list[str], supports_const: bool) -> None:
-        # Omit these for now.
-        if self.name == "jsonrpc":
-            return
-
         if self.serde:
             out.append(f"    {self.serde}\n")
         if self.viz == "const":
@@ -272,6 +275,16 @@ def define_struct(
     for prop_name, prop in properties.items():
         if prop_name == "_meta":
             # TODO?
+            continue
+        elif prop_name == "jsonrpc":
+            fields.append(
+                StructField(
+                    "pub",
+                    "jsonrpc",
+                    "String",  # cannot use `&'static str` because of Deserialize
+                    '#[serde(rename = "jsonrpc", default = "default_jsonrpc")]',
+                )
+            )
             continue
 
         prop_type = map_type(prop, prop_name, name)
