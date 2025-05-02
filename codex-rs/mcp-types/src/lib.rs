@@ -10,6 +10,9 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::convert::TryFrom;
 
+pub const MCP_SCHEMA_VERSION: &str = "2025-03-26";
+pub const JSONRPC_VERSION: &str = "2.0";
+
 /// Paired request/response types for the Model Context Protocol (MCP).
 pub trait ModelContextProtocolRequest {
     const METHOD: &'static str;
@@ -21,6 +24,10 @@ pub trait ModelContextProtocolRequest {
 pub trait ModelContextProtocolNotification {
     const METHOD: &'static str;
     type Params: DeserializeOwned + Serialize + Send + Sync + 'static;
+}
+
+fn default_jsonrpc() -> String {
+    JSONRPC_VERSION.to_owned()
 }
 
 /// Optional annotations for the client. The client can use annotations to inform how objects are used or displayed
@@ -86,6 +93,12 @@ pub enum CallToolResultContent {
     ImageContent(ImageContent),
     AudioContent(AudioContent),
     EmbeddedResource(EmbeddedResource),
+}
+
+impl From<CallToolResult> for serde_json::Value {
+    fn from(value: CallToolResult) -> Self {
+        serde_json::to_value(value).unwrap()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -208,6 +221,12 @@ pub struct CompleteResultCompletion {
     pub values: Vec<String>,
 }
 
+impl From<CompleteResult> for serde_json::Value {
+    fn from(value: CompleteResult) -> Self {
+        serde_json::to_value(value).unwrap()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum CreateMessageRequest {}
 
@@ -249,6 +268,12 @@ pub enum CreateMessageResultContent {
     TextContent(TextContent),
     ImageContent(ImageContent),
     AudioContent(AudioContent),
+}
+
+impl From<CreateMessageResult> for serde_json::Value {
+    fn from(value: CreateMessageResult) -> Self {
+        serde_json::to_value(value).unwrap()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -293,6 +318,12 @@ pub struct GetPromptRequestParams {
 pub struct GetPromptResult {
     pub description: Option<String>,
     pub messages: Vec<PromptMessage>,
+}
+
+impl From<GetPromptResult> for serde_json::Value {
+    fn from(value: GetPromptResult) -> Self {
+        serde_json::to_value(value).unwrap()
+    }
 }
 
 /// An image provided to or from an LLM.
@@ -341,6 +372,12 @@ pub struct InitializeResult {
     pub server_info: Implementation,
 }
 
+impl From<InitializeResult> for serde_json::Value {
+    fn from(value: InitializeResult) -> Self {
+        serde_json::to_value(value).unwrap()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum InitializedNotification {}
 
@@ -370,6 +407,8 @@ pub type JSONRPCBatchResponse = Vec<JSONRPCBatchResponseItem>;
 pub struct JSONRPCError {
     pub error: JSONRPCErrorError,
     pub id: RequestId,
+    #[serde(rename = "jsonrpc", default = "default_jsonrpc")]
+    pub jsonrpc: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -394,6 +433,8 @@ pub enum JSONRPCMessage {
 /// A notification which does not expect a response.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct JSONRPCNotification {
+    #[serde(rename = "jsonrpc", default = "default_jsonrpc")]
+    pub jsonrpc: String,
     pub method: String,
     pub params: Option<serde_json::Value>,
 }
@@ -402,6 +443,8 @@ pub struct JSONRPCNotification {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct JSONRPCRequest {
     pub id: RequestId,
+    #[serde(rename = "jsonrpc", default = "default_jsonrpc")]
+    pub jsonrpc: String,
     pub method: String,
     pub params: Option<serde_json::Value>,
 }
@@ -410,6 +453,8 @@ pub struct JSONRPCRequest {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct JSONRPCResponse {
     pub id: RequestId,
+    #[serde(rename = "jsonrpc", default = "default_jsonrpc")]
+    pub jsonrpc: String,
     pub result: Result,
 }
 
@@ -435,6 +480,12 @@ pub struct ListPromptsResult {
     pub prompts: Vec<Prompt>,
 }
 
+impl From<ListPromptsResult> for serde_json::Value {
+    fn from(value: ListPromptsResult) -> Self {
+        serde_json::to_value(value).unwrap()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum ListResourceTemplatesRequest {}
 
@@ -456,6 +507,12 @@ pub struct ListResourceTemplatesResult {
     pub next_cursor: Option<String>,
     #[serde(rename = "resourceTemplates")]
     pub resource_templates: Vec<ResourceTemplate>,
+}
+
+impl From<ListResourceTemplatesResult> for serde_json::Value {
+    fn from(value: ListResourceTemplatesResult) -> Self {
+        serde_json::to_value(value).unwrap()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -480,6 +537,12 @@ pub struct ListResourcesResult {
     pub resources: Vec<Resource>,
 }
 
+impl From<ListResourcesResult> for serde_json::Value {
+    fn from(value: ListResourcesResult) -> Self {
+        serde_json::to_value(value).unwrap()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum ListRootsRequest {}
 
@@ -495,6 +558,12 @@ impl ModelContextProtocolRequest for ListRootsRequest {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct ListRootsResult {
     pub roots: Vec<Root>,
+}
+
+impl From<ListRootsResult> for serde_json::Value {
+    fn from(value: ListRootsResult) -> Self {
+        serde_json::to_value(value).unwrap()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -517,6 +586,12 @@ pub struct ListToolsResult {
     #[serde(rename = "nextCursor")]
     pub next_cursor: Option<String>,
     pub tools: Vec<Tool>,
+}
+
+impl From<ListToolsResult> for serde_json::Value {
+    fn from(value: ListToolsResult) -> Self {
+        serde_json::to_value(value).unwrap()
+    }
 }
 
 /// The severity of a log message.
@@ -610,6 +685,12 @@ pub struct PaginatedRequestParams {
 pub struct PaginatedResult {
     #[serde(rename = "nextCursor")]
     pub next_cursor: Option<String>,
+}
+
+impl From<PaginatedResult> for serde_json::Value {
+    fn from(value: PaginatedResult) -> Self {
+        serde_json::to_value(value).unwrap()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -720,6 +801,12 @@ pub enum ReadResourceResultContents {
     BlobResourceContents(BlobResourceContents),
 }
 
+impl From<ReadResourceResult> for serde_json::Value {
+    fn from(value: ReadResourceResult) -> Self {
+        serde_json::to_value(value).unwrap()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Request {
     pub method: String,
@@ -793,8 +880,7 @@ pub struct ResourceUpdatedNotificationParams {
     pub uri: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct Result {}
+pub type Result = serde_json::Value;
 
 /// The sender or recipient of messages and data in a conversation.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
