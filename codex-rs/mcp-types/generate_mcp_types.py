@@ -300,9 +300,10 @@ def define_struct(
             continue
 
         prop_type = map_type(prop, prop_name, name)
-        if prop_name not in required_props:
+        is_optional = prop_name not in required_props
+        if is_optional:
             prop_type = f"Option<{prop_type}>"
-        rs_prop = rust_prop_name(prop_name)
+        rs_prop = rust_prop_name(prop_name, is_optional)
         if prop_type.startswith("&'static str"):
             fields.append(StructField("const", rs_prop.name, prop_type, rs_prop.serde))
         else:
@@ -590,16 +591,32 @@ class RustProp:
     serde: str | None = None
 
 
-def rust_prop_name(name: str) -> RustProp:
+def rust_prop_name(name: str, is_optional: bool) -> RustProp:
     """Convert a JSON property name to a Rust property name."""
+    prop_name: str
+    is_rename = False
     if name == "type":
-        return RustProp("r#type", None)
+        prop_name = "r#type"
     elif name == "ref":
-        return RustProp("r#ref", None)
+        prop_name = "r#ref"
     elif snake_case := to_snake_case(name):
-        return RustProp(snake_case, f'#[serde(rename = "{name}")]')
+        prop_name = snake_case
+        is_rename = True
     else:
-        return RustProp(name, None)
+        prop_name = name
+
+    serde_annotations = []
+    if is_rename:
+        serde_annotations.append(f'rename = "{name}"')
+    if is_optional:
+        serde_annotations.append("default")
+        serde_annotations.append('skip_serializing_if = "Option::is_none"')
+
+    if serde_annotations:
+        serde_str = f'#[serde({", ".join(serde_annotations)})]'
+    else:
+        serde_str = None
+    return RustProp(prop_name, serde_str)
 
 
 def to_snake_case(name: str) -> str:
