@@ -81,6 +81,7 @@ pub async fn run_main(cli: Cli) -> anyhow::Result<()> {
         } else {
             None
         },
+        cwd: None,
     };
     let config = Config::load_with_overrides(overrides)?;
     let (codex_wrapper, event, ctrl_c) = codex_wrapper::init_codex(config).await?;
