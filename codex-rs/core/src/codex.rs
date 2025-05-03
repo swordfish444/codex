@@ -16,6 +16,7 @@ use codex_apply_patch::ApplyPatchFileChange;
 use codex_apply_patch::MaybeApplyPatchVerified;
 use fs_err as fs;
 use futures::prelude::*;
+use serde::Deserialize;
 use serde::Serialize;
 use serde_json;
 use tokio::sync::oneshot;
@@ -190,6 +191,11 @@ struct Session {
     tx_event: Sender<Event>,
     ctrl_c: Arc<Notify>,
 
+    /// The session's current working directory. All relative paths provided by
+    /// the model as well as sandbox policies are resolved against this path
+    /// instead of `std::env::current_dir()`.
+    cwd: PathBuf,
+
     instructions: Option<String>,
     approval_policy: AskForApproval,
     sandbox_policy: SandboxPolicy,
@@ -200,6 +206,14 @@ struct Session {
     notify: Option<Vec<String>>,
 
     state: Mutex<State>,
+}
+
+impl Session {
+    fn resolve_path(&self, path: Option<String>) -> PathBuf {
+        path.as_ref()
+            .map(PathBuf::from)
+            .map_or_else(|| self.cwd.clone(), |p| self.cwd.join(p))
+    }
 }
 
 /// Mutable state of the agent
@@ -296,21 +310,14 @@ impl Session {
         sub_id: &str,
         call_id: &str,
         command: Vec<String>,
-        cwd: Option<String>,
+        workdir: PathBuf,
     ) {
-        let cwd = cwd
-            .or_else(|| {
-                std::env::current_dir()
-                    .ok()
-                    .map(|p| p.to_string_lossy().to_string())
-            })
-            .unwrap_or_else(|| "<unknown cwd>".to_string());
         let event = Event {
             id: sub_id.to_string(),
             msg: EventMsg::ExecCommandBegin {
                 call_id: call_id.to_string(),
                 command,
-                cwd,
+                cwd: workdir.to_string_lossy().into(),
             },
         };
         let _ = self.tx_event.send(event).await;
@@ -518,6 +525,7 @@ async fn submission_loop(
                 sandbox_policy,
                 disable_response_storage,
                 notify,
+                cwd,
             } => {
                 info!(model, "Configuring session");
                 let client = ModelClient::new(model.clone());
@@ -539,6 +547,13 @@ async fn submission_loop(
                 };
 
                 // update session
+                // Session working directory – canonicalise so comparisons and
+                // path joins behave consistently.
+                let cwd_path = match cwd.canonicalize() {
+                    Ok(p) => p,
+                    Err(_) => cwd.clone(),
+                };
+
                 sess = Some(Arc::new(Session {
                     client,
                     tx_event: tx_event.clone(),
@@ -546,7 +561,8 @@ async fn submission_loop(
                     instructions,
                     approval_policy,
                     sandbox_policy,
-                    writable_roots: Mutex::new(get_writable_roots()),
+                    writable_roots: Mutex::new(get_writable_roots(&cwd_path)),
+                    cwd: cwd_path,
                     notify,
                     state: Mutex::new(state),
                 }));
@@ -855,6 +871,18 @@ async fn handle_response_item(
     Ok(output)
 }
 
+#[derive(Deserialize, Debug, Clone)]
+pub struct ShellToolCallParams {
+    pub command: Vec<String>,
+    pub workdir: Option<String>,
+
+    /// This is the maximum time in seconds that the command is allowed to run.
+    #[serde(rename = "timeout")]
+    // The wire format uses `timeout`, which has ambiguous units, so we use
+    // `timeout_ms` as the field name so it is clear in code.
+    pub timeout_ms: Option<u64>,
+}
+
 async fn handle_function_call(
     sess: &Session,
     sub_id: String,
@@ -865,7 +893,7 @@ async fn handle_function_call(
     match name.as_str() {
         "container.exec" | "shell" => {
             // parse command
-            let params = match serde_json::from_str::<ExecParams>(&arguments) {
+            let params = match serde_json::from_str::<ShellToolCallParams>(&arguments) {
                 Ok(v) => v,
                 Err(e) => {
                     // allow model to re-sample
@@ -904,12 +932,7 @@ async fn handle_function_call(
             }
 
             // this was not a valid patch, execute command
-            let repo_root = std::env::current_dir().expect("no current dir");
-            let workdir: PathBuf = params
-                .workdir
-                .as_ref()
-                .map(PathBuf::from)
-                .unwrap_or(repo_root.clone());
+            let workdir = sess.resolve_path(params.workdir.clone());
 
             // safety checks
             let safety = {
@@ -968,12 +991,16 @@ async fn handle_function_call(
                 &sub_id,
                 &call_id,
                 params.command.clone(),
-                params.workdir.clone(),
+                workdir.clone(),
             )
             .await;
 
             let output_result = process_exec_tool_call(
-                params.clone(),
+                ExecParams {
+                    command: params.command.clone(),
+                    cwd: workdir.clone(),
+                    timeout_ms: params.timeout_ms,
+                },
                 sandbox_type,
                 sess.ctrl_c.clone(),
                 &sess.sandbox_policy,
@@ -1051,18 +1078,23 @@ async fn handle_function_call(
 
                             // Emit a fresh Begin event so progress bars reset.
                             let retry_call_id = format!("{call_id}-retry");
+                            let cwd = sess.resolve_path(params.workdir.clone());
                             sess.notify_exec_command_begin(
                                 &sub_id,
                                 &retry_call_id,
                                 params.command.clone(),
-                                params.workdir.clone(),
+                                cwd.clone(),
                             )
                             .await;
 
                             // This is an escalated retry; the policy will not be
                             // examined and the sandbox has been set to `None`.
                             let retry_output_result = process_exec_tool_call(
-                                params.clone(),
+                                ExecParams {
+                                    command: params.command.clone(),
+                                    cwd: cwd.clone(),
+                                    timeout_ms: params.timeout_ms,
+                                },
                                 SandboxType::None,
                                 sess.ctrl_c.clone(),
                                 &sess.sandbox_policy,
@@ -1162,43 +1194,47 @@ async fn apply_patch(
         guard.clone()
     };
 
-    let auto_approved =
-        match assess_patch_safety(&changes, sess.approval_policy, &writable_roots_snapshot) {
-            SafetyCheck::AutoApprove { .. } => true,
-            SafetyCheck::AskUser => {
-                // Compute a readable summary of path changes to include in the
-                // approval request so the user can make an informed decision.
-                let rx_approve = sess
-                    .request_patch_approval(sub_id.clone(), &changes, None, None)
-                    .await;
-                match rx_approve.await.unwrap_or_default() {
-                    ReviewDecision::Approved | ReviewDecision::ApprovedForSession => false,
-                    ReviewDecision::Denied | ReviewDecision::Abort => {
-                        return ResponseInputItem::FunctionCallOutput {
-                            call_id,
-                            output: FunctionCallOutputPayload {
-                                content: "patch rejected by user".to_string(),
-                                success: Some(false),
-                            },
-                        };
-                    }
+    let auto_approved = match assess_patch_safety(
+        &changes,
+        sess.approval_policy,
+        &writable_roots_snapshot,
+        &sess.cwd,
+    ) {
+        SafetyCheck::AutoApprove { .. } => true,
+        SafetyCheck::AskUser => {
+            // Compute a readable summary of path changes to include in the
+            // approval request so the user can make an informed decision.
+            let rx_approve = sess
+                .request_patch_approval(sub_id.clone(), &changes, None, None)
+                .await;
+            match rx_approve.await.unwrap_or_default() {
+                ReviewDecision::Approved | ReviewDecision::ApprovedForSession => false,
+                ReviewDecision::Denied | ReviewDecision::Abort => {
+                    return ResponseInputItem::FunctionCallOutput {
+                        call_id,
+                        output: FunctionCallOutputPayload {
+                            content: "patch rejected by user".to_string(),
+                            success: Some(false),
+                        },
+                    };
                 }
             }
-            SafetyCheck::Reject { reason } => {
-                return ResponseInputItem::FunctionCallOutput {
-                    call_id,
-                    output: FunctionCallOutputPayload {
-                        content: format!("patch rejected: {reason}"),
-                        success: Some(false),
-                    },
-                };
-            }
-        };
+        }
+        SafetyCheck::Reject { reason } => {
+            return ResponseInputItem::FunctionCallOutput {
+                call_id,
+                output: FunctionCallOutputPayload {
+                    content: format!("patch rejected: {reason}"),
+                    success: Some(false),
+                },
+            };
+        }
+    };
 
     // Verify write permissions before touching the filesystem.
     let writable_snapshot = { sess.writable_roots.lock().unwrap().clone() };
 
-    if let Some(offending) = first_offending_path(&changes, &writable_snapshot) {
+    if let Some(offending) = first_offending_path(&changes, &writable_snapshot, &sess.cwd) {
         let root = offending.parent().unwrap_or(&offending).to_path_buf();
 
         let reason = Some(format!(
@@ -1255,11 +1291,13 @@ async fn apply_patch(
                     ApplyPatchFileChange::Update { .. } => path,
                 };
 
-                // Reuse safety normalisation logic: treat absolute path.
+                // Reuse safety normalization logic: treat absolute path.
                 let abs = if path_ref.is_absolute() {
                     path_ref.clone()
                 } else {
-                    std::env::current_dir().unwrap_or_default().join(path_ref)
+                    // TODO(mbolin): If workdir was supplied with apply_patch call,
+                    // relative paths should be resolved against it.
+                    sess.cwd.join(path_ref)
                 };
 
                 let writable = {
@@ -1345,9 +1383,8 @@ async fn apply_patch(
 fn first_offending_path(
     changes: &HashMap<PathBuf, ApplyPatchFileChange>,
     writable_roots: &[PathBuf],
+    cwd: &Path,
 ) -> Option<PathBuf> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-
     for (path, change) in changes {
         let candidate = match change {
             ApplyPatchFileChange::Add { .. } => path,
@@ -1485,7 +1522,7 @@ fn apply_changes_from_apply_patch(
     })
 }
 
-fn get_writable_roots() -> Vec<PathBuf> {
+fn get_writable_roots(cwd: &Path) -> Vec<std::path::PathBuf> {
     let mut writable_roots = Vec::new();
     if cfg!(target_os = "macos") {
         // On macOS, $TMPDIR is private to the user.
@@ -1507,9 +1544,7 @@ fn get_writable_roots() -> Vec<PathBuf> {
         }
     }
 
-    if let Ok(cwd) = std::env::current_dir() {
-        writable_roots.push(cwd);
-    }
+    writable_roots.push(cwd.to_path_buf());
 
     writable_roots
 }
