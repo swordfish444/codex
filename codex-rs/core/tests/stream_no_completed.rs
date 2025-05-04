@@ -31,6 +31,9 @@ data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"{}\",\"output\":
     )
 }
 
+// Skip on macOS due to network sandbox restrictions that prevent binding to
+// 127.0.0.1 for the embedded Wiremock HTTP server.
+#[cfg_attr(target_os = "macos", ignore)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn retries_on_early_close() {
     let server = MockServer::start().await;
