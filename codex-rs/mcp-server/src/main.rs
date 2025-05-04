@@ -12,6 +12,7 @@ use tracing::debug;
 use tracing::error;
 use tracing::info;
 
+mod codex_tool_config;
 mod message_processor;
 use crate::message_processor::MessageProcessor;
 

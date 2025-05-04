@@ -1,8 +1,40 @@
+// The CLI-specific `parse_sandbox_permission_with_base_path()` helper lives in
+// `approval_mode_cli_arg.rs` and is only compiled when the `cli` feature is
+// enabled.  However, this config module is included in **all** builds so we
+// need a stand-in fallback when the feature is disabled to satisfy the
+// dependency graph. Instead of duplicating the full parsing logic, we provide
+// a minimal implementation that handles the same set of permissions.  This
+// ensures the library continues to compile without the `cli` feature (e.g.
+// when running unit tests).
+
+#[cfg(feature = "cli")]
 use crate::approval_mode_cli_arg::parse_sandbox_permission_with_base_path;
+
+#[cfg(not(feature = "cli"))]
+fn parse_sandbox_permission_with_base_path(
+    raw: &str,
+    _base_path: std::path::PathBuf,
+) -> std::io::Result<crate::protocol::SandboxPermission> {
+    use crate::protocol::SandboxPermission::*;
+
+    match raw {
+        "disk-full-read-access" => Ok(DiskFullReadAccess),
+        "disk-write-platform-user-temp-folder" => Ok(DiskWritePlatformUserTempFolder),
+        "disk-write-platform-global-temp-folder" => Ok(DiskWritePlatformGlobalTempFolder),
+        "disk-write-cwd" => Ok(DiskWriteCwd),
+        "disk-full-write-access" => Ok(DiskFullWriteAccess),
+        "network-full-access" => Ok(NetworkFullAccess),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("`{raw}` is not a recognised permission"),
+        )),
+    }
+}
 use crate::flags::OPENAI_DEFAULT_MODEL;
 use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPermission;
 use crate::protocol::SandboxPolicy;
+use schemars::JsonSchema;
 use dirs::home_dir;
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -13,7 +45,9 @@ use std::path::PathBuf;
 const EMBEDDED_INSTRUCTIONS: &str = include_str!("../prompt.md");
 
 /// Application configuration loaded from disk and merged with overrides.
-#[derive(Debug, Clone)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, JsonSchema)]
 pub struct Config {
     /// Optional override of model selection.
     pub model: String,
@@ -58,6 +92,11 @@ pub struct Config {
     /// resolved against this path.
     pub cwd: PathBuf,
 }
+
+// NOTE: The `ConfigForToolCall` struct previously lived here but has been
+// moved to the `codex-mcp-server` crate which is the only consumer.  Keeping
+// the type server-side avoids leaking MCP-specific concerns into the core
+// library crate.
 
 /// Base config deserialized from ~/.codex/config.toml.
 #[derive(Deserialize, Debug, Clone, Default)]
