@@ -4,6 +4,7 @@ use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPermission;
 use crate::protocol::SandboxPolicy;
 use dirs::home_dir;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -13,7 +14,9 @@ use std::path::PathBuf;
 const EMBEDDED_INSTRUCTIONS: &str = include_str!("../prompt.md");
 
 /// Application configuration loaded from disk and merged with overrides.
-#[derive(Debug, Clone)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, JsonSchema)]
 pub struct Config {
     /// Optional override of model selection.
     pub model: String,
@@ -58,6 +61,11 @@ pub struct Config {
     /// resolved against this path.
     pub cwd: PathBuf,
 }
+
+// NOTE: The `ConfigForToolCall` struct previously lived here but has been
+// moved to the `codex-mcp-server` crate which is the only consumer.  Keeping
+// the type server-side avoids leaking MCP-specific concerns into the core
+// library crate.
 
 /// Base config deserialized from ~/.codex/config.toml.
 #[derive(Deserialize, Debug, Clone, Default)]
