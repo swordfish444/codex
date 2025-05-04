@@ -83,7 +83,9 @@ pub enum Op {
 }
 
 /// Determines how liberally commands are auto‑approved by the system.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+use schemars::JsonSchema;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum AskForApproval {
     /// Under this policy, only “known safe” commands—as determined by
@@ -110,7 +112,7 @@ pub enum AskForApproval {
 }
 
 /// Determines execution restrictions for model shell commands
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub struct SandboxPolicy {
     permissions: Vec<SandboxPermission>,
@@ -228,7 +230,7 @@ impl SandboxPolicy {
 
 /// Permissions that should be granted to the sandbox in which the agent
 /// operates.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum SandboxPermission {
     /// Is allowed to read all files on disk.

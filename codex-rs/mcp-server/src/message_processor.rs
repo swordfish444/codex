@@ -1,6 +1,7 @@
 //! Very small proof-of-concept request router for the MCP prototype server.
 
 use mcp_types::CallToolRequestParams;
+use mcp_types::CallToolResult;
 use mcp_types::CallToolResultContent;
 use mcp_types::ClientRequest;
 use mcp_types::JSONRPCBatchRequest;
@@ -21,6 +22,22 @@ use mcp_types::Tool;
 use mcp_types::ToolInputSchema;
 use mcp_types::JSONRPC_VERSION;
 use serde_json::json;
+use schemars::schema_for;
+use tokio::task;
+
+// Import types from codex-core.
+use codex_core::codex_wrapper::init_codex;
+use codex_core::config::Config as CodexConfig;
+use codex_core::protocol::{Event, EventMsg};
+
+// Helper to convert a Codex Event into an MCP JSON-RPC notification.
+fn codex_event_to_notification(event: &Event) -> JSONRPCMessage {
+    JSONRPCMessage::Notification(JSONRPCNotification {
+        jsonrpc: JSONRPC_VERSION.into(),
+        method: "codex/event".into(),
+        params: Some(serde_json::to_value(event).expect("Event must serialize")),
+    })
+}
 use tokio::sync::mpsc;
 
 pub(crate) struct MessageProcessor {
@@ -302,20 +319,35 @@ impl MessageProcessor {
         params: <mcp_types::ListToolsRequest as mcp_types::ModelContextProtocolRequest>::Params,
     ) {
         tracing::trace!("tools/list -> {params:?}");
+        // -----------------------------------------------------------------
+        // Build the schema for the Codex tool dynamically using `schemars`.
+        // -----------------------------------------------------------------
+        let root_schema = schema_for!(CodexConfig);
+        let schema_value = serde_json::to_value(&root_schema).expect("schema serializable");
+
+        // Attempt to extract `properties` and `required` from the generated schema.
+        let (properties, required) = schema_value
+            .get("schema")
+            .map(|schema_root| {
+                let props = schema_root.get("properties").cloned();
+                let req = schema_root
+                    .get("required")
+                    .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok());
+                (props, req)
+            })
+            .unwrap_or((None, None));
+
         let result = ListToolsResult {
             tools: vec![Tool {
-                name: "echo".to_string(),
+                name: "codex".to_string(),
                 input_schema: ToolInputSchema {
                     r#type: "object".to_string(),
-                    properties: Some(json!({
-                        "input": {
-                            "type": "string",
-                            "description": "The input to echo back"
-                        }
-                    })),
-                    required: Some(vec!["input".to_string()]),
+                    properties,
+                    required,
                 },
-                description: Some("Echoes the request back".to_string()),
+                description: Some(
+                    "Run a Codex session. Accepts configuration parameters matching the Codex Config struct.".to_string(),
+                ),
                 annotations: None,
             }],
             next_cursor: None,
@@ -331,26 +363,223 @@ impl MessageProcessor {
     ) {
         tracing::info!("tools/call -> params: {:?}", params);
         let CallToolRequestParams { name, arguments } = params;
-        match name.as_str() {
-            "echo" => {
-                let result = mcp_types::CallToolResult {
-                    content: vec![CallToolResultContent::TextContent(TextContent {
-                        r#type: "text".to_string(),
-                        text: format!("Echo: {arguments:?}"),
-                        annotations: None,
-                    })],
-                    is_error: None,
-                };
-                self.send_response::<mcp_types::CallToolRequest>(id, result);
-            }
-            _ => {
-                let result = mcp_types::CallToolResult {
-                    content: vec![],
-                    is_error: Some(true),
-                };
-                self.send_response::<mcp_types::CallToolRequest>(id, result);
-            }
+
+        // We only support the "codex" tool for now.
+        if name != "codex" {
+            // Tool not found – return error result so the LLM can react.
+            let result = CallToolResult {
+                content: vec![CallToolResultContent::TextContent(TextContent {
+                    r#type: "text".to_string(),
+                    text: format!("Unknown tool '{name}'"),
+                    annotations: None,
+                })],
+                is_error: Some(true),
+            };
+            self.send_response::<mcp_types::CallToolRequest>(id, result);
+            return;
         }
+
+        // Clone outgoing sender to move into async task.
+        let outgoing = self.outgoing.clone();
+
+        // Spawn an async task to handle the Codex session so that we do not
+        // block the synchronous message-processing loop.
+        task::spawn(async move {
+            // -----------------------------------------------------------------
+            // Step 1: Parse configuration parameters.
+            // -----------------------------------------------------------------
+            let config: CodexConfig = match arguments {
+                Some(json_val) => match serde_json::from_value::<CodexConfig>(json_val) {
+                    Ok(cfg) => cfg,
+                    Err(e) => {
+                        let result = CallToolResult {
+                            content: vec![CallToolResultContent::TextContent(TextContent {
+                                r#type: "text".to_owned(),
+                                text: format!(
+                                    "Failed to parse configuration for Codex tool: {e}"
+                                ),
+                                annotations: None,
+                            })],
+                            is_error: Some(true),
+                        };
+                        let _ = outgoing
+                            .send(JSONRPCMessage::Response(JSONRPCResponse {
+                                jsonrpc: JSONRPC_VERSION.into(),
+                                id: id.clone(),
+                                result: result.into(),
+                            }))
+                            .await;
+                        return;
+                    }
+                },
+                None => match CodexConfig::load_with_overrides(Default::default()) {
+                    Ok(cfg) => cfg,
+                    Err(e) => {
+                        let result = CallToolResult {
+                            content: vec![CallToolResultContent::TextContent(TextContent {
+                                r#type: "text".to_string(),
+                                text: format!(
+                                    "Cannot load default Codex configuration: {e}"
+                                ),
+                                annotations: None,
+                            })],
+                            is_error: Some(true),
+                        };
+                        let _ = outgoing
+                            .send(JSONRPCMessage::Response(JSONRPCResponse {
+                                jsonrpc: JSONRPC_VERSION.into(),
+                                id: id.clone(),
+                                result: result.into(),
+                            }))
+                            .await;
+                        return;
+                    }
+                },
+            };
+
+            // -----------------------------------------------------------------
+            // Step 2: Start Codex session.
+            // -----------------------------------------------------------------
+            let (codex, first_event, _ctrl_c) = match init_codex(config).await {
+                Ok(res) => res,
+                Err(e) => {
+                    let result = CallToolResult {
+                        content: vec![CallToolResultContent::TextContent(TextContent {
+                            r#type: "text".to_string(),
+                            text: format!("Failed to start Codex session: {e}"),
+                            annotations: None,
+                        })],
+                        is_error: Some(true),
+                    };
+                    let _ = outgoing
+                        .send(JSONRPCMessage::Response(JSONRPCResponse {
+                            jsonrpc: JSONRPC_VERSION.into(),
+                            id: id.clone(),
+                            result: result.into(),
+                        }))
+                        .await;
+                    return;
+                }
+            };
+
+            // Send the initial SessionConfigured event as a notification so the
+            // client can begin rendering.
+            let _ = outgoing.send(codex_event_to_notification(&first_event)).await;
+
+            // We'll track the last AgentMessage so we can fulfil the tool call
+            // response when the task completes.
+            let mut last_agent_message: Option<String> = None;
+
+            // -----------------------------------------------------------------
+            // Step 3: Pump events until we reach a state that requires a tool
+            // response.
+            // -----------------------------------------------------------------
+            loop {
+                match codex.next_event().await {
+                    Ok(event) => {
+                        // Forward all events to the MCP client.
+                        let _ = outgoing.send(codex_event_to_notification(&event)).await;
+
+                        match &event.msg {
+                            EventMsg::AgentMessage { message } => {
+                                last_agent_message = Some(message.clone());
+                            }
+                            EventMsg::ExecApprovalRequest { .. } => {
+                                // Respond to the original call with an exec approval request.
+                                let result = CallToolResult {
+                                    content: vec![CallToolResultContent::TextContent(TextContent {
+                                        r#type: "text".to_string(),
+                                        text: "EXEC_APPROVAL_REQUIRED".to_string(),
+                                        annotations: None,
+                                    })],
+                                    is_error: None,
+                                };
+                                let _ = outgoing
+                                    .send(JSONRPCMessage::Response(JSONRPCResponse {
+                                        jsonrpc: JSONRPC_VERSION.into(),
+                                        id: id.clone(),
+                                        result: result.into(),
+                                    }))
+                                    .await;
+                                break;
+                            }
+                            EventMsg::ApplyPatchApprovalRequest { .. } => {
+                                // Respond to the original call with a patch approval request.
+                                let result = CallToolResult {
+                                    content: vec![CallToolResultContent::TextContent(TextContent {
+                                        r#type: "text".to_string(),
+                                        text: "PATCH_APPROVAL_REQUIRED".to_string(),
+                                        annotations: None,
+                                    })],
+                                    is_error: None,
+                                };
+                                let _ = outgoing
+                                    .send(JSONRPCMessage::Response(JSONRPCResponse {
+                                        jsonrpc: JSONRPC_VERSION.into(),
+                                        id: id.clone(),
+                                        result: result.into(),
+                                    }))
+                                    .await;
+                                break;
+                            }
+                            EventMsg::TaskComplete => {
+                                // Return the last agent message, if any.
+                                let result = if let Some(msg) = last_agent_message {
+                                    CallToolResult {
+                                        content: vec![CallToolResultContent::TextContent(TextContent {
+                                            r#type: "text".to_string(),
+                                            text: msg,
+                                            annotations: None,
+                                        })],
+                                        is_error: None,
+                                    }
+                                } else {
+                                    CallToolResult {
+                                        content: vec![CallToolResultContent::TextContent(TextContent {
+                                            r#type: "text".to_string(),
+                                            text: "<no-output>".to_string(),
+                                            annotations: None,
+                                        })],
+                                        is_error: None,
+                                    }
+                                };
+
+                                let _ = outgoing
+                                    .send(JSONRPCMessage::Response(JSONRPCResponse {
+                                        jsonrpc: JSONRPC_VERSION.into(),
+                                        id: id.clone(),
+                                        result: result.into(),
+                                    }))
+                                    .await;
+                                break;
+                            }
+                            _ => {
+                                // Nothing to do; continue pumping.
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // Bubble up error to the user via the response.
+                        let result = CallToolResult {
+                            content: vec![CallToolResultContent::TextContent(TextContent {
+                                r#type: "text".to_string(),
+                                text: format!("Codex session error: {e}"),
+                                annotations: None,
+                            })],
+                            is_error: Some(true),
+                        };
+                        let _ = outgoing
+                            .send(JSONRPCMessage::Response(JSONRPCResponse {
+                                jsonrpc: JSONRPC_VERSION.into(),
+                                id: id.clone(),
+                                result: result.into(),
+                            }))
+                            .await;
+                        break;
+                    }
+                }
+            }
+        });
     }
 
     fn handle_set_level(
