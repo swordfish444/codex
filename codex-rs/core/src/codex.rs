@@ -41,6 +41,7 @@ use crate::models::ContentItem;
 use crate::models::FunctionCallOutputPayload;
 use crate::models::ResponseInputItem;
 use crate::models::ResponseItem;
+use crate::models::ShellToolCallParams;
 use crate::protocol::AskForApproval;
 use crate::protocol::Event;
 use crate::protocol::EventMsg;
