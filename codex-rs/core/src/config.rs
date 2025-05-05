@@ -1,10 +1,12 @@
 use crate::approval_mode_cli_arg::parse_sandbox_permission_with_base_path;
 use crate::flags::OPENAI_DEFAULT_MODEL;
+use crate::mcp_server_config::McpServerConfig;
 use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPermission;
 use crate::protocol::SandboxPolicy;
 use dirs::home_dir;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Embedded fallback instructions that mirror the TypeScript CLI’s default
@@ -57,6 +59,9 @@ pub struct Config {
     /// for the session. All relative paths inside the business-logic layer are
     /// resolved against this path.
     pub cwd: PathBuf,
+
+    /// Definition for MCP servers that Codex can reach out to for tool calls.
+    pub mcp_servers: HashMap<String, McpServerConfig>,
 }
 
 /// Base config deserialized from ~/.codex/config.toml.
@@ -85,6 +90,10 @@ pub struct ConfigToml {
 
     /// System instructions.
     pub instructions: Option<String>,
+
+    /// Definition for MCP servers that Codex can reach out to for tool calls.
+    #[serde(default)]
+    pub mcp_servers: HashMap<String, McpServerConfig>,
 }
 
 impl ConfigToml {
@@ -213,6 +222,7 @@ impl Config {
                 .unwrap_or(false),
             notify: cfg.notify,
             instructions,
+            mcp_servers: cfg.mcp_servers,
         }
     }
 

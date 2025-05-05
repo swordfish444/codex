@@ -79,6 +79,10 @@ sandbox_permissions = [
 ]
 ```
 
+### mcp_servers
+
+FIXME: document this part of the config
+
 ### disable_response_storage
 
 Currently, customers whose accounts are set to use Zero Data Retention (ZDR) must set `disable_response_storage` to `true` so that Codex uses an alternative to the Responses API that works with ZDR:
