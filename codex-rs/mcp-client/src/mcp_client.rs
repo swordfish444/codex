@@ -18,6 +18,8 @@ use std::sync::Arc;
 
 use anyhow::anyhow;
 use anyhow::Result;
+use mcp_types::CallToolRequest;
+use mcp_types::CallToolRequestParams;
 use mcp_types::JSONRPCMessage;
 use mcp_types::JSONRPCNotification;
 use mcp_types::JSONRPCRequest;
@@ -37,6 +39,7 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
+use tracing::debug;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
@@ -122,6 +125,7 @@ impl McpClient {
                 while let Some(msg) = outgoing_rx.recv().await {
                     match serde_json::to_string(&msg) {
                         Ok(json) => {
+                            debug!("MCP message to server: {json}");
                             if stdin.write_all(json.as_bytes()).await.is_err() {
                                 error!("failed to write message to child stdin");
                                 break;
@@ -149,6 +153,7 @@ impl McpClient {
 
             tokio::spawn(async move {
                 while let Ok(Some(line)) = lines.next_line().await {
+                    debug!("MCP message from server: {line}");
                     match serde_json::from_str::<JSONRPCMessage>(&line) {
                         Ok(JSONRPCMessage::Response(resp)) => {
                             Self::dispatch_response(resp, &pending).await;
@@ -229,7 +234,7 @@ impl McpClient {
         // Send to writer task.
         if self.outgoing_tx.send(message).await.is_err() {
             return Err(anyhow!(
-                "failed to send message to writer task – channel closed"
+                "failed to send message to writer task - channel closed"
             ));
         }
 
@@ -260,6 +265,17 @@ impl McpClient {
         params: Option<ListToolsRequestParams>,
     ) -> Result<ListToolsResult> {
         self.send_request::<ListToolsRequest>(params).await
+    }
+
+    /// Convenience wrapper around `tools/call`.
+    pub async fn call_tool(
+        &self,
+        name: String,
+        arguments: Option<serde_json::Value>,
+    ) -> Result<mcp_types::CallToolResult> {
+        let params = CallToolRequestParams { name, arguments };
+        debug!("MCP tool call: {params:?}");
+        self.send_request::<CallToolRequest>(params).await
     }
 
     /// Internal helper: route a JSON-RPC *response* object to the pending map.
