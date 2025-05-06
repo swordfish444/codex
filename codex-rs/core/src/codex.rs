@@ -38,6 +38,7 @@ use crate::exec::ExecParams;
 use crate::exec::ExecToolCallOutput;
 use crate::exec::SandboxType;
 use crate::flags::OPENAI_STREAM_MAX_RETRIES;
+use crate::mcp_connection_manager::try_parse_fully_qualified_tool_name;
 use crate::models::ContentItem;
 use crate::models::FunctionCallOutputPayload;
 use crate::models::ResponseInputItem;
@@ -201,6 +202,9 @@ struct Session {
     approval_policy: AskForApproval,
     sandbox_policy: SandboxPolicy,
     writable_roots: Mutex<Vec<PathBuf>>,
+
+    /// Manager for external MCP servers/tools.
+    mcp: crate::mcp_connection_manager::McpConnectionManager,
 
     /// External notifier command (will be passed as args to exec()). When
     /// `None` this feature is disabled.
@@ -554,6 +558,34 @@ async fn submission_loop(
                 };
 
                 let writable_roots = Mutex::new(get_writable_roots(&cwd));
+
+                // Load config to initialise the MCP connection manager.
+                let config = match crate::config::Config::load_with_overrides(
+                    crate::config::ConfigOverrides::default(),
+                ) {
+                    Ok(cfg) => cfg,
+                    Err(e) => {
+                        error!("Failed to load config for MCP servers: {e:#}");
+                        // Fall back to empty server map so the session can still proceed.
+                        crate::config::Config::load_default_config_for_test()
+                    }
+                };
+
+                let mcp = match crate::mcp_connection_manager::create_mcp_connection_manager(
+                    config.mcp_servers.clone(),
+                )
+                .await
+                {
+                    Ok(mgr) => mgr,
+                    Err(e) => {
+                        error!("Failed to create MCP connection manager: {e:#}");
+                        // Use an empty manager so we can still continue.
+                        crate::mcp_connection_manager::McpConnectionManager::new(HashMap::new())
+                            .await
+                            .expect("empty manager should never fail")
+                    }
+                };
+
                 sess = Some(Arc::new(Session {
                     client,
                     tx_event: tx_event.clone(),
@@ -565,6 +597,7 @@ async fn submission_loop(
                     writable_roots,
                     notify,
                     state: Mutex::new(state),
+                    mcp,
                 }));
 
                 // ack
@@ -753,11 +786,15 @@ async fn run_turn(
     } else {
         None
     };
+
+    let extra_tools = sess.mcp.list_all_tools();
+
     let prompt = Prompt {
         input,
         prev_id,
         instructions,
         store,
+        extra_tools,
     };
 
     let mut retries = 0;
@@ -1141,13 +1178,48 @@ async fn handle_function_call(
             }
         }
         _ => {
-            // Unknown function: reply with structured failure so the model can adapt.
-            ResponseInputItem::FunctionCallOutput {
-                call_id,
-                output: crate::models::FunctionCallOutputPayload {
-                    content: format!("unsupported call: {}", name),
-                    success: None,
-                },
+            match try_parse_fully_qualified_tool_name(&name) {
+                Some((server, tool_name)) => {
+                    // Attempt to route to external MCP server.
+                    let arguments_value: Option<serde_json::Value> =
+                        serde_json::from_str(&arguments).ok();
+
+                    match sess
+                        .mcp
+                        .call_tool(&server, &tool_name, arguments_value)
+                        .await
+                    {
+                        Ok(result) => {
+                            let success = !result.is_error.unwrap_or(false);
+                            let content = serde_json::to_string(&result)
+                                .unwrap_or_else(|_| "<unserializable tool result>".to_string());
+                            ResponseInputItem::FunctionCallOutput {
+                                call_id,
+                                output: FunctionCallOutputPayload {
+                                    content,
+                                    success: Some(success),
+                                },
+                            }
+                        }
+                        Err(e) => ResponseInputItem::FunctionCallOutput {
+                            call_id,
+                            output: FunctionCallOutputPayload {
+                                content: format!("tool call error: {e}"),
+                                success: Some(false),
+                            },
+                        },
+                    }
+                }
+                None => {
+                    // Unknown function: reply with structured failure so the model can adapt.
+                    ResponseInputItem::FunctionCallOutput {
+                        call_id,
+                        output: crate::models::FunctionCallOutputPayload {
+                            content: format!("unsupported call: {}", name),
+                            success: None,
+                        },
+                    }
+                }
             }
         }
     }
