@@ -328,6 +328,21 @@ impl ChatWidget<'_> {
                     .record_completed_exec_command(call_id, stdout, stderr, exit_code);
                 self.request_redraw()?;
             }
+            EventMsg::McpToolCallBegin {
+                call_id,
+                server,
+                tool,
+                arguments,
+            } => {
+                todo!()
+            }
+            EventMsg::McpToolCallEnd {
+                call_id,
+                success,
+                result,
+            } => {
+                todo!()
+            }
             event => {
                 self.conversation_history
                     .add_background_event(format!("{event:?}"));
