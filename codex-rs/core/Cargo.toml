@@ -19,6 +19,7 @@ env-flags = "0.1.1"
 eventsource-stream = "0.2.3"
 fs-err = "3.1.0"
 futures = "0.3"
+codex-mcp-client = { path = "../mcp-client" }
 mime_guess = "2.0"
 patch = "0.7"
 path-absolutize = "3.1.1"
@@ -39,6 +40,7 @@ toml = "0.8.20"
 tracing = { version = "0.1.41", features = ["log"] }
 tree-sitter = "0.25.3"
 tree-sitter-bash = "0.23.3"
+mcp-types = { path = "../mcp-types" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.172"
