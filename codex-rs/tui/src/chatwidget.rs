@@ -334,14 +334,22 @@ impl ChatWidget<'_> {
                 tool,
                 arguments,
             } => {
-                todo!()
+                self.conversation_history.add_active_mcp_tool_call(
+                    call_id,
+                    server,
+                    tool,
+                    arguments,
+                );
+                self.request_redraw()?;
             }
             EventMsg::McpToolCallEnd {
                 call_id,
                 success,
                 result,
             } => {
-                todo!()
+                self.conversation_history
+                    .record_completed_mcp_tool_call(call_id, success, result);
+                self.request_redraw()?;
             }
             event => {
                 self.conversation_history
