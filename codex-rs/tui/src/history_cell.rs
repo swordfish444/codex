@@ -1,4 +1,5 @@
 use codex_ansi_escape::ansi_escape_line;
+use codex_common::elapsed::format_elapsed_instant;
 use codex_core::config::Config;
 use codex_core::protocol::FileChange;
 use ratatui::prelude::*;
@@ -201,7 +202,7 @@ impl HistoryCell {
         success: bool,
         result: Option<serde_json::Value>,
     ) -> Self {
-        let duration = start.elapsed();
+        let duration = format_elapsed_instant(start);
         let status_str = if success { "success" } else { "failed" };
         let title_line = Line::from(vec![
             "tool".magenta(),
