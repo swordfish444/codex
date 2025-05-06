@@ -1,8 +1,6 @@
 //! Standard type to use with the `--approval-mode` CLI option.
 //! Available when the `cli` feature is enabled for the crate.
 
-use std::path::PathBuf;
-
 use clap::ArgAction;
 use clap::Parser;
 use clap::ValueEnum;
