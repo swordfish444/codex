@@ -96,7 +96,30 @@ impl HistoryCell {
     pub(crate) fn new_agent_message(message: String) -> Self {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from("codex".magenta().bold()));
-        lines.extend(message.lines().map(|l| Line::from(l.to_string())));
+        let markdown = tui_markdown::from_str(&message);
+
+        // `tui_markdown` returns a `ratatui::text::Text` where every `Line` borrows from the
+        // input `message` string. Since the `HistoryCell` stores its lines with a `'static`
+        // lifetime we must create an **owned** copy of each line so that it is no longer tied to
+        // `message`. We do this by cloning the content of every `Span` into an owned `String`.
+
+        for borrowed_line in markdown.lines {
+            let mut owned_spans = Vec::with_capacity(borrowed_line.spans.len());
+            for span in &borrowed_line.spans {
+                // Create a new owned String for the span's content to break the lifetime link.
+                let owned_span = RtSpan::styled(span.content.to_string(), span.style);
+                owned_spans.push(owned_span);
+            }
+
+            let owned_line: Line<'static> = Line::from(owned_spans).style(borrowed_line.style);
+            // Preserve alignment if it was set on the source line.
+            let owned_line = match borrowed_line.alignment {
+                Some(alignment) => owned_line.alignment(alignment),
+                None => owned_line,
+            };
+
+            lines.push(owned_line);
+        }
         lines.push(Line::from(""));
 
         HistoryCell::AgentMessage { lines }
