@@ -211,7 +211,7 @@ impl HistoryCell {
         let status_str = if success { "success" } else { "failed" };
         let title_line = Line::from(vec![
             "tool".magenta(),
-            format!(" {fq_tool_name} ({status_str}, duration: {:?})", duration).dim(),
+            format!(" {fq_tool_name} ({status_str}, duration: {})", duration).dim(),
         ]);
 
         let mut lines: Vec<Line<'static>> = Vec::new();
