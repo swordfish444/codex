@@ -21,6 +21,7 @@ mod mcp_tool_call;
 mod model_provider_info;
 mod models;
 pub mod protocol;
+mod rollout;
 mod safety;
 mod user_notification;
 pub mod util;
