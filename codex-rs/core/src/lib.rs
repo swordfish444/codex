@@ -24,5 +24,6 @@ mod safety;
 mod user_notification;
 pub mod util;
 mod zdr_transcript;
+mod rollout;
 
 pub use codex::Codex;
