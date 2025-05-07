@@ -25,6 +25,10 @@ use crate::mcp_server_config::McpServerConfig;
 /// choose a delimiter from this character set.
 const MCP_TOOL_NAME_DELIMITER: &str = "__OAI_CODEX_MCP__";
 
+/// Map that holds a startup error for every MCP server that could **not** be
+/// spawned successfully.
+pub type ClientStartErrors = HashMap<String, anyhow::Error>;
+
 fn fully_qualified_tool_name(server: &str, tool: &str) -> String {
     format!("{server}{MCP_TOOL_NAME_DELIMITER}{tool}")
 }
@@ -56,40 +60,51 @@ impl McpConnectionManager {
     /// * `mcp_servers` – Map loaded from the user configuration where *keys*
     ///   are human-readable server identifiers and *values* are the spawn
     ///   instructions.
-    pub async fn new(mcp_servers: HashMap<String, McpServerConfig>) -> Result<Self> {
+    ///
+    /// The function no longer errors out when *individual* MCP servers fail
+    /// to start. Instead, it returns a tuple `(Self, ClientStartErrors)` where
+    /// the map stores the error for every server that failed to spawn.
+    /// Call-sites are expected to inspect the map and surface the failures to
+    /// the user (e.g. via `EventMsg::Error`).
+    pub async fn new(
+        mcp_servers: HashMap<String, McpServerConfig>,
+    ) -> Result<(Self, ClientStartErrors)> {
         // Early exit if no servers are configured.
         if mcp_servers.is_empty() {
-            return Ok(Self::default());
+            return Ok((Self::default(), ClientStartErrors::default()));
         }
 
-        // Spin up all servers concurrently.
+        // Launch all configured servers concurrently.
         let mut join_set = JoinSet::new();
 
-        // Spawn tasks to launch each server.
         for (server_name, cfg) in mcp_servers {
-            // TODO: Verify server name: require `^[a-zA-Z0-9_-]+$`?
             join_set.spawn(async move {
                 let McpServerConfig { command, args, env } = cfg;
                 let client_res = McpClient::new_stdio_client(command, args, env).await;
-
                 (server_name, client_res)
             });
         }
 
         let mut clients: HashMap<String, std::sync::Arc<McpClient>> =
             HashMap::with_capacity(join_set.len());
+        let mut errors: ClientStartErrors = HashMap::new();
+
         while let Some(res) = join_set.join_next().await {
-            let (server_name, client_res) = res?;
+            let (server_name, client_res) = res?; // JoinError propagation
 
-            let client = client_res
-                .with_context(|| format!("failed to spawn MCP server `{server_name}`"))?;
-
-            clients.insert(server_name, std::sync::Arc::new(client));
+            match client_res {
+                Ok(client) => {
+                    clients.insert(server_name, std::sync::Arc::new(client));
+                }
+                Err(e) => {
+                    errors.insert(server_name, e.into());
+                }
+            }
         }
 
         let tools = list_all_tools(&clients).await?;
 
-        Ok(Self { clients, tools })
+        Ok((Self { clients, tools }, errors))
     }
 
     /// Returns a single map that contains **all** tools. Each key is the

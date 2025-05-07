@@ -592,14 +592,35 @@ async fn submission_loop(
                     }
                 };
 
-                let mcp_connection_manager =
+                let (mcp_connection_manager, failed_clients) =
                     match McpConnectionManager::new(config.mcp_servers.clone()).await {
-                        Ok(mgr) => mgr,
+                        Ok((mgr, failures)) => (mgr, failures),
                         Err(e) => {
                             error!("Failed to create MCP connection manager: {e:#}");
-                            McpConnectionManager::default()
+                            (McpConnectionManager::default(), Default::default())
                         }
                     };
+
+                // Surface individual client start-up failures to the user.
+                if !failed_clients.is_empty() {
+                    for (server_name, err) in failed_clients {
+                        // Log the failure for debugging.
+                        error!("MCP client for '{server_name}' failed to start: {err:#}");
+
+                        // Emit an error event so the front-end can inform the user.
+                        let event = Event {
+                            id: sub.id.clone(),
+                            msg: EventMsg::Error {
+                                message: format!(
+                                    "Failed to start MCP server '{server_name}': {err}"
+                                ),
+                            },
+                        };
+
+                        // Ignore send failures (agent might have died already).
+                        let _ = tx_event.send(event).await;
+                    }
+                }
 
                 sess = Some(Arc::new(Session {
                     client,
