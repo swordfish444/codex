@@ -19,7 +19,8 @@ pub async fn init_codex(config: Config) -> anyhow::Result<(CodexWrapper, Event, 
     let ctrl_c = notify_on_sigint();
     let codex = CodexWrapper::new(Codex::spawn(ctrl_c.clone())?);
     let init_id = codex
-        .submit(Op::ConfigureSession {
+            .submit(Op::ConfigureSession {
+            provider: config.provider.clone(),
             model: config.model.clone(),
             instructions: config.instructions.clone(),
             approval_policy: config.approval_policy,

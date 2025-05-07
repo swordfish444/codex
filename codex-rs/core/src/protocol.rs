@@ -20,6 +20,10 @@ pub struct Submission {
     pub op: Op,
 }
 
+fn default_provider() -> String {
+    "openai".to_string()
+}
+
 /// Submission operation
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -27,6 +31,11 @@ pub struct Submission {
 pub enum Op {
     /// Configure the model session.
     ConfigureSession {
+        /// Provider identifier ("openai", "gemini", …). Defaults to
+        /// "openai" when omitted so that older clients continue to work.
+        #[serde(default = "default_provider")]
+        provider: String,
+
         /// If not specified, server will use its default model.
         model: String,
         /// Model instructions

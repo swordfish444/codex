@@ -12,6 +12,7 @@ pub mod config;
 pub mod error;
 pub mod exec;
 mod flags;
+mod model_provider_info;
 mod is_safe_command;
 #[cfg(target_os = "linux")]
 pub mod linux;
