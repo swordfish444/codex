@@ -96,6 +96,7 @@ async fn keeps_previous_response_id_between_tasks() {
         .submit(Submission {
             id: "init".into(),
             op: Op::ConfigureSession {
+                provider: "openai".to_string(),
                 model: config.model,
                 instructions: None,
                 approval_policy: config.approval_policy,

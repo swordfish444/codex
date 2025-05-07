@@ -19,6 +19,9 @@ pub struct Config {
     /// Optional override of model selection.
     pub model: String,
 
+    /// Selected provider ("openai", "gemini", …)
+    pub provider: String,
+
     /// Approval policy for executing commands.
     pub approval_policy: AskForApproval,
 
@@ -61,6 +64,9 @@ pub struct Config {
 
     /// Definition for MCP servers that Codex can reach out to for tool calls.
     pub mcp_servers: HashMap<String, McpServerConfig>,
+
+    /// Combined provider map (defaults merged with user-defined overrides).
+    pub providers: HashMap<String, crate::model_provider_info::ModelProviderInfo>,
 }
 
 /// Base config deserialized from ~/.codex/config.toml.
@@ -68,6 +74,9 @@ pub struct Config {
 pub struct ConfigToml {
     /// Optional override of model selection.
     pub model: Option<String>,
+
+    /// Selected provider
+    pub provider: Option<String>,
 
     /// Default approval policy for executing commands.
     pub approval_policy: Option<AskForApproval>,
@@ -93,6 +102,11 @@ pub struct ConfigToml {
     /// Definition for MCP servers that Codex can reach out to for tool calls.
     #[serde(default)]
     pub mcp_servers: HashMap<String, McpServerConfig>,
+
+    /// User-defined provider entries that extend/override the built-in list
+    /// (`codex-cli/src/utils/providers.ts`).
+    #[serde(default)]
+    pub providers: HashMap<String, crate::model_provider_info::ModelProviderInfo>,
 }
 
 impl ConfigToml {
@@ -152,6 +166,8 @@ pub struct ConfigOverrides {
     pub approval_policy: Option<AskForApproval>,
     pub sandbox_policy: Option<SandboxPolicy>,
     pub disable_response_storage: Option<bool>,
+
+    pub provider: Option<String>,
 }
 
 impl Config {
@@ -176,6 +192,7 @@ impl Config {
             approval_policy,
             sandbox_policy,
             disable_response_storage,
+            provider,
         } = overrides;
 
         let sandbox_policy = match sandbox_policy {
@@ -195,6 +212,9 @@ impl Config {
 
         Self {
             model: model.or(cfg.model).unwrap_or_else(default_model),
+            provider: provider
+                .or(cfg.provider)
+                .unwrap_or_else(|| "openai".to_string()),
             cwd: cwd.map_or_else(
                 || {
                     tracing::info!("cwd not set, using current dir");
@@ -222,6 +242,7 @@ impl Config {
             notify: cfg.notify,
             instructions,
             mcp_servers: cfg.mcp_servers,
+            providers: cfg.providers,
         }
     }
 

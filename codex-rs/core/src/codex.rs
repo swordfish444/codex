@@ -540,6 +540,7 @@ async fn submission_loop(
                 sess.abort();
             }
             Op::ConfigureSession {
+                provider,
                 model,
                 instructions,
                 approval_policy,
@@ -548,7 +549,7 @@ async fn submission_loop(
                 notify,
                 cwd,
             } => {
-                info!(model, "Configuring session");
+                info!(model, provider, "Configuring session");
                 if !cwd.is_absolute() {
                     let message = format!("cwd is not absolute: {cwd:?}");
                     error!(message);
@@ -562,7 +563,25 @@ async fn submission_loop(
                     return;
                 }
 
-                let client = ModelClient::new(model.clone());
+                // Load config to resolve provider information & MCP servers.
+                let config = match Config::load_with_overrides(ConfigOverrides::default()) {
+                    Ok(cfg) => cfg,
+                    Err(e) => {
+                        error!("Failed to load config: {e:#}");
+                        Config::load_default_config_for_test()
+                    }
+                };
+
+                let provider_map = crate::model_provider_info::provider_map(&config);
+                let provider_info = provider_map
+                    .get(&provider.to_lowercase())
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        crate::model_provider_info::default_providers()["openai"].clone()
+                    });
+
+                let client =
+                    ModelClient::new(model.clone(), provider.clone(), provider_info.clone());
 
                 // abort any current running session and clone its state
                 let state = match sess.take() {

@@ -18,6 +18,7 @@ pub mod linux;
 mod mcp_connection_manager;
 pub mod mcp_server_config;
 mod mcp_tool_call;
+mod model_provider_info;
 mod models;
 pub mod protocol;
 mod safety;
