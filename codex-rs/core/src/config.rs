@@ -1,5 +1,7 @@
 use crate::flags::OPENAI_DEFAULT_MODEL;
 use crate::mcp_server_config::McpServerConfig;
+use crate::model_provider_info::ModelProviderInfo;
+use crate::model_provider_info::built_in_model_providers;
 use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPermission;
 use crate::protocol::SandboxPolicy;
@@ -18,6 +20,9 @@ const EMBEDDED_INSTRUCTIONS: &str = include_str!("../prompt.md");
 pub struct Config {
     /// Optional override of model selection.
     pub model: String,
+
+    /// Selected provider ("openai", "openrouter", ...)
+    pub provider: String,
 
     /// Approval policy for executing commands.
     pub approval_policy: AskForApproval,
@@ -61,6 +66,9 @@ pub struct Config {
 
     /// Definition for MCP servers that Codex can reach out to for tool calls.
     pub mcp_servers: HashMap<String, McpServerConfig>,
+
+    /// Combined provider map (defaults merged with user-defined overrides).
+    pub providers: HashMap<String, ModelProviderInfo>,
 }
 
 /// Base config deserialized from ~/.codex/config.toml.
@@ -68,6 +76,9 @@ pub struct Config {
 pub struct ConfigToml {
     /// Optional override of model selection.
     pub model: Option<String>,
+
+    /// Selected provider
+    pub provider: Option<String>,
 
     /// Default approval policy for executing commands.
     pub approval_policy: Option<AskForApproval>,
@@ -93,6 +104,10 @@ pub struct ConfigToml {
     /// Definition for MCP servers that Codex can reach out to for tool calls.
     #[serde(default)]
     pub mcp_servers: HashMap<String, McpServerConfig>,
+
+    /// User-defined provider entries that extend/override the built-in list.
+    #[serde(default)]
+    pub providers: HashMap<String, ModelProviderInfo>,
 }
 
 impl ConfigToml {
@@ -152,6 +167,8 @@ pub struct ConfigOverrides {
     pub approval_policy: Option<AskForApproval>,
     pub sandbox_policy: Option<SandboxPolicy>,
     pub disable_response_storage: Option<bool>,
+
+    pub provider: Option<String>,
 }
 
 impl Config {
@@ -176,6 +193,7 @@ impl Config {
             approval_policy,
             sandbox_policy,
             disable_response_storage,
+            provider,
         } = overrides;
 
         let sandbox_policy = match sandbox_policy {
@@ -193,8 +211,17 @@ impl Config {
             }
         };
 
+        let mut model_providers = built_in_model_providers();
+        // Merge user-defined providers into the built-in list.
+        for (key, provider) in cfg.providers.into_iter() {
+            model_providers.entry(key).or_insert(provider);
+        }
+
         Self {
             model: model.or(cfg.model).unwrap_or_else(default_model),
+            provider: provider
+                .or(cfg.provider)
+                .unwrap_or_else(|| "openai".to_string()),
             cwd: cwd.map_or_else(
                 || {
                     tracing::info!("cwd not set, using current dir");
@@ -222,6 +249,7 @@ impl Config {
             notify: cfg.notify,
             instructions,
             mcp_servers: cfg.mcp_servers,
+            providers: model_providers,
         }
     }
 

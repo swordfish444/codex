@@ -16,10 +16,16 @@ use tokio::sync::Notify;
 /// is received as a response to the initial `ConfigureSession` submission so
 /// that callers can surface the information to the UI.
 pub async fn init_codex(config: Config) -> anyhow::Result<(CodexWrapper, Event, Arc<Notify>)> {
+    let provider = config
+        .providers
+        .get(&config.provider)
+        .ok_or_else(|| anyhow::anyhow!("provider {} not found in config", config.provider))?;
+
     let ctrl_c = notify_on_sigint();
     let codex = CodexWrapper::new(Codex::spawn(ctrl_c.clone())?);
     let init_id = codex
         .submit(Op::ConfigureSession {
+            provider: provider.clone(),
             model: config.model.clone(),
             instructions: config.instructions.clone(),
             approval_policy: config.approval_policy,

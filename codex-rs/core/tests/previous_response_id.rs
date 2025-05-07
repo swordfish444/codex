@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use codex_core::Codex;
+use codex_core::ModelProviderInfo;
 use codex_core::config::Config;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
@@ -82,11 +83,14 @@ async fn keeps_previous_response_id_between_tasks() {
     // Update environment – `set_var` is `unsafe` starting with the 2024
     // edition so we group the calls into a single `unsafe { … }` block.
     unsafe {
-        std::env::set_var("OPENAI_API_KEY", "test-key");
-        std::env::set_var("OPENAI_API_BASE", server.uri());
         std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "0");
         std::env::set_var("OPENAI_STREAM_MAX_RETRIES", "0");
     }
+    let model_provider = ModelProviderInfo {
+        name: "openai".into(),
+        base_url: format!("{}/v1", server.uri()),
+        env_key: "test-key".into(),
+    };
 
     let codex = Codex::spawn(std::sync::Arc::new(tokio::sync::Notify::new())).unwrap();
 
@@ -96,6 +100,7 @@ async fn keeps_previous_response_id_between_tasks() {
         .submit(Submission {
             id: "init".into(),
             op: Op::ConfigureSession {
+                provider: model_provider,
                 model: config.model,
                 instructions: None,
                 approval_policy: config.approval_policy,

@@ -84,6 +84,7 @@ async fn retries_on_early_close() {
         .submit(Submission {
             id: "init".into(),
             op: Op::ConfigureSession {
+                provider: config.providers.get("openai").unwrap().clone(),
                 model: config.model,
                 instructions: None,
                 approval_policy: config.approval_policy,

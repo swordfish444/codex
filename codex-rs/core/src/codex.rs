@@ -564,6 +564,7 @@ async fn submission_loop(
                 sess.abort();
             }
             Op::ConfigureSession {
+                provider,
                 model,
                 instructions,
                 approval_policy,
@@ -572,7 +573,7 @@ async fn submission_loop(
                 notify,
                 cwd,
             } => {
-                info!(model, "Configuring session");
+                info!("Configuring session: model={model}; provider={provider:?}");
                 if !cwd.is_absolute() {
                     let message = format!("cwd is not absolute: {cwd:?}");
                     error!(message);
@@ -586,7 +587,7 @@ async fn submission_loop(
                     return;
                 }
 
-                let client = ModelClient::new(model.clone());
+                let client = ModelClient::new(model.clone(), provider.clone());
 
                 // abort any current running session and clone its state
                 let state = match sess.take() {
