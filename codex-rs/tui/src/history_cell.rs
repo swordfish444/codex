@@ -69,6 +69,9 @@ pub(crate) enum HistoryCell {
     /// Background event
     BackgroundEvent { lines: Vec<Line<'static>> },
 
+    /// Error event from the backend.
+    ErrorEvent { lines: Vec<Line<'static>> },
+
     /// Info describing the newly‑initialized session.
     SessionInfo { lines: Vec<Line<'static>> },
 
@@ -245,6 +248,12 @@ impl HistoryCell {
         HistoryCell::BackgroundEvent { lines }
     }
 
+    pub(crate) fn new_error_event(message: String) -> Self {
+        let lines: Vec<Line<'static>> =
+            vec![vec!["ERROR".red().bold(), message.into()].into(), "".into()];
+        HistoryCell::ErrorEvent { lines }
+    }
+
     pub(crate) fn new_session_info(config: &Config, model: String) -> Self {
         let mut lines: Vec<Line<'static>> = Vec::new();
 
@@ -332,6 +341,7 @@ impl HistoryCell {
             HistoryCell::UserPrompt { lines, .. }
             | HistoryCell::AgentMessage { lines, .. }
             | HistoryCell::BackgroundEvent { lines, .. }
+            | HistoryCell::ErrorEvent { lines, .. }
             | HistoryCell::SessionInfo { lines, .. }
             | HistoryCell::ActiveExecCommand { lines, .. }
             | HistoryCell::CompletedExecCommand { lines, .. }
