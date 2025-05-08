@@ -5,7 +5,13 @@
 // the TUI or the tracing stack).
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+mod chat_completions;
+
+// Re-export the optional aggregation helper so callers can opt-in with
+// `stream.aggregate()` without needing to know the private module layout.
+pub use chat_completions::AggregateStreamExt;
 mod client;
+mod client_common;
 pub mod codex;
 pub use codex::Codex;
 pub mod codex_wrapper;
@@ -21,6 +27,7 @@ pub mod mcp_server_config;
 mod mcp_tool_call;
 mod model_provider_info;
 pub use model_provider_info::ModelProviderInfo;
+pub use model_provider_info::WireApi;
 mod models;
 pub mod protocol;
 mod rollout;
