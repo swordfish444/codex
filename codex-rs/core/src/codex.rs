@@ -28,9 +28,10 @@ use tracing::info;
 use tracing::trace;
 use tracing::warn;
 
+use crate::AggregateStreamExt;
 use crate::client::ModelClient;
-use crate::client::Prompt;
-use crate::client::ResponseEvent;
+use crate::client_common::Prompt;
+use crate::client_common::ResponseEvent;
 use crate::config::Config;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
@@ -791,6 +792,7 @@ async fn run_turn(
         match try_run_turn(sess, &sub_id, &prompt).await {
             Ok(output) => return Ok(output),
             Err(CodexErr::Interrupted) => return Err(CodexErr::Interrupted),
+            Err(CodexErr::EnvVar(var)) => return Err(CodexErr::EnvVar(var)),
             Err(e) => {
                 if retries < *OPENAI_STREAM_MAX_RETRIES {
                     retries += 1;
@@ -835,7 +837,7 @@ async fn try_run_turn(
     sub_id: &str,
     prompt: &Prompt,
 ) -> CodexResult<Vec<ProcessedResponseItem>> {
-    let mut stream = sess.client.clone().stream(prompt).await?;
+    let mut stream = sess.client.clone().stream(prompt).await?.aggregate();
 
     // Buffer all the incoming messages from the stream first, then execute them.
     // If we execute a function call in the middle of handling the stream, it can time out.
