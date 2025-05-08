@@ -174,6 +174,10 @@ impl ConversationHistoryWidget {
         self.add_to_history(HistoryCell::new_background_event(message));
     }
 
+    pub fn add_error(&mut self, message: String) {
+        self.add_to_history(HistoryCell::new_error_event(message));
+    }
+
     /// Add a pending patch entry (before user approval).
     pub fn add_patch_event(
         &mut self,

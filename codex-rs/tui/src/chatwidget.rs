@@ -240,8 +240,7 @@ impl ChatWidget<'_> {
                 self.request_redraw()?;
             }
             EventMsg::Error { message } => {
-                self.conversation_history
-                    .add_background_event(format!("Error: {message}"));
+                self.conversation_history.add_error(message);
                 self.bottom_pane.set_task_running(false)?;
             }
             EventMsg::ExecApprovalRequest {
