@@ -31,10 +31,13 @@ use tracing::info;
 use tracing::trace;
 use tracing::warn;
 
+use crate::WireApi;
+use crate::chat_completions::AggregateStreamExt;
 use crate::client::ModelClient;
-use crate::client::Prompt;
-use crate::client::ResponseEvent;
+use crate::client_common::Prompt;
+use crate::client_common::ResponseEvent;
 use crate::config::Config;
+use crate::conversation_history::ConversationHistory;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
 use crate::exec::ExecParams;
@@ -65,7 +68,6 @@ use crate::safety::assess_command_safety;
 use crate::safety::assess_patch_safety;
 use crate::user_notification::UserNotification;
 use crate::util::backoff;
-use crate::zdr_transcript::ZdrTranscript;
 
 /// The high-level interface to the Codex system.
 /// It operates as a queue pair where you send submissions and receive events.
@@ -181,7 +183,7 @@ struct State {
     previous_response_id: Option<String>,
     pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
     pending_input: Vec<ResponseInputItem>,
-    zdr_transcript: Option<ZdrTranscript>,
+    zdr_transcript: Option<ConversationHistory>,
 }
 
 impl Session {
@@ -416,11 +418,15 @@ impl Drop for Session {
 }
 
 impl State {
-    pub fn partial_clone(&self) -> Self {
+    pub fn partial_clone(&self, retain_zdr_transcript: bool) -> Self {
         Self {
             approved_commands: self.approved_commands.clone(),
             previous_response_id: self.previous_response_id.clone(),
-            zdr_transcript: self.zdr_transcript.clone(),
+            zdr_transcript: if retain_zdr_transcript {
+                self.zdr_transcript.clone()
+            } else {
+                None
+            },
             ..Default::default()
         }
     }
@@ -534,14 +540,19 @@ async fn submission_loop(
                 let client = ModelClient::new(model.clone(), provider.clone());
 
                 // abort any current running session and clone its state
+                let retain_zdr_transcript =
+                    record_conversation_history(disable_response_storage, provider.wire_api);
                 let state = match sess.take() {
                     Some(sess) => {
                         sess.abort();
-                        sess.state.lock().unwrap().partial_clone()
+                        sess.state
+                            .lock()
+                            .unwrap()
+                            .partial_clone(retain_zdr_transcript)
                     }
                     None => State {
-                        zdr_transcript: if disable_response_storage {
-                            Some(ZdrTranscript::new())
+                        zdr_transcript: if retain_zdr_transcript {
+                            Some(ConversationHistory::new())
                         } else {
                             None
                         },
@@ -794,6 +805,7 @@ async fn run_turn(
         match try_run_turn(sess, &sub_id, &prompt).await {
             Ok(output) => return Ok(output),
             Err(CodexErr::Interrupted) => return Err(CodexErr::Interrupted),
+            Err(CodexErr::EnvVar(var)) => return Err(CodexErr::EnvVar(var)),
             Err(e) => {
                 if retries < *OPENAI_STREAM_MAX_RETRIES {
                     retries += 1;
@@ -838,7 +850,7 @@ async fn try_run_turn(
     sub_id: &str,
     prompt: &Prompt,
 ) -> CodexResult<Vec<ProcessedResponseItem>> {
-    let mut stream = sess.client.clone().stream(prompt).await?;
+    let mut stream = sess.client.clone().stream(prompt).await?.aggregate();
 
     // Buffer all the incoming messages from the stream first, then execute them.
     // If we execute a function call in the middle of handling the stream, it can time out.
@@ -1611,4 +1623,16 @@ fn get_last_assistant_message_from_turn(responses: &[ResponseItem]) -> Option<St
             None
         }
     })
+}
+
+/// See [`ConversationHistory`] for details.
+fn record_conversation_history(disable_response_storage: bool, wire_api: WireApi) -> bool {
+    if disable_response_storage {
+        return true;
+    }
+
+    match wire_api {
+        WireApi::Responses => false,
+        WireApi::Chat => true,
+    }
 }
