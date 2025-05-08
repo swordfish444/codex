@@ -227,8 +227,6 @@ impl ChatWidget<'_> {
             }
             EventMsg::TaskStarted => {
                 self.bottom_pane.set_task_running(true)?;
-                self.conversation_history
-                    .add_background_event(format!("task {id} started"));
                 self.request_redraw()?;
             }
             EventMsg::TaskComplete => {
