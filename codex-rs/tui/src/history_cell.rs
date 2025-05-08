@@ -32,6 +32,9 @@ pub(crate) enum PatchEventType {
 /// `Vec<Line<'static>>` representation to make it easier to display in a
 /// scrollable list.
 pub(crate) enum HistoryCell {
+    /// Welcome message.
+    WelcomeMessage { lines: Vec<Line<'static>> },
+
     /// Message from the user.
     UserPrompt { lines: Vec<Line<'static>> },
 
@@ -88,6 +91,18 @@ pub(crate) enum HistoryCell {
 const TOOL_CALL_MAX_LINES: usize = 5;
 
 impl HistoryCell {
+    pub(crate) fn new_welcome_message() -> Self {
+        let lines: Vec<Line<'static>> = vec![
+            Line::from(vec![
+                "OpenAI ".into(),
+                "Codex".bold(),
+                " (research preview)".dim(),
+            ]),
+            Line::from(""),
+        ];
+        HistoryCell::WelcomeMessage { lines }
+    }
+
     pub(crate) fn new_user_prompt(message: String) -> Self {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from("user".cyan().bold()));
@@ -258,19 +273,16 @@ impl HistoryCell {
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         lines.push(Line::from("codex session:".magenta().bold()));
-        lines.push(Line::from(vec!["↳ model: ".bold(), model.into()]));
-        lines.push(Line::from(vec![
-            "↳ cwd: ".bold(),
-            config.cwd.display().to_string().into(),
-        ]));
-        lines.push(Line::from(vec![
-            "↳ approval: ".bold(),
-            format!("{:?}", config.approval_policy).into(),
-        ]));
-        lines.push(Line::from(vec![
-            "↳ sandbox: ".bold(),
-            format!("{:?}", config.sandbox_policy).into(),
-        ]));
+        let entries = vec![
+            ("workdir", config.cwd.display().to_string()),
+            ("model", model),
+            ("provider", config.model_provider_id.clone()),
+            ("approval", format!("{:?}", config.approval_policy)),
+            ("sandbox", format!("{:?}", config.sandbox_policy)),
+        ];
+        for (key, value) in entries {
+            lines.push(Line::from(vec![format!("{key}: ").bold(), value.into()]));
+        }
         lines.push(Line::from(""));
 
         HistoryCell::SessionInfo { lines }
@@ -338,7 +350,8 @@ impl HistoryCell {
 
     pub(crate) fn lines(&self) -> &Vec<Line<'static>> {
         match self {
-            HistoryCell::UserPrompt { lines, .. }
+            HistoryCell::WelcomeMessage { lines, .. }
+            | HistoryCell::UserPrompt { lines, .. }
             | HistoryCell::AgentMessage { lines, .. }
             | HistoryCell::BackgroundEvent { lines, .. }
             | HistoryCell::ErrorEvent { lines, .. }

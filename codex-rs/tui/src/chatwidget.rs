@@ -162,12 +162,8 @@ impl ChatWidget<'_> {
     }
 
     fn submit_welcome_message(&mut self) -> std::result::Result<(), SendError<AppEvent>> {
-        self.handle_codex_event(Event {
-            id: "welcome".to_string(),
-            msg: EventMsg::AgentMessage {
-                message: "Welcome to codex!".to_string(),
-            },
-        })?;
+        self.conversation_history.add_welcome_message();
+        self.request_redraw()?;
         Ok(())
     }
 
