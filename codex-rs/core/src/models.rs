@@ -116,7 +116,6 @@ pub struct ShellToolCallParams {
     pub timeout_ms: Option<u64>,
 }
 
-#[expect(dead_code)]
 #[derive(Deserialize, Debug, Clone)]
 pub struct FunctionCallOutputPayload {
     pub content: String,
