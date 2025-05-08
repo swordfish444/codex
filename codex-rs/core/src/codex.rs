@@ -29,8 +29,8 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::client::ModelClient;
-use crate::client::Prompt;
-use crate::client::ResponseEvent;
+use crate::client_common::Prompt;
+use crate::client_common::ResponseEvent;
 use crate::config::Config;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;

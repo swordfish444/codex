@@ -98,7 +98,7 @@ pub enum CodexErr {
     TokioJoin(#[from] JoinError),
 
     #[error("missing environment variable {0}")]
-    EnvVar(&'static str),
+    EnvVar(String),
 }
 
 impl CodexErr {

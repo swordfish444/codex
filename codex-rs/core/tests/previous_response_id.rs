@@ -91,6 +91,7 @@ async fn keeps_previous_response_id_between_tasks() {
         // ModelClient will return an error if the environment variable for the
         // provider is not set.
         env_key: "PATH".into(),
+        wire_api: codex_core::WireApi::Responses,
     };
 
     // Init session
