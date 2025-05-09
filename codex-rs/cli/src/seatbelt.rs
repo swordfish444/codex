@@ -1,4 +1,5 @@
-use codex_core::exec::create_seatbelt_command;
+use codex_core::exec::StdioPolicy;
+use codex_core::exec::spawn_command_under_seatbelt;
 use codex_core::protocol::SandboxPolicy;
 
 pub async fn run_seatbelt(
@@ -6,10 +7,9 @@ pub async fn run_seatbelt(
     sandbox_policy: SandboxPolicy,
 ) -> anyhow::Result<()> {
     let cwd = std::env::current_dir().expect("failed to get cwd");
-    let seatbelt_command = create_seatbelt_command(command, &sandbox_policy, &cwd);
-    let status = tokio::process::Command::new(seatbelt_command[0].clone())
-        .args(&seatbelt_command[1..])
-        .spawn()
+    let child =
+        spawn_command_under_seatbelt(command, &sandbox_policy, cwd, StdioPolicy::Inherit).await;
+    let status = child
         .map_err(|e| anyhow::anyhow!("Failed to spawn command: {}", e))?
         .wait()
         .await
