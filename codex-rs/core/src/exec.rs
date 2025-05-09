@@ -42,6 +42,16 @@ const MACOS_SEATBELT_BASE_POLICY: &str = include_str!("seatbelt_base_policy.sbpl
 /// already has root access.
 const MACOS_PATH_TO_SEATBELT_EXECUTABLE: &str = "/usr/bin/sandbox-exec";
 
+/// Experimental environment variable that will be set to some non-empty value
+/// if both of the following are true:
+///
+/// 1. The process was spawned by Codex as part of a shell tool call.
+/// 2. SandboxPolicy.has_full_network_access() was false for the tool call.
+///
+/// We may try to have just one environment variable for all sandboxing
+/// attributes, so this may change in the future.
+pub const CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR: &str = "CODEX_SANDBOX_NETWORK_DISABLED";
+
 #[derive(Debug, Clone)]
 pub struct ExecParams {
     pub command: Vec<String>,
@@ -90,23 +100,15 @@ pub async fn process_exec_tool_call(
     let start = Instant::now();
 
     let raw_output_result = match sandbox_type {
-        SandboxType::None => exec(params, ctrl_c).await,
+        SandboxType::None => exec(params, sandbox_policy, ctrl_c).await,
         SandboxType::MacosSeatbelt => {
             let ExecParams {
                 command,
                 cwd,
                 timeout_ms,
             } = params;
-            let seatbelt_command = create_seatbelt_command(command, sandbox_policy, &cwd);
-            exec(
-                ExecParams {
-                    command: seatbelt_command,
-                    cwd,
-                    timeout_ms,
-                },
-                ctrl_c,
-            )
-            .await
+            let child = spawn_command_under_seatbelt(command, sandbox_policy, cwd).await?;
+            consume_truncated_output(child, ctrl_c, timeout_ms).await
         }
         SandboxType::LinuxSeccomp => exec_linux(params, ctrl_c, sandbox_policy).await,
     };
@@ -151,7 +153,16 @@ pub async fn process_exec_tool_call(
     }
 }
 
-pub fn create_seatbelt_command(
+pub async fn spawn_command_under_seatbelt(
+    command: Vec<String>,
+    sandbox_policy: &SandboxPolicy,
+    cwd: PathBuf,
+) -> std::io::Result<Child> {
+    let seatbelt_command = create_seatbelt_command(command, sandbox_policy, &cwd);
+    spawn_child(seatbelt_command, cwd, sandbox_policy).await
+}
+
+fn create_seatbelt_command(
     command: Vec<String>,
     sandbox_policy: &SandboxPolicy,
     cwd: &Path,
@@ -235,16 +246,27 @@ pub async fn exec(
         cwd,
         timeout_ms,
     }: ExecParams,
+    sandbox_policy: &SandboxPolicy,
     ctrl_c: Arc<Notify>,
 ) -> Result<RawExecToolCallOutput> {
-    let child = spawn_child(command, cwd).await?;
+    let child = spawn_child(command, cwd, sandbox_policy).await?;
     consume_truncated_output(child, ctrl_c, timeout_ms).await
 }
 
 /// Spawns the appropriate child process for the ExecParams.
-async fn spawn_child(command: Vec<String>, cwd: PathBuf) -> std::io::Result<Child> {
+async fn spawn_child(
+    command: Vec<String>,
+    cwd: PathBuf,
+    sandbox_policy: &SandboxPolicy,
+) -> std::io::Result<Child> {
+    // For now, we take `SandboxPolicy` as a parameter to exec() because we need
+    // to determine whether to set the `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR`
+    // environment variable. Ultimately, we should be stricter about the
+    // environment variables that are set for the command (as we are when
+    // spawning an MCP server), so instead of SandboxPolicy, we should take the
+    // exact env to use for the Command (i.e., `env_clear().envs(env)`).
     if command.is_empty() {
-        return Err(std::io::Error::new(
+        return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "command args are empty",
         ));
@@ -253,6 +275,10 @@ async fn spawn_child(command: Vec<String>, cwd: PathBuf) -> std::io::Result<Chil
     let mut cmd = Command::new(&command[0]);
     cmd.args(&command[1..]);
     cmd.current_dir(cwd);
+
+    if !sandbox_policy.has_full_network_access() {
+        cmd.env(CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR, "1");
+    }
 
     // Do not create a file descriptor for stdin because otherwise some
     // commands may hang forever waiting for input. For example, ripgrep has
