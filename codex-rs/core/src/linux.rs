@@ -9,7 +9,9 @@ use crate::error::Result;
 use crate::error::SandboxErr;
 use crate::exec::ExecParams;
 use crate::exec::RawExecToolCallOutput;
-use crate::exec::exec;
+use crate::exec::StdioPolicy;
+use crate::exec::consume_truncated_output;
+use crate::exec::spawn_child;
 use crate::protocol::SandboxPolicy;
 
 use landlock::ABI;
@@ -49,8 +51,15 @@ pub async fn exec_linux(
             .expect("Failed to create runtime");
 
         rt.block_on(async {
-            apply_sandbox_policy_to_current_thread(sandbox_policy, &params.cwd)?;
-            exec(params, ctrl_c_copy).await
+            let ExecParams {
+                command,
+                cwd,
+                timeout_ms,
+            } = params;
+            let child =
+                spawn_command_under_landlock(command, &sandbox_policy, cwd, StdioPolicy::Inherit)
+                    .await?;
+            consume_truncated_output(child, ctrl_c_copy, timeout_ms).await
         })
     })
     .join();
@@ -65,10 +74,22 @@ pub async fn exec_linux(
     }
 }
 
+pub async fn spawn_command_under_landlock(
+    command: Vec<String>,
+    sandbox_policy: &SandboxPolicy,
+    cwd: PathBuf,
+    stdio_policy: StdioPolicy,
+) -> Result<tokio::process::Child> {
+    apply_sandbox_policy_to_current_thread(sandbox_policy, &cwd)?;
+    spawn_child(command, cwd, sandbox_policy, stdio_policy)
+        .await
+        .map_err(CodexErr::Io)
+}
+
 /// Apply sandbox policies inside this thread so only the child inherits
 /// them, not the entire CLI process.
-pub fn apply_sandbox_policy_to_current_thread(
-    sandbox_policy: SandboxPolicy,
+fn apply_sandbox_policy_to_current_thread(
+    sandbox_policy: &SandboxPolicy,
     cwd: &Path,
 ) -> Result<()> {
     if !sandbox_policy.has_full_network_access() {
