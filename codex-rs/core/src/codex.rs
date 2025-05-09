@@ -681,20 +681,34 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
         let pending_input = sess.get_pending_input().into_iter().map(ResponseItem::from);
         net_new_turn_input.extend(pending_input);
 
+        // Persist only the net-new items of this turn to the rollout.
+        sess.record_rollout_items(&net_new_turn_input).await;
+
+        // Construct the input that we will send to the model. When using the
+        // Chat completions API (or ZDR clients), the model needs the full
+        // conversation history on each turn. The rollout file, however, should
+        // only record the new items that originated in this turn so that it
+        // represents an append-only log without duplicates.
         let turn_input: Vec<ResponseItem> =
             if let Some(transcript) = sess.state.lock().unwrap().zdr_transcript.as_mut() {
-                // If we are using ZDR, we need to send the transcript with every turn.
-                let mut full_transcript = transcript.contents();
-                full_transcript.extend(net_new_turn_input.clone());
+                // If we are using Chat/ZDR, we need to send the transcript with every turn.
+
+                // 1. Build up the conversation history for the next turn.
+                let full_transcript = [transcript.contents(), net_new_turn_input.clone()].concat();
+
+                // 2. Update the in-memory transcript so that future turns
+                // include these items as part of the history.
                 transcript.record_items(net_new_turn_input);
+
+                // Note that `transcript.record_items()` does some filtering
+                // such that `full_transcript` may include items that were
+                // excluded from `transcript`.
                 full_transcript
             } else {
+                // Responses API path – we can just send the new items and
+                // record the same.
                 net_new_turn_input
             };
-
-        // Persist the input part of the turn to the rollout (user messages /
-        // function_call_output from previous step).
-        sess.record_rollout_items(&turn_input).await;
 
         let turn_input_messages: Vec<String> = turn_input
             .iter()
