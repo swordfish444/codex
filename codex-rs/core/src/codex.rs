@@ -561,14 +561,35 @@ async fn submission_loop(
 
                 let writable_roots = Mutex::new(get_writable_roots(&cwd));
 
-                let mcp_connection_manager =
+                let (mcp_connection_manager, failed_clients) =
                     match McpConnectionManager::new(config.mcp_servers.clone()).await {
-                        Ok(mgr) => mgr,
+                        Ok((mgr, failures)) => (mgr, failures),
                         Err(e) => {
-                            error!("Failed to create MCP connection manager: {e:#}");
-                            McpConnectionManager::default()
+                            let message = format!("Failed to create MCP connection manager: {e:#}");
+                            error!("{message}");
+                            let _ = tx_event
+                                .send(Event {
+                                    id: sub.id.clone(),
+                                    msg: EventMsg::Error { message },
+                                })
+                                .await;
+                            (McpConnectionManager::default(), Default::default())
                         }
                     };
+
+                // Surface individual client start-up failures to the user.
+                if !failed_clients.is_empty() {
+                    for (server_name, err) in failed_clients {
+                        let message =
+                            format!("MCP client for `{server_name}` failed to start: {err:#}");
+                        error!("{message}");
+                        let event = Event {
+                            id: sub.id.clone(),
+                            msg: EventMsg::Error { message },
+                        };
+                        let _ = tx_event.send(event).await;
+                    }
+                }
 
                 // Attempt to create a RolloutRecorder *before* moving the
                 // `instructions` value into the Session struct.
