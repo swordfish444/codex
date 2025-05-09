@@ -1,4 +1,4 @@
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 pub mod landlock;
 pub mod proto;
 pub mod seatbelt;
