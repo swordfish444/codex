@@ -74,6 +74,7 @@ async fn main() -> anyhow::Result<()> {
             proto::run_main(proto_cli).await?;
         }
         Some(Subcommand::Debug(debug_args)) => match debug_args.cmd {
+            #[cfg(target_os = "macos")]
             DebugCommand::Seatbelt(SeatbeltCommand {
                 command,
                 sandbox,
@@ -82,7 +83,11 @@ async fn main() -> anyhow::Result<()> {
                 let sandbox_policy = create_sandbox_policy(full_auto, sandbox);
                 seatbelt::run_seatbelt(command, sandbox_policy).await?;
             }
-            #[cfg(target_os = "linux")]
+            #[cfg(not(target_os = "macos"))]
+            DebugCommand::Seatbelt(_) => {
+                anyhow::bail!("Seatbelt is only supported on macOS.");
+            }
+            #[cfg(unix)]
             DebugCommand::Landlock(LandlockCommand {
                 command,
                 sandbox,
@@ -91,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
                 let sandbox_policy = create_sandbox_policy(full_auto, sandbox);
                 codex_cli::landlock::run_landlock(command, sandbox_policy)?;
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(unix))]
             DebugCommand::Landlock(_) => {
                 anyhow::bail!("Landlock is only supported on Linux.");
             }
