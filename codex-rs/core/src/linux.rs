@@ -49,8 +49,8 @@ pub async fn exec_linux(
             .expect("Failed to create runtime");
 
         rt.block_on(async {
-            apply_sandbox_policy_to_current_thread(sandbox_policy, &params.cwd)?;
-            exec(params, ctrl_c_copy).await
+            apply_sandbox_policy_to_current_thread(&sandbox_policy, &params.cwd)?;
+            exec(params, &sandbox_policy, ctrl_c_copy).await
         })
     })
     .join();
@@ -68,7 +68,7 @@ pub async fn exec_linux(
 /// Apply sandbox policies inside this thread so only the child inherits
 /// them, not the entire CLI process.
 pub fn apply_sandbox_policy_to_current_thread(
-    sandbox_policy: SandboxPolicy,
+    sandbox_policy: &SandboxPolicy,
     cwd: &Path,
 ) -> Result<()> {
     if !sandbox_policy.has_full_network_access() {
