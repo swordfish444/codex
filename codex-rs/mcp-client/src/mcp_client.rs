@@ -17,6 +17,7 @@ use std::sync::atomic::AtomicI64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use mcp_types::CallToolRequest;
@@ -29,6 +30,7 @@ use mcp_types::JSONRPCResponse;
 use mcp_types::ListToolsRequest;
 use mcp_types::ListToolsRequestParams;
 use mcp_types::ListToolsResult;
+use mcp_types::ModelContextProtocolNotification;
 use mcp_types::ModelContextProtocolRequest;
 use mcp_types::RequestId;
 use serde::Serialize;
@@ -271,6 +273,34 @@ impl McpClient {
                 other
             ))),
         }
+    }
+
+    pub async fn send_notification<N>(&self, params: N::Params) -> Result<()>
+    where
+        N: ModelContextProtocolNotification,
+        N::Params: Serialize,
+    {
+        // Serialize params -> JSON. For many request types `Params` is
+        // `Option<T>` and `None` should be encoded as *absence* of the field.
+        let params_json = serde_json::to_value(&params)?;
+        let params_field = if params_json.is_null() {
+            None
+        } else {
+            Some(params_json)
+        };
+
+        let method = N::METHOD.to_string();
+        let jsonrpc_notification = JSONRPCNotification {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            method: method.clone(),
+            params: params_field,
+        };
+
+        let notification = JSONRPCMessage::Notification(jsonrpc_notification);
+        self.outgoing_tx
+            .send(notification)
+            .await
+            .with_context(|| format!("failed to send notification `{method}` to writer task"))
     }
 
     /// Convenience wrapper around `tools/list`.
