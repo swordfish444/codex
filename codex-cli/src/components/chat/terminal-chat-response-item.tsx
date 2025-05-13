@@ -20,6 +20,7 @@ import supportsHyperlinks from "supports-hyperlinks";
 import TerminalRenderer from "marked-terminal";
 import path from "path";
 import React, { useEffect, useMemo } from "react";
+import supportsHyperlinks from "supports-hyperlinks";
 
 export default function TerminalChatResponseItem({
   item,
