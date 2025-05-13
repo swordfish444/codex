@@ -24,7 +24,6 @@ import {
   uniqueById,
 } from "../../utils/model-utils.js";
 import { createOpenAIClient } from "../../utils/openai-client.js";
-import { CLI_VERSION } from "../../utils/session.js";
 import { shortCwd } from "../../utils/short-path.js";
 import { saveRollout } from "../../utils/storage/save-rollout.js";
 import ApprovalModeOverlay from "../approval-mode-overlay.js";
@@ -36,6 +35,7 @@ import chalk from "chalk";
 import { Box, Text } from "ink";
 import { spawn } from "node:child_process";
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { CLI_VERSION } from "src/version.js";
 import { inspect } from "util";
 
 export type OverlayModeType =
