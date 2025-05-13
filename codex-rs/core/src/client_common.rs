@@ -15,7 +15,8 @@ pub struct Prompt {
     pub input: Vec<ResponseItem>,
     /// Optional previous response ID (when storage is enabled).
     pub prev_id: Option<String>,
-    /// Optional initial instructions (only sent on first turn).
+    /// Optional instructions from the user to amend to the built-in agent
+    /// instructions.
     pub instructions: Option<String>,
     /// Whether to store response on server side (disable_response_storage = !store).
     pub store: bool,
@@ -54,8 +55,7 @@ pub(crate) enum Summary {
 #[derive(Debug, Serialize)]
 pub(crate) struct Payload<'a> {
     pub(crate) model: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) instructions: Option<&'a String>,
+    pub(crate) instructions: &'a str,
     // TODO(mbolin): ResponseItem::Other should not be serialized. Currently,
     // we code defensively to avoid this case, but perhaps we should use a
     // separate enum for serialization.
