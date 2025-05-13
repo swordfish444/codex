@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::io::BufRead;
 use std::path::Path;
@@ -36,6 +37,10 @@ use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::WireApi;
 use crate::models::ResponseItem;
 use crate::util::backoff;
+
+/// The `instructions` field in the payload sent to a model should always start
+/// with this content.
+const BASE_INSTRUCTIONS: &str = include_str!("../prompt.md");
 
 /// When serialized as JSON, this produces a valid "Tool" in the OpenAI
 /// Responses API.
@@ -165,9 +170,16 @@ impl ModelClient {
 
         debug!("tools_json: {}", serde_json::to_string_pretty(&tools_json)?);
 
+        let full_instructions: Cow<str> = match &prompt.instructions {
+            Some(instructions) => {
+                let instructions = format!("{BASE_INSTRUCTIONS}\n{instructions}");
+                Cow::Owned(instructions)
+            }
+            None => Cow::Borrowed(BASE_INSTRUCTIONS),
+        };
         let payload = Payload {
             model: &self.model,
-            instructions: prompt.instructions.as_ref(),
+            instructions: &full_instructions,
             input: &prompt.input,
             tools: &tools_json,
             tool_choice: "auto",
@@ -180,6 +192,7 @@ impl ModelClient {
             store: prompt.store,
             stream: true,
         };
+        tracing::error!("payload: {}", serde_json::to_string(&payload)?);
 
         let base_url = self.provider.base_url.clone();
         let base_url = base_url.trim_end_matches('/');
