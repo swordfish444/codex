@@ -1,4 +1,4 @@
-import type { TerminalChatSession } from "../../utils/session.js";
+import type { TerminalChatSession } from "../../session.js";
 import type { ResponseItem } from "openai/resources/responses/responses";
 
 import TerminalChatResponseItem from "./terminal-chat-response-item";
