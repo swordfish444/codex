@@ -1,0 +1,26 @@
+diff --git a/index.cjs b/index.cjs
+index 1afa52b2b7162a948e1d044babf3d456ff7feec7..27e632aa643fa77fc9f294782904be7d9991c13a 100644
+--- a/index.cjs
++++ b/index.cjs
+@@ -59430,7 +59430,7 @@ Renderer.prototype.space = function () {
+ 
+ Renderer.prototype.text = function (text) {
+   if (typeof text === 'object') {
+-    text = text.text;
++    text = text.tokens ? this.parser.parseInline(text.tokens) : text.text;
+   }
+   return this.o.text(text);
+ };
+@@ -59532,10 +59532,10 @@ Renderer.prototype.listitem = function (text) {
+   }
+   var transform = compose(this.o.listitem, this.transform);
+   var isNested = text.indexOf('\n') !== -1;
+-  if (isNested) text = text.trim();
++  if (!isNested) text = transform(text);
+ 
+   // Use BULLET_POINT as a marker for ordered or unordered list item
+-  return '\n' + BULLET_POINT + transform(text);
++  return '\n' + BULLET_POINT + text;
+ };
+ 
+ Renderer.prototype.checkbox = function (checked) {
