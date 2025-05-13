@@ -12,6 +12,13 @@ import type {
 import type { Reasoning } from "openai/resources.mjs";
 
 import {
+  ORIGIN,
+  CLI_VERSION,
+  getSessionId,
+  setCurrentModel,
+  setSessionId,
+} from "../../session.js";
+import {
   OPENAI_TIMEOUT_MS,
   OPENAI_ORGANIZATION,
   OPENAI_PROJECT,
@@ -22,13 +29,6 @@ import {
 import { log } from "../logger/log.js";
 import { parseToolCallArguments } from "../parsers.js";
 import { responsesCreateViaChatCompletions } from "../responses.js";
-import {
-  ORIGIN,
-  CLI_VERSION,
-  getSessionId,
-  setCurrentModel,
-  setSessionId,
-} from "../session.js";
 import { handleExecCommand } from "./handle-exec-command.js";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { randomUUID } from "node:crypto";
