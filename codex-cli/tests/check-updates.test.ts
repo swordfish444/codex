@@ -9,7 +9,7 @@ import {
   renderUpdateCommand,
 } from "../src/utils/check-updates";
 import { detectInstallerByPath } from "../src/utils/package-manager-detector";
-import { CLI_VERSION } from "../src/utils/session";
+import { CLI_VERSION } from "../src/session";
 
 // In-memory FS mock
 let memfs: Record<string, string> = {};

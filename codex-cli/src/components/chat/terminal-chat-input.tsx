@@ -10,12 +10,12 @@ import type {
 import MultilineTextEditor from "./multiline-editor";
 import { TerminalChatCommandReview } from "./terminal-chat-command-review.js";
 import TextCompletions from "./terminal-chat-completions.js";
+import { setSessionId } from "../../session.js";
 import { loadConfig } from "../../utils/config.js";
 import { getFileSystemSuggestions } from "../../utils/file-system-suggestions.js";
 import { expandFileTags } from "../../utils/file-tag-utils";
 import { createInputItem } from "../../utils/input-utils.js";
 import { log } from "../../utils/logger/log.js";
-import { setSessionId } from "../../utils/session.js";
 import { SLASH_COMMANDS, type SlashCommand } from "../../utils/slash-commands";
 import {
   loadCommandHistory,
@@ -584,7 +584,7 @@ export default function TerminalChatInput({
 
         try {
           const os = await import("node:os");
-          const { CLI_VERSION } = await import("../../utils/session.js");
+          const { CLI_VERSION } = await import("../../session.js");
           const { buildBugReportUrl } = await import(
             "../../utils/bug-report.js"
           );
