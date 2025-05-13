@@ -6,6 +6,11 @@ import React from "react";
 import { describe, afterEach, beforeEach, it, expect, vi } from "vitest";
 import chalk from "chalk";
 
+const BOLD = "\x1B[1m";
+const BOLD_OFF = "\x1B[22m";
+const ITALIC = "\x1B[3m";
+const ITALIC_OFF = "\x1B[23m";
+
 /** Simple sanity check that the Markdown component renders bold/italic text.
  * We strip ANSI codes, so the output should contain the raw words. */
 it("renders basic markdown", () => {
@@ -44,11 +49,18 @@ describe("ensure <Markdown> produces content with correct ANSI escape codes", ()
     );
 
     const frame = lastFrame();
-    const BOLD = "\x1B[1m";
-    const BOLD_OFF = "\x1B[22m";
-    const ITALIC = "\x1B[3m";
-    const ITALIC_OFF = "\x1B[23m";
     expect(frame).toBe(`${BOLD}bold${BOLD_OFF} ${ITALIC}italic${ITALIC_OFF}`);
+  });
+
+  // We had to patch in https://github.com/mikaelbr/marked-terminal/pull/366 to
+  // make this work.
+  it("bold test in a bullet should be rendered correctly", () => {
+    const { lastFrame } = renderTui(
+      <Markdown fileOpener={undefined}>* **bold** text</Markdown>,
+    );
+
+    const outputWithAnsi = lastFrame();
+    expect(outputWithAnsi).toBe(`* ${BOLD}bold${BOLD_OFF} text`);
   });
 
   it("citations should get converted to hyperlinks when stdout supports them", () => {
