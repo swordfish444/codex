@@ -124,8 +124,12 @@ impl ChatWidget<'_> {
         &mut self,
         key_event: KeyEvent,
     ) -> std::result::Result<(), SendError<AppEvent>> {
-        // Special-case <tab>: does not get dispatched to child components.
-        if matches!(key_event.code, crossterm::event::KeyCode::Tab) {
+        // Special-case <Tab>: normally toggles focus between history and bottom panes.
+        // However, when the slash-command popup is visible we forward the key
+        // to the bottom pane so it can handle auto-completion.
+        if matches!(key_event.code, crossterm::event::KeyCode::Tab)
+            && !self.bottom_pane.is_command_popup_visible()
+        {
             self.input_focus = match self.input_focus {
                 InputFocus::HistoryPane => InputFocus::BottomPane,
                 InputFocus::BottomPane => InputFocus::HistoryPane,

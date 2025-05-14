@@ -15,6 +15,7 @@ use crate::user_approval_widget::ApprovalRequest;
 mod approval_modal_view;
 mod bottom_pane_view;
 mod chat_composer;
+mod command_popup;
 mod status_indicator_view;
 
 pub(crate) use chat_composer::ChatComposer;
@@ -167,6 +168,11 @@ impl BottomPane<'_> {
 
     pub(crate) fn request_redraw(&self) -> Result<(), SendError<AppEvent>> {
         self.app_event_tx.send(AppEvent::Redraw)
+    }
+
+    /// Returns true when the slash-command popup inside the composer is visible.
+    pub(crate) fn is_command_popup_visible(&self) -> bool {
+        self.active_view.is_none() && self.composer.is_command_popup_visible()
     }
 }
 
