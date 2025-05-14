@@ -150,7 +150,7 @@ async fn keeps_previous_response_id_between_tasks() {
             .unwrap();
         match ev.msg {
             codex_core::protocol::EventMsg::TaskComplete => break,
-            codex_core::protocol::EventMsg::Error { message } => {
+            codex_core::protocol::EventMsg::Error(codex_core::protocol::ErrorEvent { message }) => {
                 panic!("unexpected error: {message}")
             }
             _ => (),
