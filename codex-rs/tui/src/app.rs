@@ -177,6 +177,11 @@ impl App<'_> {
                         let _ = self.chat_widget.update_latest_log(line);
                     }
                 }
+                AppEvent::DispatchCommand(cmd) => {
+                    if matches!(self.app_state, AppState::Chat) {
+                        let _ = self.chat_widget.dispatch_command(cmd);
+                    }
+                }
             }
         }
         terminal.clear()?;

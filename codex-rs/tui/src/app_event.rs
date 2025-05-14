@@ -22,4 +22,8 @@ pub(crate) enum AppEvent {
 
     /// Latest formatted log line emitted by `tracing`.
     LatestLog(String),
+
+    /// Dispatch a recognized slash command from the UI (composer) to the app
+    /// layer so it can be handled centrally.
+    DispatchCommand(crate::slash_command::SlashCommand),
 }
