@@ -85,10 +85,10 @@ pub async fn run_codex_tool_session(
                 let _ = outgoing.send(codex_event_to_notification(&event)).await;
 
                 match &event.msg {
-                    EventMsg::AgentMessage { message } => {
+                    EventMsg::AgentMessage(codex_core::protocol::AgentMessageEvent { message }) => {
                         last_agent_message = Some(message.clone());
                     }
-                    EventMsg::ExecApprovalRequest { .. } => {
+                    EventMsg::ExecApprovalRequest(_) => {
                         let result = CallToolResult {
                             content: vec![CallToolResultContent::TextContent(TextContent {
                                 r#type: "text".to_string(),
@@ -106,7 +106,7 @@ pub async fn run_codex_tool_session(
                             .await;
                         break;
                     }
-                    EventMsg::ApplyPatchApprovalRequest { .. } => {
+                    EventMsg::ApplyPatchApprovalRequest(_) => {
                         let result = CallToolResult {
                             content: vec![CallToolResultContent::TextContent(TextContent {
                                 r#type: "text".to_string(),
@@ -153,7 +153,7 @@ pub async fn run_codex_tool_session(
                             .await;
                         break;
                     }
-                    EventMsg::SessionConfigured { .. } => {
+                    EventMsg::SessionConfigured(_) => {
                         tracing::error!("unexpected SessionConfigured event");
                     }
                     _ => {}

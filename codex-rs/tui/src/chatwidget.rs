@@ -213,11 +213,11 @@ impl ChatWidget<'_> {
                     .add_session_info(&self.config, event);
                 self.request_redraw()?;
             }
-            EventMsg::AgentMessage { message } => {
+            EventMsg::AgentMessage(codex_core::protocol::AgentMessageEvent { message }) => {
                 self.conversation_history.add_agent_message(message);
                 self.request_redraw()?;
             }
-            EventMsg::AgentReasoning { text } => {
+            EventMsg::AgentReasoning(codex_core::protocol::AgentReasoningEvent { text }) => {
                 self.conversation_history.add_agent_reasoning(text);
                 self.request_redraw()?;
             }
@@ -229,15 +229,15 @@ impl ChatWidget<'_> {
                 self.bottom_pane.set_task_running(false)?;
                 self.request_redraw()?;
             }
-            EventMsg::Error { message } => {
+            EventMsg::Error(codex_core::protocol::ErrorEvent { message }) => {
                 self.conversation_history.add_error(message);
                 self.bottom_pane.set_task_running(false)?;
             }
-            EventMsg::ExecApprovalRequest {
+            EventMsg::ExecApprovalRequest(codex_core::protocol::ExecApprovalRequestEvent {
                 command,
                 cwd,
                 reason,
-            } => {
+            }) => {
                 let request = ApprovalRequest::Exec {
                     id,
                     command,
@@ -246,11 +246,13 @@ impl ChatWidget<'_> {
                 };
                 self.bottom_pane.push_approval_request(request)?;
             }
-            EventMsg::ApplyPatchApprovalRequest {
-                changes,
-                reason,
-                grant_root,
-            } => {
+            EventMsg::ApplyPatchApprovalRequest(
+                codex_core::protocol::ApplyPatchApprovalRequestEvent {
+                    changes,
+                    reason,
+                    grant_root,
+                },
+            ) => {
                 // ------------------------------------------------------------------
                 // Before we even prompt the user for approval we surface the patch
                 // summary in the main conversation so that the dialog appears in a
@@ -276,18 +278,20 @@ impl ChatWidget<'_> {
                 self.bottom_pane.push_approval_request(request)?;
                 self.request_redraw()?;
             }
-            EventMsg::ExecCommandBegin {
-                call_id, command, ..
-            } => {
+            EventMsg::ExecCommandBegin(codex_core::protocol::ExecCommandBeginEvent {
+                call_id,
+                command,
+                cwd: _,
+            }) => {
                 self.conversation_history
                     .add_active_exec_command(call_id, command);
                 self.request_redraw()?;
             }
-            EventMsg::PatchApplyBegin {
+            EventMsg::PatchApplyBegin(codex_core::protocol::PatchApplyBeginEvent {
                 call_id: _,
                 auto_approved,
                 changes,
-            } => {
+            }) => {
                 // Even when a patch is auto‑approved we still display the
                 // summary so the user can follow along.
                 self.conversation_history
@@ -297,32 +301,31 @@ impl ChatWidget<'_> {
                 }
                 self.request_redraw()?;
             }
-            EventMsg::ExecCommandEnd {
+            EventMsg::ExecCommandEnd(codex_core::protocol::ExecCommandEndEvent {
                 call_id,
                 exit_code,
                 stdout,
                 stderr,
-                ..
-            } => {
+            }) => {
                 self.conversation_history
                     .record_completed_exec_command(call_id, stdout, stderr, exit_code);
                 self.request_redraw()?;
             }
-            EventMsg::McpToolCallBegin {
+            EventMsg::McpToolCallBegin(codex_core::protocol::McpToolCallBeginEvent {
                 call_id,
                 server,
                 tool,
                 arguments,
-            } => {
+            }) => {
                 self.conversation_history
                     .add_active_mcp_tool_call(call_id, server, tool, arguments);
                 self.request_redraw()?;
             }
-            EventMsg::McpToolCallEnd {
+            EventMsg::McpToolCallEnd(codex_core::protocol::McpToolCallEndEvent {
                 call_id,
                 success,
                 result,
-            } => {
+            }) => {
                 self.conversation_history
                     .record_completed_mcp_tool_call(call_id, success, result);
                 self.request_redraw()?;
