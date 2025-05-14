@@ -29,7 +29,7 @@ use crate::user_approval_widget::ApprovalRequest;
 use crate::user_approval_widget::UserApprovalWidget;
 
 /// Minimum number of visible text rows inside the textarea.
-const MIN_TEXTAREA_ROWS: usize = 3;
+const MIN_TEXTAREA_ROWS: usize = 1;
 /// Number of terminal rows consumed by the textarea border (top + bottom).
 const TEXTAREA_BORDER_LINES: u16 = 2;
 
@@ -176,6 +176,24 @@ impl<'a> BottomPane<'a> {
                         self.request_redraw()?;
                         Ok(InputResult::Submitted(text))
                     }
+                    Input {
+                        key: Key::Enter, ..
+                    }
+                    | Input {
+                        key: Key::Char('j'),
+                        ctrl: true,
+                        alt: false,
+                        shift: false,
+                    } => {
+                        // If the user has their terminal emulator configured so
+                        // Enter+Shift (or any modifier) sends a different key
+                        // event, we should let them insert a newline.
+                        //
+                        // We also allow Ctrl+J to insert a newline.
+                        self.textarea.insert_newline();
+                        self.request_redraw()?;
+                        Ok(InputResult::None)
+                    }
                     input => {
                         self.textarea.input(input);
                         self.request_redraw()?;
@@ -297,8 +315,9 @@ fn update_border_for_input_focus(textarea: &mut TextArea, state: &PaneState, has
 
     let block_state = if has_focus && accepting_input {
         BlockState {
-            title: "use Enter to send for now (Ctrl-D to quit)",
-            right_title: Line::from("press enter to send").alignment(Alignment::Right),
+            title: "",
+            right_title: Line::from("Enter to send | Ctrl+D to quit | Ctrl+J for newline")
+                .alignment(Alignment::Right),
             border_style: Style::default(),
         }
     } else {
