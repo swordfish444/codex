@@ -92,9 +92,11 @@ async fn live_streaming_and_prev_id_reset() {
             .expect("agent closed");
 
         match ev.msg {
-            EventMsg::AgentMessage { .. } => saw_message_before_complete = true,
+            EventMsg::AgentMessage(_) => saw_message_before_complete = true,
             EventMsg::TaskComplete => break,
-            EventMsg::Error { message } => panic!("agent reported error in task1: {message}"),
+            EventMsg::Error(codex_core::protocol::ErrorEvent { message }) => {
+                panic!("agent reported error in task1: {message}")
+            }
             _ => (),
         }
     }
@@ -122,11 +124,15 @@ async fn live_streaming_and_prev_id_reset() {
             .expect("agent closed");
 
         match &ev.msg {
-            EventMsg::AgentMessage { message } if message.contains("second turn succeeded") => {
+            EventMsg::AgentMessage(codex_core::protocol::AgentMessageEvent { message })
+                if message.contains("second turn succeeded") =>
+            {
                 got_expected = true;
             }
             EventMsg::TaskComplete => break,
-            EventMsg::Error { message } => panic!("agent reported error in task2: {message}"),
+            EventMsg::Error(codex_core::protocol::ErrorEvent { message }) => {
+                panic!("agent reported error in task2: {message}")
+            }
             _ => (),
         }
     }
@@ -171,19 +177,28 @@ async fn live_shell_function_call() {
             .expect("agent closed");
 
         match ev.msg {
-            EventMsg::ExecCommandBegin { command, .. } => {
+            EventMsg::ExecCommandBegin(codex_core::protocol::ExecCommandBeginEvent {
+                command,
+                call_id: _,
+                cwd: _,
+            }) => {
                 assert_eq!(command, vec!["echo", MARKER]);
                 saw_begin = true;
             }
-            EventMsg::ExecCommandEnd {
-                stdout, exit_code, ..
-            } => {
+            EventMsg::ExecCommandEnd(codex_core::protocol::ExecCommandEndEvent {
+                stdout,
+                exit_code,
+                call_id: _,
+                stderr: _,
+            }) => {
                 assert_eq!(exit_code, 0, "echo returned non‑zero exit code");
                 assert!(stdout.contains(MARKER));
                 saw_end_with_output = true;
             }
             EventMsg::TaskComplete => break,
-            EventMsg::Error { message } => panic!("agent error during shell test: {message}"),
+            EventMsg::Error(codex_core::protocol::ErrorEvent { message }) => {
+                panic!("agent error during shell test: {message}")
+            }
             _ => (),
         }
     }

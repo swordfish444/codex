@@ -95,11 +95,11 @@ impl EventProcessor {
     pub(crate) fn process_event(&mut self, event: Event) {
         let Event { id, msg } = event;
         match msg {
-            EventMsg::Error { message } => {
+            EventMsg::Error(codex_core::protocol::ErrorEvent { message }) => {
                 let prefix = "ERROR:".style(self.red);
                 ts_println!("{prefix} {message}");
             }
-            EventMsg::BackgroundEvent { message } => {
+            EventMsg::BackgroundEvent(codex_core::protocol::BackgroundEventEvent { message }) => {
                 ts_println!("{}", message.style(self.dimmed));
             }
             EventMsg::TaskStarted => {
@@ -110,15 +110,15 @@ impl EventProcessor {
                 let msg = format!("Task complete: {id}");
                 ts_println!("{}", msg.style(self.bold));
             }
-            EventMsg::AgentMessage { message } => {
+            EventMsg::AgentMessage(codex_core::protocol::AgentMessageEvent { message }) => {
                 let prefix = "Agent message:".style(self.bold);
                 ts_println!("{prefix} {message}");
             }
-            EventMsg::ExecCommandBegin {
+            EventMsg::ExecCommandBegin(codex_core::protocol::ExecCommandBeginEvent {
                 call_id,
                 command,
                 cwd,
-            } => {
+            }) => {
                 self.call_id_to_command.insert(
                     call_id.clone(),
                     ExecCommandBegin {
@@ -133,12 +133,12 @@ impl EventProcessor {
                     cwd.to_string_lossy(),
                 );
             }
-            EventMsg::ExecCommandEnd {
+            EventMsg::ExecCommandEnd(codex_core::protocol::ExecCommandEndEvent {
                 call_id,
                 stdout,
                 stderr,
                 exit_code,
-            } => {
+            }) => {
                 let exec_command = self.call_id_to_command.remove(&call_id);
                 let (duration, call) = if let Some(ExecCommandBegin {
                     command,
@@ -173,19 +173,21 @@ impl EventProcessor {
             }
 
             // Handle MCP tool calls (e.g. calling external functions via MCP).
-            EventMsg::McpToolCallBegin {
+            EventMsg::McpToolCallBegin(codex_core::protocol::McpToolCallBeginEvent {
                 call_id,
                 server,
                 tool,
                 arguments,
-            } => {
+            }) => {
                 // Build fully-qualified tool name: server.tool
                 let fq_tool_name = format!("{server}.{tool}");
 
                 // Format arguments as compact JSON so they fit on one line.
                 let args_str = arguments
                     .as_ref()
-                    .map(|v| serde_json::to_string(v).unwrap_or_else(|_| v.to_string()))
+                    .map(|v: &serde_json::Value| {
+                        serde_json::to_string(v).unwrap_or_else(|_| v.to_string())
+                    })
                     .unwrap_or_default();
 
                 let invocation = if args_str.is_empty() {
@@ -208,11 +210,11 @@ impl EventProcessor {
                     invocation.style(self.bold),
                 );
             }
-            EventMsg::McpToolCallEnd {
+            EventMsg::McpToolCallEnd(codex_core::protocol::McpToolCallEndEvent {
                 call_id,
                 success,
                 result,
-            } => {
+            }) => {
                 // Retrieve start time and invocation for duration calculation and labeling.
                 let info = self.call_id_to_tool_call.remove(&call_id);
 
@@ -243,11 +245,11 @@ impl EventProcessor {
                     }
                 }
             }
-            EventMsg::PatchApplyBegin {
+            EventMsg::PatchApplyBegin(codex_core::protocol::PatchApplyBeginEvent {
                 call_id,
                 auto_approved,
                 changes,
-            } => {
+            }) => {
                 // Store metadata so we can calculate duration later when we
                 // receive the corresponding PatchApplyEnd event.
                 self.call_id_to_patch.insert(
@@ -321,12 +323,12 @@ impl EventProcessor {
                     }
                 }
             }
-            EventMsg::PatchApplyEnd {
+            EventMsg::PatchApplyEnd(codex_core::protocol::PatchApplyEndEvent {
                 call_id,
                 stdout,
                 stderr,
                 success,
-            } => {
+            }) => {
                 let patch_begin = self.call_id_to_patch.remove(&call_id);
 
                 // Compute duration and summary label similar to exec commands.
@@ -355,10 +357,10 @@ impl EventProcessor {
                     println!("{}", line.style(self.dimmed));
                 }
             }
-            EventMsg::ExecApprovalRequest { .. } => {
+            EventMsg::ExecApprovalRequest(_) => {
                 // Should we exit?
             }
-            EventMsg::ApplyPatchApprovalRequest { .. } => {
+            EventMsg::ApplyPatchApprovalRequest(_) => {
                 // Should we exit?
             }
             _ => {
