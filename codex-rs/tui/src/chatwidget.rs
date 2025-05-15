@@ -195,6 +195,15 @@ impl ChatWidget<'_> {
                 tracing::error!("failed to send message: {e}");
             });
 
+        // Persist the text to cross-session message history.
+        if !text.is_empty() {
+            self.codex_op_tx
+                .send(Op::AddHistory { text: text.clone() })
+                .unwrap_or_else(|e| {
+                    tracing::error!("failed to send AddHistory op: {e}");
+                });
+        }
+
         // Only show text portion in conversation history for now.
         if !text.is_empty() {
             self.conversation_history.add_user_message(text);

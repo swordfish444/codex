@@ -88,6 +88,15 @@ pub enum Op {
         /// The user's decision in response to the request.
         decision: ReviewDecision,
     },
+
+    /// Append a line of text to the persistent cross-session message history.
+    ///
+    /// The processing loop is responsible for augmenting the entry with the
+    /// `session_id` and a timestamp before persisting it to disk.
+    AddHistory {
+        /// The message text to be stored.
+        text: String,
+    },
 }
 
 /// Determines how liberally commands are auto‑approved by the system.
