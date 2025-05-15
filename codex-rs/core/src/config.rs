@@ -81,6 +81,18 @@ pub struct Config {
     /// Directory containing all Codex state (defaults to `~/.codex` but can be
     /// overridden by the `CODEX_HOME` environment variable).
     pub codex_home: PathBuf,
+
+    /// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
+    pub history: History,
+}
+
+/// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
+#[derive(Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct History {
+    pub save: bool,
+
+    /// If set, the maximum size of the history file in bytes.
+    pub max_bytes: Option<usize>,
 }
 
 /// Base config deserialized from ~/.codex/config.toml.
@@ -130,6 +142,10 @@ pub struct ConfigToml {
     /// Named profiles to facilitate switching between different configurations.
     #[serde(default)]
     pub profiles: HashMap<String, ConfigProfile>,
+
+    /// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
+    #[serde(default)]
+    pub history: Option<History>,
 }
 
 impl ConfigToml {
@@ -297,6 +313,8 @@ impl Config {
             }
         };
 
+        let history = cfg.history.unwrap_or_default();
+
         let config = Self {
             model: model
                 .or(config_profile.model)
@@ -320,6 +338,7 @@ impl Config {
             model_providers,
             project_doc_max_bytes: cfg.project_doc_max_bytes.unwrap_or(PROJECT_DOC_MAX_BYTES),
             codex_home,
+            history,
         };
         Ok(config)
     }
@@ -620,6 +639,7 @@ disable_response_storage = true
                 model_providers: fixture.model_provider_map.clone(),
                 project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
                 codex_home: fixture.codex_home(),
+                history: History::default(),
             },
             o3_profile_config
         );
@@ -654,6 +674,7 @@ disable_response_storage = true
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
             codex_home: fixture.codex_home(),
+            history: History::default(),
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -703,6 +724,7 @@ disable_response_storage = true
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
             codex_home: fixture.codex_home(),
+            history: History::default(),
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);
