@@ -63,6 +63,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.86
         with:
           targets: ${{ matrix.target }}
+          components: clippy
 
       - uses: actions/cache@v4
         with:
