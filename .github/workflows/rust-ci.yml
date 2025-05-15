@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.86
       - name: cargo fmt
         run: cargo fmt -- --config imports_granularity=Item --check
 
@@ -58,7 +58,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.86
         with:
           targets: ${{ matrix.target }}
 
