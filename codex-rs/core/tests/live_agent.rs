@@ -57,7 +57,7 @@ async fn spawn_codex() -> Result<Codex, CodexErr> {
         std::env::set_var("OPENAI_STREAM_MAX_RETRIES", "2");
     }
 
-    let config = Config::load_default_config_for_test();
+    let config = Config::load_default_config_for_test(std::env::temp_dir());
     let (agent, _init_id) = Codex::spawn(config, std::sync::Arc::new(Notify::new())).await?;
 
     Ok(agent)

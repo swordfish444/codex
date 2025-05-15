@@ -96,7 +96,7 @@ async fn retries_on_early_close() {
     };
 
     let ctrl_c = std::sync::Arc::new(tokio::sync::Notify::new());
-    let mut config = Config::load_default_config_for_test();
+    let mut config = Config::load_default_config_for_test(std::env::temp_dir());
     config.model_provider = model_provider;
     let (codex, _init_id) = Codex::spawn(config, ctrl_c).await.unwrap();
 

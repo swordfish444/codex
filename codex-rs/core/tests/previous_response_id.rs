@@ -108,7 +108,7 @@ async fn keeps_previous_response_id_between_tasks() {
     };
 
     // Init session
-    let mut config = Config::load_default_config_for_test();
+    let mut config = Config::load_default_config_for_test(std::env::temp_dir());
     config.model_provider = model_provider;
     let ctrl_c = std::sync::Arc::new(tokio::sync::Notify::new());
     let (codex, _init_id) = Codex::spawn(config, ctrl_c.clone()).await.unwrap();
