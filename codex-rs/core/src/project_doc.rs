@@ -147,7 +147,8 @@ mod tests {
     /// value is cleared to mimic a scenario where no system instructions have
     /// been configured.
     fn make_config(root: &TempDir, limit: usize, instructions: Option<&str>) -> Config {
-        let mut cfg = Config::load_default_config_for_test();
+        let codex_home = TempDir::new().unwrap();
+        let mut cfg = Config::load_default_config_for_test(&codex_home);
         cfg.cwd = root.path().to_path_buf();
         cfg.project_doc_max_bytes = limit;
 

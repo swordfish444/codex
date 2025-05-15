@@ -30,6 +30,7 @@ rand = "0.9"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tempfile = "3"
 thiserror = "2.0.12"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
 tokio = { version = "1", features = [
@@ -59,5 +60,4 @@ openssl-sys = { version = "*", features = ["vendored"] }
 assert_cmd = "2"
 predicates = "3"
 pretty_assertions = "1.4.1"
-tempfile = "3"
 wiremock = "0.6"
