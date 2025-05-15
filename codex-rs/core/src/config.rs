@@ -81,6 +81,17 @@ pub struct Config {
     /// Directory containing all Codex state (defaults to `~/.codex` but can be
     /// overridden by the `CODEX_HOME` environment variable).
     pub codex_home: PathBuf,
+
+    pub history: History,
+}
+
+/// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
+#[derive(Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct History {
+    pub save: bool,
+
+    /// If set, the maximum size of the history file in bytes.
+    pub max_bytes: Option<usize>,
 }
 
 /// Base config deserialized from ~/.codex/config.toml.
