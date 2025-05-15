@@ -88,6 +88,15 @@ pub enum Op {
         /// The user's decision in response to the request.
         decision: ReviewDecision,
     },
+
+    /// Append an entry to the persistent cross-session message history.
+    ///
+    /// Note the entry is not guaranteed to be logged if the user has
+    /// history disabled, it matches the list of "sensitive" patterns, etc.
+    AddToHistory {
+        /// The message text to be stored.
+        text: String,
+    },
 }
 
 /// Determines how liberally commands are auto‑approved by the system.

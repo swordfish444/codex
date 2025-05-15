@@ -48,6 +48,7 @@ use crate::flags::OPENAI_STREAM_MAX_RETRIES;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::mcp_connection_manager::try_parse_fully_qualified_tool_name;
 use crate::mcp_tool_call::handle_mcp_tool_call;
+use crate::message_history;
 use crate::models::ContentItem;
 use crate::models::FunctionCallOutputPayload;
 use crate::models::ReasoningItemReasoningSummary;
@@ -110,6 +111,7 @@ impl Codex {
             cwd: config.cwd.clone(),
         };
 
+        let config = Arc::new(config);
         tokio::spawn(submission_loop(config, rx_sub, tx_event, ctrl_c));
         let codex = Codex {
             next_id: AtomicU64::new(0),
@@ -483,11 +485,16 @@ impl AgentTask {
 }
 
 async fn submission_loop(
-    config: Config,
+    config: Arc<Config>,
     rx_sub: Receiver<Submission>,
     tx_event: Sender<Event>,
     ctrl_c: Arc<Notify>,
 ) {
+    // Generate a unique ID for the lifetime of this Codex session. We create
+    // it *before* any operations are processed so that it is available for
+    // history logging even if `ConfigureSession` has not yet been received.
+    let session_id = Uuid::new_v4();
+
     let mut sess: Option<Arc<Session>> = None;
     // shorthand - send an event when there is no active session
     let send_no_session_event = |sub_id: String| async {
@@ -608,7 +615,9 @@ async fn submission_loop(
 
                 // Attempt to create a RolloutRecorder *before* moving the
                 // `instructions` value into the Session struct.
-                let session_id = Uuid::new_v4();
+                // TODO: if ConfigureSession is sent twice, we will create an
+                // overlapping rollout file. Consider passing RolloutRecorder
+                // from above.
                 let rollout_recorder =
                     match RolloutRecorder::new(&config, session_id, instructions.clone()).await {
                         Ok(r) => Some(r),
@@ -690,6 +699,17 @@ async fn submission_loop(
                     }
                     other => sess.notify_approval(&id, other),
                 }
+            }
+            Op::AddToHistory { text } => {
+                // Perform blocking I/O inside a blocking task so we do not
+                // stall the async runtime.
+                let id = session_id;
+                let config = config.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Err(e) = message_history::append_entry(&text, &id, &config) {
+                        tracing::warn!("failed to append to message history: {e}");
+                    }
+                });
             }
         }
     }
