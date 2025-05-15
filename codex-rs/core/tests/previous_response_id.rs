@@ -2,13 +2,14 @@ use std::time::Duration;
 
 use codex_core::Codex;
 use codex_core::ModelProviderInfo;
-use codex_core::config::Config;
 use codex_core::exec::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_core::protocol::ErrorEvent;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
+use common::load_default_config_for_test;
 use serde_json::Value;
+use tempfile::TempDir;
 use tokio::time::timeout;
 use wiremock::Match;
 use wiremock::Mock;
@@ -17,6 +18,8 @@ use wiremock::Request;
 use wiremock::ResponseTemplate;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
+
+mod common;
 
 /// Matcher asserting that JSON body has NO `previous_response_id` field.
 struct NoPrevId;
@@ -108,7 +111,8 @@ async fn keeps_previous_response_id_between_tasks() {
     };
 
     // Init session
-    let mut config = Config::load_default_config_for_test();
+    let codex_home = TempDir::new().unwrap();
+    let mut config = load_default_config_for_test(&codex_home);
     config.model_provider = model_provider;
     let ctrl_c = std::sync::Arc::new(tokio::sync::Notify::new());
     let (codex, _init_id) = Codex::spawn(config, ctrl_c.clone()).await.unwrap();

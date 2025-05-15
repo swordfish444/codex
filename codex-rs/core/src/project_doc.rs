@@ -133,6 +133,10 @@ async fn load_first_candidate(
 }
 
 #[cfg(test)]
+#[path = "../tests/common/mod.rs"]
+mod common;
+
+#[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
@@ -147,7 +151,8 @@ mod tests {
     /// value is cleared to mimic a scenario where no system instructions have
     /// been configured.
     fn make_config(root: &TempDir, limit: usize, instructions: Option<&str>) -> Config {
-        let mut cfg = Config::load_default_config_for_test();
+        let codex_home = TempDir::new().unwrap();
+        let mut cfg = common::load_default_config_for_test(&codex_home);
         cfg.cwd = root.path().to_path_buf();
         cfg.project_doc_max_bytes = limit;
 

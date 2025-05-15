@@ -1,12 +1,25 @@
 //! Root of the `codex-core` library.
 
 // Prevent accidental direct writes to stdout/stderr in library code. All
-// user‑visible output must go through the appropriate abstraction (e.g.,
+// user-visible output must go through the appropriate abstraction (e.g.,
 // the TUI or the tracing stack).
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
-mod chat_completions;
+//---------------------------------------------------------------------------
+// Test support
+//---------------------------------------------------------------------------
+// Some helper modules are `#[path]`-included into unit tests that live inside
+// `src/` *and* reused by the integration tests under `core/tests`.  They refer
+// to the crate as `codex_core::...`. When they are compiled as part of this
+// very crate that name would normally not be in scope. The following alias
+// makes it available, avoiding conditional compilation tricks in the helpers.
 
+// Alias current crate under the name `codex_core` for the reason explained
+// above.
+#[cfg(test)]
+extern crate self as codex_core;
+
+mod chat_completions;
 mod client;
 mod client_common;
 pub mod codex;

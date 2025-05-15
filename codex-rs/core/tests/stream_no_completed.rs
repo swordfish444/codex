@@ -5,10 +5,11 @@ use std::time::Duration;
 
 use codex_core::Codex;
 use codex_core::ModelProviderInfo;
-use codex_core::config::Config;
 use codex_core::exec::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
+use common::load_default_config_for_test;
+use tempfile::TempDir;
 use tokio::time::timeout;
 use wiremock::Mock;
 use wiremock::MockServer;
@@ -17,6 +18,8 @@ use wiremock::Respond;
 use wiremock::ResponseTemplate;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
+
+mod common;
 
 fn sse_incomplete() -> String {
     // Only a single line; missing the completed event.
@@ -96,7 +99,8 @@ async fn retries_on_early_close() {
     };
 
     let ctrl_c = std::sync::Arc::new(tokio::sync::Notify::new());
-    let mut config = Config::load_default_config_for_test();
+    let codex_home = TempDir::new().unwrap();
+    let mut config = load_default_config_for_test(&codex_home);
     config.model_provider = model_provider;
     let (codex, _init_id) = Codex::spawn(config, ctrl_c).await.unwrap();
 
