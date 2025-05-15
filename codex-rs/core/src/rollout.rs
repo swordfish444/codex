@@ -17,7 +17,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::{self};
 use uuid::Uuid;
 
-use crate::config::codex_dir;
+use crate::config::Config;
 use crate::models::ResponseItem;
 
 /// Folder inside `~/.codex` that holds saved rollouts.
@@ -49,12 +49,12 @@ impl RolloutRecorder {
     /// Attempt to create a new [`RolloutRecorder`]. If the sessions directory
     /// cannot be created or the rollout file cannot be opened we return the
     /// error so the caller can decide whether to disable persistence.
-    pub async fn new(uuid: Uuid, instructions: Option<String>) -> std::io::Result<Self> {
+    pub async fn new(cfg: &Config, uuid: Uuid, instructions: Option<String>) -> std::io::Result<Self> {
         let LogFileInfo {
             file,
             session_id,
             timestamp,
-        } = create_log_file(uuid)?;
+        } = create_log_file(&cfg.codex_home, uuid)?;
 
         // Build the static session metadata JSON first.
         let timestamp_format: &[FormatItem] = format_description!(
@@ -154,9 +154,9 @@ struct LogFileInfo {
     timestamp: OffsetDateTime,
 }
 
-fn create_log_file(session_id: Uuid) -> std::io::Result<LogFileInfo> {
+fn create_log_file(codex_dir: &std::path::Path, session_id: Uuid) -> std::io::Result<LogFileInfo> {
     // Resolve ~/.codex/sessions and create it if missing.
-    let mut dir = codex_dir()?;
+    let mut dir = codex_dir.to_path_buf();
     dir.push(SESSIONS_SUBDIR);
     fs::create_dir_all(&dir)?;
 
