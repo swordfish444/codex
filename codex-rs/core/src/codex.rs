@@ -51,6 +51,8 @@ use crate::mcp_connection_manager::try_parse_fully_qualified_tool_name;
 use crate::mcp_tool_call::handle_mcp_tool_call;
 use crate::models::ContentItem;
 use crate::models::FunctionCallOutputPayload;
+use crate::models::LocalShellAction;
+use crate::models::LocalShellExecAction;
 use crate::models::ReasoningItemReasoningSummary;
 use crate::models::ResponseInputItem;
 use crate::models::ResponseItem;
@@ -1025,6 +1027,27 @@ async fn handle_response_item(
             output = Some(
                 handle_function_call(sess, sub_id.to_string(), name, arguments, call_id).await,
             );
+        }
+        ResponseItem::LocalShellCall {
+            id,
+            call_id,
+            status: _,
+            action,
+        } => {
+            let LocalShellAction::Exec(action) = action;
+            let params = ShellToolCallParams {
+                command: action.command,
+                workdir: action.working_directory,
+                timeout_ms: action.timeout_ms,
+            };
+            let effective_call_id = match (call_id, id) {
+                (Some(call_id), _) => call_id,
+                (None, Some(id)) => id,
+                (None, None) => {
+                    error!("LocalShellCall without call_id or id");
+                    todo!("Respond to model to tell it about this error");
+                }
+            };
         }
         ResponseItem::FunctionCallOutput { .. } => {
             debug!("unexpected FunctionCallOutput from stream");
