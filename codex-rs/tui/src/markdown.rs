@@ -1,8 +1,36 @@
+use codex_core::config::UriBasedFileOpener;
 use ratatui::text::Line;
 use ratatui::text::Span;
+use std::path::Path;
+use std::path::PathBuf;
 
-pub(crate) fn append_markdown(markdown_source: &str, lines: &mut Vec<Line<'static>>) {
-    let markdown = tui_markdown::from_str(markdown_source);
+use crate::citation_regex::CITATION_REGEX;
+
+/// Convert the provided markdown to [`ratatui`] [`Line`]s and append them to
+/// `lines`. Before rendering we rewrite Codex-style file citations of the form
+/// `【F:path/to/file†L10-L20】` into standard markdown hyperlinks that IDEs such
+/// as VS Code can interpret when combined with the "URI-based file opener"
+/// functionality.
+///
+/// The specific URI scheme to use is determined by `file_opener` (e.g.
+/// `vscode`, `vscode-insiders`, `cursor`, `windsurf`). When it is `None` the
+/// citations are **left unchanged** so they still render as plain text.
+pub(crate) fn append_markdown(
+    markdown_source: &str,
+    lines: &mut Vec<Line<'static>>,
+    file_opener: Option<UriBasedFileOpener>,
+    cwd: &Path,
+) {
+    // Perform citation rewrite *before* feeding the string to the markdown
+    // renderer. When `file_opener` is absent we bypass the transformation to
+    // avoid unnecessary allocations.
+    let processed_markdown: std::borrow::Cow<'_, str> = if let Some(scheme) = file_opener {
+        std::borrow::Cow::Owned(rewrite_file_citations(markdown_source, scheme, cwd))
+    } else {
+        std::borrow::Cow::Borrowed(markdown_source)
+    };
+
+    let markdown = tui_markdown::from_str(&processed_markdown);
 
     // `tui_markdown` returns a `ratatui::text::Text` where every `Line` borrows
     // from the input `message` string. Since the `HistoryCell` stores its lines
@@ -26,5 +54,102 @@ pub(crate) fn append_markdown(markdown_source: &str, lines: &mut Vec<Line<'stati
         };
 
         lines.push(owned_line);
+    }
+}
+
+/// Rewrites file citations in `src` into markdown hyperlinks using the
+/// provided `scheme` (`vscode`, `cursor`, etc.). The resulting URI follows the
+/// format expected by VS Code-compatible file openers:
+///
+/// ```text
+/// <scheme>://file<ABS_PATH>:<LINE>
+/// ```
+fn rewrite_file_citations(src: &str, scheme: UriBasedFileOpener, cwd: &Path) -> String {
+    // Map enum values to the corresponding URI scheme strings.
+    let scheme_str: &str = match scheme {
+        UriBasedFileOpener::VsCode => "vscode",
+        UriBasedFileOpener::VsCodeInsiders => "vscode-insiders",
+        UriBasedFileOpener::Windsurf => "windsurf",
+        UriBasedFileOpener::Cursor => "cursor",
+    };
+
+    CITATION_REGEX
+        .replace_all(src, |caps: &regex::Captures<'_>| {
+            let file = &caps[1];
+            let start_line = &caps[2];
+
+            // Resolve the path against `cwd` when it is relative.
+            let path = {
+                let p = Path::new(file);
+                if p.is_absolute() {
+                    PathBuf::from(p)
+                } else {
+                    cwd.join(p)
+                }
+            };
+
+            // VS Code expects forward slashes even on Windows because URIs use
+            // `/` as the path separator.
+            let abs = path.to_string_lossy().replace('\\', "/");
+
+            // Render as a normal markdown link so the downstream renderer emits
+            // the hyperlink escape sequence (when supported by the terminal).
+            format!("[{}]({}://file{}:{})", file, scheme_str, abs, start_line)
+        })
+        .into_owned()
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn citation_is_rewritten_with_absolute_path() {
+        let markdown = "See 【F:/src/main.rs†L42-L50】 for details.";
+        let cwd = Path::new("/workspace");
+        let result = rewrite_file_citations(markdown, UriBasedFileOpener::VsCode, cwd);
+
+        assert_eq!(
+            "See [/src/main.rs](vscode://file/src/main.rs:42) for details.",
+            result
+        );
+    }
+
+    #[test]
+    fn citation_is_rewritten_with_relative_path() {
+        let markdown = "Refer to 【F:lib/mod.rs†L5】 here.";
+        let cwd = Path::new("/home/user/project");
+        let result = rewrite_file_citations(markdown, UriBasedFileOpener::Cursor, cwd);
+
+        assert_eq!(
+            "Refer to [lib/mod.rs](cursor://file/home/user/project/lib/mod.rs:5) here.",
+            result
+        );
+    }
+
+    #[test]
+    fn citation_unchanged_without_file_opener() {
+        let markdown = "Look at 【F:file.rs†L1】.";
+        let cwd = Path::new("/");
+        let unchanged = rewrite_file_citations(markdown, UriBasedFileOpener::VsCode, cwd);
+        // The helper itself always rewrites – this test validates behaviour of
+        // append_markdown when `file_opener` is None.
+        let mut out = Vec::new();
+        append_markdown(markdown, &mut out, None, cwd);
+        // Convert lines back to string for comparison.
+        let rendered: String = out
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.clone())
+            .collect::<Vec<_>>()
+            .join("");
+        assert_eq!(markdown, rendered);
+        // Ensure helper rewrites.
+        assert_ne!(markdown, unchanged);
     }
 }
