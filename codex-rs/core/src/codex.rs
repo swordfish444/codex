@@ -1025,6 +1025,15 @@ async fn handle_response_item(
                 handle_function_call(sess, sub_id.to_string(), name, arguments, call_id).await,
             );
         }
+        ResponseItem::LocalShellCall {
+            id,
+            call_id,
+            status,
+            action,
+        } => {
+            let _ = (id, call_id, status, action);
+            todo!()
+        }
         ResponseItem::FunctionCallOutput { .. } => {
             debug!("unexpected FunctionCallOutput from stream");
         }
