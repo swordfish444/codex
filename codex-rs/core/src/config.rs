@@ -84,6 +84,10 @@ pub struct Config {
 
     /// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
     pub history: History,
+
+    /// Optional URI-based file opener. If set, citations to files in the model
+    /// output will be hyperlinked using the specified URI scheme.
+    pub file_opener: UriBasedFileOpener,
 }
 
 /// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
@@ -97,13 +101,32 @@ pub struct History {
     pub max_bytes: Option<usize>,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq, Default)]
+#[derive(Deserialize, Debug, Copy, Clone, PartialEq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum HistoryPersistence {
     /// Save all history entries to disk.
     #[default]
     SaveAll,
     /// Do not write history to disk.
+    None,
+}
+
+#[derive(Deserialize, Debug, Copy, Clone, PartialEq)]
+pub enum UriBasedFileOpener {
+    #[serde(rename = "vscode")]
+    VsCode,
+
+    #[serde(rename = "vscode-insiders")]
+    VsCodeInsiders,
+
+    #[serde(rename = "windsurf")]
+    Windsurf,
+
+    #[serde(rename = "cursor")]
+    Cursor,
+
+    /// Option to disable the URI-based file opener.
+    #[serde(rename = "none")]
     None,
 }
 
@@ -158,6 +181,10 @@ pub struct ConfigToml {
     /// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
     #[serde(default)]
     pub history: Option<History>,
+
+    /// Optional URI-based file opener. If set, citations to files in the model
+    /// output will be hyperlinked using the specified URI scheme.
+    pub file_opener: Option<UriBasedFileOpener>,
 }
 
 impl ConfigToml {
@@ -351,6 +378,7 @@ impl Config {
             project_doc_max_bytes: cfg.project_doc_max_bytes.unwrap_or(PROJECT_DOC_MAX_BYTES),
             codex_home,
             history,
+            file_opener: cfg.file_opener.unwrap_or(UriBasedFileOpener::VsCode),
         };
         Ok(config)
     }
@@ -686,6 +714,7 @@ disable_response_storage = true
                 project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
                 codex_home: fixture.codex_home(),
                 history: History::default(),
+                file_opener: Some(UriBasedFileOpener::VsCode),
             },
             o3_profile_config
         );
@@ -721,6 +750,7 @@ disable_response_storage = true
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
             codex_home: fixture.codex_home(),
             history: History::default(),
+            file_opener: Some(UriBasedFileOpener::VsCode),
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -771,6 +801,7 @@ disable_response_storage = true
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
             codex_home: fixture.codex_home(),
             history: History::default(),
+            file_opener: Some(UriBasedFileOpener::VsCode),
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);
