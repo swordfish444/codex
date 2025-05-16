@@ -201,7 +201,9 @@ function TerminalChatResponseToolCallOutput({
   message,
   fullStdout,
 }: {
-  message: ResponseFunctionToolCallOutputItem | ResponseLocalShellCallOutputItem;
+  message:
+    | ResponseFunctionToolCallOutputItem
+    | ResponseLocalShellCallOutputItem;
   fullStdout: boolean;
 }) {
   const { output, metadata } = parseToolCallOutput(message.output);
