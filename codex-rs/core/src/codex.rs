@@ -51,6 +51,7 @@ use crate::mcp_connection_manager::try_parse_fully_qualified_tool_name;
 use crate::mcp_tool_call::handle_mcp_tool_call;
 use crate::models::ContentItem;
 use crate::models::FunctionCallOutputPayload;
+use crate::models::LocalShellAction;
 use crate::models::ReasoningItemReasoningSummary;
 use crate::models::ResponseInputItem;
 use crate::models::ResponseItem;
@@ -1022,9 +1023,43 @@ async fn handle_response_item(
             arguments,
             call_id,
         } => {
+            tracing::info!("FunctionCall: {arguments}");
             output = Some(
                 handle_function_call(sess, sub_id.to_string(), name, arguments, call_id).await,
             );
+        }
+        ResponseItem::LocalShellCall {
+            id,
+            call_id,
+            status: _,
+            action,
+        } => {
+            let LocalShellAction::Exec(action) = action;
+            tracing::info!("LocalShellCall: {action:?}");
+            let params = ShellToolCallParams {
+                command: action.command,
+                workdir: action.working_directory,
+                timeout_ms: action.timeout_ms,
+            };
+            let effective_call_id = match (call_id, id) {
+                (Some(call_id), _) => call_id,
+                (None, Some(id)) => id,
+                (None, None) => {
+                    error!("LocalShellCall without call_id or id");
+                    todo!("Respond to model to tell it about this error");
+                }
+            };
+
+            let exec_params = to_exec_params(params, sess);
+            output = Some(
+                handle_container_exec_with_params(
+                    exec_params,
+                    sess,
+                    sub_id.to_string(),
+                    effective_call_id,
+                )
+                .await,
+            )
         }
         ResponseItem::FunctionCallOutput { .. } => {
             debug!("unexpected FunctionCallOutput from stream");
@@ -1043,7 +1078,13 @@ async fn handle_function_call(
 ) -> ResponseInputItem {
     match name.as_str() {
         "container.exec" | "shell" => {
-            handle_container_exec_function_call(sess, sub_id, arguments, call_id).await
+            let params = match parse_container_exec_arguments(arguments, sess, &call_id) {
+                Ok(params) => params,
+                Err(output) => {
+                    return output;
+                }
+            };
+            handle_container_exec_with_params(params, sess, sub_id, call_id).await
         }
         _ => {
             match try_parse_fully_qualified_tool_name(&name) {
@@ -1070,6 +1111,14 @@ async fn handle_function_call(
     }
 }
 
+fn to_exec_params(params: ShellToolCallParams, sess: &Session) -> ExecParams {
+    ExecParams {
+        command: params.command,
+        cwd: sess.resolve_path(params.workdir.clone()),
+        timeout_ms: params.timeout_ms,
+    }
+}
+
 fn parse_container_exec_arguments(
     arguments: String,
     sess: &Session,
@@ -1077,11 +1126,7 @@ fn parse_container_exec_arguments(
 ) -> Result<ExecParams, ResponseInputItem> {
     // parse command
     match serde_json::from_str::<ShellToolCallParams>(&arguments) {
-        Ok(shell_tool_call_params) => Ok(ExecParams {
-            command: shell_tool_call_params.command,
-            cwd: sess.resolve_path(shell_tool_call_params.workdir.clone()),
-            timeout_ms: shell_tool_call_params.timeout_ms,
-        }),
+        Ok(shell_tool_call_params) => Ok(to_exec_params(shell_tool_call_params, sess)),
         Err(e) => {
             // allow model to re-sample
             let output = ResponseInputItem::FunctionCallOutput {
@@ -1094,22 +1139,6 @@ fn parse_container_exec_arguments(
             Err(output)
         }
     }
-}
-
-async fn handle_container_exec_function_call(
-    sess: &Session,
-    sub_id: String,
-    arguments: String,
-    call_id: String,
-) -> ResponseInputItem {
-    let params = match parse_container_exec_arguments(arguments, sess, &call_id) {
-        Ok(params) => params,
-        Err(output) => {
-            return output;
-        }
-    };
-
-    handle_container_exec_with_params(params, sess, sub_id, call_id).await
 }
 
 async fn handle_container_exec_with_params(
