@@ -438,6 +438,8 @@ impl WidgetRef for ConversationHistoryWidget {
             .wrap(wrap_cfg())
             .scroll((offset_into_first as u16, 0));
 
+        // Clear the widget area to avoid visual artifacts from previous frames.
+        Clear.render(area, buf);
         paragraph.render(area, buf);
 
         // Draw scrollbar if necessary.
