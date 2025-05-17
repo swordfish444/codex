@@ -8,11 +8,13 @@ use std::str::Utf8Error;
 
 use anyhow::Context;
 use anyhow::Result;
+use parser::END_PATCH_MARKER;
 pub use parser::Hunk;
 pub use parser::ParseError;
 use parser::ParseError::*;
 use parser::UpdateFileChunk;
 pub use parser::parse_patch;
+use regex::Regex;
 use similar::TextDiff;
 use thiserror::Error;
 use tree_sitter::LanguageError;
@@ -62,7 +64,26 @@ pub enum MaybeApplyPatch {
 }
 
 pub fn maybe_parse_apply_patch(argv: &[String]) -> MaybeApplyPatch {
-    match argv {
+    // Clean up heredoc quoting issues and ensure proper suffix for some model outputs.
+    let argv = {
+        if argv.len() == 3 && argv[0] == "bash" && argv[1] == "-lc" {
+            let mut script = argv[2].clone();
+            // Remove quoted heredoc markers that can break parsing.
+            let re_start = Regex::new(r#"(['"])?<<(['"])?EOF(['"]?)"#).unwrap();
+            let re_end = Regex::new(r#"\*\*\* End Patch\nEOF(['"])?"#).unwrap();
+            script = re_start.replace_all(&script, "").to_string();
+            script = re_end.replace_all(&script, "*** End Patch").to_string();
+            script = script.trim().to_string();
+            if !script.ends_with(END_PATCH_MARKER) {
+                script.push_str("\n");
+                script.push_str(END_PATCH_MARKER);
+            }
+            vec![argv[0].clone(), argv[1].clone(), script]
+        } else {
+            argv.to_vec()
+        }
+    };
+    match argv.as_slice() {
         [cmd, body] if cmd == "apply_patch" => match parse_patch(body) {
             Ok(hunks) => MaybeApplyPatch::Body(hunks),
             Err(e) => MaybeApplyPatch::PatchParseError(e),
@@ -618,6 +639,9 @@ pub fn print_summary(
     }
     Ok(())
 }
+
+/// Detailed instructions for gpt-4.1 on how to use the `apply_patch` tool.
+pub const APPLY_PATCH_TOOL_INSTRUCTIONS: &str = include_str!("../apply_patch_tool_instructions.md");
 
 #[cfg(test)]
 mod tests {
