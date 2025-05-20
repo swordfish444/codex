@@ -23,7 +23,8 @@ pub fn run_landlock(command: Vec<String>, sandbox_policy: SandboxPolicy) -> anyh
         let cwd = std::env::current_dir()?;
 
         apply_sandbox_policy_to_current_thread(&sandbox_policy, &cwd)?;
-        let mut child = spawn_child_sync(command, cwd, &sandbox_policy, StdioPolicy::Inherit)?;
+        let env: std::collections::HashMap<String, String> = std::env::vars().collect();
+        let mut child = spawn_child_sync(command, cwd, &sandbox_policy, StdioPolicy::Inherit, env)?;
         let status = child.wait()?;
         Ok(status)
     });
