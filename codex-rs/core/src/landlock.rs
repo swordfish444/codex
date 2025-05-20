@@ -157,6 +157,7 @@ mod tests {
             command: cmd.iter().map(|elm| elm.to_string()).collect(),
             cwd: std::env::current_dir().expect("cwd should exist"),
             timeout_ms: Some(timeout_ms),
+            env: std::collections::HashMap::new(),
         };
 
         let sandbox_policy =
@@ -236,9 +237,10 @@ mod tests {
         let params = ExecParams {
             command: cmd.iter().map(|s| s.to_string()).collect(),
             cwd: std::env::current_dir().expect("cwd should exist"),
-            // Give the tool a generous 2‑second timeout so even slow DNS timeouts
+            // Give the tool a generous 2-second timeout so even slow DNS timeouts
             // do not stall the suite.
             timeout_ms: Some(2_000),
+            env: std::collections::HashMap::new(),
         };
 
         let sandbox_policy = SandboxPolicy::new_read_only_policy();
