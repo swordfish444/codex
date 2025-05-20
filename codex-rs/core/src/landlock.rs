@@ -147,6 +147,7 @@ mod tests {
     use crate::exec::SandboxType;
     use crate::exec::process_exec_tool_call;
     use crate::protocol::SandboxPolicy;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::NamedTempFile;
     use tokio::sync::Notify;
@@ -157,6 +158,7 @@ mod tests {
             command: cmd.iter().map(|elm| elm.to_string()).collect(),
             cwd: std::env::current_dir().expect("cwd should exist"),
             timeout_ms: Some(timeout_ms),
+            env: HashMap::new(),
         };
 
         let sandbox_policy =
@@ -236,9 +238,10 @@ mod tests {
         let params = ExecParams {
             command: cmd.iter().map(|s| s.to_string()).collect(),
             cwd: std::env::current_dir().expect("cwd should exist"),
-            // Give the tool a generous 2‑second timeout so even slow DNS timeouts
+            // Give the tool a generous 2-second timeout so even slow DNS timeouts
             // do not stall the suite.
             timeout_ms: Some(2_000),
+            env: HashMap::new(),
         };
 
         let sandbox_policy = SandboxPolicy::new_read_only_policy();
