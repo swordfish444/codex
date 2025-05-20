@@ -9,8 +9,16 @@ pub async fn run_seatbelt(
     sandbox_policy: SandboxPolicy,
 ) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
-    let mut child =
-        spawn_command_under_seatbelt(command, &sandbox_policy, cwd, StdioPolicy::Inherit).await?;
+    // For the debug CLI we currently inherit the full parent environment.
+    let env: std::collections::HashMap<String, String> = std::env::vars().collect();
+    let mut child = spawn_command_under_seatbelt(
+        command,
+        &sandbox_policy,
+        cwd,
+        StdioPolicy::Inherit,
+        env,
+    )
+    .await?;
     let status = child.wait().await?;
     handle_exit_status(status);
 }
