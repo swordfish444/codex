@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::error::CodexErr;
-use crate::error::Result;
-use crate::error::SandboxErr;
-use crate::protocol::SandboxPolicy;
+use codex_core::error::CodexErr;
+use codex_core::error::Result;
+use codex_core::error::SandboxErr;
+use codex_core::protocol::SandboxPolicy;
 
 use landlock::ABI;
 use landlock::Access;

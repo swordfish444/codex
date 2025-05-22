@@ -7,10 +7,6 @@ edition = "2024"
 name = "codex"
 path = "src/main.rs"
 
-[[bin]]
-name = "codex-linux-sandbox"
-path = "src/linux-sandbox/main.rs"
-
 [lib]
 name = "codex_cli"
 path = "src/lib.rs"
