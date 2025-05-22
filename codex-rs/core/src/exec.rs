@@ -21,7 +21,7 @@ use tokio::sync::Notify;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::error::SandboxErr;
-use crate::exec_linux::exec_linux;
+// use crate::exec_linux::exec_linux; // No longer needed – switch to helper binary.
 use crate::protocol::SandboxPolicy;
 
 // Maximum we send for each stream, which is either:
@@ -101,7 +101,25 @@ pub async fn process_exec_tool_call(
             .await?;
             consume_truncated_output(child, ctrl_c, timeout_ms).await
         }
-        SandboxType::LinuxSeccomp => exec_linux(params, ctrl_c, sandbox_policy),
+        SandboxType::LinuxSeccomp => {
+            let ExecParams {
+                command,
+                cwd,
+                timeout_ms,
+                env,
+            } = params;
+
+            let child = spawn_command_under_linux_sandbox(
+                command,
+                sandbox_policy,
+                cwd,
+                StdioPolicy::RedirectForShellTool,
+                env,
+            )
+            .await?;
+
+            consume_truncated_output(child, ctrl_c, timeout_ms).await
+        }
     };
     let duration = start.elapsed();
     match raw_output_result {
@@ -153,6 +171,87 @@ pub async fn spawn_command_under_seatbelt(
 ) -> std::io::Result<Child> {
     let seatbelt_command = create_seatbelt_command(command, sandbox_policy, &cwd);
     spawn_child_async(seatbelt_command, cwd, sandbox_policy, stdio_policy, env).await
+}
+
+/// Spawn a shell tool command under the Linux Landlock+seccomp sandbox helper
+/// (codex-linux-sandbox).
+///
+/// Unlike macOS Seatbelt where we directly embed the policy text, the Linux
+/// helper accepts a list of `--sandbox-permission`/`-s` flags mirroring the
+/// public CLI.  We convert the internal [`SandboxPolicy`] representation into
+/// the equivalent CLI options so that front-ends and the business-logic layer
+/// remain decoupled from the platform-specific implementation.
+async fn spawn_command_under_linux_sandbox(
+    command: Vec<String>,
+    sandbox_policy: &SandboxPolicy,
+    cwd: PathBuf,
+    stdio_policy: StdioPolicy,
+    env: HashMap<String, String>,
+) -> std::io::Result<Child> {
+    let linux_cmd = create_linux_sandbox_command(command, sandbox_policy, &cwd);
+    spawn_child_async(linux_cmd, cwd, sandbox_policy, stdio_policy, env).await
+}
+
+/// Converts the sandbox policy into the CLI invocation for `codex-linux-sandbox`.
+fn create_linux_sandbox_command(
+    mut command: Vec<String>,
+    sandbox_policy: &SandboxPolicy,
+    cwd: &Path,
+) -> Vec<String> {
+    // Resolve the helper binary path in the following order:
+    // 1. Explicit override via `CODEX_LINUX_SANDBOX_EXECUTABLE` env var.
+    // 2. Cargo-provided env var when running tests (`CARGO_BIN_EXE_codex-linux-sandbox`).
+    // 3. Fallback to just `codex-linux-sandbox` (resolved via PATH).
+    let helper = std::env::var("CODEX_LINUX_SANDBOX_EXECUTABLE")
+        .or_else(|_| std::env::var("CARGO_BIN_EXE_codex-linux-sandbox"))
+        .unwrap_or_else(|_| "codex-linux-sandbox".to_string());
+
+    let mut linux_cmd: Vec<String> = vec![helper];
+
+    // If the policy matches the built-in “full-auto” setting, use the concise flag.
+    if *sandbox_policy == SandboxPolicy::new_full_auto_policy() {
+        linux_cmd.push("--full-auto".to_string());
+    } else {
+        // Otherwise, translate individual permissions.
+        // Use high-level helper methods to infer flags when we cannot see the
+        // exact permission list (private field).
+
+        if sandbox_policy.has_full_disk_read_access() {
+            linux_cmd.extend(["-s", "disk-full-read-access"].map(String::from));
+        }
+
+        if sandbox_policy.has_full_disk_write_access() {
+            linux_cmd.extend(["-s", "disk-full-write-access"].map(String::from));
+        } else {
+            // Derive granular writable paths (includes cwd if `DiskWriteCwd` is
+            // present).
+            for root in sandbox_policy.get_writable_roots_with_cwd(cwd) {
+                // Check if this path corresponds exactly to cwd to map to
+                // `disk-write-cwd`, otherwise use the generic folder rule.
+                if root == cwd {
+                    linux_cmd.extend(["-s", "disk-write-cwd"].map(String::from));
+                } else {
+                    linux_cmd.extend([
+                        "-s".to_string(),
+                        format!("disk-write-folder={}", root.to_string_lossy()),
+                    ]);
+                }
+            }
+        }
+
+        if sandbox_policy.has_full_network_access() {
+            linux_cmd.extend(["-s", "network-full-access"].map(String::from));
+        }
+    }
+
+    // Separator so that command arguments starting with `-` are not parsed as
+    // options of the helper itself.
+    linux_cmd.push("--".to_string());
+
+    // Append the original tool command.
+    linux_cmd.append(&mut command);
+
+    linux_cmd
 }
 
 fn create_seatbelt_command(
