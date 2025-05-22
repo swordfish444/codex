@@ -21,7 +21,6 @@ use tokio::sync::Notify;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::error::SandboxErr;
-use crate::exec_linux::exec_linux;
 use crate::protocol::SandboxPolicy;
 
 // Maximum we send for each stream, which is either:
@@ -101,7 +100,25 @@ pub async fn process_exec_tool_call(
             .await?;
             consume_truncated_output(child, ctrl_c, timeout_ms).await
         }
-        SandboxType::LinuxSeccomp => exec_linux(params, ctrl_c, sandbox_policy),
+        SandboxType::LinuxSeccomp => {
+            let ExecParams {
+                command,
+                cwd,
+                timeout_ms,
+                env,
+            } = params;
+
+            let child = spawn_command_under_linux_sandbox(
+                command,
+                sandbox_policy,
+                cwd,
+                StdioPolicy::RedirectForShellTool,
+                env,
+            )
+            .await?;
+
+            consume_truncated_output(child, ctrl_c, timeout_ms).await
+        }
     };
     let duration = start.elapsed();
     match raw_output_result {
@@ -152,7 +169,104 @@ pub async fn spawn_command_under_seatbelt(
     env: HashMap<String, String>,
 ) -> std::io::Result<Child> {
     let seatbelt_command = create_seatbelt_command(command, sandbox_policy, &cwd);
-    spawn_child_async(seatbelt_command, cwd, sandbox_policy, stdio_policy, env).await
+    let arg0 = None;
+    spawn_child_async(
+        seatbelt_command,
+        arg0,
+        cwd,
+        sandbox_policy,
+        stdio_policy,
+        env,
+    )
+    .await
+}
+
+/// Spawn a shell tool command under the Linux Landlock+seccomp sandbox helper
+/// (codex-linux-sandbox).
+///
+/// Unlike macOS Seatbelt where we directly embed the policy text, the Linux
+/// helper accepts a list of `--sandbox-permission`/`-s` flags mirroring the
+/// public CLI.  We convert the internal [`SandboxPolicy`] representation into
+/// the equivalent CLI options so that front-ends and the business-logic layer
+/// remain decoupled from the platform-specific implementation.
+pub async fn spawn_command_under_linux_sandbox(
+    command: Vec<String>,
+    sandbox_policy: &SandboxPolicy,
+    cwd: PathBuf,
+    stdio_policy: StdioPolicy,
+    env: HashMap<String, String>,
+) -> std::io::Result<Child> {
+    let linux_cmd = create_linux_sandbox_command_args(command, sandbox_policy, &cwd);
+    let arg0 = Some("codex-linux-sandbox");
+    spawn_child_async(linux_cmd, arg0, cwd, sandbox_policy, stdio_policy, env).await
+}
+
+/// Converts the sandbox policy into the CLI invocation for `codex-linux-sandbox`.
+pub fn create_linux_sandbox_command_args(
+    command: Vec<String>,
+    sandbox_policy: &SandboxPolicy,
+    cwd: &Path,
+) -> Vec<String> {
+    // TODO(mbolin): Require the client to pass codex_linux_sandbox_exe as a
+    // parameter to this function because code in `codex_core` should assume it
+    // is bundled in a binary that special-cases arg0 when it is
+    // "codex-linux-sandbox".
+    #[expect(clippy::expect_used)]
+    let codex_linux_sandbox_exe =
+        std::env::current_exe().expect("failed to get current executable");
+
+    #[expect(clippy::expect_used)]
+    let mut linux_cmd: Vec<String> = vec![
+        codex_linux_sandbox_exe
+            .to_str()
+            .expect("failed to convert path to str")
+            .to_string(),
+    ];
+
+    // If the policy matches the built-in “full-auto” setting, use the concise flag.
+    if *sandbox_policy == SandboxPolicy::new_full_auto_policy() {
+        linux_cmd.push("--full-auto".to_string());
+    } else {
+        // Otherwise, translate individual permissions.
+        // Use high-level helper methods to infer flags when we cannot see the
+        // exact permission list (private field).
+
+        if sandbox_policy.has_full_disk_read_access() {
+            linux_cmd.extend(["-s", "disk-full-read-access"].map(String::from));
+        }
+
+        if sandbox_policy.has_full_disk_write_access() {
+            linux_cmd.extend(["-s", "disk-full-write-access"].map(String::from));
+        } else {
+            // Derive granular writable paths (includes cwd if `DiskWriteCwd` is
+            // present).
+            for root in sandbox_policy.get_writable_roots_with_cwd(cwd) {
+                // Check if this path corresponds exactly to cwd to map to
+                // `disk-write-cwd`, otherwise use the generic folder rule.
+                if root == cwd {
+                    linux_cmd.extend(["-s", "disk-write-cwd"].map(String::from));
+                } else {
+                    linux_cmd.extend([
+                        "-s".to_string(),
+                        format!("disk-write-folder={}", root.to_string_lossy()),
+                    ]);
+                }
+            }
+        }
+
+        if sandbox_policy.has_full_network_access() {
+            linux_cmd.extend(["-s", "network-full-access"].map(String::from));
+        }
+    }
+
+    // Separator so that command arguments starting with `-` are not parsed as
+    // options of the helper itself.
+    linux_cmd.push("--".to_string());
+
+    // Append the original tool command.
+    linux_cmd.extend(command);
+
+    linux_cmd
 }
 
 fn create_seatbelt_command(
@@ -243,8 +357,10 @@ async fn exec(
     sandbox_policy: &SandboxPolicy,
     ctrl_c: Arc<Notify>,
 ) -> Result<RawExecToolCallOutput> {
+    let arg0 = None;
     let child = spawn_child_async(
         command,
+        arg0,
         cwd,
         sandbox_policy,
         StdioPolicy::RedirectForShellTool,
@@ -260,124 +376,62 @@ pub enum StdioPolicy {
     Inherit,
 }
 
-macro_rules! configure_command {
-    (
-        $cmd_type: path,
-        $command: expr,
-        $cwd: expr,
-        $sandbox_policy: expr,
-        $stdio_policy: expr,
-        $env_map: expr
-    ) => {{
-        // For now, we take `SandboxPolicy` as a parameter to spawn_child() because
-        // we need to determine whether to set the
-        // `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` environment variable.
-        // Ultimately, we should be stricter about the environment variables that
-        // are set for the command (as we are when spawning an MCP server), so
-        // instead of SandboxPolicy, we should take the exact env to use for the
-        // Command (i.e., `env_clear().envs(env)`).
-        if $command.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "command args are empty",
-            ));
-        }
-
-        let mut cmd = <$cmd_type>::new(&$command[0]);
-        cmd.args(&$command[1..]);
-        cmd.current_dir($cwd);
-
-        // Previously, to update the env for `cmd`, we did the straightforward
-        // thing of calling `env_clear()` followed by `envs(&env_map)` so
-        // that the spawned process inherited *only* the variables explicitly
-        // provided by the caller. On Linux, the combination of `env_clear()`
-        // and Landlock/seccomp caused a permission error whereas this more
-        // "surgical" approach of setting variables individually appears to
-        // work fine. More time with `strace` and friends is merited to fully
-        // debug thus, though we will soon use a helper binary like we do for
-        // Seatbelt, which will simplify this logic.
-
-        // Iterate through the current process environment first so we can
-        // decide, for every variable that already exists, whether we need to
-        // override its value.
-        let mut remaining_overrides = $env_map.clone();
-        for (key, current_val) in std::env::vars() {
-            if let Some(desired_val) = remaining_overrides.remove(&key) {
-                // The caller provided a value for this variable. Override it
-                // only if the value differs from what is currently set.
-                if desired_val != current_val {
-                    cmd.env(&key, desired_val);
-                }
-            }
-            // If the variable was not in `env_map`, we leave it unchanged.
-        }
-
-        // Any entries still left in `remaining_overrides` were not present in
-        // the parent environment. Add them now so that the child process sees
-        // the complete set requested by the caller.
-        for (key, val) in remaining_overrides {
-            cmd.env(key, val);
-        }
-
-        if !$sandbox_policy.has_full_network_access() {
-            cmd.env(CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR, "1");
-        }
-
-        match $stdio_policy {
-            StdioPolicy::RedirectForShellTool => {
-                // Do not create a file descriptor for stdin because otherwise some
-                // commands may hang forever waiting for input. For example, ripgrep has
-                // a heuristic where it may try to read from stdin as explained here:
-                // https://github.com/BurntSushi/ripgrep/blob/e2362d4d5185d02fa857bf381e7bd52e66fafc73/crates/core/flags/hiargs.rs#L1101-L1103
-                cmd.stdin(Stdio::null());
-
-                cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-            }
-            StdioPolicy::Inherit => {
-                // Inherit stdin, stdout, and stderr from the parent process.
-                cmd.stdin(Stdio::inherit())
-                    .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit());
-            }
-        }
-
-        std::io::Result::<$cmd_type>::Ok(cmd)
-    }};
-}
-
 /// Spawns the appropriate child process for the ExecParams and SandboxPolicy,
 /// ensuring the args and environment variables used to create the `Command`
 /// (and `Child`) honor the configuration.
-pub(crate) async fn spawn_child_async(
+async fn spawn_child_async(
     command: Vec<String>,
+    arg0: Option<&str>,
     cwd: PathBuf,
     sandbox_policy: &SandboxPolicy,
     stdio_policy: StdioPolicy,
     env: HashMap<String, String>,
 ) -> std::io::Result<Child> {
-    let mut cmd = configure_command!(Command, command, cwd, sandbox_policy, stdio_policy, env)?;
-    cmd.kill_on_drop(true).spawn()
-}
+    // For now, we take `SandboxPolicy` as a parameter to spawn_child() because
+    // we need to determine whether to set the
+    // `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` environment variable.
+    // Ultimately, we should be stricter about the environment variables that
+    // are set for the command (as we are when spawning an MCP server), so
+    // instead of SandboxPolicy, we should take the exact env to use for the
+    // Command (i.e., `env_clear().envs(env)`).
+    if command.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "command args are empty",
+        ));
+    }
 
-/// Alternative version of `spawn_child_async()` that returns
-/// `std::process::Child` instead of `tokio::process::Child`. This is useful for
-/// spawning a child process in a thread that is not running a Tokio runtime.
-pub fn spawn_child_sync(
-    command: Vec<String>,
-    cwd: PathBuf,
-    sandbox_policy: &SandboxPolicy,
-    stdio_policy: StdioPolicy,
-    env: HashMap<String, String>,
-) -> std::io::Result<std::process::Child> {
-    let mut cmd = configure_command!(
-        std::process::Command,
-        command,
-        cwd,
-        sandbox_policy,
-        stdio_policy,
-        env
-    )?;
-    cmd.spawn()
+    let mut cmd = Command::new(&command[0]);
+    #[cfg(unix)]
+    cmd.arg0(arg0.unwrap_or_else(|| &command[0]));
+    cmd.args(&command[1..]);
+    cmd.current_dir(cwd);
+    cmd.env_clear();
+    cmd.envs(env);
+
+    if !sandbox_policy.has_full_network_access() {
+        cmd.env(CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR, "1");
+    }
+
+    match stdio_policy {
+        StdioPolicy::RedirectForShellTool => {
+            // Do not create a file descriptor for stdin because otherwise some
+            // commands may hang forever waiting for input. For example, ripgrep has
+            // a heuristic where it may try to read from stdin as explained here:
+            // https://github.com/BurntSushi/ripgrep/blob/e2362d4d5185d02fa857bf381e7bd52e66fafc73/crates/core/flags/hiargs.rs#L1101-L1103
+            cmd.stdin(Stdio::null());
+
+            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        }
+        StdioPolicy::Inherit => {
+            // Inherit stdin, stdout, and stderr from the parent process.
+            cmd.stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
+        }
+    }
+
+    cmd.kill_on_drop(true).spawn()
 }
 
 /// Consumes the output of a child process, truncating it so it is suitable for
