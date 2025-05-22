@@ -562,6 +562,7 @@ dependencies = [
  "clap",
  "codex-common",
  "codex-core",
+ "codex-linux-sandbox",
  "mcp-types",
  "owo-colors 4.2.0",
  "serde_json",
@@ -589,6 +590,18 @@ dependencies = [
  "serde_with",
  "starlark",
  "tempfile",
+]
+
+[[package]]
+name = "codex-linux-sandbox"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "codex-common",
+ "codex-core",
+ "landlock",
+ "libc",
+ "seccompiler",
 ]
 
 [[package]]

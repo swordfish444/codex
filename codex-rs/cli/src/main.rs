@@ -6,6 +6,7 @@ use codex_cli::proto;
 use codex_cli::seatbelt;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
+use codex_core::exec_env::create_env;
 use codex_exec::Cli as ExecCli;
 use codex_tui::Cli as TuiCli;
 
@@ -94,22 +95,32 @@ async fn main() -> anyhow::Result<()> {
                 })?;
                 seatbelt::run_seatbelt(command, &config).await?;
             }
-            #[cfg(unix)]
             DebugCommand::Landlock(LandlockCommand {
                 command,
                 sandbox,
                 full_auto,
             }) => {
                 let sandbox_policy = create_sandbox_policy(full_auto, sandbox);
+                let cwd = std::env::current_dir()?;
                 let config = Config::load_with_overrides(ConfigOverrides {
                     sandbox_policy: Some(sandbox_policy),
                     ..Default::default()
                 })?;
-                codex_cli::landlock::run_landlock(command, &config)?;
-            }
-            #[cfg(not(unix))]
-            DebugCommand::Landlock(_) => {
-                anyhow::bail!("Landlock is only supported on Linux.");
+                let full_args = codex_core::exec::create_linux_sandbox_command_args(
+                    command,
+                    &config.sandbox_policy,
+                    &cwd,
+                );
+
+                let env = create_env(&config.shell_environment_policy);
+                codex_core::exec::spawn_command_under_linux_sandbox(
+                    full_args,
+                    &config.sandbox_policy,
+                    cwd,
+                    codex_core::exec::StdioPolicy::Inherit,
+                    env,
+                )
+                .await?;
             }
         },
     }
