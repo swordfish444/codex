@@ -147,6 +147,7 @@ mod tests {
     use crate::exec::SandboxType;
     use crate::exec::process_exec_tool_call;
     use crate::protocol::SandboxPolicy;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::NamedTempFile;
     use tokio::sync::Notify;
