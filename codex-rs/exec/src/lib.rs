@@ -1,5 +1,10 @@
 mod cli;
 mod event_processor;
+mod exit_status;
+pub mod landlock;
+
+#[cfg(target_os = "linux")]
+pub use landlock::run_landlock;
 
 use std::io::IsTerminal;
 use std::path::Path;
