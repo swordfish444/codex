@@ -1,9 +1,13 @@
+use std::path::PathBuf;
+
 use clap::Parser;
 use codex_cli::LandlockCommand;
 use codex_cli::SeatbeltCommand;
 use codex_cli::create_sandbox_policy;
 use codex_cli::proto;
 use codex_cli::seatbelt;
+use codex_core::config::Config;
+use codex_core::config::ConfigOverrides;
 use codex_exec::Cli as ExecCli;
 use codex_tui::Cli as TuiCli;
 
@@ -64,17 +68,23 @@ struct ReplProto {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let codex_linux_sandbox_exe: Option<PathBuf> = if cfg!(target_os = "linux") {
+        std::env::current_exe().ok()
+    } else {
+        None
+    };
+
     let cli = MultitoolCli::parse();
 
     match cli.subcommand {
         None => {
-            codex_tui::run_main(cli.interactive)?;
+            codex_tui::run_main(cli.interactive, codex_linux_sandbox_exe)?;
         }
         Some(Subcommand::Exec(exec_cli)) => {
-            codex_exec::run_main(exec_cli).await?;
+            codex_exec::run_main(exec_cli, codex_linux_sandbox_exe).await?;
         }
         Some(Subcommand::Mcp) => {
-            codex_mcp_server::run_main().await?;
+            codex_mcp_server::run_main(codex_linux_sandbox_exe).await?;
         }
         Some(Subcommand::Proto(proto_cli)) => {
             proto::run_main(proto_cli).await?;
@@ -86,7 +96,11 @@ async fn main() -> anyhow::Result<()> {
                 full_auto,
             }) => {
                 let sandbox_policy = create_sandbox_policy(full_auto, sandbox);
-                seatbelt::run_seatbelt(command, sandbox_policy).await?;
+                let config = Config::load_with_overrides(ConfigOverrides {
+                    sandbox_policy: Some(sandbox_policy),
+                    ..Default::default()
+                })?;
+                seatbelt::run_seatbelt(command, &config).await?;
             }
             #[cfg(unix)]
             DebugCommand::Landlock(LandlockCommand {
@@ -95,7 +109,11 @@ async fn main() -> anyhow::Result<()> {
                 full_auto,
             }) => {
                 let sandbox_policy = create_sandbox_policy(full_auto, sandbox);
-                codex_cli::landlock::run_landlock(command, sandbox_policy)?;
+                let config = Config::load_with_overrides(ConfigOverrides {
+                    sandbox_policy: Some(sandbox_policy),
+                    ..Default::default()
+                })?;
+                codex_cli::landlock::run_landlock(command, &config)?;
             }
             #[cfg(not(unix))]
             DebugCommand::Landlock(_) => {
