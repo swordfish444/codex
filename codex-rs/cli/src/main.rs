@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use clap::Parser;
 use codex_cli::LandlockCommand;
 use codex_cli::SeatbeltCommand;
@@ -8,8 +6,11 @@ use codex_cli::proto;
 use codex_cli::seatbelt;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
+use codex_core::exec_env::create_env;
 use codex_exec::Cli as ExecCli;
 use codex_tui::Cli as TuiCli;
+use std::path::Path;
+use std::path::PathBuf;
 
 use crate::proto::ProtoCli;
 
@@ -66,14 +67,33 @@ enum DebugCommand {
 #[derive(Debug, Parser)]
 struct ReplProto {}
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let codex_linux_sandbox_exe: Option<PathBuf> = if cfg!(target_os = "linux") {
-        std::env::current_exe().ok()
-    } else {
-        None
-    };
+fn main() -> anyhow::Result<()> {
+    // Determine if we were invoked via the special alias.
+    let argv0 = std::env::args().next().unwrap_or_default();
+    let exe_name = Path::new(&argv0)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
 
+    if exe_name == "codex-linux-sandbox" {
+        codex_linux_sandbox::run_main()
+    }
+
+    // Regular `codex` invocation – parse the normal CLI.
+    let runtime = tokio::runtime::Runtime::new()?;
+    runtime.block_on(async {
+        let codex_linux_sandbox_exe: Option<PathBuf> = if cfg!(target_os = "linux") {
+            std::env::current_exe().ok()
+        } else {
+            None
+        };
+
+        cli_main(codex_linux_sandbox_exe).await?;
+        Ok(())
+    })
+}
+
+async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
     let cli = MultitoolCli::parse();
 
     match cli.subcommand {
@@ -102,22 +122,35 @@ async fn main() -> anyhow::Result<()> {
                 })?;
                 seatbelt::run_seatbelt(command, &config).await?;
             }
-            #[cfg(unix)]
             DebugCommand::Landlock(LandlockCommand {
                 command,
                 sandbox,
                 full_auto,
             }) => {
                 let sandbox_policy = create_sandbox_policy(full_auto, sandbox);
+                let cwd = std::env::current_dir()?;
                 let config = Config::load_with_overrides(ConfigOverrides {
                     sandbox_policy: Some(sandbox_policy),
                     ..Default::default()
                 })?;
-                codex_cli::landlock::run_landlock(command, &config)?;
-            }
-            #[cfg(not(unix))]
-            DebugCommand::Landlock(_) => {
-                anyhow::bail!("Landlock is only supported on Linux.");
+                let sandbox_command_args = codex_core::exec::create_linux_sandbox_command_args(
+                    command,
+                    &config.sandbox_policy,
+                    &cwd,
+                );
+
+                let codex_linux_sandbox_exe = codex_linux_sandbox_exe
+                    .ok_or(anyhow::anyhow!("codex-linux-sandbox executable not found"))?;
+                let env = create_env(&config.shell_environment_policy);
+                codex_core::exec::spawn_command_under_linux_sandbox(
+                    codex_linux_sandbox_exe,
+                    sandbox_command_args,
+                    &config.sandbox_policy,
+                    cwd,
+                    codex_core::exec::StdioPolicy::Inherit,
+                    env,
+                )
+                .await?;
             }
         },
     }
