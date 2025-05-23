@@ -49,5 +49,8 @@ tui-markdown = "0.3.3"
 tui-textarea = "0.7.0"
 uuid = "1"
 
+# For unified sandbox/async runtime dispatch logic.
+codex-linux-sandbox = { path = "../linux-sandbox" }
+
 [dev-dependencies]
 pretty_assertions = "1"
