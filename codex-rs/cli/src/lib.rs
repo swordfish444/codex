@@ -1,6 +1,4 @@
 mod exit_status;
-#[cfg(unix)]
-pub mod landlock;
 pub mod proto;
 pub mod seatbelt;
 
