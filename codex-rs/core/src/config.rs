@@ -13,6 +13,7 @@ use crate::protocol::SandboxPermission;
 use crate::protocol::SandboxPolicy;
 use dirs::home_dir;
 use serde::Deserialize;
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
@@ -106,6 +107,126 @@ pub struct Config {
     ///
     /// When this program is invoked, arg0 will be set to `codex-linux-sandbox`.
     pub codex_linux_sandbox_exe: Option<PathBuf>,
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// CLI-level JSON overrides ("-c key=value") support                                            //
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+impl Config {
+    /// Load configuration with *generic* CLI overrides (`-c key=value`) applied **in between**
+    /// the values parsed from `config.toml` and the strongly-typed overrides specified via
+    /// [`ConfigOverrides`].
+    ///
+    /// The precedence order is therefore: `config.toml` < `-c` overrides < `ConfigOverrides`.
+    ///
+    /// Most CLI binaries should call this method – `load_with_overrides()` is still available
+    /// for non-CLI callers (tests, servers) which do not accept the `-c` flag.
+    pub fn load_with_cli_overrides(
+        cli_overrides: Vec<(String, JsonValue)>,
+        overrides: ConfigOverrides,
+    ) -> std::io::Result<Self> {
+        // Resolve CODEX_HOME first; needed by sandbox deserializer later.
+        let codex_home = find_codex_home()?;
+
+        // Step 1: parse `config.toml` into a generic JSON value.
+        let mut root_value = load_config_as_json(&codex_home)?;
+
+        // Step 2: apply the `-c` overrides.
+        for (path, value) in cli_overrides.into_iter() {
+            apply_json_override(&mut root_value, &path, value);
+        }
+
+        // Step 3: deserialize into `ConfigToml` so that Serde can enforce the
+        // correct types.
+        let cfg: ConfigToml = serde_json::from_value(root_value).map_err(|e| {
+            tracing::error!("Failed to deserialize overridden config: {e}");
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+        })?;
+
+        // Step 4: merge with the strongly-typed overrides.
+        Self::load_from_base_config_with_overrides(cfg, overrides, codex_home)
+    }
+}
+
+/// Read `~/.codex/config.toml` (or the resolved CODEX_HOME location) and
+/// return it as a generic JSON value. Returns an empty JSON object when the
+/// file does not exist.
+fn load_config_as_json(codex_home: &Path) -> std::io::Result<JsonValue> {
+    let config_path = codex_home.join("config.toml");
+    match std::fs::read_to_string(&config_path) {
+        Ok(contents) => {
+            // Parse as TOML first, then convert to JSON for easier mutation.
+            match toml::from_str::<toml::Value>(&contents) {
+                Ok(toml_val) => {
+                    let json_val = serde_json::to_value(toml_val).map_err(|e| {
+                        tracing::error!("Failed to convert TOML config to JSON value: {e}");
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+                    })?;
+                    Ok(json_val)
+                }
+                Err(e) => {
+                    tracing::error!("Failed to parse config.toml: {e}");
+                    Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::info!("config.toml not found, using defaults");
+            Ok(JsonValue::Object(Default::default()))
+        }
+        Err(e) => {
+            tracing::error!("Failed to read config.toml: {e}");
+            Err(e)
+        }
+    }
+}
+
+/// Apply a single dotted-path override onto a JSON value.
+fn apply_json_override(root: &mut JsonValue, path: &str, value: JsonValue) {
+    use serde_json::Map;
+
+    let segments: Vec<&str> = path.split('.').collect();
+    let mut current = root;
+
+    for (idx, segment) in segments.iter().enumerate() {
+        let is_last = idx == segments.len() - 1;
+
+        if is_last {
+            match current {
+                JsonValue::Object(map) => {
+                    map.insert(segment.to_string(), value);
+                }
+                _ => {
+                    *current = JsonValue::Object({
+                        let mut m = Map::new();
+                        m.insert(segment.to_string(), value);
+                        m
+                    });
+                }
+            }
+            return;
+        }
+
+        // Traverse or create intermediate object.
+        match current {
+            JsonValue::Object(map) => {
+                current = map
+                    .entry(segment.to_string())
+                    .or_insert_with(|| JsonValue::Object(Map::new()));
+            }
+            _ => {
+                *current = JsonValue::Object(Map::new());
+                if let JsonValue::Object(map) = current {
+                    // Safe unwrap: we just replaced current with an empty
+                    // object and immediately inserted the key.
+                    current = map
+                        .entry(segment.to_string())
+                        .or_insert_with(|| JsonValue::Object(Map::new()));
+                }
+            }
+        }
+    }
 }
 
 /// Base config deserialized from ~/.codex/config.toml.

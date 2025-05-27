@@ -38,6 +38,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         color,
         last_message_file,
         prompt,
+        config_overrides,
     } = cli;
 
     let (stdout_with_ansi, stderr_with_ansi) = match color {
@@ -72,7 +73,16 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         model_provider: None,
         codex_linux_sandbox_exe,
     };
-    let config = Config::load_with_overrides(overrides)?;
+    // Parse `-c` overrides.
+    let cli_kv_overrides = match config_overrides.parse_overrides() {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Error parsing -c overrides: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let config = Config::load_with_cli_overrides(cli_kv_overrides, overrides)?;
     // Print the effective configuration so users can see what Codex is using.
     print_config_summary(&config, stdout_with_ansi);
 
