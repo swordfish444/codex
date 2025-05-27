@@ -13,6 +13,7 @@ use crate::protocol::SandboxPermission;
 use crate::protocol::SandboxPolicy;
 use dirs::home_dir;
 use serde::Deserialize;
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
@@ -108,6 +109,122 @@ pub struct Config {
     pub codex_linux_sandbox_exe: Option<PathBuf>,
 }
 
+impl Config {
+    /// Load configuration with *generic* CLI overrides (`-c key=value`) applied
+    /// **in between** the values parsed from `config.toml` and the
+    /// strongly-typed overrides specified via [`ConfigOverrides`].
+    ///
+    /// The precedence order is therefore: `config.toml` < `-c` overrides <
+    /// `ConfigOverrides`.
+    pub fn load_with_cli_overrides(
+        cli_overrides: Vec<(String, JsonValue)>,
+        overrides: ConfigOverrides,
+    ) -> std::io::Result<Self> {
+        // Resolve the directory that stores Codex state (e.g. ~/.codex or the
+        // value of $CODEX_HOME) so we can embed it into the resulting
+        // `Config` instance.
+        let codex_home = find_codex_home()?;
+
+        // Step 1: parse `config.toml` into a generic JSON value.
+        let mut root_value = load_config_as_json(&codex_home)?;
+
+        // Step 2: apply the `-c` overrides.
+        for (path, value) in cli_overrides.into_iter() {
+            apply_json_override(&mut root_value, &path, value);
+        }
+
+        // Step 3: deserialize into `ConfigToml` so that Serde can enforce the
+        // correct types.
+        let cfg: ConfigToml = serde_json::from_value(root_value).map_err(|e| {
+            tracing::error!("Failed to deserialize overridden config: {e}");
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+        })?;
+
+        // Step 4: merge with the strongly-typed overrides.
+        Self::load_from_base_config_with_overrides(cfg, overrides, codex_home)
+    }
+}
+
+/// Read `~/.codex/config.toml` (or the resolved CODEX_HOME location) and
+/// return it as a generic JSON value. Returns an empty JSON object when the
+/// file does not exist.
+fn load_config_as_json(codex_home: &Path) -> std::io::Result<JsonValue> {
+    let config_path = codex_home.join("config.toml");
+    match std::fs::read_to_string(&config_path) {
+        Ok(contents) => {
+            // Parse as TOML first, then convert to JSON for easier mutation.
+            match toml::from_str::<toml::Value>(&contents) {
+                Ok(toml_val) => {
+                    let json_val = serde_json::to_value(toml_val).map_err(|e| {
+                        tracing::error!("Failed to convert TOML config to JSON value: {e}");
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+                    })?;
+                    Ok(json_val)
+                }
+                Err(e) => {
+                    tracing::error!("Failed to parse config.toml: {e}");
+                    Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::info!("config.toml not found, using defaults");
+            Ok(JsonValue::Object(Default::default()))
+        }
+        Err(e) => {
+            tracing::error!("Failed to read config.toml: {e}");
+            Err(e)
+        }
+    }
+}
+
+/// Apply a single dotted-path override onto a JSON value.
+fn apply_json_override(root: &mut JsonValue, path: &str, value: JsonValue) {
+    use serde_json::Map;
+
+    let segments: Vec<&str> = path.split('.').collect();
+    let mut current = root;
+
+    for (idx, segment) in segments.iter().enumerate() {
+        let is_last = idx == segments.len() - 1;
+
+        if is_last {
+            match current {
+                JsonValue::Object(map) => {
+                    map.insert(segment.to_string(), value);
+                }
+                _ => {
+                    *current = JsonValue::Object({
+                        let mut m = Map::new();
+                        m.insert(segment.to_string(), value);
+                        m
+                    });
+                }
+            }
+            return;
+        }
+
+        // Traverse or create intermediate object.
+        match current {
+            JsonValue::Object(map) => {
+                current = map
+                    .entry(segment.to_string())
+                    .or_insert_with(|| JsonValue::Object(Map::new()));
+            }
+            _ => {
+                *current = JsonValue::Object(Map::new());
+                if let JsonValue::Object(map) = current {
+                    // Safe unwrap: we just replaced current with an empty
+                    // object and immediately inserted the key.
+                    current = map
+                        .entry(segment.to_string())
+                        .or_insert_with(|| JsonValue::Object(Map::new()));
+                }
+            }
+        }
+    }
+}
+
 /// Base config deserialized from ~/.codex/config.toml.
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct ConfigToml {
@@ -171,29 +288,6 @@ pub struct ConfigToml {
     pub tui: Option<Tui>,
 }
 
-impl ConfigToml {
-    /// Attempt to parse the file at `~/.codex/config.toml`. If it does not
-    /// exist, return a default config. Though if it exists and cannot be
-    /// parsed, report that to the user and force them to fix it.
-    fn load_from_toml(codex_home: &Path) -> std::io::Result<Self> {
-        let config_toml_path = codex_home.join("config.toml");
-        match std::fs::read_to_string(&config_toml_path) {
-            Ok(contents) => toml::from_str::<Self>(&contents).map_err(|e| {
-                tracing::error!("Failed to parse config.toml: {e}");
-                std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-            }),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                tracing::info!("config.toml not found, using defaults");
-                Ok(Self::default())
-            }
-            Err(e) => {
-                tracing::error!("Failed to read config.toml: {e}");
-                Err(e)
-            }
-        }
-    }
-}
-
 fn deserialize_sandbox_permissions<'de, D>(
     deserializer: D,
 ) -> Result<Option<Vec<SandboxPermission>>, D::Error>
@@ -227,28 +321,12 @@ pub struct ConfigOverrides {
     pub cwd: Option<PathBuf>,
     pub approval_policy: Option<AskForApproval>,
     pub sandbox_policy: Option<SandboxPolicy>,
-    pub disable_response_storage: Option<bool>,
     pub model_provider: Option<String>,
     pub config_profile: Option<String>,
     pub codex_linux_sandbox_exe: Option<PathBuf>,
 }
 
 impl Config {
-    /// Load configuration, optionally applying overrides (CLI flags). Merges
-    /// ~/.codex/config.toml, ~/.codex/instructions.md, embedded defaults, and
-    /// any values provided in `overrides` (highest precedence).
-    pub fn load_with_overrides(overrides: ConfigOverrides) -> std::io::Result<Self> {
-        // Resolve the directory that stores Codex state (e.g. ~/.codex or the
-        // value of $CODEX_HOME) so we can embed it into the resulting
-        // `Config` instance.
-        let codex_home = find_codex_home()?;
-
-        let cfg: ConfigToml = ConfigToml::load_from_toml(&codex_home)?;
-        tracing::warn!("Config parsed from config.toml: {cfg:?}");
-
-        Self::load_from_base_config_with_overrides(cfg, overrides, codex_home)
-    }
-
     /// Meant to be used exclusively for tests: `load_with_overrides()` should
     /// be used in all other cases.
     pub fn load_from_base_config_with_overrides(
@@ -264,7 +342,6 @@ impl Config {
             cwd,
             approval_policy,
             sandbox_policy,
-            disable_response_storage,
             model_provider,
             config_profile: config_profile_key,
             codex_linux_sandbox_exe,
@@ -356,8 +433,8 @@ impl Config {
                 .unwrap_or_else(AskForApproval::default),
             sandbox_policy,
             shell_environment_policy,
-            disable_response_storage: disable_response_storage
-                .or(config_profile.disable_response_storage)
+            disable_response_storage: config_profile
+                .disable_response_storage
                 .or(cfg.disable_response_storage)
                 .unwrap_or(false),
             notify: cfg.notify,

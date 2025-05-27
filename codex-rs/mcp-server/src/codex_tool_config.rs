@@ -41,12 +41,10 @@ pub(crate) struct CodexToolCallParam {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox_permissions: Option<Vec<CodexToolCallSandboxPermission>>,
 
-    /// Disable server-side response storage.
+    /// Individual config settings that will override what is in
+    /// CODEX_HOME/config.toml.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disable_response_storage: Option<bool>,
-    // Custom system instructions.
-    // #[serde(default, skip_serializing_if = "Option::is_none")]
-    // pub instructions: Option<String>,
+    pub config: Option<Vec<(String, serde_json::Value)>>,
 }
 
 // Create custom enums for use with `CodexToolCallApprovalPolicy` where we
@@ -155,7 +153,7 @@ impl CodexToolCallParam {
             cwd,
             approval_policy,
             sandbox_permissions,
-            disable_response_storage,
+            config: cli_overrides,
         } = self;
         let sandbox_policy = sandbox_permissions.map(|perms| {
             SandboxPolicy::from(perms.into_iter().map(Into::into).collect::<Vec<_>>())
@@ -168,12 +166,12 @@ impl CodexToolCallParam {
             cwd: cwd.map(PathBuf::from),
             approval_policy: approval_policy.map(Into::into),
             sandbox_policy,
-            disable_response_storage,
             model_provider: None,
             codex_linux_sandbox_exe,
         };
 
-        let cfg = codex_core::config::Config::load_with_overrides(overrides)?;
+        let cli_overrides = cli_overrides.unwrap_or_else(std::vec::Vec::new);
+        let cfg = codex_core::config::Config::load_with_cli_overrides(cli_overrides, overrides)?;
 
         Ok((prompt, cfg))
     }
