@@ -40,13 +40,6 @@ pub(crate) struct CodexToolCallParam {
     /// (e.g. "disk-write-cwd", "network-full-access").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox_permissions: Option<Vec<CodexToolCallSandboxPermission>>,
-
-    /// Disable server-side response storage.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disable_response_storage: Option<bool>,
-    // Custom system instructions.
-    // #[serde(default, skip_serializing_if = "Option::is_none")]
-    // pub instructions: Option<String>,
 }
 
 // Create custom enums for use with `CodexToolCallApprovalPolicy` where we
@@ -155,7 +148,6 @@ impl CodexToolCallParam {
             cwd,
             approval_policy,
             sandbox_permissions,
-            disable_response_storage,
         } = self;
         let sandbox_policy = sandbox_permissions.map(|perms| {
             SandboxPolicy::from(perms.into_iter().map(Into::into).collect::<Vec<_>>())
@@ -168,7 +160,6 @@ impl CodexToolCallParam {
             cwd: cwd.map(PathBuf::from),
             approval_policy: approval_policy.map(Into::into),
             sandbox_policy,
-            disable_response_storage,
             model_provider: None,
             codex_linux_sandbox_exe,
         };
