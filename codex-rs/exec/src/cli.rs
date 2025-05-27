@@ -1,5 +1,6 @@
 use clap::Parser;
 use clap::ValueEnum;
+use codex_common::CliConfigOverrides;
 use codex_common::SandboxPermissionOption;
 use std::path::PathBuf;
 
@@ -36,6 +37,9 @@ pub struct Cli {
     /// Disable server‑side response storage (sends the full conversation context with every request)
     #[arg(long = "disable-response-storage", default_value_t = false)]
     pub disable_response_storage: bool,
+
+    #[clap(flatten)]
+    pub config_overrides: CliConfigOverrides,
 
     /// Specifies color settings for use in the output.
     #[arg(long = "color", value_enum, default_value_t = Color::Auto)]
