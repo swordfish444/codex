@@ -1,15 +1,16 @@
 //! Configuration object accepted by the `codex` MCP tool-call.
 
-use std::path::PathBuf;
-
+use codex_core::protocol::AskForApproval;
+use codex_core::protocol::SandboxPolicy;
 use mcp_types::Tool;
 use mcp_types::ToolInputSchema;
 use schemars::JsonSchema;
 use schemars::r#gen::SchemaSettings;
 use serde::Deserialize;
-
-use codex_core::protocol::AskForApproval;
-use codex_core::protocol::SandboxPolicy;
+use serde_json::Value as JsonValue;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use toml::Value as TomlValue;
 
 /// Client-supplied configuration for a `codex` tool-call.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -41,12 +42,10 @@ pub(crate) struct CodexToolCallParam {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox_permissions: Option<Vec<CodexToolCallSandboxPermission>>,
 
-    /// Disable server-side response storage.
+    /// Individual config settings that will override what is in
+    /// CODEX_HOME/config.toml.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disable_response_storage: Option<bool>,
-    // Custom system instructions.
-    // #[serde(default, skip_serializing_if = "Option::is_none")]
-    // pub instructions: Option<String>,
+    pub config: Option<HashMap<String, serde_json::Value>>,
 }
 
 // Create custom enums for use with `CodexToolCallApprovalPolicy` where we
@@ -155,7 +154,7 @@ impl CodexToolCallParam {
             cwd,
             approval_policy,
             sandbox_permissions,
-            disable_response_storage,
+            config: cli_overrides,
         } = self;
         let sandbox_policy = sandbox_permissions.map(|perms| {
             SandboxPolicy::from(perms.into_iter().map(Into::into).collect::<Vec<_>>())
@@ -168,14 +167,46 @@ impl CodexToolCallParam {
             cwd: cwd.map(PathBuf::from),
             approval_policy: approval_policy.map(Into::into),
             sandbox_policy,
-            disable_response_storage,
             model_provider: None,
             codex_linux_sandbox_exe,
         };
 
-        let cfg = codex_core::config::Config::load_with_overrides(overrides)?;
+        let cli_overrides = cli_overrides
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(k, v)| (k, json_to_toml(&v)))
+            .collect();
+
+        let cfg = codex_core::config::Config::load_with_cli_overrides(cli_overrides, overrides)?;
 
         Ok((prompt, cfg))
+    }
+}
+
+/// Convert a `serde_json::Value` into a semantically equivalent `toml::Value`.
+fn json_to_toml(v: &JsonValue) -> TomlValue {
+    use JsonValue::*;
+    match v {
+        Null => TomlValue::String(std::string::String::new()),
+        Bool(b) => TomlValue::Boolean(*b),
+        Number(n) => {
+            if let Some(i) = n.as_i64() {
+                TomlValue::Integer(i)
+            } else if let Some(f) = n.as_f64() {
+                TomlValue::Float(f)
+            } else {
+                TomlValue::String(n.to_string())
+            }
+        }
+        String(s) => TomlValue::String(s.clone()),
+        Array(arr) => TomlValue::Array(arr.iter().map(json_to_toml).collect()),
+        Object(map) => {
+            let tbl = map
+                .iter()
+                .map(|(k, v)| (k.clone(), json_to_toml(v)))
+                .collect::<toml::value::Table>();
+            TomlValue::Table(tbl)
+        }
     }
 }
 
@@ -183,6 +214,7 @@ impl CodexToolCallParam {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use serde_json::json;
 
     /// We include a test to verify the exact JSON schema as "executable
     /// documentation" for the schema. When can track changes to this test as a
@@ -216,13 +248,14 @@ mod tests {
                 ],
                 "type": "string"
               },
+              "config": {
+                "description": "Individual config settings that will override what is in CODEX_HOME/config.toml.",
+                "additionalProperties": true,
+                "type": "object"
+              },
               "cwd": {
                 "description": "Working directory for the session. If relative, it is resolved against the server process's current working directory.",
                 "type": "string"
-              },
-              "disable-response-storage": {
-                "description": "Disable server-side response storage.",
-                "type": "boolean"
               },
               "model": {
                 "description": "Optional override for the model name (e.g. \"o3\", \"o4-mini\")",
@@ -258,5 +291,20 @@ mod tests {
           }
         });
         assert_eq!(expected_tool_json, tool_json);
+    }
+
+    #[test]
+    fn json_number_to_toml() {
+        let json_value = json!(123);
+        assert_eq!(TomlValue::Integer(123), json_to_toml(&json_value));
+    }
+
+    #[test]
+    fn json_array_to_toml() {
+        let json_value = json!([true, 1]);
+        assert_eq!(
+            TomlValue::Array(vec![TomlValue::Boolean(true), TomlValue::Integer(1)]),
+            json_to_toml(&json_value)
+        );
     }
 }
