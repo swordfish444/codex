@@ -25,6 +25,7 @@ use crate::flags::OPENAI_REQUEST_MAX_RETRIES;
 use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS;
 use crate::models::ContentItem;
 use crate::models::ResponseItem;
+use crate::openai_tools::create_tools_json;
 use crate::util::backoff;
 
 /// Implementation for the classic Chat Completions API. This is intentionally
@@ -56,10 +57,13 @@ pub(crate) async fn stream_chat_completions(
         }
     }
 
+    let tools_json = create_tools_json(prompt, model)?;
+    // Rewrite tools to match the chat completions tool call format:
+    // https://platform.openai.com/docs/guides/function-calling?api-mode=chat
     let payload = json!({
         "model": model,
         "messages": messages,
-        "stream": true
+        "stream": true,
     });
 
     let base_url = provider.base_url.trim_end_matches('/');
