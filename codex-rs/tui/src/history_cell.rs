@@ -1,18 +1,25 @@
+use base64::Engine;
 use codex_ansi_escape::ansi_escape_line;
 use codex_common::elapsed::format_duration;
 use codex_core::config::Config;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::SessionConfiguredEvent;
+use image::DynamicImage;
+use image::GenericImageView;
+use image::ImageReader;
 use ratatui::prelude::*;
 use ratatui::style::Color;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line as RtLine;
 use ratatui::text::Span as RtSpan;
+use ratatui_image::Image as TuiImage;
+use tracing::error;
 
 use crate::cell_widget::CellWidget;
 use crate::text_block::TextBlock;
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
@@ -73,8 +80,13 @@ pub(crate) enum HistoryCell {
         view: TextBlock,
     },
 
-    /// Completed MCP tool call.
-    CompletedMcpToolCall { view: TextBlock },
+    /// Completed MCP tool call where we show the result serialized as JSON.
+    CompletedMcpToolCallWithTextOutput { view: TextBlock },
+
+    /// Completed MCP tool call where the result is an image.
+    /// Admittedly, [mcp_types::CallToolResult] can have multiple content types,
+    /// which could be a mix of text and images, so we need to tighten this up.
+    CompletedMcpToolCallWithImageOutput { image: DynamicImage },
 
     /// Background event.
     BackgroundEvent { view: TextBlock },
@@ -284,13 +296,58 @@ impl HistoryCell {
         }
     }
 
+    fn try_new_completed_mcp_tool_call_with_image_output(
+        result: &Result<mcp_types::CallToolResult, String>,
+    ) -> Option<Self> {
+        match result {
+            Ok(mcp_types::CallToolResult { content, .. }) => {
+                if let Some(mcp_types::CallToolResultContent::ImageContent(image)) = content.first()
+                {
+                    let raw_data =
+                        match base64::engine::general_purpose::STANDARD.decode(&image.data) {
+                            Ok(data) => data,
+                            Err(e) => {
+                                error!("Failed to decode image data: {e}");
+                                return None;
+                            }
+                        };
+                    let reader = match ImageReader::new(Cursor::new(raw_data)).with_guessed_format()
+                    {
+                        Ok(reader) => reader,
+                        Err(e) => {
+                            error!("Failed to guess image format: {e}");
+                            return None;
+                        }
+                    };
+
+                    let image = match reader.decode() {
+                        Ok(image) => image,
+                        Err(e) => {
+                            error!("Image decoding failed: {e}");
+                            return None;
+                        }
+                    };
+
+                    Some(HistoryCell::CompletedMcpToolCallWithImageOutput { image })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn new_completed_mcp_tool_call(
         fq_tool_name: String,
         invocation: String,
         start: Instant,
         success: bool,
-        result: Option<serde_json::Value>,
+        result: Result<mcp_types::CallToolResult, String>,
     ) -> Self {
+        if let Some(cell) = Self::try_new_completed_mcp_tool_call_with_image_output(&result) {
+            return cell;
+        }
+
         let duration = format_duration(start.elapsed());
         let status_str = if success { "success" } else { "failed" };
         let title_line = Line::from(vec![
@@ -302,7 +359,14 @@ impl HistoryCell {
         lines.push(title_line);
         lines.push(Line::from(format!("$ {invocation}")));
 
-        if let Some(res_val) = result {
+        // Convert result into serde_json::Value early so we don't have to
+        // worry about lifetimes inside the match arm.
+        let result_val = result.map(|r| {
+            serde_json::to_value(r)
+                .unwrap_or_else(|_| serde_json::Value::String("<serialization error>".into()))
+        });
+
+        if let Ok(res_val) = result_val {
             let json_pretty =
                 serde_json::to_string_pretty(&res_val).unwrap_or_else(|_| res_val.to_string());
             let mut iter = json_pretty.lines();
@@ -317,7 +381,7 @@ impl HistoryCell {
 
         lines.push(Line::from(""));
 
-        HistoryCell::CompletedMcpToolCall {
+        HistoryCell::CompletedMcpToolCallWithTextOutput {
             view: TextBlock::new(lines),
         }
     }
@@ -424,10 +488,17 @@ impl CellWidget for HistoryCell {
             | HistoryCell::ErrorEvent { view }
             | HistoryCell::SessionInfo { view }
             | HistoryCell::CompletedExecCommand { view }
-            | HistoryCell::CompletedMcpToolCall { view }
+            | HistoryCell::CompletedMcpToolCallWithTextOutput { view }
             | HistoryCell::PendingPatch { view }
             | HistoryCell::ActiveExecCommand { view, .. }
             | HistoryCell::ActiveMcpToolCall { view, .. } => view.height(width),
+            HistoryCell::CompletedMcpToolCallWithImageOutput { image } => {
+                // For images, we use a fixed height based on the image size.
+                // This is a simplification; ideally, we should calculate the
+                // height based on the image's aspect ratio and the given width.
+                let (_width, height) = image.dimensions();
+                (height as f64 * 0.5).ceil() as usize // Scale down for better fit
+            }
         }
     }
 
@@ -441,11 +512,61 @@ impl CellWidget for HistoryCell {
             | HistoryCell::ErrorEvent { view }
             | HistoryCell::SessionInfo { view }
             | HistoryCell::CompletedExecCommand { view }
-            | HistoryCell::CompletedMcpToolCall { view }
+            | HistoryCell::CompletedMcpToolCallWithTextOutput { view }
             | HistoryCell::PendingPatch { view }
             | HistoryCell::ActiveExecCommand { view, .. }
             | HistoryCell::ActiveMcpToolCall { view, .. } => {
                 view.render_window(first_visible_line, area, buf)
+            }
+            HistoryCell::CompletedMcpToolCallWithImageOutput { image } => {
+                // For images, we render the image directly into the buffer.
+                // This is a simplification; ideally, we should handle scaling
+                // and centering based on the area size.
+                // NOTE: The `ratatui_image` crate went through a few API iterations and the
+                // currently-pinned version (v8) does not provide the
+                // `Image::from_dynamic_image` convenience helper that older code relied on.
+                //
+                // To render the picture we now need to:
+                // 1. Resize the raw `DynamicImage` so that it fits into the `area` that ratatui
+                //    assigned to this cell.
+                // 2. Build an appropriate `ratatui_image::protocol::Protocol` instance for the
+                //    *current* terminal – the `picker` helper simplifies this.
+                // 3. Create a stateless `ratatui_image::Image` widget from the protocol and let
+                //    it write to the buffer.
+                use ratatui_image::Resize as ImgResize;
+                use ratatui_image::picker::Picker;
+
+                // Resize the image to the target width while keeping the aspect ratio.  We clamp
+                // the target height to the area height to avoid overspill.
+                let (orig_w, orig_h) = image.dimensions();
+                if orig_w == 0 || orig_h == 0 || area.width == 0 || area.height == 0 {
+                    return;
+                }
+
+                let target_w = area.width as u32;
+                let scale = target_w as f64 / orig_w as f64;
+                let mut target_h = (orig_h as f64 * scale).round() as u32;
+                let max_h = area.height as u32;
+                if target_h > max_h {
+                    // Re-scale so the height fits.
+                    let scale = max_h as f64 / orig_h as f64;
+                    target_h = max_h;
+                    // Keep width in sync with the new scale.
+                    let _ = (scale * orig_w as f64).round() as u32;
+                }
+
+                let resized =
+                    image.resize(target_w, target_h, image::imageops::FilterType::Lanczos3);
+
+                // Build a protocol suited for the active terminal.  We do not have font size info
+                // here, but `Picker::from_fontsize` needs *some* value – a reasonable default is
+                // fine for now because the widget will clip anything that exceeds `area`.
+                let picker = Picker::from_fontsize((8, 16));
+
+                if let Ok(protocol) = picker.new_protocol(resized, area, ImgResize::Fit(None)) {
+                    let img_widget = TuiImage::new(&protocol);
+                    img_widget.render(area, buf);
+                }
             }
         }
     }
