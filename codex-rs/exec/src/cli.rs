@@ -46,7 +46,16 @@ pub struct Cli {
     pub last_message_file: Option<PathBuf>,
 
     /// Initial instructions for the agent.
-    pub prompt: String,
+    ///
+    /// Behaviour:
+    ///  • If a string is provided, that is used as the prompt.
+    ///  • If omitted, the prompt is read from stdin *only when* stdin is not a TTY
+    ///    (i.e. another process is piping data). Otherwise the CLI exits with an
+    ///    error explaining that a prompt is required.
+    ///  • Supplying `-` explicitly forces reading the prompt from stdin even when
+    ///    stdin **is** a TTY.
+    #[arg(value_name = "PROMPT")]
+    pub prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
