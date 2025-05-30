@@ -25,6 +25,7 @@ use crate::flags::OPENAI_REQUEST_MAX_RETRIES;
 use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS;
 use crate::models::ContentItem;
 use crate::models::ResponseItem;
+use crate::openai_tools::create_tools_json;
 use crate::util::backoff;
 
 /// Implementation for the classic Chat Completions API. This is intentionally
@@ -56,17 +57,47 @@ pub(crate) async fn stream_chat_completions(
         }
     }
 
+    let tools_json = create_tools_json(prompt, model)?;
+    // create_tools_json() returns JSON values that are compatible with
+    // Function Calling in the Responses API:
+    // https://platform.openai.com/docs/guides/function-calling?api-mode=responses
+    // So we must rewrite "tools" to match the chat completions tool call format:
+    // https://platform.openai.com/docs/guides/function-calling?api-mode=chat
+    let tools_json = tools_json
+        .into_iter()
+        .filter_map(|mut tool| {
+            if tool.get("type") != Some(&serde_json::Value::String("function".to_string())) {
+                return None;
+            }
+
+            if let Some(map) = tool.as_object_mut() {
+                // Remove "type" field as it is not needed in chat completions.
+                map.remove("type");
+                Some(json!({
+                    "type": "function",
+                    "function": map,
+                }))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<serde_json::Value>>();
+
     let payload = json!({
         "model": model,
         "messages": messages,
-        "stream": true
+        "stream": true,
+        "tools": tools_json,
     });
 
     let base_url = provider.base_url.trim_end_matches('/');
     let url = format!("{}/chat/completions", base_url);
 
     debug!(url, "POST (chat)");
-    trace!("request payload: {}", payload);
+    trace!(
+        "request payload: {}",
+        serde_json::to_string_pretty(&payload).unwrap_or_default()
+    );
 
     let api_key = provider.api_key()?;
     let mut attempt = 0;
