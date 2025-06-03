@@ -81,6 +81,18 @@ if (wantsNative) {
   process.exit(exitCode);
 }
 
+// Ensure a compatible Node version before falling back to the JavaScript CLI.
+const pkgJsonPath = path.join(__dirname, "../package.json");
+const { engines } = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+const requiredNodeMajor = Number.parseInt(engines.node.match(/\d+/)[0], 10);
+const currentMajor = Number.parseInt(process.versions.node.split(".")[0], 10);
+if (currentMajor < requiredNodeMajor) {
+  console.error(
+    `Codex CLI requires Node.js ${requiredNodeMajor} or newer. Detected ${process.version}. Please upgrade your Node.js installation.`
+  );
+  process.exit(1);
+}
+
 // Fallback: execute the original JavaScript CLI.
 
 // Resolve the path to the compiled CLI bundle
