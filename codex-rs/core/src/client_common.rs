@@ -2,6 +2,7 @@ use crate::config_types::ReasoningEffort as ReasoningEffortConfig;
 use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use crate::error::Result;
 use crate::models::ResponseItem;
+use codex_apply_patch::APPLY_PATCH_TOOL_INSTRUCTIONS;
 use futures::Stream;
 use serde::Serialize;
 use std::borrow::Cow;
@@ -13,7 +14,7 @@ use tokio::sync::mpsc;
 
 /// The `instructions` field in the payload sent to a model should always start
 /// with this content.
-const BASE_INSTRUCTIONS: &str = include_str!("../prompt.md");
+pub(crate) const BASE_INSTRUCTIONS: &str = include_str!("../prompt.md");
 
 /// API request payload for a single model turn.
 #[derive(Default, Debug, Clone)]
@@ -35,14 +36,22 @@ pub struct Prompt {
 }
 
 impl Prompt {
-    pub(crate) fn get_full_instructions(&self) -> Cow<str> {
-        match &self.instructions {
-            Some(instructions) => {
-                let instructions = format!("{BASE_INSTRUCTIONS}\n{instructions}");
-                Cow::Owned(instructions)
-            }
-            None => Cow::Borrowed(BASE_INSTRUCTIONS),
-        }
+    pub(crate) fn get_full_instructions(&self, model: &str) -> Cow<str> {
+        [
+            Some(Cow::Borrowed(BASE_INSTRUCTIONS)),
+            self.instructions.as_ref().map(|s| Cow::Owned(s.clone())),
+            if model.starts_with("gpt-4.1") {
+                Some(Cow::Borrowed(APPLY_PATCH_TOOL_INSTRUCTIONS))
+            } else {
+                None
+            },
+        ]
+        .iter()
+        .filter_map(|s| s.as_ref())
+        .map(|cow| cow.as_ref())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .into()
     }
 }
 
