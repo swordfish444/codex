@@ -18,6 +18,7 @@ use tracing::warn;
 
 use crate::chat_completions::AggregateStreamExt;
 use crate::chat_completions::stream_chat_completions;
+use crate::client_common::BASE_INSTRUCTIONS;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
@@ -36,6 +37,8 @@ use crate::model_provider_info::WireApi;
 use crate::models::ResponseItem;
 use crate::openai_tools::create_tools_json_for_responses_api;
 use crate::util::backoff;
+use codex_apply_patch::APPLY_PATCH_TOOL_INSTRUCTIONS;
+use std::borrow::Cow;
 
 #[derive(Clone)]
 pub struct ModelClient {
@@ -106,7 +109,30 @@ impl ModelClient {
             return stream_from_fixture(path).await;
         }
 
-        let full_instructions = prompt.get_full_instructions();
+        // Model-specific instructions and reasoning adjustments.
+        let mut model_specific_instructions: Option<&str> = None;
+        if self.model.starts_with("gpt-4.1") {
+            model_specific_instructions = Some(APPLY_PATCH_TOOL_INSTRUCTIONS);
+        }
+        let full_instructions = {
+            match &prompt.instructions {
+                Some(user_instructions) => {
+                    let mut parts = vec![BASE_INSTRUCTIONS];
+                    if let Some(msi) = model_specific_instructions {
+                        parts.push(msi);
+                    }
+                    parts.push(user_instructions);
+                    Cow::Owned(parts.join("\n"))
+                }
+                None => {
+                    if let Some(msi) = model_specific_instructions {
+                        Cow::Owned([BASE_INSTRUCTIONS, msi].join("\n"))
+                    } else {
+                        Cow::Borrowed(BASE_INSTRUCTIONS)
+                    }
+                }
+            }
+        };
         let tools_json = create_tools_json_for_responses_api(prompt, &self.model)?;
         let reasoning = create_reasoning_param_for_request(&self.model, self.effort, self.summary);
         let payload = ResponsesApiRequest {
