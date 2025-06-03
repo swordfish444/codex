@@ -25,7 +25,7 @@ pub struct Prompt {
     pub prev_id: Option<String>,
     /// Optional instructions from the user to amend to the built-in agent
     /// instructions.
-    pub instructions: Option<String>,
+    pub user_instructions: Option<String>,
     /// Whether to store response on server side (disable_response_storage = !store).
     pub store: bool,
 
@@ -39,7 +39,9 @@ impl Prompt {
     pub(crate) fn get_full_instructions(&self, model: &str) -> Cow<str> {
         [
             Some(Cow::Borrowed(BASE_INSTRUCTIONS)),
-            self.instructions.as_ref().map(|s| Cow::Owned(s.clone())),
+            self.user_instructions
+                .as_ref()
+                .map(|s| Cow::Owned(s.clone())),
             if model.starts_with("gpt-4.1") {
                 Some(Cow::Borrowed(APPLY_PATCH_TOOL_INSTRUCTIONS))
             } else {
