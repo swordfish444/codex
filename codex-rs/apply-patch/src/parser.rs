@@ -37,6 +37,14 @@ const EOF_MARKER: &str = "*** End of File";
 const CHANGE_CONTEXT_MARKER: &str = "@@ ";
 const EMPTY_CHANGE_CONTEXT_MARKER: &str = "@@";
 
+/// Currently, the only OpenAI model that knowingly requires lenient parsing is
+/// gpt-4.1. While we could try to require everyone to pass in a strictness
+/// param when invoking apply_patch, it is a pain to thread it through all of
+/// the call sites, so we resign ourselves allowing lenient parsing for all
+/// models. See [`ParseMode::Lenient`] for details on the exceptions we make for
+/// gpt-4.1.
+const PARSE_IN_STRICT_MODE: bool = false;
+
 #[derive(Debug, PartialEq, Error)]
 pub enum ParseError {
     #[error("invalid patch: {0}")]
@@ -95,19 +103,86 @@ pub struct UpdateFileChunk {
 }
 
 pub fn parse_patch(patch: &str) -> Result<Vec<Hunk>, ParseError> {
+    let mode = if PARSE_IN_STRICT_MODE {
+        ParseMode::Strict
+    } else {
+        ParseMode::Lenient
+    };
+    parse_patch_text(patch, mode)
+}
+
+enum ParseMode {
+    /// Parse the patch text argument as is.
+    Strict,
+
+    /// GPT-4.1 is known to formulate the `command` array for the `local_shell`
+    /// tool call for `apply_patch` call using something like the following:
+    ///
+    /// ```json
+    /// [
+    ///   "apply_patch",
+    ///   "<<'EOF'\n*** Begin Patch\n*** Update File: README.md\n@@...\n*** End Patch\nEOF\n",
+    /// ]
+    /// ```
+    ///
+    /// This is a problem because `local_shell` is a bit of a misnomer: the
+    /// `command` is not invoked by passing the arguments to a shell like Bash,
+    /// but are invoked using something akin to `execvpe(3)`.
+    ///
+    /// This is significant in this case because where a shell would interpret
+    /// `<<'EOF'...` as a heredoc and pass the contents via stdin (which is
+    /// fine, as `apply_patch` is specified to read from stdin if no argument is
+    /// passed), `execvpe(3)` interprets the heredoc as a literal string. To get
+    /// the `local_shell` tool to run a command the way shell would, the
+    /// `command` array must be something like:
+    ///
+    /// ```json
+    /// [
+    ///   "bash",
+    ///   "-lc",
+    ///   "apply_patch <<'EOF'\n*** Begin Patch\n*** Update File: README.md\n@@...\n*** End Patch\nEOF\n",
+    /// ]
+    /// ```
+    ///
+    /// In lenient mode, we check if the argument to `apply_patch` starts with
+    /// `<<'EOF'` and ends with `EOF\n`. If so, we strip off these markers,
+    /// trim() the result, and treat what is left as the patch text.
+    Lenient,
+}
+
+fn parse_patch_text(patch: &str, mode: ParseMode) -> Result<Vec<Hunk>, ParseError> {
     let lines: Vec<&str> = patch.trim().lines().collect();
-    if lines.is_empty() || lines[0] != BEGIN_PATCH_MARKER {
-        return Err(InvalidPatchError(String::from(
-            "The first line of the patch must be '*** Begin Patch'",
-        )));
-    }
-    let last_line_index = lines.len() - 1;
-    if lines[last_line_index] != END_PATCH_MARKER {
-        return Err(InvalidPatchError(String::from(
-            "The last line of the patch must be '*** End Patch'",
-        )));
-    }
+    let lines: &[&str] = match check_patch_boundaries_strict(&lines) {
+        Ok(()) => &lines,
+        Err(e) => {
+            match mode {
+                ParseMode::Strict => {
+                    return Err(e);
+                }
+                ParseMode::Lenient => {
+                    match lines.as_slice() {
+                        [first, .., last] => {
+                            // If we are in lenient mode, we check if the first line starts with
+                            // `<<'EOF'` and the last line ends with `EOF`.
+                            if (first.starts_with("<<'EOF'") || first.starts_with("<<EOF\"EOF\""))
+                                && last.ends_with("EOF")
+                            {
+                                &lines[1..lines.len() - 1]
+                            } else {
+                                return Err(e);
+                            }
+                        }
+                        _ => {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+        }
+    };
+
     let mut hunks: Vec<Hunk> = Vec::new();
+    let last_line_index = lines.len().saturating_sub(1);
     let mut remaining_lines = &lines[1..last_line_index];
     let mut line_number = 2;
     while !remaining_lines.is_empty() {
@@ -117,6 +192,34 @@ pub fn parse_patch(patch: &str) -> Result<Vec<Hunk>, ParseError> {
         remaining_lines = &remaining_lines[hunk_lines..]
     }
     Ok(hunks)
+}
+
+/// Checks the start and end lines of the patch text for `apply_patch`,
+/// returning an error if they do not match the expected markers.
+fn check_patch_boundaries_strict(lines: &[&str]) -> Result<(), ParseError> {
+    let (first_line, last_line) = match lines {
+        [] => (None, None),
+        [first] => (Some(first), Some(first)),
+        [first, .., last] => (Some(first), Some(last)),
+    };
+    check_start_and_end_lines_strict(first_line, last_line)
+}
+
+fn check_start_and_end_lines_strict(
+    first_line: Option<&&str>,
+    last_line: Option<&&str>,
+) -> Result<(), ParseError> {
+    match (first_line, last_line) {
+        (Some(&first), Some(&last)) if first == BEGIN_PATCH_MARKER && last == END_PATCH_MARKER => {
+            Ok(())
+        }
+        (Some(&first), _) if first != BEGIN_PATCH_MARKER => Err(InvalidPatchError(String::from(
+            "The first line of the patch must be '*** Begin Patch'",
+        ))),
+        _ => Err(InvalidPatchError(String::from(
+            "The last line of the patch must be '*** End Patch'",
+        ))),
+    }
 }
 
 /// Attempts to parse a single hunk from the start of lines.
