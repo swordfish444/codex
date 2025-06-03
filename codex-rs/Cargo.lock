@@ -567,6 +567,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "pretty_assertions",
+ "regex-lite",
  "serde_json",
  "similar",
  "tempfile",
