@@ -1503,6 +1503,14 @@
       "created_at": "2025-06-03T18:23:47Z",
       "repoId": 965415649,
       "pullRequestNo": 1209
+    },
+    {
+      "name": "te-chan",
+      "id": 50950268,
+      "comment_id": 2943659559,
+      "created_at": "2025-06-05T10:34:55Z",
+      "repoId": 965415649,
+      "pullRequestNo": 1223
     }
   ]
 }
