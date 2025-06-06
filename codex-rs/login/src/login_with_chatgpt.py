@@ -8,6 +8,13 @@
 
 The script should exit with a non-zero code if the user fails to navigate the
 auth flow.
+
+To test this script locally without overwriting your existing auth.json file:
+
+```
+rm -rf /tmp/codex_home && mkdir /tmp/codex_home
+CODEX_HOME=/tmp/codex_home python3 codex-rs/login/src/login_with_chatgpt.py
+```
 """
 
 from __future__ import annotations
