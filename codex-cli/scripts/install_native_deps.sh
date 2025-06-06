@@ -78,7 +78,7 @@ gh run download --dir "$ARTIFACTS_DIR" --repo openai/codex "$WORKFLOW_ID"
 zstd -d "$ARTIFACTS_DIR/x86_64-unknown-linux-musl/codex-linux-sandbox-x86_64-unknown-linux-musl.zst" \
      -o "$BIN_DIR/codex-linux-sandbox-x64"
 
-zstd -d "$ARTIFACTS_DIR/aarch64-unknown-linux-gnu/codex-linux-sandbox-aarch64-unknown-linux-gnu.zst" \
+zstd -d "$ARTIFACTS_DIR/aarch64-unknown-linux-musl/codex-linux-sandbox-aarch64-unknown-linux-musl.zst" \
      -o "$BIN_DIR/codex-linux-sandbox-arm64"
 
 if [[ "$INCLUDE_RUST" -eq 1 ]]; then
@@ -86,8 +86,8 @@ if [[ "$INCLUDE_RUST" -eq 1 ]]; then
   zstd -d "$ARTIFACTS_DIR/x86_64-unknown-linux-musl/codex-x86_64-unknown-linux-musl.zst" \
       -o "$BIN_DIR/codex-x86_64-unknown-linux-musl"
   # ARM64 Linux
-  zstd -d "$ARTIFACTS_DIR/aarch64-unknown-linux-gnu/codex-aarch64-unknown-linux-gnu.zst" \
-      -o "$BIN_DIR/codex-aarch64-unknown-linux-gnu"
+  zstd -d "$ARTIFACTS_DIR/aarch64-unknown-linux-musl/codex-aarch64-unknown-linux-musl.zst" \
+      -o "$BIN_DIR/codex-aarch64-unknown-linux-musl"
   # x64 macOS
   zstd -d "$ARTIFACTS_DIR/x86_64-apple-darwin/codex-x86_64-apple-darwin.zst" \
       -o "$BIN_DIR/codex-x86_64-apple-darwin"
