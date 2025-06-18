@@ -188,7 +188,7 @@ pub(crate) struct Session {
 
     /// Optional rollout recorder for persisting the conversation transcript so
     /// sessions can be replayed or inspected later.
-    rollout: Mutex<Option<crate::rollout::RolloutRecorder>>,
+    rollout: Mutex<Option<RolloutRecorder>>,
     state: Mutex<State>,
     codex_linux_sandbox_exe: Option<PathBuf>,
 }
@@ -207,6 +207,9 @@ struct State {
     approved_commands: HashSet<Vec<String>>,
     current_task: Option<AgentTask>,
     previous_response_id: Option<String>,
+    /// ID of the in-flight Responses API request (if any). Used to cancel
+    /// the turn when the user interrupts.
+    in_progress_response_id: Option<String>,
     pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
     pending_input: Vec<ResponseInputItem>,
     zdr_transcript: Option<ConversationHistory>,
@@ -403,6 +406,7 @@ impl Session {
         arguments: Option<serde_json::Value>,
         timeout: Option<Duration>,
     ) -> anyhow::Result<CallToolResult> {
+        self.notify_background_event("123", "call_tool");
         self.mcp_connection_manager
             .call_tool(server, tool, arguments, timeout)
             .await
@@ -410,11 +414,30 @@ impl Session {
 
     pub fn abort(&self) {
         info!("Aborting existing session");
-        let mut state = self.state.lock().unwrap();
-        state.pending_approvals.clear();
-        state.pending_input.clear();
-        if let Some(task) = state.current_task.take() {
-            task.abort();
+        self.notify_background_event("123", "Aborting existing session");
+
+        // Extract any in-progress response ID so we can cancel it outside the
+        // mutex (to avoid holding the lock across an await).
+        let in_progress_id_opt = {
+            let mut state = self.state.lock().unwrap();
+            state.pending_approvals.clear();
+            state.pending_input.clear();
+            let id = state.in_progress_response_id.clone();
+
+            if let Some(task) = state.current_task.take() {
+                task.abort();
+            }
+
+            id
+        };
+
+        if let Some(resp_id) = in_progress_id_opt {
+            let client = self.client.clone();
+            tokio::spawn(async move {
+                if let Err(e) = client.cancel_response(&resp_id).await {
+                    warn!("failed to cancel response {resp_id}: {e:#}");
+                }
+            });
         }
     }
 
@@ -431,7 +454,7 @@ impl Session {
         }
 
         let Ok(json) = serde_json::to_string(&notification) else {
-            tracing::error!("failed to serialise notification payload");
+            error!("failed to serialise notification payload");
             return;
         };
 
@@ -443,7 +466,7 @@ impl Session {
 
         // Fire-and-forget – we do not wait for completion.
         if let Err(e) = command.spawn() {
-            tracing::warn!("failed to spawn notifier '{}': {e}", notify_command[0]);
+            warn!("failed to spawn notifier '{}': {e}", notify_command[0]);
         }
     }
 }
@@ -459,6 +482,7 @@ impl State {
         Self {
             approved_commands: self.approved_commands.clone(),
             previous_response_id: self.previous_response_id.clone(),
+            in_progress_response_id: self.in_progress_response_id.clone(),
             zdr_transcript: if retain_zdr_transcript {
                 self.zdr_transcript.clone()
             } else {
@@ -647,7 +671,7 @@ async fn submission_loop(
                     match RolloutRecorder::new(&config, session_id, instructions.clone()).await {
                         Ok(r) => Some(r),
                         Err(e) => {
-                            tracing::warn!("failed to initialise rollout recorder: {e}");
+                            warn!("failed to initialise rollout recorder: {e}");
                             None
                         }
                     };
@@ -742,7 +766,7 @@ async fn submission_loop(
                 tokio::spawn(async move {
                     if let Err(e) = crate::message_history::append_entry(&text, &id, &config).await
                     {
-                        tracing::warn!("failed to append to message history: {e}");
+                        warn!("failed to append to message history: {e}");
                     }
                 });
             }
@@ -772,7 +796,7 @@ async fn submission_loop(
                     };
 
                     if let Err(e) = tx_event.send(event).await {
-                        tracing::warn!("failed to send GetHistoryEntryResponse event: {e}");
+                        warn!("failed to send GetHistoryEntryResponse event: {e}");
                     }
                 });
             }
@@ -1074,6 +1098,12 @@ async fn try_run_turn(
     let mut output = Vec::new();
     for event in input {
         match event {
+            ResponseEvent::Created { response_id } => {
+                // Track the in-flight response so we can cancel it if the
+                // user interrupts.
+                let mut state = sess.state.lock().unwrap();
+                state.in_progress_response_id = Some(response_id);
+            }
             ResponseEvent::OutputItemDone(item) => {
                 let response = handle_response_item(sess, sub_id, item.clone()).await?;
                 output.push(ProcessedResponseItem { item, response });
@@ -1081,6 +1111,8 @@ async fn try_run_turn(
             ResponseEvent::Completed { response_id } => {
                 let mut state = sess.state.lock().unwrap();
                 state.previous_response_id = Some(response_id);
+                // Clear in-progress ID – the turn finished successfully.
+                state.in_progress_response_id = None;
                 break;
             }
         }
@@ -1125,7 +1157,7 @@ async fn handle_response_item(
             arguments,
             call_id,
         } => {
-            tracing::info!("FunctionCall: {arguments}");
+            info!("FunctionCall: {arguments}");
             Some(handle_function_call(sess, sub_id.to_string(), name, arguments, call_id).await)
         }
         ResponseItem::LocalShellCall {
@@ -1135,7 +1167,7 @@ async fn handle_response_item(
             action,
         } => {
             let LocalShellAction::Exec(action) = action;
-            tracing::info!("LocalShellCall: {action:?}");
+            info!("LocalShellCall: {action:?}");
             let params = ShellToolCallParams {
                 command: action.command,
                 workdir: action.working_directory,
@@ -1207,7 +1239,7 @@ async fn handle_function_call(
                     // Unknown function: reply with structured failure so the model can adapt.
                     ResponseInputItem::FunctionCallOutput {
                         call_id,
-                        output: crate::models::FunctionCallOutputPayload {
+                        output: FunctionCallOutputPayload {
                             content: format!("unsupported call: {}", name),
                             success: None,
                         },
@@ -1239,7 +1271,7 @@ fn parse_container_exec_arguments(
             // allow model to re-sample
             let output = ResponseInputItem::FunctionCallOutput {
                 call_id: call_id.to_string(),
-                output: crate::models::FunctionCallOutputPayload {
+                output: FunctionCallOutputPayload {
                     content: format!("failed to parse function arguments: {e}"),
                     success: None,
                 },
@@ -1307,7 +1339,7 @@ async fn handle_container_exec_with_params(
                 ReviewDecision::Denied | ReviewDecision::Abort => {
                     return ResponseInputItem::FunctionCallOutput {
                         call_id,
-                        output: crate::models::FunctionCallOutputPayload {
+                        output: FunctionCallOutputPayload {
                             content: "exec command rejected by user".to_string(),
                             success: None,
                         },
@@ -1323,7 +1355,7 @@ async fn handle_container_exec_with_params(
         SafetyCheck::Reject { reason } => {
             return ResponseInputItem::FunctionCallOutput {
                 call_id,
-                output: crate::models::FunctionCallOutputPayload {
+                output: FunctionCallOutputPayload {
                     content: format!("exec command rejected: {reason}"),
                     success: None,
                 },
@@ -1850,7 +1882,7 @@ fn apply_changes_from_apply_patch(action: &ApplyPatchAction) -> anyhow::Result<A
     })
 }
 
-fn get_writable_roots(cwd: &Path) -> Vec<std::path::PathBuf> {
+fn get_writable_roots(cwd: &Path) -> Vec<PathBuf> {
     let mut writable_roots = Vec::new();
     if cfg!(target_os = "macos") {
         // On macOS, $TMPDIR is private to the user.
@@ -1878,7 +1910,7 @@ fn get_writable_roots(cwd: &Path) -> Vec<std::path::PathBuf> {
 }
 
 /// Exec output is a pre-serialized JSON payload
-fn format_exec_output(output: &str, exit_code: i32, duration: std::time::Duration) -> String {
+fn format_exec_output(output: &str, exit_code: i32, duration: Duration) -> String {
     #[derive(Serialize)]
     struct ExecMetadata {
         exit_code: i32,

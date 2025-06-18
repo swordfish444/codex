@@ -108,7 +108,7 @@ impl WidgetRef for StatusIndicatorWidget {
         // Animated 3‑dot pattern inside brackets. The *active* dot is bold
         // white, the others are dim.
         const DOT_COUNT: usize = 3;
-        let idx = self.frame_idx.load(std::sync::atomic::Ordering::Relaxed);
+        let idx = self.frame_idx.load(Ordering::Relaxed);
         let phase = idx % (DOT_COUNT * 2 - 2);
         let active = if phase < DOT_COUNT {
             phase
