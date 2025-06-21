@@ -7,6 +7,7 @@ use codex_common::CliConfigOverrides;
 use codex_exec::Cli as ExecCli;
 use codex_tui::Cli as TuiCli;
 use std::path::PathBuf;
+use uuid::Uuid;
 
 use crate::proto::ProtoCli;
 
@@ -33,6 +34,11 @@ struct MultitoolCli {
 
 #[derive(Debug, clap::Subcommand)]
 enum Subcommand {
+    /// Resume an existing TUI session by UUID.
+    Session {
+        /// UUID of the session to resume
+        session_id: Uuid,
+    },
     /// Run Codex non-interactively.
     #[clap(visible_alias = "e")]
     Exec(ExecCli),
@@ -85,6 +91,12 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
     match cli.subcommand {
         None => {
             let mut tui_cli = cli.interactive;
+            prepend_config_flags(&mut tui_cli.config_overrides, cli.config_overrides);
+            codex_tui::run_main(tui_cli, codex_linux_sandbox_exe)?;
+        }
+        Some(Subcommand::Session { session_id }) => {
+            let mut tui_cli = cli.interactive;
+            tui_cli.session = Some(session_id);
             prepend_config_flags(&mut tui_cli.config_overrides, cli.config_overrides);
             codex_tui::run_main(tui_cli, codex_linux_sandbox_exe)?;
         }

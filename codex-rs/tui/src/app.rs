@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::channel;
 
+use codex_core::ResponseItem;
 use uuid::Uuid;
 
 /// Top-level application state: which full-screen view is currently active.
@@ -47,8 +48,6 @@ pub(crate) struct App<'a> {
     /// Stored parameters needed to instantiate the ChatWidget later, e.g.,
     /// after dismissing the Git-repo warning.
     chat_args: Option<ChatWidgetArgs>,
-
-    /// Session ID reported by the backend; used for resuming the session.
     session_id: Option<Uuid>,
 }
 
@@ -175,6 +174,20 @@ impl<'a> App<'a> {
     pub fn event_sender(&self) -> AppEventSender {
         self.app_event_tx.clone()
     }
+
+    /// Override the session ID for this UI instance (useful for session-resume).
+    pub fn set_session_id(&mut self, id: Uuid) {
+        self.session_id = Some(id);
+    }
+
+    /// Replay a previous session transcript into the chat widget.
+    pub fn replay_items(&mut self, items: Vec<ResponseItem>) {
+        if let AppState::Chat { widget } = &mut self.app_state {
+            widget.replay_items(items);
+        }
+    }
+
+    /// Override the session ID for this UI instance (useful for session-resume).
 
     /// Returns the session ID assigned by the backend for this session, if available.
     pub fn session_id(&self) -> Option<Uuid> {

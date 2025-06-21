@@ -37,6 +37,7 @@ use crate::bottom_pane::InputResult;
 use crate::conversation_history_widget::ConversationHistoryWidget;
 use crate::history_cell::PatchEventType;
 use crate::user_approval_widget::ApprovalRequest;
+use codex_core::{ContentItem, ReasoningItemReasoningSummary, ResponseItem};
 
 pub(crate) struct ChatWidget<'a> {
     app_event_tx: AppEventSender,
@@ -204,6 +205,45 @@ impl ChatWidget<'_> {
         // Only show text portion in conversation history for now.
         if !text.is_empty() {
             self.conversation_history.add_user_message(text);
+        }
+        self.conversation_history.scroll_to_bottom();
+    }
+
+    /// Replay a previous session transcript into the conversation history.
+    pub fn replay_items(&mut self, items: Vec<ResponseItem>) {
+        for item in items {
+            match item {
+                ResponseItem::Message { role, content } => {
+                    let text = content
+                        .into_iter()
+                        .filter_map(|ci| match ci {
+                            ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                                Some(text)
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("");
+                    if role.eq_ignore_ascii_case("user") {
+                        self.conversation_history.add_user_message(text);
+                    } else {
+                        self.conversation_history
+                            .add_agent_message(&self.config, text);
+                    }
+                }
+                ResponseItem::Reasoning { summary, .. } => {
+                    let text = summary
+                        .into_iter()
+                        .filter_map(|s| match s {
+                            ReasoningItemReasoningSummary::SummaryText { text } => Some(text),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    self.conversation_history
+                        .add_agent_reasoning(&self.config, text);
+                }
+                _ => {}
+            }
         }
         self.conversation_history.scroll_to_bottom();
     }

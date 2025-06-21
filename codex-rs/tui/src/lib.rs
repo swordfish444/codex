@@ -3,6 +3,7 @@
 // alternate‑screen mode starts; that file opts‑out locally via `allow`.
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 use app::App;
+use codex_core::ResponseItem;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::openai_api_key::OPENAI_API_KEY_ENV_VAR;
@@ -13,11 +14,14 @@ use codex_core::protocol::SandboxPolicy;
 use codex_core::util::is_inside_git_repo;
 use codex_login::try_read_openai_api_key;
 use log_layer::TuiLogLayer;
-use std::fs::OpenOptions;
+use serde_json;
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use tracing_appender::non_blocking;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
+use uuid::Uuid;
 
 mod app;
 mod app_event;
@@ -175,7 +179,12 @@ fn run_ratatui_app(
     let (mut terminal, mut mouse_capture) = tui::init(&config)?;
     terminal.clear()?;
 
-    let Cli { prompt, images, .. } = cli;
+    let Cli {
+        prompt,
+        images,
+        session,
+        ..
+    } = cli;
     let mut app = App::new(
         config.clone(),
         prompt,
@@ -183,6 +192,14 @@ fn run_ratatui_app(
         show_git_warning,
         images,
     );
+    // If resuming, override the generated session ID so UI hint logic and history use it
+    if let Some(id) = session {
+        app.set_session_id(id);
+        // Attempt to replay past conversation transcript
+        if let Some(items) = load_rollout_for_session(&config, id) {
+            app.replay_items(items);
+        }
+    }
 
     // Bridge log receiver into the AppEvent channel so latest log lines update the UI.
     {
@@ -203,6 +220,30 @@ fn run_ratatui_app(
         eprintln!("Resume this session with: codex session {session_id}");
     }
     app_result
+}
+
+/// Load and parse a previous session's rollout JSONL file.
+fn load_rollout_for_session(config: &Config, session_id: Uuid) -> Option<Vec<ResponseItem>> {
+    let dir = config.codex_home.join("sessions");
+    let target = session_id.to_string();
+    for entry in fs::read_dir(&dir).ok()? {
+        let path = entry.ok()?.path();
+        if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
+            if fname.starts_with("rollout-") && fname.contains(&target) && fname.ends_with(".jsonl")
+            {
+                let file = File::open(path).ok()?;
+                let reader = BufReader::new(file);
+                let mut items = Vec::new();
+                for line in reader.lines().flatten() {
+                    if let Ok(item) = serde_json::from_str::<ResponseItem>(&line) {
+                        items.push(item);
+                    }
+                }
+                return Some(items);
+            }
+        }
+    }
+    None
 }
 
 #[expect(

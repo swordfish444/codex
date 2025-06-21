@@ -3,10 +3,18 @@ use codex_common::ApprovalModeCliArg;
 use codex_common::CliConfigOverrides;
 use codex_common::SandboxPermissionOption;
 use std::path::PathBuf;
+use uuid::Uuid;
 
+/// Interactive TUI for chatting with Codex.
+///
+/// If a `--session` UUID is provided, resumes the existing session.
 #[derive(Parser, Debug)]
 #[command(version)]
 pub struct Cli {
+    /// Resume a previous session by its UUID.
+    #[arg(long, value_name = "SESSION_ID")]
+    pub session: Option<Uuid>,
+
     /// Optional user prompt to start the session.
     pub prompt: Option<String>,
 

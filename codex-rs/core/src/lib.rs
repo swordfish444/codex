@@ -27,6 +27,7 @@ mod model_provider_info;
 pub use model_provider_info::ModelProviderInfo;
 pub use model_provider_info::WireApi;
 mod models;
+pub use models::{ContentItem, ReasoningItemReasoningSummary, ResponseItem};
 pub mod openai_api_key;
 mod openai_tools;
 mod project_doc;
