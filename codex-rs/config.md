@@ -402,14 +402,17 @@ Options that are specific to the TUI.
 
 ```toml
 [tui]
-# This will make it so that Codex does not try to process mouse events, which
-# means your Terminal's native drag-to-text to text selection and copy/paste
-# should work. The tradeoff is that Codex will not receive any mouse events, so
-# it will not be possible to use the mouse to scroll conversation history.
-#
-# Note that most terminals support holding down a modifier key when using the
-# mouse to support text selection. For example, even if Codex mouse capture is
-# enabled (i.e., this is set to `false`), you can still hold down alt while
-# dragging the mouse to select text.
+
+# This will make it so that Codex does not process mouse events, which
+# means your terminal's native drag-to-text selection and copy/paste will work.
+# The tradeoff is that Codex will not receive any mouse events, so it will not
+# be possible to use the mouse to scroll conversation history.
+# Note that most terminals support a modifier key to enable text selection
+# even when mouse capture is enabled (e.g., holding Alt in iTerm).
 disable_mouse_capture = true  # defaults to `false`
+
+# Maximum number of visible lines in the chat input composer before scrolling.
+# The composer will expand up to this many lines; additional content will enable
+# an internal scrollbar.
+composer_max_rows = 10  # defaults to `10`
 ```
