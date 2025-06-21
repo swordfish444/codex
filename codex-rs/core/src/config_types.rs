@@ -74,7 +74,7 @@ pub enum HistoryPersistence {
 }
 
 /// Collection of settings that are specific to the TUI.
-#[derive(Deserialize, Debug, Clone, PartialEq, Default)]
+#[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct Tui {
     /// By default, mouse capture is enabled in the TUI so that it is possible
     /// to scroll the conversation history with a mouse. This comes at the cost
@@ -87,7 +87,27 @@ pub struct Tui {
     /// the mouse is not possible, though the keyboard shortcuts e.g. `b` and
     /// `space` still work. This allows the user to select text in the TUI
     /// using the mouse without needing to hold down a modifier key.
+    #[serde(default)]
     pub disable_mouse_capture: bool,
+
+    /// Maximum number of visible lines in the chat input composer before scrolling.
+    /// The composer will expand up to this many lines; additional content will enable
+    /// an internal scrollbar.
+    #[serde(default = "default_composer_max_rows")]
+    pub composer_max_rows: usize,
+}
+
+fn default_composer_max_rows() -> usize {
+    10
+}
+
+impl Default for Tui {
+    fn default() -> Self {
+        Self {
+            disable_mouse_capture: Default::default(),
+            composer_max_rows: default_composer_max_rows(),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Default)]

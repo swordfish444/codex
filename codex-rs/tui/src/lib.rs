@@ -197,6 +197,11 @@ fn run_ratatui_app(
     let app_result = app.run(&mut terminal, &mut mouse_capture);
 
     restore();
+    // On exit, display a command that can be used to resume this session
+    #[allow(clippy::print_stderr)]
+    if let Some(session_id) = app.session_id() {
+        eprintln!("Resume this session with: codex session {session_id}");
+    }
     app_result
 }
 

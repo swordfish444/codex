@@ -41,12 +41,18 @@ pub(crate) struct BottomPane<'a> {
 pub(crate) struct BottomPaneParams {
     pub(crate) app_event_tx: AppEventSender,
     pub(crate) has_input_focus: bool,
+    /// Maximum number of visible lines in the chat input composer.
+    pub(crate) composer_max_rows: usize,
 }
 
 impl BottomPane<'_> {
     pub fn new(params: BottomPaneParams) -> Self {
         Self {
-            composer: ChatComposer::new(params.has_input_focus, params.app_event_tx.clone()),
+            composer: ChatComposer::new(
+                params.has_input_focus,
+                params.app_event_tx.clone(),
+                params.composer_max_rows,
+            ),
             active_view: None,
             app_event_tx: params.app_event_tx,
             has_input_focus: params.has_input_focus,

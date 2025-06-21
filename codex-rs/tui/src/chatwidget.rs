@@ -124,6 +124,7 @@ impl ChatWidget<'_> {
             bottom_pane: BottomPane::new(BottomPaneParams {
                 app_event_tx,
                 has_input_focus: true,
+                composer_max_rows: config.tui.composer_max_rows,
             }),
             input_focus: InputFocus::BottomPane,
             config,

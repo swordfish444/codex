@@ -35,10 +35,12 @@ pub(crate) struct ChatComposer<'a> {
     command_popup: Option<CommandPopup>,
     app_event_tx: AppEventSender,
     history: ChatComposerHistory,
+    /// Maximum number of visible lines in the chat input composer.
+    max_rows: usize,
 }
 
 impl ChatComposer<'_> {
-    pub fn new(has_input_focus: bool, app_event_tx: AppEventSender) -> Self {
+    pub fn new(has_input_focus: bool, app_event_tx: AppEventSender, max_rows: usize) -> Self {
         let mut textarea = TextArea::default();
         textarea.set_placeholder_text("send a message");
         textarea.set_cursor_line_style(ratatui::style::Style::default());
@@ -48,6 +50,7 @@ impl ChatComposer<'_> {
             command_popup: None,
             app_event_tx,
             history: ChatComposerHistory::new(),
+            max_rows,
         };
         this.update_border(has_input_focus);
         this
@@ -249,7 +252,12 @@ impl ChatComposer<'_> {
     }
 
     pub fn calculate_required_height(&self, area: &Rect) -> u16 {
-        let rows = self.textarea.lines().len().max(MIN_TEXTAREA_ROWS);
+        let rows = self
+            .textarea
+            .lines()
+            .len()
+            .max(MIN_TEXTAREA_ROWS)
+            .min(self.max_rows);
         let num_popup_rows = if let Some(popup) = &self.command_popup {
             popup.calculate_required_height(area)
         } else {

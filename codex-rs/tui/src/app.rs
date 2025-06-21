@@ -9,8 +9,7 @@ use crate::scroll_event_helper::ScrollEventHelper;
 use crate::slash_command::SlashCommand;
 use crate::tui;
 use codex_core::config::Config;
-use codex_core::protocol::Event;
-use codex_core::protocol::Op;
+use codex_core::protocol::{Event, EventMsg, Op, SessionConfiguredEvent};
 use color_eyre::eyre::Result;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -19,6 +18,8 @@ use crossterm::event::MouseEventKind;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::channel;
+
+use uuid::Uuid;
 
 /// Top-level application state: which full-screen view is currently active.
 #[allow(clippy::large_enum_variant)]
@@ -46,6 +47,9 @@ pub(crate) struct App<'a> {
     /// Stored parameters needed to instantiate the ChatWidget later, e.g.,
     /// after dismissing the Git-repo warning.
     chat_args: Option<ChatWidgetArgs>,
+
+    /// Session ID reported by the backend; used for resuming the session.
+    session_id: Option<Uuid>,
 }
 
 /// Aggregate parameters needed to create a `ChatWidget`, as creation may be
@@ -162,6 +166,7 @@ impl<'a> App<'a> {
             app_state,
             config,
             chat_args,
+            session_id: None,
         }
     }
 
@@ -169,6 +174,11 @@ impl<'a> App<'a> {
     /// can inject `AppEvent`s.
     pub fn event_sender(&self) -> AppEventSender {
         self.app_event_tx.clone()
+    }
+
+    /// Returns the session ID assigned by the backend for this session, if available.
+    pub fn session_id(&self) -> Option<Uuid> {
+        self.session_id
     }
 
     pub(crate) fn run(
@@ -316,6 +326,10 @@ impl<'a> App<'a> {
     }
 
     fn dispatch_codex_event(&mut self, event: Event) {
+        // Capture session ID when the session is initially configured
+        if let EventMsg::SessionConfigured(SessionConfiguredEvent { session_id, .. }) = &event.msg {
+            self.session_id = Some(*session_id);
+        }
         match &mut self.app_state {
             AppState::Chat { widget } => widget.handle_codex_event(event),
             AppState::Login { .. } | AppState::GitWarning { .. } => {}
