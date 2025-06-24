@@ -35,7 +35,15 @@ Tasks live under `agentydragon/tasks/` as individual Markdown files. Please upda
 -  Without `--agent`, this creates or reuses a worktree at
 -  `agentydragon/tasks/.worktrees/<task-id>-<task-slug>` off the `agentydragon` branch.
 -  With `--agent`, after setup it launches a Codex agent in that workspace,
--  preloaded to work on the specified task from its Markdown file.
+  -  preloaded to work on the specified task from its Markdown file.
+
+  - **Review helper**: in the repo root run:
+
+    ```sh
+    agentydragon/tasks/review-unmerged-task-branches.sh
+    ```
+
+    This will launch a Codex agent to review all `agentydragon/NN-slug` branches not yet merged into `agentydragon`, prompting you to merge completed tasks and reporting any branches that need further work.
 
 ---
 
