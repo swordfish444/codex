@@ -17,6 +17,7 @@ Provide a runtime command that displays the current sandbox/container environmen
   - List of bind mounts (host path → container path, mode)
   - File-system permission policies in effect
   - Network sandbox status (restricted or allowed)
+  - Runtime TUI status‑bar indicators for key sandbox attributes (e.g. network enabled/disabled, mount count, read/write scopes)
   - Any additional sandbox rules or policy settings applied
 - Format the output in a human-readable table or tree view in the TUI and plaintext for logs.
 - Ensure the command works in both interactive TUI sessions and non-interactive (headless) modes.
