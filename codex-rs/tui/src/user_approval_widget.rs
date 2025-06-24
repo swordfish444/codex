@@ -64,7 +64,7 @@ const SELECT_OPTIONS: &[SelectOption] = &[
         enters_input_mode: false,
     },
     SelectOption {
-        label: "Yes, always approve this exact command for this session (a)",
+        label: "Yes, always approve this exact patch for this session (a)",
         decision: Some(ReviewDecision::ApprovedForSession),
 
         enters_input_mode: false,
