@@ -1,15 +1,21 @@
+use crossterm::event::Event as CrosstermEvent;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, Borders, BorderType, Paragraph};
+use ratatui::prelude::Widget;
 use ratatui::text::Line;
+use ratatui::widgets::Block;
+use ratatui::widgets::BorderType;
+use ratatui::widgets::Borders;
+use ratatui::widgets::Paragraph;
 use tui_input::Input;
+use tui_input::backend::crossterm::EventHandler;
 
-use crate::app_event::AppEvent;
-use crate::app_event_sender::AppEventSender;
 use super::BottomPane;
 use super::BottomPaneView;
+use crate::app_event::AppEvent;
+use crate::app_event_sender::AppEventSender;
 
 /// Interactive view prompting for dynamic mount-add (host/container/mode).
 enum MountAddStage {
@@ -18,7 +24,7 @@ enum MountAddStage {
     Mode,
 }
 
-pub(crate) struct MountAddView<'a> {
+pub(crate) struct MountAddView {
     stage: MountAddStage,
     host_input: Input,
     container_input: Input,
@@ -27,7 +33,7 @@ pub(crate) struct MountAddView<'a> {
     done: bool,
 }
 
-impl MountAddView<'_> {
+impl MountAddView {
     pub fn new(app_event_tx: AppEventSender) -> Self {
         Self {
             stage: MountAddStage::Host,
@@ -40,7 +46,7 @@ impl MountAddView<'_> {
     }
 }
 
-impl<'a> BottomPaneView<'a> for MountAddView<'a> {
+impl<'a> BottomPaneView<'a> for MountAddView {
     fn handle_key_event(&mut self, pane: &mut BottomPane<'a>, key_event: KeyEvent) {
         if self.done {
             return;
@@ -50,14 +56,16 @@ impl<'a> BottomPaneView<'a> for MountAddView<'a> {
                 if key_event.code == KeyCode::Enter {
                     self.stage = MountAddStage::Container;
                 } else {
-                    self.host_input.handle_event(&key_event);
+                    self.host_input
+                        .handle_event(&CrosstermEvent::Key(key_event));
                 }
             }
             MountAddStage::Container => {
                 if key_event.code == KeyCode::Enter {
                     self.stage = MountAddStage::Mode;
                 } else {
-                    self.container_input.handle_event(&key_event);
+                    self.container_input
+                        .handle_event(&CrosstermEvent::Key(key_event));
                 }
             }
             MountAddStage::Mode => {
@@ -66,12 +74,21 @@ impl<'a> BottomPaneView<'a> for MountAddView<'a> {
                     let container = std::path::PathBuf::from(self.container_input.value());
                     let mode = {
                         let m = self.mode_input.value();
-                        if m.is_empty() { "rw".to_string() } else { m }
+                        if m.is_empty() {
+                            "rw".to_string()
+                        } else {
+                            m.to_string()
+                        }
                     };
-                    self.app_event_tx.send(AppEvent::MountAdd { host, container, mode });
+                    self.app_event_tx.send(AppEvent::MountAdd {
+                        host,
+                        container,
+                        mode,
+                    });
                     self.done = true;
                 } else {
-                    self.mode_input.handle_event(&key_event);
+                    self.mode_input
+                        .handle_event(&CrosstermEvent::Key(key_event));
                 }
             }
         }
@@ -93,20 +110,23 @@ impl<'a> BottomPaneView<'a> for MountAddView<'a> {
             MountAddStage::Container => ("Container path:", self.container_input.value()),
             MountAddStage::Mode => ("Mode (rw|ro):", self.mode_input.value()),
         };
-        let paragraph = Paragraph::new(vec![Line::from(prompt), Line::from(input)])
-            .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded));
+        let paragraph = Paragraph::new(vec![Line::from(prompt), Line::from(input)]).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        );
         paragraph.render(area, buf);
     }
 }
 
 /// Interactive view prompting for dynamic mount-remove (container path).
-pub(crate) struct MountRemoveView<'a> {
+pub(crate) struct MountRemoveView {
     container_input: Input,
     app_event_tx: AppEventSender,
     done: bool,
 }
 
-impl MountRemoveView<'_> {
+impl MountRemoveView {
     pub fn new(app_event_tx: AppEventSender) -> Self {
         Self {
             container_input: Input::default(),
@@ -116,7 +136,7 @@ impl MountRemoveView<'_> {
     }
 }
 
-impl<'a> BottomPaneView<'a> for MountRemoveView<'a> {
+impl<'a> BottomPaneView<'a> for MountRemoveView {
     fn handle_key_event(&mut self, pane: &mut BottomPane<'a>, key_event: KeyEvent) {
         if self.done {
             return;
@@ -126,7 +146,8 @@ impl<'a> BottomPaneView<'a> for MountRemoveView<'a> {
             self.app_event_tx.send(AppEvent::MountRemove { container });
             self.done = true;
         } else {
-            self.container_input.handle_event(&key_event);
+            self.container_input
+                .handle_event(&CrosstermEvent::Key(key_event));
         }
         pane.request_redraw();
     }
@@ -144,7 +165,11 @@ impl<'a> BottomPaneView<'a> for MountRemoveView<'a> {
             Line::from("Container path to unmount:"),
             Line::from(self.container_input.value()),
         ])
-        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        );
         paragraph.render(area, buf);
     }
 }

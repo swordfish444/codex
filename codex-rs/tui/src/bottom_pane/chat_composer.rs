@@ -137,13 +137,15 @@ impl ChatComposer<'_> {
                 ctrl: false,
             } => {
                 if let Some(cmd) = popup.selected_command() {
-                    let first_line = self.textarea.lines().first().unwrap_or("").to_string();
+                    let first_line = self.textarea.lines().first().map_or("", |v| v).to_string();
                     let args = first_line
                         .strip_prefix(&format!("/{}", cmd.command()))
                         .unwrap_or("")
                         .trim();
-                    if (cmd == SlashCommand::MountAdd || cmd == SlashCommand::MountRemove) && !args.is_empty() {
-                        let evt = if cmd == SlashCommand::MountAdd {
+                    if (*cmd == SlashCommand::MountAdd || *cmd == SlashCommand::MountRemove)
+                        && !args.is_empty()
+                    {
+                        let evt = if *cmd == SlashCommand::MountAdd {
                             AppEvent::InlineMountAdd(args.to_string())
                         } else {
                             AppEvent::InlineMountRemove(args.to_string())
