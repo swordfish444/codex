@@ -24,7 +24,7 @@ Tasks live under `agentydragon/tasks/` as individual Markdown files. Please upda
 
 ### Branch & Worktree Workflow
 
-- **Branch convention**: work on each task in its own branch named `agentydragon/<task-id>-<task-slug>`.
+- **Branch convention**: work on each task in its own branch named `agentydragon-<task-id>-<task-slug>`, to avoid refname conflicts.
 - **Worktree helper**: in `agentydragon/tasks/`, run:
 -
 -   ```sh

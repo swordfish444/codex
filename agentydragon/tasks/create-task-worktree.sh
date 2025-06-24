@@ -72,7 +72,7 @@ task_input="${task_inputs[0]}"
 repo_root=$(git rev-parse --show-toplevel)
 tasks_dir="$repo_root/agentydragon/tasks"
 
-# If given only a two-digit ID, resolve to the full task slug
+ # If given only a two-digit ID, resolve to the full task slug
 if [[ "$task_input" =~ ^[0-9]{2}$ ]]; then
   matches=( "$tasks_dir/${task_input}-"*.md )
   if [ "${#matches[@]}" -eq 1 ]; then
@@ -85,7 +85,8 @@ if [[ "$task_input" =~ ^[0-9]{2}$ ]]; then
 else
   task_slug="$task_input"
 fi
-branch="agentydragon/$task_slug"
+# Use dash-separated branch name to avoid ref-dir conflicts
+branch="agentydragon-$task_slug"
 worktrees_dir="$tasks_dir/.worktrees"
 worktree_path="$worktrees_dir/$task_slug"
 
