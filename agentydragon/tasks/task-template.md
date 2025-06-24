@@ -1,27 +1,29 @@
 # Task Template
 
+# Valid status values: Not started | Started | Done | Cancelled
+
+---
+id: <NN>
+title: <Task Title>
+status: Not started  # one of: Not started, Started, Done, Cancelled
+summary: Brief summary of current status.
+goal: |
+  Describe the objective of the task here.
+---
+
 > *This task is specific to codex-rs.*
-
-## Status
-
-**General Status**: Not started / Started / Done / Cancelled  
-**Summary**: Brief summary of current status.
-
-## Goal
-
-Describe the objective of the task.
 
 ## Acceptance Criteria
 
-List the measurable criteria for completion.
+List measurable criteria for completion.
 
 ## Implementation
 
 **How it was implemented**  
-Provide details on code modules, design decisions, and steps taken during implementation.
+Provide details on code modules, design decisions, and steps taken.
 
 **How it works**  
-Explain the runtime behavior and overall operation to help engineers understand the feature.
+Explain runtime behavior and overall operation.
 
 ## Notes
 
