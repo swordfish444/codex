@@ -1,3 +1,9 @@
+# AGENTS.md
+
+**Agents:** Please update this file with a brief summary of your work (features, fixes,
+refactors, documentation, etc.) whenever you make changes to this repository. This serves
+as shared project notes and is automatically merged into the AI assistant's context.
+
 # Rust/codex-rs
 
 In the codex-rs folder where the rust code lives:
