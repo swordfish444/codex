@@ -43,6 +43,17 @@ To run Codex non-interactively, run `codex exec PROMPT` (you can also pass the p
 
 Sometimes it is not convenient to `cd` to the directory you want Codex to use as the "working root" before running Codex. Fortunately, `codex` supports a `--cd` option so you can specify whatever folder you want. You can confirm that Codex is honoring `--cd` by double-checking the **workdir** it reports in the TUI at the start of a new session.
 
+### `codex config` to manage your configuration file
+
+Codex now provides a built-in `config` subcommand for managing your `config.toml`:
+
+```shell
+codex config edit               # open ~/.codex/config.toml in $EDITOR (or vi)
+codex config set KEY VALUE      # set a config key to a TOML literal, e.g. tui.auto_mount_repo true
+```
+
+Use `codex config --help` for more details.
+
 ### Experimenting with the Codex Sandbox
 
 To test to see what happens when a command is run under the sandbox provided by Codex, we provide the following subcommands in Codex CLI:

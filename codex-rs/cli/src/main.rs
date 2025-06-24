@@ -7,6 +7,11 @@ use codex_common::CliConfigOverrides;
 use codex_exec::Cli as ExecCli;
 use codex_tui::Cli as TuiCli;
 use std::path::PathBuf;
+use std::{env, fs, process};
+use std::io::ErrorKind;
+use toml::{self, value::Table, Value};
+use serde::de::Error as SerdeError;
+use codex_core::config::find_codex_home;
 use uuid::Uuid;
 
 use crate::proto::ProtoCli;
@@ -32,6 +37,30 @@ struct MultitoolCli {
     subcommand: Option<Subcommand>,
 }
 
+/// Parse a raw TOML literal (e.g. `true`, `42`, `[1,2]`, `{a=1}`) into a TOML Value.
+/// Wraps the literal under a sentinel key to satisfy the TOML parser.
+fn parse_toml_value(raw: &str) -> Result<Value, toml::de::Error> {
+    let wrapped = format!("_x_ = {raw}");
+    let table: Table = toml::from_str(&wrapped)?;
+    table.get("_x_")
+        .cloned()
+        .ok_or_else(|| SerdeError::custom("missing sentinel"))
+}
+
+/// Subcommands for the `codex config` command.
+#[derive(Debug, clap::Subcommand)]
+enum ConfigCmd {
+    /// Open the config file in your editor ($EDITOR or vi).
+    Edit,
+    /// Set a configuration key to a TOML literal, e.g. `tui.auto_mount_repo true`.
+    Set {
+        /// Dotted path to the key (e.g. `tui.auto_mount_repo`).
+        key: String,
+        /// A TOML literal value (e.g. `true`, `42`, `"foo"`, `[1,2]`).
+        value: String,
+    },
+}
+
 #[derive(Debug, clap::Subcommand)]
 enum Subcommand {
     /// Resume an existing TUI session by UUID.
@@ -39,6 +68,9 @@ enum Subcommand {
         /// UUID of the session to resume
         session_id: Uuid,
     },
+    /// Inspect or modify the CLI configuration file.
+    #[command(subcommand)]
+    Config(ConfigCmd),
     /// Run Codex non-interactively.
     #[clap(visible_alias = "e")]
     Exec(ExecCli),
@@ -100,6 +132,46 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
             prepend_config_flags(&mut tui_cli.config_overrides, cli.config_overrides);
             codex_tui::run_main(tui_cli, codex_linux_sandbox_exe)?;
         }
+        Some(Subcommand::Config(cmd)) => {
+            // Handle `codex config` subcommands: edit or set.
+            // Determine config directory and file path.
+            let codex_home = find_codex_home()?;
+            fs::create_dir_all(&codex_home)?;
+            let config_path = codex_home.join("config.toml");
+            // Load existing config.toml into a Toml value, or start with empty table.
+            let mut doc = match fs::read_to_string(&config_path) {
+                Ok(s) => toml::from_str::<toml::Value>(&s)?,
+                Err(e) if e.kind() == ErrorKind::NotFound => toml::Value::Table(Default::default()),
+                Err(e) => return Err(e.into()),
+            };
+            match cmd {
+                ConfigCmd::Edit => {
+                    // Ensure the config file exists.
+                    if !config_path.exists() {
+                        fs::write(&config_path, "")?;
+                    }
+                    // Open in editor from $EDITOR or fall back to vi.
+                    let editor = env::var_os("EDITOR").unwrap_or_else(|| "vi".into());
+                    let status = process::Command::new(editor)
+                        .arg(&config_path)
+                        .status()?;
+                    if !status.success() {
+                        std::process::exit(status.code().unwrap_or(1));
+                    }
+                }
+                ConfigCmd::Set { key, value } => {
+                    // Parse the provided TOML literal value.
+                    let val = parse_toml_value(&value)
+                        .map_err(|e| anyhow::anyhow!("TOML parse error for `{}`: {}", value, e))?;
+                    // Apply the override into the document.
+                    apply_override(&mut doc, &key, val);
+                    // Serialize and write back to disk.
+                    let s = toml::to_string_pretty(&doc)?;
+                    fs::write(&config_path, s)?;
+                }
+            }
+            return Ok(());
+        }
         Some(Subcommand::Exec(mut exec_cli)) => {
             prepend_config_flags(&mut exec_cli.config_overrides, cli.config_overrides);
             codex_exec::run_main(exec_cli, codex_linux_sandbox_exe).await?;
@@ -147,4 +219,60 @@ fn prepend_config_flags(
     subcommand_config_overrides
         .raw_overrides
         .splice(0..0, cli_config_overrides.raw_overrides);
+}
+
+/// Apply a dotted-path override into a TOML document, creating tables as needed.
+fn apply_override(root: &mut toml::Value, path: &str, value: toml::Value) {
+    use toml::value::Table;
+    let parts: Vec<&str> = path.split('.').collect();
+    let mut current = root;
+    for (i, part) in parts.iter().enumerate() {
+        let last = i == parts.len() - 1;
+        if last {
+            match current {
+                toml::Value::Table(tbl) => {
+                    tbl.insert((*part).to_string(), value);
+                }
+                _ => {
+                    let mut tbl = Table::new();
+                    tbl.insert((*part).to_string(), value);
+                    *current = toml::Value::Table(tbl);
+                }
+            }
+            return;
+        }
+        match current {
+            toml::Value::Table(tbl) => {
+                current = tbl.entry((*part).to_string())
+                    .or_insert_with(|| toml::Value::Table(Table::new()));
+            }
+            _ => {
+                *current = toml::Value::Table(Table::new());
+                if let toml::Value::Table(tbl) = current {
+                    current = tbl.entry((*part).to_string())
+                        .or_insert_with(|| toml::Value::Table(Table::new()));
+                }
+            }
+        }
+    }
+}
+
+// ---------------------
+// Tests for CLI parsing
+// ---------------------
+#[cfg(test)]
+mod tests {
+    use super::MultitoolCli;
+    use clap::CommandFactory;
+
+    #[test]
+    fn config_subcommands_help() {
+        let mut cmd = MultitoolCli::command();
+        let cfg = cmd.find_subcommand_mut("config").expect("config subcommand not found");
+        let mut buf = Vec::new();
+        cfg.write_long_help(&mut buf).unwrap();
+        let help = String::from_utf8(buf).unwrap();
+        assert!(help.contains("edit"), "help missing 'edit': {}", help);
+        assert!(help.contains("set"), "help missing 'set': {}", help);
+    }
 }
