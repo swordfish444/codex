@@ -13,7 +13,7 @@ Allow users to plug in an external executable that makes approval decisions for 
 
 ## Acceptance Criteria
 
-- Support a new `[[custom_approval_predicates]]` section in `config.toml`, each with an `executable = "..."` field.
+- Support a new `[[approval_predicates]]` section in `config.toml` for Python-based predicates, each with a `python_predicate_binary = "..."` field (pointing to the predicate executable) and an implicit `never_expire = true` setting.
 - Before prompting the user, invoke each configured predicate in order, passing the following (via CLI args or env vars):
   - Session ID
   - Container working directory (CWD)
