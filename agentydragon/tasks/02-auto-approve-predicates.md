@@ -1,5 +1,12 @@
 # Task 02: Granular Auto-Approval Predicates
 
+> *This task is specific to codex-rs.*
+
+## Status
+
+**General Status**: Not started  
+**Summary**: Not started; missing Implementation details (How it was implemented and How it works).
+
 ## Goal
 Let users configure one or more scripts in `config.toml` that examine each proposed shell command and output exactly one of:
 
@@ -14,6 +21,14 @@ If the script exits non-zero or prints anything else, default to `user-confirm`.
 - Before running any shell/subprocess, Codex invokes each configured script in order, passing the candidate command as an argument.
 - If a script prints `continue`/`deny`/`user-confirm`, take that action and skip remaining scripts.
 - If all scripts return non-zero or invalid output, pause for manual approval (existing logic).
+
+## Implementation
+
+**How it was implemented**  
+*(Not implemented yet)*
+
+**How it works**  
+*(Not implemented yet)*
 
 ## Notes
 - This pairs with the existing `approval_policy = "unless-allow-listed"` but adds custom logic before prompting.

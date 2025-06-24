@@ -19,12 +19,18 @@ This file documents the changes introduced on the `agentydragon` branch
 - Added `uuid` crate to `codex-rs/cli` and `codex-rs/tui`.
 
 ## Documentation tasks (under `tasks/`)
+- task-template.md
 - 01-dynamic-mount-commands.md
 - 02-auto-approve-predicates.md
 - 03-live-config-reload.md
 - 04-auto-mount-repo.md
+- 04-auto-mount-repo-plan.md
 - 06-external-editor-prompt.md
 - 07-undo-feedback-decision.md
+- 08-set-shell-title.md
+- 09-file-dir-level-approvals.md
+- 10-inspect-container-state.md
+- 11-custom-approval-predicates.md
 
 ---
 

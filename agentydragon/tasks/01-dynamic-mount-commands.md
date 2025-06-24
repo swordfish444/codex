@@ -1,5 +1,12 @@
 # Task 01: Dynamic Mount-Add and Mount-Remove Commands
 
+> *This task is specific to codex-rs.*
+
+## Status
+
+**General Status**: Not started  
+**Summary**: Not started; missing Implementation details (How it was implemented and How it works).
+
 ## Goal
 Implement the `/mount-add` and `/mount-remove` slash commands in the TUI, supporting two modes:
 
@@ -16,6 +23,14 @@ These commands should:
 - Users can type `/mount-add` alone to open a small TUI form prompting for the three fields.
 - Symmetrically for `/mount-remove` by container path.
 - The `sandbox_policy` is updated so subsequent shell commands can read/write the newly mounted folder.
+
+## Implementation
+
+**How it was implemented**  
+*(Not implemented yet)*
+
+**How it works**  
+*(Not implemented yet)*
 
 ## Notes
 - This builds on the static `[[sandbox.mounts]]` support introduced earlier.
