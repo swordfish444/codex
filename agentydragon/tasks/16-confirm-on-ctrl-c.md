@@ -19,6 +19,7 @@ Require two consecutive Ctrl+C keystrokes (within a short timeout) to exit the T
   - If a second Ctrl+C occurs within a configurable timeout (e.g. 2 sec), the TUI exits normally.
   - If no second Ctrl+C arrives before timeout, clear the confirmation state and resume normal operation.
 - Ensure that child processes (shell tool calls) still receive SIGINT immediately and are not affected by the double‑Ctrl+C logic.
+- Prevent immediate exit on Ctrl+D (EOF); require the same double‑confirmation workflow as for Ctrl+C when EOF is received.
 - Provide unit or integration tests simulating SIGINT events to verify behavior.
 
 ## Implementation
@@ -30,6 +31,7 @@ Require two consecutive Ctrl+C keystrokes (within a short timeout) to exit the T
   2. If enabled and not already confirming, enter a `ConfirmExit` state, record timestamp, and display confirmation message.
   3. If enabled and in `ConfirmExit` state, exit immediately on second Ctrl+C.
   4. On each TUI tick, if in `ConfirmExit` and timeout elapsed, clear `ConfirmExit` state.
+  5. Intercept EOF (Ctrl+D) events in the input handler and apply the same `ConfirmExit` logic as for Ctrl+C when `require_double_ctrl_c` is enabled.
 - Add rendering logic in the status bar (`tui/src/status_indicator_widget.rs` or similar) to show the confirmation prompt.
 
 **How it works**  
