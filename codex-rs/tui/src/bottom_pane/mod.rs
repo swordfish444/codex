@@ -63,6 +63,16 @@ impl BottomPane<'_> {
     /// Forward a key event to the active view or the composer.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> InputResult {
         if let Some(mut view) = self.active_view.take() {
+            // During task execution, allow input to pass through status indicator overlay
+            if self.is_task_running && view.should_hide_when_task_is_done() {
+                // restore overlay view and forward input to composer
+                self.active_view = Some(view);
+                let (input_result, needs_redraw) = self.composer.handle_key_event(key_event);
+                if needs_redraw {
+                    self.request_redraw();
+                }
+                return input_result;
+            }
             view.handle_key_event(self, key_event);
             if !view.is_complete() {
                 self.active_view = Some(view);
@@ -197,11 +207,54 @@ impl BottomPane<'_> {
 
 impl WidgetRef for &BottomPane<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        // Show BottomPaneView if present.
+        // Always render composer, then overlay any active view (e.g., status indicator or modal)
+        (&self.composer).render_ref(area, buf);
         if let Some(ov) = &self.active_view {
             ov.render(area, buf);
-        } else {
-            (&self.composer).render_ref(area, buf);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    /// Construct a BottomPane with default parameters for testing.
+    fn make_pane() -> BottomPane<'static> {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let app_event_tx = AppEventSender::new(tx);
+        BottomPane::new(BottomPaneParams {
+            app_event_tx,
+            has_input_focus: true,
+            composer_max_rows: 3,
+        })
+    }
+
+    #[test]
+    fn forward_input_during_status_indicator() {
+        let mut pane = make_pane();
+        // Start task to show status indicator overlay
+        pane.set_task_running(true);
+        // Simulate typing 'h'
+        let key = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
+        let result = pane.handle_key_event(key);
+        // No submission event is returned
+        assert!(matches!(result, InputResult::None));
+        // Composer should have recorded the input
+        let content = pane.composer.textarea.lines().join("\n");
+        assert_eq!(content, "h");
+        // Status indicator overlay remains active
+        assert!(pane.active_view.is_some());
+    }
+
+    #[test]
+    fn remove_status_indicator_after_task_complete() {
+        let mut pane = make_pane();
+        pane.set_task_running(true);
+        assert!(pane.active_view.is_some());
+        pane.set_task_running(false);
+        // Overlay should be removed when task finishes
+        assert!(pane.active_view.is_none());
     }
 }
