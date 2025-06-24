@@ -7,3 +7,9 @@ repos:
         language: python
         additional_dependencies: [PyYAML]
         files: ^agentydragon/tasks/[0-9]{2}-.*\.md$
+      - id: cargo-build
+        name: Check Rust workspace builds
+        entry: bash -lc 'cd codex-rs && cargo build --workspace --locked'
+        language: system
+        pass_filenames: false
+        require_serial: true

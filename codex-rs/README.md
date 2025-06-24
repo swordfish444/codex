@@ -11,8 +11,19 @@ npm i -g @openai/codex@native
 codex
 ```
 
-You can also download a platform-specific release directly from our [GitHub Releases](https://github.com/openai/codex/releases).
+You can also build and install the Rust-native binary from source:
 
+```shell
+cargo install --path cli --locked
+```
+
+By default this installs into `$HOME/.cargo/bin`, so make sure that's on your `PATH`. To install system-wide (e.g. to `/usr/local`), run:
+
+```shell
+sudo cargo install --path cli --locked --root /usr/local
+```
+
+You can also download a platform-specific release directly from our [GitHub Releases](https://github.com/openai/codex/releases).
 ## What's new in the Rust CLI
 
 While we are [working to close the gap between the TypeScript and Rust implementations of Codex CLI](https://github.com/openai/codex/issues/1262), note that the Rust CLI has a number of features that the TypeScript CLI does not!
