@@ -3,20 +3,26 @@
 # create-task-worktree.sh
 #
 # Create or reuse a git worktree for a specific task branch under agentydragon/tasks/.worktrees.
-# Usage: create-task-worktree.sh <task-id>-<task-slug>
+# Usage: create-task-worktree.sh [-a|--agent] [-t|--tmux] <task-id>-<task-slug> [<more-task-ids>...]
 
 set -euo pipefail
 
 agent_mode=false
+tmux_mode=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -a|--agent)
       agent_mode=true
       shift
       ;;
+    -t|--tmux)
+      tmux_mode=true
+      shift
+      ;;
     -h|--help)
-      echo "Usage: $0 [-a|--agent] <task-id>-<task-slug>"
+      echo "Usage: $0 [-a|--agent] [-t|--tmux] <task-id>-<task-slug> [<more-task-ids>...]"
       echo "  -a, --agent    after creating/reusing, launch a codex agent in the task workspace"
+      echo "  -t, --tmux     open multiple tasks in tmux session (implies --agent)"
       exit 0
       ;;
     *)
@@ -26,12 +32,34 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ "$#" -ne 1 ]; then
-  echo "Usage: $0 [-a|--agent] <task-id>-<task-slug>"
+  echo "Usage: $0 [-a|--agent] [-t|--tmux] <task-id>-<task-slug> [<more-task-ids>...]"
   exit 1
 fi
 
 # Capture raw input so we can accept just a two-digit task ID
-task_input="$1"
+task_inputs=("$@")
+
+# If tmux mode, batch-create worktrees and launch in tmux
+if [ "$tmux_mode" = true ]; then
+  # Implicitly enable agent mode in tmux panes
+  agent_mode=true
+  # Build a unique session name from task IDs
+  session="agentydragon-${task_inputs[*]// /_}"
+  cmd="$0"
+  # First pane: first task
+  first="${task_inputs[0]}"
+  pane_cmd="$cmd${agent_mode:+ -a} $first"
+  tmux new-session -d -s "$session" "$pane_cmd"
+  # Split for remaining tasks
+  for task in "${task_inputs[@]:1}"; do
+    tmux split-window -v "$cmd${agent_mode:+ -a} $task"
+  done
+  tmux select-layout tiled
+  tmux attach -t "$session"
+  exit 0
+fi
+
+task_input="${task_inputs[0]}"
 
 # Determine repository root and tasks directory
 repo_root=$(git rev-parse --show-toplevel)
