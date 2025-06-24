@@ -276,8 +276,10 @@ impl UserApprovalWidget<'_> {
                 self.send_decision_with_feedback(ReviewDecision::Denied, feedback);
             }
             KeyCode::Esc => {
-                // Cancel input – treat as deny without feedback.
-                self.send_decision(ReviewDecision::Denied);
+                self.mode = Mode::Select;
+                if let Some(idx) = SELECT_OPTIONS.iter().position(|opt| opt.enters_input_mode) {
+                    self.selected_option = idx;
+                }
             }
             _ => {
                 // Feed into input widget for normal editing.
@@ -368,5 +370,36 @@ impl WidgetRef for &UserApprovalWidget<'_> {
         outer.render(area, buf);
         self.confirmation_prompt.clone().render(prompt_chunk, buf);
         Widget::render(List::new(lines), response_chunk, buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn esc_in_input_mode_cancels_input_and_preserves_value() {
+        let (tx, rx) = mpsc::channel();
+        let app_event_tx = AppEventSender::new(tx);
+        let mut widget = UserApprovalWidget::new(
+            ApprovalRequest::Exec {
+                id: "id".into(),
+                command: Vec::new(),
+                cwd: std::env::current_dir().unwrap(),
+                reason: None,
+            },
+            app_event_tx.clone(),
+        );
+        widget.mode = Mode::Input;
+        widget.input.get_mut().set_value("feedback".to_string());
+        widget.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(widget.mode, Mode::Select);
+        let expected_idx = SELECT_OPTIONS.iter().position(|opt| opt.enters_input_mode).unwrap();
+        assert_eq!(widget.selected_option, expected_idx);
+        assert_eq!(widget.input.value(), "feedback");
+        assert!(rx.try_recv().is_err());
+        assert!(!widget.done);
     }
 }

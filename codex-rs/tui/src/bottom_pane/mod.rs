@@ -12,6 +12,7 @@ use crate::app_event_sender::AppEventSender;
 use crate::user_approval_widget::ApprovalRequest;
 
 mod approval_modal_view;
+mod mount_view;
 mod bottom_pane_view;
 mod chat_composer;
 mod chat_composer_history;
@@ -22,6 +23,7 @@ pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
 
 use approval_modal_view::ApprovalModalView;
+use mount_view::{MountAddView, MountRemoveView};
 use status_indicator_view::StatusIndicatorView;
 
 /// Pane displayed in the lower half of the chat UI.
@@ -63,6 +65,16 @@ impl BottomPane<'_> {
     /// Forward a key event to the active view or the composer.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> InputResult {
         if let Some(mut view) = self.active_view.take() {
+            // During task execution, allow input to pass through status indicator overlay
+            if self.is_task_running && view.should_hide_when_task_is_done() {
+                // restore overlay view and forward input to composer
+                self.active_view = Some(view);
+                let (input_result, needs_redraw) = self.composer.handle_key_event(key_event);
+                if needs_redraw {
+                    self.request_redraw();
+                }
+                return input_result;
+            }
             view.handle_key_event(self, key_event);
             if !view.is_complete() {
                 self.active_view = Some(view);
@@ -135,6 +147,20 @@ impl BottomPane<'_> {
         }
     }
 
+    /// Launch interactive mount-add dialog (host, container, [mode]).
+    pub fn push_mount_add_interactive(&mut self) {
+        let view = MountAddView::new(self.app_event_tx.clone());
+        self.active_view = Some(Box::new(view));
+        self.request_redraw();
+    }
+
+    /// Launch interactive mount-remove dialog (container path).
+    pub fn push_mount_remove_interactive(&mut self) {
+        let view = MountRemoveView::new(self.app_event_tx.clone());
+        self.active_view = Some(Box::new(view));
+        self.request_redraw();
+    }
+
     /// Called when the agent requests user approval.
     pub fn push_approval_request(&mut self, request: ApprovalRequest) {
         let request = if let Some(view) = self.active_view.as_mut() {
@@ -197,11 +223,54 @@ impl BottomPane<'_> {
 
 impl WidgetRef for &BottomPane<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        // Show BottomPaneView if present.
+        // Always render composer, then overlay any active view (e.g., status indicator or modal)
+        (&self.composer).render_ref(area, buf);
         if let Some(ov) = &self.active_view {
             ov.render(area, buf);
-        } else {
-            (&self.composer).render_ref(area, buf);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    /// Construct a BottomPane with default parameters for testing.
+    fn make_pane() -> BottomPane<'static> {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let app_event_tx = AppEventSender::new(tx);
+        BottomPane::new(BottomPaneParams {
+            app_event_tx,
+            has_input_focus: true,
+            composer_max_rows: 3,
+        })
+    }
+
+    #[test]
+    fn forward_input_during_status_indicator() {
+        let mut pane = make_pane();
+        // Start task to show status indicator overlay
+        pane.set_task_running(true);
+        // Simulate typing 'h'
+        let key = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
+        let result = pane.handle_key_event(key);
+        // No submission event is returned
+        assert!(matches!(result, InputResult::None));
+        // Composer should have recorded the input
+        let content = pane.composer.textarea.lines().join("\n");
+        assert_eq!(content, "h");
+        // Status indicator overlay remains active
+        assert!(pane.active_view.is_some());
+    }
+
+    #[test]
+    fn remove_status_indicator_after_task_complete() {
+        let mut pane = make_pane();
+        pane.set_task_running(true);
+        assert!(pane.active_view.is_some());
+        pane.set_task_running(false);
+        // Overlay should be removed when task finishes
+        assert!(pane.active_view.is_none());
     }
 }

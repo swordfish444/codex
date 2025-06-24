@@ -253,6 +253,25 @@ impl SandboxPolicy {
     }
 }
 
+impl SandboxPolicy {
+    /// Grant disk-write permission for the specified folder.
+    pub fn allow_disk_write_folder(&mut self, folder: std::path::PathBuf) {
+        self.permissions.push(SandboxPermission::DiskWriteFolder { folder });
+    }
+
+    /// Revoke any disk-write permission for the specified folder.
+    pub fn revoke_disk_write_folder<P: AsRef<std::path::Path>>(&mut self, folder: P) {
+        let target = folder.as_ref();
+        self.permissions.retain(|perm| {
+            if let SandboxPermission::DiskWriteFolder { folder: f } = perm {
+                f != target
+            } else {
+                true
+            }
+        });
+    }
+}
+
 /// Permissions that should be granted to the sandbox in which the agent
 /// operates.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

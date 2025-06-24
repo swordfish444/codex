@@ -4,8 +4,8 @@
 
 ## Status
 
-**General Status**: Not started  
-**Summary**: Not started; missing Implementation details (How it was implemented and How it works).
+**General Status**: Done  
+**Summary**: Implemented interactive prompt overlay allowing user input during streaming without aborting runs.
 
 ## Goal
 
@@ -23,10 +23,12 @@ Allow users to interleave composing prompts and issuing slash-commands while the
 ## Implementation
 
 **How it was implemented**  
-*(Not implemented yet)*
+- Modified `BottomPane::handle_key_event` in `tui/src/bottom_pane/mod.rs` to special-case the `StatusIndicatorView` while `is_task_running`, forwarding key events to `ChatComposer` and preserving the overlay.
+- Updated `BottomPane::render_ref` to always render the composer first and then overlay the active view, ensuring the input box remains visible and editable under the status indicator.
+- Added unit tests in `tui/src/bottom_pane/mod.rs` to verify input is forwarded during task execution and that the status indicator overlay is removed upon task completion.
 
 **How it works**  
-*(Not implemented yet)*
+During LLM streaming or tool execution, the `StatusIndicatorView` remains active as an overlay. The modified event handler detects this overlay and forwards user key events to the underlying `ChatComposer` without dismissing the overlay. On task completion (`set_task_running(false)`), the overlay is automatically removed (via `should_hide_when_task_is_done`), returning to the normal input-only view.
 
 ## Notes
 

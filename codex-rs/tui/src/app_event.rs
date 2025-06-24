@@ -27,5 +27,21 @@ pub(crate) enum AppEvent {
 
     /// Dispatch a recognized slash command from the UI (composer) to the app
     /// layer so it can be handled centrally.
+    /// Dispatch a recognized slash command from the UI (composer) to the app
+    /// layer so it can be handled centrally (interactive dialog).
     DispatchCommand(SlashCommand),
+    /// Inline mount-add DSL: raw argument string (`host=... container=... mode=...`).
+    InlineMountAdd(String),
+    /// Inline mount-remove DSL: raw argument string (`container=...`).
+    InlineMountRemove(String),
+    /// Perform mount-add: create symlink and update sandbox policy.
+    MountAdd {
+        host: std::path::PathBuf,
+        container: std::path::PathBuf,
+        mode: String,
+    },
+    /// Perform mount-remove: remove symlink and update sandbox policy.
+    MountRemove {
+        container: std::path::PathBuf,
+    },
 }

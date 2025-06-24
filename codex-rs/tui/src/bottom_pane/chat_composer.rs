@@ -18,6 +18,7 @@ use super::command_popup::CommandPopup;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::slash_command::SlashCommand;
 
 /// Minimum number of visible text rows inside the textarea.
 const MIN_TEXTAREA_ROWS: usize = 1;
@@ -136,14 +137,23 @@ impl ChatComposer<'_> {
                 ctrl: false,
             } => {
                 if let Some(cmd) = popup.selected_command() {
-                    // Send command to the app layer.
-                    self.app_event_tx.send(AppEvent::DispatchCommand(*cmd));
-
-                    // Clear textarea so no residual text remains.
+                    let first_line = self.textarea.lines().first().unwrap_or("").to_string();
+                    let args = first_line
+                        .strip_prefix(&format!("/{}", cmd.command()))
+                        .unwrap_or("")
+                        .trim();
+                    if (cmd == SlashCommand::MountAdd || cmd == SlashCommand::MountRemove) && !args.is_empty() {
+                        let evt = if cmd == SlashCommand::MountAdd {
+                            AppEvent::InlineMountAdd(args.to_string())
+                        } else {
+                            AppEvent::InlineMountRemove(args.to_string())
+                        };
+                        self.app_event_tx.send(evt);
+                    } else {
+                        self.app_event_tx.send(AppEvent::DispatchCommand(*cmd));
+                    }
                     self.textarea.select_all();
                     self.textarea.cut();
-
-                    // Hide popup since the command has been dispatched.
                     self.command_popup = None;
                     return (InputResult::None, true);
                 }
