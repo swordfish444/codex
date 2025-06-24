@@ -31,6 +31,7 @@ This file documents the changes introduced on the `agentydragon` branch
 - 09-file-dir-level-approvals.md
 - 10-inspect-container-state.md
 - 11-custom-approval-predicates.md
+- 12-internet-connection-toggle.md
 
 ---
 
