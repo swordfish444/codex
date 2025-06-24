@@ -117,6 +117,11 @@ echo "Done."
 
 if [ "$agent_mode" = true ]; then
   echo "Launching codex agent for task $task_slug in $worktree_path"
+  prompt_file="$repo_root/agentydragon/prompts/developer.md"
+  if [ ! -f "$prompt_file" ]; then
+    echo "Error: developer prompt file not found at $prompt_file" >&2
+    exit 1
+  fi
   cd "$worktree_path"
-  codex "Read the task definition in agentydragon/tasks/$task_slug.md and update its **Status** and **Implementation** sections to make progress on the task. Continue editing the file until the task is complete."
+  codex "$(<"$prompt_file")"
 fi

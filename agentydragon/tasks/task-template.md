@@ -18,12 +18,13 @@ goal: |
 List measurable criteria for completion.
 
 ## Implementation
-
 **How it was implemented**  
-Provide details on code modules, design decisions, and steps taken.
+Provide details on code modules, design decisions, and steps taken.  
+*If this section is left blank or contains only placeholder text, the implementing developer should first populate it with a concise high-level plan before writing code.*
 
 **How it works**  
-Explain runtime behavior and overall operation.
+Explain runtime behavior and overall operation.  
+*If this section is left blank or contains only placeholder text, the implementing developer should update it to describe the intended runtime behavior.*
 
 ## Notes
 
