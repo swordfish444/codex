@@ -51,6 +51,9 @@ yarn-error.log*
 
 # oaipkg import cache
 oaipkg/
+ 
+# Ignore task worktree directories created by create-task-worktree.sh
+agentydragon/tasks/.worktrees/
 !.env.example
 
 # package
