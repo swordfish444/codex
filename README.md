@@ -325,6 +325,20 @@ pnpm link
 
 </details>
 
+<details>
+<summary><strong>Rust / Cargo (codex-rs)</strong></summary>
+
+```bash
+# Ensure you have Rust and Cargo installed (via rustup)
+cd codex-rs/cli
+cargo install --path . --locked
+
+# Or run without installing:
+cargo run --manifest-path codex-rs/cli/Cargo.toml -- --help
+```
+
+</details>
+
 ---
 
 ## Configuration guide
