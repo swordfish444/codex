@@ -22,7 +22,7 @@ except ImportError:
     sys.exit(1)
 
 REQUIRED_KEYS = ["id", "title", "status", "summary", "goal"]
-ALLOWED_STATUSES = ["Not started", "Started", "Done", "Cancelled"]
+ALLOWED_STATUSES = ["Not started", "Started", "Needs manual review", "Done", "Cancelled"]
 
 def parse_frontmatter(text):
     # Expect frontmatter delimited by '---' on its own line

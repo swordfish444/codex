@@ -1,11 +1,11 @@
 # Task Template
 
-# Valid status values: Not started | Started | Done | Cancelled
+# Valid status values: Not started | Started | Needs manual review | Done | Cancelled
 
 ---
 id: <NN>
 title: <Task Title>
-status: Not started  # one of: Not started, Started, Done, Cancelled
+status: Not started  # one of: Not started, Started, Needs manual review, Done, Cancelled
 summary: Brief summary of current status.
 goal: |
   Describe the objective of the task here.
