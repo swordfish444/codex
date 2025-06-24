@@ -18,6 +18,10 @@ This file documents the changes introduced on the `agentydragon` branch
 ## Dependency updates
 - Added `uuid` crate to `codex-rs/cli` and `codex-rs/tui`.
 
+## codex-rs/tui: Undo feedback decision with Esc key
+- Pressing `Esc` in feedback-entry mode now cancels feedback entry and returns to the select menu, preserving the partially entered feedback text.
+- Added a unit test for the ESC cancellation behavior in `tui/src/user_approval_widget.rs`.
+
 ## Documentation tasks
 
 Tasks live under `agentydragon/tasks/` as individual Markdown files. Please update each task’s **Status** and **Implementation** sections in place rather than maintaining a static list here.
