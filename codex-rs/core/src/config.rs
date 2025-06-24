@@ -11,7 +11,6 @@ use crate::flags::OPENAI_DEFAULT_MODEL;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::built_in_model_providers;
 use crate::protocol::AskForApproval;
-use crate::protocol::SandboxPermission;
 use crate::protocol::SandboxPolicy;
 use dirs::home_dir;
 use serde::Deserialize;
@@ -244,8 +243,10 @@ pub struct ConfigToml {
     // The `default` attribute ensures that the field is treated as `None` when
     // the key is omitted from the TOML. Without it, Serde treats the field as
     // required because we supply a custom deserializer.
-    #[serde(default, deserialize_with = "deserialize_sandbox_permissions")]
-    pub sandbox_permissions: Option<Vec<SandboxPermission>>,
+    /// Optional sandbox policy for the session. If omitted, Codex defaults to
+    /// the restrictive `read-only` policy.
+    #[serde(default)]
+    pub sandbox: Option<SandboxPolicy>,
 
     /// Disable server-side response storage (sends the full conversation
     /// context with every request). Currently necessary for OpenAI customers
@@ -296,32 +297,6 @@ pub struct ConfigToml {
     pub model_reasoning_summary: Option<ReasoningSummary>,
 }
 
-fn deserialize_sandbox_permissions<'de, D>(
-    deserializer: D,
-) -> Result<Option<Vec<SandboxPermission>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let permissions: Option<Vec<String>> = Option::deserialize(deserializer)?;
-
-    match permissions {
-        Some(raw_permissions) => {
-            let base_path = find_codex_home().map_err(serde::de::Error::custom)?;
-
-            let converted = raw_permissions
-                .into_iter()
-                .map(|raw| {
-                    parse_sandbox_permission_with_base_path(&raw, base_path.clone())
-                        .map_err(serde::de::Error::custom)
-                })
-                .collect::<Result<Vec<_>, D::Error>>()?;
-
-            Ok(Some(converted))
-        }
-        None => Ok(None),
-    }
-}
-
 /// Optional overrides for user configuration (e.g., from CLI flags).
 #[derive(Default, Debug, Clone)]
 pub struct ConfigOverrides {
@@ -369,20 +344,10 @@ impl Config {
             None => ConfigProfile::default(),
         };
 
-        let sandbox_policy = match sandbox_policy {
-            Some(sandbox_policy) => sandbox_policy,
-            None => {
-                // Derive a SandboxPolicy from the permissions in the config.
-                match cfg.sandbox_permissions {
-                    // Note this means the user can explicitly set permissions
-                    // to the empty list in the config file, granting it no
-                    // permissions whatsoever.
-                    Some(permissions) => SandboxPolicy::from(permissions),
-                    // Default to read only rather than completely locked down.
-                    None => SandboxPolicy::new_read_only_policy(),
-                }
-            }
-        };
+        let sandbox_policy = sandbox_policy.unwrap_or_else(|| {
+            cfg.sandbox
+                .unwrap_or_else(SandboxPolicy::new_read_only_policy)
+        });
 
         let mut model_providers = built_in_model_providers();
         // Merge user-defined providers into the built-in list.
@@ -520,50 +485,6 @@ pub fn log_dir(cfg: &Config) -> std::io::Result<PathBuf> {
     Ok(p)
 }
 
-pub fn parse_sandbox_permission_with_base_path(
-    raw: &str,
-    base_path: PathBuf,
-) -> std::io::Result<SandboxPermission> {
-    use SandboxPermission::*;
-
-    if let Some(path) = raw.strip_prefix("disk-write-folder=") {
-        return if path.is_empty() {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "--sandbox-permission disk-write-folder=<PATH> requires a non-empty PATH",
-            ))
-        } else {
-            use path_absolutize::*;
-
-            let file = PathBuf::from(path);
-            let absolute_path = if file.is_relative() {
-                file.absolutize_from(base_path)
-            } else {
-                file.absolutize()
-            }
-            .map(|path| path.into_owned())?;
-            Ok(DiskWriteFolder {
-                folder: absolute_path,
-            })
-        };
-    }
-
-    match raw {
-        "disk-full-read-access" => Ok(DiskFullReadAccess),
-        "disk-write-platform-user-temp-folder" => Ok(DiskWritePlatformUserTempFolder),
-        "disk-write-platform-global-temp-folder" => Ok(DiskWritePlatformGlobalTempFolder),
-        "disk-write-cwd" => Ok(DiskWriteCwd),
-        "disk-full-write-access" => Ok(DiskFullWriteAccess),
-        "network-full-access" => Ok(NetworkFullAccess),
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!(
-                "`{raw}` is not a recognised permission.\nRun with `--help` to see the accepted values."
-            ),
-        )),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
@@ -572,42 +493,6 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
-
-    /// Verify that the `sandbox_permissions` field on `ConfigToml` correctly
-    /// differentiates between a value that is completely absent in the
-    /// provided TOML (i.e. `None`) and one that is explicitly specified as an
-    /// empty array (i.e. `Some(vec![])`). This ensures that downstream logic
-    /// that treats these two cases differently (default read-only policy vs a
-    /// fully locked-down sandbox) continues to function.
-    #[test]
-    fn test_sandbox_permissions_none_vs_empty_vec() {
-        // Case 1: `sandbox_permissions` key is *absent* from the TOML source.
-        let toml_source_without_key = "";
-        let cfg_without_key: ConfigToml = toml::from_str(toml_source_without_key)
-            .expect("TOML deserialization without key should succeed");
-        assert!(cfg_without_key.sandbox_permissions.is_none());
-
-        // Case 2: `sandbox_permissions` is present but set to an *empty array*.
-        let toml_source_with_empty = "sandbox_permissions = []";
-        let cfg_with_empty: ConfigToml = toml::from_str(toml_source_with_empty)
-            .expect("TOML deserialization with empty array should succeed");
-        assert_eq!(Some(vec![]), cfg_with_empty.sandbox_permissions);
-
-        // Case 3: `sandbox_permissions` contains a non-empty list of valid values.
-        let toml_source_with_values = r#"
-            sandbox_permissions = ["disk-full-read-access", "network-full-access"]
-        "#;
-        let cfg_with_values: ConfigToml = toml::from_str(toml_source_with_values)
-            .expect("TOML deserialization with valid permissions should succeed");
-
-        assert_eq!(
-            Some(vec![
-                SandboxPermission::DiskFullReadAccess,
-                SandboxPermission::NetworkFullAccess
-            ]),
-            cfg_with_values.sandbox_permissions
-        );
-    }
 
     #[test]
     fn test_toml_parsing() {
@@ -641,22 +526,6 @@ persistence = "none"
             }),
             history_no_persistence_cfg.history
         );
-    }
-
-    /// Deserializing a TOML string containing an *invalid* permission should
-    /// fail with a helpful error rather than silently defaulting or
-    /// succeeding.
-    #[test]
-    fn test_sandbox_permissions_illegal_value() {
-        let toml_bad = r#"sandbox_permissions = ["not-a-real-permission"]"#;
-
-        let err = toml::from_str::<ConfigToml>(toml_bad)
-            .expect_err("Deserialization should fail for invalid permission");
-
-        // Make sure the error message contains the invalid value so users have
-        // useful feedback.
-        let msg = err.to_string();
-        assert!(msg.contains("not-a-real-permission"));
     }
 
     struct PrecedenceTestFixture {

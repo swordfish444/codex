@@ -1,26 +1,19 @@
 use clap::Parser;
-use codex_common::SandboxPermissionOption;
 use std::ffi::CString;
 
 use crate::landlock::apply_sandbox_policy_to_current_thread;
 
 #[derive(Debug, Parser)]
 pub struct LandlockCommand {
-    #[clap(flatten)]
-    pub sandbox: SandboxPermissionOption,
-
     /// Full command args to run under landlock.
     #[arg(trailing_var_arg = true)]
     pub command: Vec<String>,
 }
 
 pub fn run_main() -> ! {
-    let LandlockCommand { sandbox, command } = LandlockCommand::parse();
+    let LandlockCommand { command } = LandlockCommand::parse();
 
-    let sandbox_policy = match sandbox.permissions.map(Into::into) {
-        Some(sandbox_policy) => sandbox_policy,
-        None => codex_core::protocol::SandboxPolicy::new_read_only_policy(),
-    };
+    let sandbox_policy = codex_core::protocol::SandboxPolicy::new_read_only_policy();
 
     let cwd = match std::env::current_dir() {
         Ok(cwd) => cwd,
