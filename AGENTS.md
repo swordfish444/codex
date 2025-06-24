@@ -1,7 +1,7 @@
 # AGENTS.md
 
 **Agents:** Please update `agentydragon/README.md` with a brief summary of your work
-(features, fixes, refactors, documentation, etc.) whenever you make changes to this repository.
+(features, fixes, refactors, documentation, etc.) whenever you make changes to this repository. For work on tasks in `agentydragon/tasks/`, update the corresponding task Markdown’s **Status** and **Implementation** sections in place rather than maintaining a central task list.
 This serves as a branch-level changelog that the AI assistant will include in its context.
 
 # Rust/codex-rs
