@@ -17,6 +17,7 @@ goal: |
 - Role labels and message content appear on the same line, separated by a space.
 - Command-result annotations show a checkmark and duration for zero exit codes, or `exit code: N` and duration for nonzero codes, in the format `<icon or exit code> <duration>ms`.
 - Existing functionality remains unaffected beyond formatting changes.
+- Verbose background event logs (e.g. sandbox‑denied exec errors, retries) collapse into a single command execution entry showing command start, running indicator, and concise completion status.
 - Automated examples or tests verify the new rendering behavior.
 
 ## Implementation
