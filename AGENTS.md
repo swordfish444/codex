@@ -1,8 +1,12 @@
 # AGENTS.md
 
-**Agents:** Please update `agentydragon/README.md` with a brief summary of your work
-(features, fixes, refactors, documentation, etc.) whenever you make changes to this repository. For work on tasks in `agentydragon/tasks/`, update the corresponding task Markdown’s **Status** and **Implementation** sections in place rather than maintaining a central task list.
-This serves as a branch-level changelog that the AI assistant will include in its context.
+**Agents:**
+- Update `agentydragon/README.md` with a brief summary of your work (features, fixes, refactors, documentation, etc.) whenever you make changes to this repository.
+- Read `agentydragon/README.md` for the branch-level changelog and guidelines on task conventions.
+- For work on tasks, “add task” means creating a new Markdown file under `agentydragon/tasks/` using `task-template.md`:
+  - Name it with a two-digit prefix and kebab-case slug (e.g. `14-new-feature.md`).
+  - Fill in the **Status**, **Goal**, **Acceptance Criteria**, and **Implementation** sections.
+- No central task list should be maintained. The AI assistant will include these branch-level notes in its context.
 
 # Rust/codex-rs
 
