@@ -32,6 +32,7 @@ This file documents the changes introduced on the `agentydragon` branch
 - 10-inspect-container-state.md
 - 11-custom-approval-predicates.md
 - 12-internet-connection-toggle.md
+- 13-interactive-prompt-during-execution.md
 
 ---
 
