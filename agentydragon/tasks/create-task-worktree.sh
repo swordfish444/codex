@@ -58,11 +58,10 @@ if [ "$tmux_mode" = true ]; then
   first="${task_inputs[0]}"
   pane_cmd="$cmd${agent_mode:+ -a} $first"
   tmux new-session -d -s "$session" "$pane_cmd"
-  # Split for remaining tasks
+  # Open each additional task in its own tmux window
   for task in "${task_inputs[@]:1}"; do
-    tmux split-window -v "$cmd${agent_mode:+ -a} $task"
+    tmux new-window -t "$session" "$cmd${agent_mode:+ -a} $task"
   done
-  tmux select-layout tiled
   tmux attach -t "$session"
   exit 0
 fi
