@@ -87,7 +87,7 @@ export function TerminalChatCommandReview({
 
     if (showAlwaysApprove) {
       opts.push({
-        label: "Yes, always approve this exact command for this session (a)",
+        label: "Yes, always approve this exact patch for this session (a)",
         value: ReviewDecision.ALWAYS,
       });
     }
