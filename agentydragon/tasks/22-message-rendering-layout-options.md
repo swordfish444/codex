@@ -1,0 +1,33 @@
+---
+id: 22
+title: Message Separation and Sender-Content Layout Options
+status: Not started  # one of: Not started, Started, Needs manual review, Done, Cancelled
+summary: Add configurable options for inter-message spacing and sender-content line breaks in chat rendering.
+goal: |
+  Provide users with flexibility in how chat messages are visually separated and how sender labels are displayed relative to message content:
+  - Control whether an empty line is inserted between consecutive messages.
+  - Control whether sender and content appear on the same line or on separate lines.
+
+## Acceptance Criteria
+
+- Introduce two new config flags under the UI section:
+  - `message_spacing: true|false` controls inserting a blank line between messages when true.
+  - `sender_break_line: true|false` controls breaking line after the sender label when true.
+- Both flags default to `false` to preserve current compact layout.
+- When `message_spacing` is enabled, render an empty line between each message bubble or block.
+- When `sender_break_line` is enabled, render the sender label on its own line above the message content; otherwise render `Sender: Content` on a single line.
+- Ensure both flags can be toggled independently and work together in any combination.
+- Add unit tests to verify the four layout permutations produce the correct sequence of lines.
+
+## Implementation
+
+**How it was implemented**  
+- Extend the chat UI renderer to read `message_spacing` and `sender_break_line` from config.
+- In the message rendering routine, after emitting each message block, conditionally insert a blank line if `message_spacing` is true.
+- When rendering a message header, split layout based on `sender_break_line`: emit sender label and content either together or in two lines.
+- Write unit tests for all combinations of `(message_spacing, sender_break_line)` covering single-line messages, multi-line content, and boundaries.
+
+## Notes
+
+- These options improve readability for users who prefer more visual separation or clearer sender labels.
+- Keep default settings unchanged to avoid surprising existing users.
