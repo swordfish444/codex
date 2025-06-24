@@ -31,9 +31,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [ "$#" -ne 1 ]; then
-  echo "Usage: $0 [-a|--agent] [-t|--tmux] <task-id>-<task-slug> [<more-task-ids>...]"
-  exit 1
+# Validate number of task arguments based on mode
+if [ "$tmux_mode" = true ]; then
+  if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 [-a|--agent] [-t|--tmux] <task-id>-<task-slug> [<more-task-ids>...]"
+    exit 1
+  fi
+else
+  if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 [-a|--agent] [-t|--tmux] <task-id>-<task-slug> [<more-task-ids>...]"
+    exit 1
+  fi
 fi
 
 # Capture raw input so we can accept just a two-digit task ID
