@@ -44,14 +44,15 @@ mkdir -p "$worktrees_dir"
 
 # Create branch if it does not exist
 if ! git show-ref --verify --quiet "refs/heads/$branch"; then
-  echo "Creating branch $branch from master..."
-  git branch --track "$branch" master
+  echo "Creating branch $branch from agentydragon branch..."
+  git branch --track "$branch" agentydragon
 fi
 
 # Create worktree if it does not exist
 if [ ! -d "$worktree_path" ]; then
   echo "Creating worktree for $branch at $worktree_path"
   git worktree add "$worktree_path" "$branch"
+
 else
   echo "Worktree for $branch already exists at $worktree_path"
 fi
