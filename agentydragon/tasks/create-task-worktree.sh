@@ -7,8 +7,26 @@
 
 set -euo pipefail
 
+agent_mode=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -a|--agent)
+      agent_mode=true
+      shift
+      ;;
+    -h|--help)
+      echo "Usage: $0 [-a|--agent] <task-id>-<task-slug>"
+      echo "  -a, --agent    after creating/reusing, launch a codex agent in the task workspace"
+      exit 0
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
 if [ "$#" -ne 1 ]; then
-  echo "Usage: $0 <task-id>-<task-slug>"
+  echo "Usage: $0 [-a|--agent] <task-id>-<task-slug>"
   exit 1
 fi
 
@@ -39,3 +57,9 @@ else
 fi
 
 echo "Done."
+
+if [ "$agent_mode" = true ]; then
+  echo "Launching codex agent for task $task_slug in $worktree_path"
+  cd "$worktree_path"
+  codex "Read the task definition in agentydragon/tasks/$task_slug.md and update its **Status** and **Implementation** sections to make progress on the task. Continue editing the file until the task is complete."
+fi

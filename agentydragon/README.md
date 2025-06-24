@@ -25,9 +25,16 @@ Tasks live under `agentydragon/tasks/` as individual Markdown files. Please upda
 ### Branch & Worktree Workflow
 
 - **Branch convention**: work on each task in its own branch named `agentydragon/<task-id>-<task-slug>`.
-- **Worktree helper**: run `create-task-worktree.sh <task-id>-<task-slug>`
-  in `agentydragon/tasks/` to create or reuse a worktree at
-  `agentydragon/tasks/.worktrees/<task-id>-<task-slug>` off the `master` branch.
+- **Worktree helper**: in `agentydragon/tasks/`, run:
+-
+-   ```sh
+-   create-task-worktree.sh [--agent] <task-id>-<task-slug>
+-   ```
+-
+-  Without `--agent`, this creates or reuses a worktree at
+-  `agentydragon/tasks/.worktrees/<task-id>-<task-slug>` off the `master` branch.
+-  With `--agent`, after setup it launches a Codex agent in that workspace,
+-  preloaded to work on the specified task from its Markdown file.
 
 ---
 
