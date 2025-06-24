@@ -1,8 +1,8 @@
 # AGENTS.md
 
-**Agents:** Please update this file with a brief summary of your work (features, fixes,
-refactors, documentation, etc.) whenever you make changes to this repository. This serves
-as shared project notes and is automatically merged into the AI assistant's context.
+**Agents:** Please update `agentydragon/README.md` with a brief summary of your work
+(features, fixes, refactors, documentation, etc.) whenever you make changes to this repository.
+This serves as a branch-level changelog that the AI assistant will include in its context.
 
 # Rust/codex-rs
 
