@@ -58,14 +58,8 @@ struct SelectOption {
 // keep in same order as in the TS implementation
 const SELECT_OPTIONS: &[SelectOption] = &[
     SelectOption {
-        label: "Yes (y)",
+        label: "Yes, run this command (y)",
         decision: Some(ReviewDecision::Approved),
-
-        enters_input_mode: false,
-    },
-    SelectOption {
-        label: "Yes, always approve this exact patch for this session (a)",
-        decision: Some(ReviewDecision::ApprovedForSession),
 
         enters_input_mode: false,
     },

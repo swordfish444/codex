@@ -80,14 +80,14 @@ export function TerminalChatCommandReview({
       | { label: string; value: "switch" }
     > = [
       {
-        label: "Yes (y)",
+        label: "Yes, run this command (y)",
         value: ReviewDecision.YES,
       },
     ];
 
     if (showAlwaysApprove) {
       opts.push({
-        label: "Yes, always approve this exact patch for this session (a)",
+        label: "Yes, apply this patch (a)",
         value: ReviewDecision.ALWAYS,
       });
     }
