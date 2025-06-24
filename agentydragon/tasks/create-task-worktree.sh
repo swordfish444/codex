@@ -102,6 +102,12 @@ fi
 if [ ! -d "$worktree_path" ]; then
   echo "Creating worktree for $branch at $worktree_path"
   git worktree add "$worktree_path" "$branch"
+  # Install pre-commit hooks in the new worktree if pre-commit is available
+  if command -v pre-commit >/dev/null 2>&1; then
+    (cd "$worktree_path" && pre-commit install)
+  else
+    echo "Warning: pre-commit not found; skipping hook install in $worktree_path"
+  fi
 
 else
   echo "Worktree for $branch already exists at $worktree_path"
