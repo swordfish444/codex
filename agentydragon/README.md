@@ -28,7 +28,8 @@ Tasks live under `agentydragon/tasks/` as individual Markdown files. Please upda
 - **Worktree helper**: in `agentydragon/tasks/`, run:
 -
 -   ```sh
--   create-task-worktree.sh [--agent] <task-id>-<task-slug>
+-   # Accept either a full slug (NN-slug) or just the two-digit task ID:
+-   create-task-worktree.sh [--agent] <task-slug|NN>
 -   ```
 -
 -  Without `--agent`, this creates or reuses a worktree at
