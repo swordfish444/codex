@@ -48,6 +48,9 @@ yarn-error.log*
 
 # env
 .env*
+
+# oaipkg import cache
+oaipkg/
 !.env.example
 
 # package
