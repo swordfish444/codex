@@ -12,6 +12,7 @@ use crate::app_event_sender::AppEventSender;
 use crate::user_approval_widget::ApprovalRequest;
 
 mod approval_modal_view;
+mod mount_view;
 mod bottom_pane_view;
 mod chat_composer;
 mod chat_composer_history;
@@ -22,6 +23,7 @@ pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
 
 use approval_modal_view::ApprovalModalView;
+use mount_view::{MountAddView, MountRemoveView};
 use status_indicator_view::StatusIndicatorView;
 
 /// Pane displayed in the lower half of the chat UI.
@@ -133,6 +135,20 @@ impl BottomPane<'_> {
                 // No change.
             }
         }
+    }
+
+    /// Launch interactive mount-add dialog (host, container, [mode]).
+    pub fn push_mount_add_interactive(&mut self) {
+        let view = MountAddView::new(self.app_event_tx.clone());
+        self.active_view = Some(Box::new(view));
+        self.request_redraw();
+    }
+
+    /// Launch interactive mount-remove dialog (container path).
+    pub fn push_mount_remove_interactive(&mut self) {
+        let view = MountRemoveView::new(self.app_event_tx.clone());
+        self.active_view = Some(Box::new(view));
+        self.request_redraw();
     }
 
     /// Called when the agent requests user approval.

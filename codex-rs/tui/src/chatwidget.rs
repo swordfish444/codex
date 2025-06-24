@@ -413,6 +413,18 @@ impl ChatWidget<'_> {
         self.bottom_pane.update_status_text(line);
     }
 
+    /// Launch interactive mount-add dialog.
+    pub fn push_mount_add_interactive(&mut self) {
+        self.bottom_pane.push_mount_add_interactive();
+        self.request_redraw();
+    }
+
+    /// Launch interactive mount-remove dialog.
+    pub fn push_mount_remove_interactive(&mut self) {
+        self.bottom_pane.push_mount_remove_interactive();
+        self.request_redraw();
+    }
+
     fn request_redraw(&mut self) {
         self.app_event_tx.send(AppEvent::Redraw);
     }

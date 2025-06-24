@@ -60,6 +60,95 @@ struct ChatWidgetArgs {
     initial_images: Vec<PathBuf>,
 }
 
+/// Parse raw argument string for `/mount-add host=... container=... mode=...`.
+fn parse_mount_add_args(raw: &str) -> Result<(std::path::PathBuf, std::path::PathBuf, String), String> {
+    let mut host = None;
+    let mut container = None;
+    let mut mode = "rw".to_string();
+    for token in raw.split_whitespace() {
+        let mut parts = token.splitn(2, '=');
+        let key = parts.next().unwrap();
+        let value = parts.next().ok_or_else(|| format!("invalid argument '{}'", token))?;
+        match key {
+            "host" => host = Some(std::path::PathBuf::from(value)),
+            "container" => container = Some(std::path::PathBuf::from(value)),
+            "mode" => mode = value.to_string(),
+            _ => return Err(format!("unknown argument '{}'", key)),
+        }
+    }
+    let host = host.ok_or_else(|| "missing 'host' argument".to_string())?;
+    let container = container.ok_or_else(|| "missing 'container' argument".to_string())?;
+    Ok((host, container, mode))
+}
+
+/// Parse raw argument string for `/mount-remove container=...`.
+fn parse_mount_remove_args(raw: &str) -> Result<std::path::PathBuf, String> {
+    let mut container = None;
+    for token in raw.split_whitespace() {
+        let mut parts = token.splitn(2, '=');
+        let key = parts.next().unwrap();
+        let value = parts.next().ok_or_else(|| format!("invalid argument '{}'", token))?;
+        if key == "container" {
+            container = Some(std::path::PathBuf::from(value));
+        } else {
+            return Err(format!("unknown argument '{}'", key));
+        }
+    }
+    container.ok_or_else(|| "missing 'container' argument".to_string())
+}
+
+/// Handle inline mount-add DSL event.
+fn handle_inline_mount_add(config: &mut Config, raw: &str) -> Result<(), String> {
+    let (host, container, mode) = parse_mount_add_args(raw)?;
+    do_mount_add(config, &host, &container, &mode).map_err(|e| e.to_string())
+}
+
+/// Handle inline mount-remove DSL event.
+fn handle_inline_mount_remove(config: &mut Config, raw: &str) -> Result<(), String> {
+    let container = parse_mount_remove_args(raw)?;
+    do_mount_remove(config, &container).map_err(|e| e.to_string())
+}
+
+/// Perform mount-add: create symlink under cwd and update sandbox policy.
+fn do_mount_add(
+    config: &mut Config,
+    host: &std::path::PathBuf,
+    container: &std::path::PathBuf,
+    mode: &str,
+) -> std::io::Result<()> {
+    let host_abs = std::fs::canonicalize(host)?;
+    let target = config.cwd.join(container);
+    if target.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("target '{}' already exists", target.display()),
+        ));
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&host_abs, &target)?;
+    #[cfg(windows)]
+    {
+        if host_abs.is_file() {
+            std::os::windows::fs::symlink_file(&host_abs, &target)?;
+        } else {
+            std::os::windows::fs::symlink_dir(&host_abs, &target)?;
+        }
+    }
+    if mode.contains('w') {
+        config.sandbox_policy.allow_disk_write_folder(host_abs);
+    }
+    Ok(())
+}
+
+/// Perform mount-remove: remove symlink under cwd and revoke sandbox policy.
+fn do_mount_remove(config: &mut Config, container: &std::path::PathBuf) -> std::io::Result<()> {
+    let target = config.cwd.join(container);
+    let host = std::fs::read_link(&target)?;
+    std::fs::remove_file(&target)?;
+    config.sandbox_policy.revoke_disk_write_folder(host);
+    Ok(())
+}
+
 impl<'a> App<'a> {
     pub(crate) fn new(
         config: Config,
@@ -208,6 +297,30 @@ impl<'a> App<'a> {
                 AppEvent::Redraw => {
                     self.draw_next_frame(terminal)?;
                 }
+                AppEvent::InlineMountAdd(args) => {
+                    if let Err(err) = handle_inline_mount_add(&mut self.config, &args) {
+                        tracing::error!("mount-add failed: {err}");
+                    }
+                    self.app_event_tx.send(AppEvent::Redraw);
+                }
+                AppEvent::InlineMountRemove(args) => {
+                    if let Err(err) = handle_inline_mount_remove(&mut self.config, &args) {
+                        tracing::error!("mount-remove failed: {err}");
+                    }
+                    self.app_event_tx.send(AppEvent::Redraw);
+                }
+                AppEvent::MountAdd { host, container, mode } => {
+                    if let Err(err) = do_mount_add(&mut self.config, &host, &container, &mode) {
+                        tracing::error!("mount-add failed: {err}");
+                    }
+                    self.app_event_tx.send(AppEvent::Redraw);
+                }
+                AppEvent::MountRemove { container } => {
+                    if let Err(err) = do_mount_remove(&mut self.config, &container) {
+                        tracing::error!("mount-remove failed: {err}");
+                    }
+                    self.app_event_tx.send(AppEvent::Redraw);
+                }
                 AppEvent::KeyEvent(key_event) => {
                     match key_event {
                         KeyEvent {
@@ -272,6 +385,18 @@ impl<'a> App<'a> {
                     }
                     SlashCommand::Quit => {
                         break;
+                    }
+                    SlashCommand::MountAdd => {
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.push_mount_add_interactive();
+                            self.app_event_tx.send(AppEvent::Redraw);
+                        }
+                    }
+                    SlashCommand::MountRemove => {
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.push_mount_remove_interactive();
+                            self.app_event_tx.send(AppEvent::Redraw);
+                        }
                     }
                 },
             }

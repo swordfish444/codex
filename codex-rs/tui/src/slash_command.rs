@@ -15,6 +15,10 @@ pub enum SlashCommand {
     New,
     ToggleMouseMode,
     Quit,
+    /// Add a dynamic mount (host path → container path).
+    MountAdd,
+    /// Remove a dynamic mount by container path.
+    MountRemove,
 }
 
 impl SlashCommand {
@@ -22,10 +26,11 @@ impl SlashCommand {
     pub fn description(self) -> &'static str {
         match self {
             SlashCommand::New => "Start a new chat.",
-            SlashCommand::ToggleMouseMode => {
-                "Toggle mouse mode (enable for scrolling, disable for text selection)"
-            }
+            SlashCommand::ToggleMouseMode =>
+                "Toggle mouse mode (enable for scrolling, disable for text selection)",
             SlashCommand::Quit => "Exit the application.",
+            SlashCommand::MountAdd => "Add a mount: host path → container path.",
+            SlashCommand::MountRemove => "Remove a mount by container path.",
         }
     }
 
