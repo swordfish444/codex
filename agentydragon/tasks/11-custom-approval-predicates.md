@@ -39,3 +39,6 @@ Allow users to plug in an external executable that makes approval decisions for 
 
 - Consider passing context via environment variables (e.g. `CODEX_SESSION_ID`, `CODEX_CONTAINER_CWD`, `CODEX_HOST_CWD`, `CODEX_COMMAND`).
 - Reuse invocation logic from the auto-approval predicates feature (Task 02).
+- **Motivating example**: auto-approve `pre-commit run --files <any number of space-separated files>`.
+- **Motivating example**: auto-approve any `git` command (e.g. `git add`, `git commit`, `git push`, `git status`, etc.) provided its repository root is under `<directory>`, correctly handling common flags and safe invocation modes.
+- **Motivating example**: auto-approve any shell pipeline composed out of `<these known-safe commands>` operating on `<known-safe files>` with `<known-safe params>`, using a general pipeline parser to ensure safety—a nontrivial example of predicate logic.
