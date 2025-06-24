@@ -3,7 +3,7 @@
 # create-task-worktree.sh
 #
 # Create or reuse a git worktree for a specific task branch under agentydragon/tasks/.worktrees.
-# Usage: create-task-worktree.sh [-a|--agent] [-t|--tmux] <task-id>-<task-slug> [<more-task-ids>...]
+# Usage: create-task-worktree.sh [-a|--agent] [-t|--tmux] <task-slug|NN> [<task-slug|NN>...]
 
 set -euo pipefail
 
@@ -20,9 +20,9 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      echo "Usage: $0 [-a|--agent] [-t|--tmux] <task-id>-<task-slug> [<more-task-ids>...]"
+      echo "Usage: $0 [-a|--agent] [-t|--tmux] <task-slug|NN> [<task-slug|NN>...]"
       echo "  -a, --agent    after creating/reusing, launch a codex agent in the task workspace"
-      echo "  -t, --tmux     open multiple tasks in tmux session (implies --agent)"
+      echo "  -t, --tmux     launch each agent review in a tiled tmux session (implies --agent)"
       exit 0
       ;;
     *)
