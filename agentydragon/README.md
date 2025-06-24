@@ -28,8 +28,8 @@ Tasks live under `agentydragon/tasks/` as individual Markdown files. Please upda
 - **Worktree helper**: in `agentydragon/tasks/`, run:
 -
 -   ```sh
--   # Accept either a full slug (NN-slug) or just the two-digit task ID:
--   create-task-worktree.sh [--agent] <task-slug|NN>
+-   # Accept a full slug (NN-slug) or two-digit task ID (NN), optionally multiple; use --tmux to open each in a tmux window:
+-   create-task-worktree.sh [--agent] [--tmux] <task-slug|NN> [<task-slug|NN>...]
 -   ```
 -
 -  Without `--agent`, this creates or reuses a worktree at
