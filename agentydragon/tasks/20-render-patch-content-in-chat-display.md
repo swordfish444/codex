@@ -19,6 +19,8 @@ goal: |
 - File paths in diff headers are shown relative to the current working directory, unless the file resides outside the CWD.
 - Event logs around patch application are simplified: drop structured event data and replace with a simple status note (e.g. "patch applied").
 - Configurable parameter (e.g. `patch_context_lines`) controls the number of context lines for collapsed hunks.
+- Preserve the user’s draft input when an approval dialog or patch diff appears; ensure the draft editor remains visible so users can continue editing while reviewing.
+- Provide end-to-end integration tests that simulate drafting long messages, triggering approval dialogs and overlays, and verify that all UI elements (draft editor, diffs, logs) render correctly without overlap or content loss.
 
 ## Implementation
 
@@ -26,6 +28,8 @@ goal: |
 - Extend the chat renderer to detect patch approval prompts and render diffs using a custom formatter.
 - Compute relative paths via `Path::strip_prefix`, falling back to full path if outside CWD.
 - Track the current patch ID and render its full content; collapse previous patch bodies according to `patch_context_lines` setting.
+- Preserve and render the current draft buffer alongside the active patch diff, ensuring live edits remain visible during approval steps.
+- Add integration tests using the TUI test harness or end-to-end framework to simulate user input of long text, approval flows, overlay dialogs, and log output, asserting correct screen layout and content integrity.
 - Replace verbose event debug output with a single-line status message.
 
 ## Notes
