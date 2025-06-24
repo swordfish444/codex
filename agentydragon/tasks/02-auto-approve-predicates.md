@@ -8,19 +8,19 @@
 **Summary**: Not started; missing Implementation details (How it was implemented and How it works).
 
 ## Goal
-Let users configure one or more scripts in `config.toml` that examine each proposed shell command and output exactly one of:
+Let users configure one or more scripts in `config.toml` that examine each proposed shell command and return exactly one of:
 
-- `continue`        => auto-approve and proceed under the sandbox
-- `deny`            => auto-reject (skip sandbox and do not run the command)
-- `user-confirm`    => pause execution and open the interactive approval dialog for manual decision
+- `deny`        => auto-reject (skip sandbox and do not run the command)
+- `allow`       => auto-approve and proceed under the sandbox
+- `no-opinion`  => no opinion (neither approve nor reject)
 
-If the script exits non-zero or prints anything else, default to `user-confirm`.
+Multiple scripts cast votes: if any script returns `deny`, the command is denied; otherwise if any script returns `allow`, the command is allowed; otherwise (all scripts return `no-opinion` or exit non-zero), pause for manual approval (existing logic).
 
 ## Acceptance Criteria
 - New `[[auto_allow]]` table in `config.toml` supporting one or more `script = "..."` entries.
 - Before running any shell/subprocess, Codex invokes each configured script in order, passing the candidate command as an argument.
-- If a script prints `continue`/`deny`/`user-confirm`, take that action and skip remaining scripts.
-- If all scripts return non-zero or invalid output, pause for manual approval (existing logic).
+- If a script returns `deny` or `allow`, immediately take that vote and skip remaining scripts.
+- After all scripts complete with only `no-opinion` results or errors, pause for manual approval (existing logic).
 
 ## Implementation
 
