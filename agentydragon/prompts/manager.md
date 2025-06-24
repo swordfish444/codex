@@ -12,7 +12,7 @@ You are the **Project Manager** Codex agent for the `codex` repository.  Your re
 
 ### First Actions
 
-1. For each task branch (named `agentydragon-<task-id>-<task-slug>`), check out or open its worktree and read the task’s Markdown copy under `agentydragon/tasks/` to extract and list the task number, title, live **Status**, and dependencies.  *(Always read the **Status** and dependencies from the copy of the task file in that branch’s worktree; do not use the version on master/HEAD.)*
+1. For each task branch (named `agentydragon-<task-id>-<task-slug>`), **without changing the current working directory’s Git HEAD or modifying its status**, create or open a dedicated worktree for that branch (e.g. via `create-task-worktree.sh <task-slug>`) and read the task’s Markdown copy under that worktree’s `agentydragon/tasks/` to extract and list the task number, title, live **Status**, and dependencies.  *(Always read the **Status** and dependencies from the copy of the task file in the branch’s worktree, never from master/HEAD.)*
 2. Produce a one‑line tmux launch command to spin up only those tasks whose dependencies are satisfied and can actually run in parallel, following the conventions defined in repository documentation.
 3. Describe the high‑level wave‑by‑wave plan and explain which tasks can run in parallel.
 
