@@ -1,9 +1,9 @@
 +++
 id = "16"
 title = "Confirm on Ctrl+D to Exit"
-status = "Not started"
-dependencies = "" # No prerequisites
-last_updated = "2025-06-25T01:40:09.513723"
+status = "Merged"
+dependencies = ""
+last_updated = "2025-06-25T05:36:23.493497"
 +++
 
 # Task 16: Confirm on Ctrl+D to Exit

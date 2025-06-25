@@ -1,9 +1,9 @@
 +++
 id = "19"
 title = "Bash Command Rendering Improvements for Less Verbosity"
-status = "Done"
+status = "Merged"
 dependencies = "02,07,09,11,14,29"
-last_updated = "2025-06-25T01:40:09.600000"
+last_updated = "2025-06-25T05:36:32.641375"
 +++
 
 > *This task is specific to per-agent UI conventions and log readability.*

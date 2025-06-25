@@ -1,9 +1,9 @@
 +++
 id = "03"
 title = "Live Config Reload and Prompt on Changes"
-status = "Done"
+status = "Merged"
 dependencies = "02,07,09,11,14,29"
-last_updated = "2025-06-25T01:40:09.504758"
+last_updated = "2025-06-25T05:36:17.783726"
 +++
 
 # Task 03: Live Config Reload and Prompt on Changes
