@@ -1,5 +1,5 @@
-++ # Task 18: Chat UI Textarea Overlay and Border Styling Fix
-++
+# Task 18: Chat UI Textarea Overlay and Border Styling Fix
+
 ---
 id: 18
 title: Chat UI Textarea Overlay and Border Styling Fix
@@ -34,9 +34,3 @@ goal: |
 - This involves updating the rendering logic in the TUI modules (likely under `tui/src/` in `codex-rs`).
 - Ensure layout changes do not break existing tests or rendering in unusual terminal sizes.
 - Consider writing a simple snapshot test or manual demo script to validate border and overlay behavior.
-
----
-Run the frontmatter linter to ensure conformance:
-```bash
-python3 agentydragon/tools/check_task_frontmatter.py agentydragon/tasks/18-chat-ui-textarea-overlay-border-fix.md
-```

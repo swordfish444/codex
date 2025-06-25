@@ -29,9 +29,3 @@ Explain runtime behavior and overall operation.
 ## Notes
 
 Any additional notes or references.
-
----
-Run the frontmatter linter to ensure conformance:
-```bash
-python3 ../tools/check_task_frontmatter.py
-```
