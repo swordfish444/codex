@@ -21,6 +21,8 @@ pub enum SlashCommand {
     MountAdd,
     /// Remove a dynamic mount by container path.
     MountRemove,
+    /// Inspect sandbox and container environment (mounts, permissions, network).
+    InspectEnv,
 }
 
 impl SlashCommand {
@@ -35,6 +37,7 @@ impl SlashCommand {
             SlashCommand::Quit => "Exit the application.",
             SlashCommand::MountAdd => "Add a mount: host path → container path.",
             SlashCommand::MountRemove => "Remove a mount by container path.",
+            SlashCommand::InspectEnv => "Inspect sandbox and container environment (mounts, permissions, network)",
         }
     }
 
@@ -48,4 +51,21 @@ impl SlashCommand {
 /// Return all built-in commands in a HashMap keyed by their command string.
 pub fn built_in_slash_commands() -> HashMap<&'static str, SlashCommand> {
     SlashCommand::iter().map(|c| (c.command(), c)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn built_in_includes_inspect_env() {
+        let commands = built_in_slash_commands();
+        assert_eq!(commands.get("inspect-env"), Some(&SlashCommand::InspectEnv));
+    }
+
+    #[test]
+    fn inspect_env_description_contains_keyword() {
+        let desc = SlashCommand::InspectEnv.description();
+        assert!(desc.contains("sandbox"), "description was: {}", desc);
+    }
 }
