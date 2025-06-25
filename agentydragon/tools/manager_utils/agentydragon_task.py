@@ -2,6 +2,7 @@
 CLI for managing agentydragon tasks: status, set-status, set-deps, dispose, launch.
 """
 import subprocess
+import re
 import sys
 from datetime import datetime
 
@@ -26,7 +27,18 @@ def status():
     If tabulate is installed, render as GitHub-flavored Markdown table;
     otherwise fallback to fixed-width formatting.
     """
+    # preload all task statuses to filter dependencies
+    all_meta = {}
+    for md in sorted(task_dir().glob('*.md')):
+        if md.name == 'task-template.md' or md.name.endswith('-plan.md'):
+            continue
+        try:
+            meta, _ = load_task(md)
+        except ValueError:
+            continue
+        all_meta[meta.id] = meta
     rows = []
+    merged_tasks = []  # collect merged tasks for bottom summary
     root = repo_root()
     for md in sorted(task_dir().glob('*.md')):
         if md.name == 'task-template.md' or md.name.endswith('-plan.md'):
@@ -61,7 +73,7 @@ def status():
                 capture_output=True, text=True
             ).stdout.strip()
             wt_clean = 'Clean' if not status_out else 'Dirty'
-        # derive branch & merge status
+        # derive branch & merge status (unchanged)
         if branches:
             bname = branches[0]
             # merged into agentydragon?
@@ -106,11 +118,25 @@ def status():
             wt_info = wt_clean
         else:
             wt_info = 'none'
+        # skip fully merged tasks (no branch, no worktree) into summary
+        if meta.status == 'Merged' and branch_info == 'no branch' and wt_info == 'none':
+            merged_tasks.append((meta.id, meta.title))
+            continue
+        # filter out merged dependencies by ID
+        deps = [d.strip() for d in re.findall(r"\d+", meta.dependencies)]
+        deps = [d for d in deps if all_meta.get(d, None) and all_meta[d].status != 'Merged']
+        deps_str = ','.join(deps)
+        # color status and worktree info with ANSI codes
+        stat_disp = meta.status
+        wt_disp = wt_info
+        if wt_info.lower() == 'dirty':
+            wt_disp = f"\033[31m{wt_info}\033[0m"
+        if meta.status in ('Done', 'Merged'):
+            stat_disp = f"\033[32m{meta.status}\033[0m"
         rows.append((
-            meta.id, meta.title, meta.status,
-            meta.dependencies.replace('\n', ' '),
-            meta.last_updated.strftime('%Y-%m-%d %H:%M'),
-            branch_info, wt_info
+            meta.id, meta.title, stat_disp,
+            deps_str, meta.last_updated.strftime('%Y-%m-%d %H:%M'),
+            branch_info, wt_disp
         ))
     headers = ['ID', 'Title', 'Status', 'Dependencies', 'Updated',
                'Branch Status', 'Worktree Status']
@@ -125,6 +151,10 @@ def status():
         print(fmt.format(*headers))
         for r in rows:
             print(fmt.format(*r))
+    # summary of merged tasks (no branch, no worktree)
+    if merged_tasks:
+        items = ' '.join(f"{tid} ({title})" for tid, title in merged_tasks)
+        print(f"\n\033[32mDone & merged:\033[0m {items}")
 
 @cli.command()
 @click.argument('task_id')
