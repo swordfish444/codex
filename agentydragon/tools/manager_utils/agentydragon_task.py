@@ -206,7 +206,8 @@ def dispose(task_id):
             capture_output=True, text=True, cwd=root
         ).stdout.splitlines()
         for br in branches:
-            name = br.strip().lstrip('* ').strip()
+            # strip markers for current (*) or other worktrees (+) and whitespace
+            name = br.lstrip('*+ ').strip()
             if name:
                 subprocess.run(['git', 'branch', '-D', name], cwd=root)
         click.echo(f'Disposed task {tid}')
