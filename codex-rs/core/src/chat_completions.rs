@@ -116,6 +116,18 @@ pub(crate) async fn stream_chat_completions(
         }
     }
 
+    // If a tool invocation was never resolved (e.g. was cancelled), insert a fake cancellation result and flush buffered user inputs
+    if let Some(call_id) = pending_call.take() {
+        messages.push(json!({
+            "role": "tool",
+            "tool_call_id": call_id,
+            "content": "Tool cancelled"
+        }));
+        for msg in buf_user.drain(..) {
+            messages.push(msg);
+        }
+    }
+
     let tools_json = create_tools_json_for_chat_completions_api(prompt, model)?;
     let payload = json!({
         "model": model,

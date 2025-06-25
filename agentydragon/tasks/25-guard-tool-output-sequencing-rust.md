@@ -30,7 +30,7 @@ We will implement the following high-level plan:
 - Add tests under `codex-rs/core/tests/` (e.g. `guard_tool_output_sequencing.rs`) that exercise interleaved input sequences:
   - A user message mid-rollout before tool output, ensuring it is delayed until after the tool result.
   - Normal flow where no buffering is needed.
-  - Cancellation or error-result paths that also trigger a flush of buffered messages.
+  - Cancellation paths (no tool output) inserting a fake "Tool cancelled" tool message and flushing buffered messages.
 
 ## Notes
 
