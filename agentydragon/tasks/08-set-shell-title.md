@@ -1,9 +1,9 @@
 +++
 id = "08"
 title = "Set Shell Title to Reflect Session Status"
-status = "Complete"
+status = "Done"
 dependencies = "02,07,09,11,14,29"
-last_updated = "2025-06-25T01:40:09.506643"
+last_updated = "2025-06-30T12:00:00.000000"
 +++
 
 # Task 08: Set Shell Title to Reflect Session Status
@@ -12,8 +12,8 @@ last_updated = "2025-06-25T01:40:09.506643"
 
 ## Status
 
-**General Status**: Complete  
-**Summary**: All acceptance criteria have been implemented and verified. Shell title functionality is fully operational.
+**General Status**: Done  
+**Summary**: Implemented session title persistence, `/set-title` slash command, and real-time ANSI updates in both TUI and exec clients.
 
 ## Goal
 
@@ -31,22 +31,19 @@ Allow the CLI to update the terminal title bar to reflect the current session st
 - Ensure title updates work across Linux, macOS, and Windows terminals via ANSI escape sequences.
 
 ## Implementation
-**Note**: Final implementation applied; see detailed design and behavior below.
+**Note**: Populate this section with a concise high-level plan before beginning detailed implementation.
 
-**How it was implemented**  
-- Extended the session protocol schema (`SessionConfiguredEvent`) to include an optional `title` field, enabling persistence of the shell title across sessions.  
-- Added a new slash command `/set-title <text>` in the TUI (`slash_command.rs` and `app.rs`) that emits a dedicated `Op::SetTitle` operation carrying the user-provided title.  
-- Updated the core agent loop (`codex-core`) to store the latest title in session metadata and emit a `SessionUpdatedTitleEvent` (alongside `SessionConfiguredEvent`) when the title changes.  
-- In both the interactive TUI (`tui/src/chatwidget.rs`) and non-interactive exec client (`exec/src/event_processor.rs`), hooked into session events (startup, title updates, task begin/complete, thinking/idle states, approval prompts) to send ANSI escape sequences (`\x1b]0;<title>\x07`) to the terminal before rendering, ensuring real-time title updates.  
-- Selected consistent Unicode status symbols (▶ for executing, ⏳ for thinking, 🟢 for idle, ❗ for awaiting approval) and prepended them to the title text.  
-- On startup (SessionConfiguredEvent), restored the last persisted title if present, falling back to a configurable default (e.g. “Codex CLI”).
+**Planned approach**  
+- Extend the session protocol schema (`SessionConfiguredEvent`) in `codex-rs/core` to include an optional `title` field and introduce a new `SessionUpdatedTitleEvent` type.  
+- Add a `SetTitle { title: String }` variant to the `Op` enum for custom titles and implement the `/set-title <text>` slash command in the TUI crates (`tui/src/slash_command.rs`, `tui/src/app_event.rs`, and `tui/src/app.rs`).  
+- Modify the core agent loop to handle `Op::SetTitle`: persist the new title in session metadata, emit a `SessionUpdatedTitleEvent`, and include the persisted title in `SessionConfiguredEvent` on startup/resume.  
+- Implement event listeners in both the interactive TUI (`tui/src/chatwidget.rs`) and non-interactive exec client (`exec/src/event_processor.rs`) that respond to session, title, and lifecycle events (session start, task begin/end, reasoning, idle, approval) by emitting ANSI escape sequences (`\x1b]0;<symbol> <title>\x07`) to update the terminal title bar.  
+- Choose consistent Unicode symbols for each session state—executing (▶), thinking (⏳), idle (🟢), awaiting approval (❗)—and apply these as status indicators prefixed to the title.  
+- On session startup or resume, restore the last persisted title or fall back to a default if none exists.
 
 **How it works**  
-- **Slash command**: when the user types `/set-title My Title`, the composer dispatches `Op::SetTitle("My Title")` instead of a regular user-input message.  
-- **Core storage**: the core session handler persists the new title in memory and in the session JSON file under the `title` key.  
-- **Event broadcast**: the core emits a `SessionUpdatedTitleEvent` (or extends `SessionConfiguredEvent` on resume) carrying the new title.  
-- **ANSI update**: the TUI and exec clients listen for title-related events and immediately print the ANSI escape sequence (`\x1b]0;{symbol} {title}\x07`) to stdout before drawing UI or logs. Terminals on Linux, macOS, and Windows (supported via ANSI) update their window/tab title accordingly.  
-- **Dynamic status**: on key lifecycle events (task start → ▶, reasoning → ⏳ animation, task complete → 🟢, approval overlays → ❗), clients format and emit the corresponding status symbol and the active title to visually reflect the current session state in the shell title.
+- Users type `/set-title MyTitle` to set a custom session title; the core persists it and broadcasts a `SessionUpdatedTitleEvent`.  
+- Clients print the appropriate ANSI escape code to update the terminal title before rendering UI or logs, reflecting real-time session state via the selected status symbol prefix.
 
 ## Notes
 
