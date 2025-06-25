@@ -406,6 +406,12 @@ impl WidgetRef for &UserApprovalWidget<'_> {
             }
         };
 
+        // Fill the entire dialog area with a solid background to block underlying text.
+        for row in area.y..area.y + area.height {
+            for col in area.x..area.x + area.width {
+                buf[(col, row)].set_bg(Color::DarkGray);
+            }
+        }
         outer.render(area, buf);
         self.confirmation_prompt.clone().render(prompt_chunk, buf);
         Widget::render(List::new(lines), response_chunk, buf);
@@ -417,6 +423,9 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::sync::mpsc;
+    use ratatui::buffer::{Buffer, Cell};
+    use ratatui::layout::Rect;
+    use ratatui::style::{Color, Style};
 
     #[test]
     fn esc_in_input_mode_cancels_input_and_preserves_value() {
@@ -465,5 +474,46 @@ mod tests {
         let truncated = session_scoped_label(&long_cmd, 10);
         assert!(truncated.starts_with("Yes, always allow running `"));
         assert!(truncated.ends_with("` for this session (a)"));
+    }
+
+    #[test]
+    fn render_approval_dialog_fills_background() {
+        // Arrange: create a basic Exec approval widget in Select mode.
+        let (tx, _) = mpsc::channel();
+        let app_event_tx = AppEventSender::new(tx);
+        let widget = UserApprovalWidget::new(
+            ApprovalRequest::Exec {
+                id: "id".into(),
+                command: vec!["cmd".into()],
+                cwd: std::env::current_dir().unwrap(),
+                reason: None,
+            },
+            app_event_tx,
+        );
+
+        // Determine dialog area size.
+        let width = 50;
+        let height = widget.get_height(&Rect::new(0, 0, width, u16::MAX));
+        let area = Rect::new(0, 0, width, height);
+
+        // Pre-fill buffer with a sentinel background (red).
+        let mut buf = Buffer::empty(area);
+        for row in area.y..area.y + area.height {
+            for col in area.x..area.x + area.width {
+                buf[(col, row)].set_bg(Color::Red);
+            }
+        }
+
+        // Act: render the widget
+        (&widget).render_ref(area, &mut buf);
+
+        // Assert: no cell in dialog region remains transparent or retains the sentinel background.
+        for row in area.y..area.y + area.height {
+            for col in area.x..area.x + area.width {
+                let cell = buf.cell((col, row)).unwrap();
+                assert_ne!(cell.bg, Color::Reset, "Found transparent cell at ({}, {})", col, row);
+                assert_ne!(cell.bg, Color::Red, "Found unfilled cell at ({}, {})", col, row);
+            }
+        }
     }
 }
