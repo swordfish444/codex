@@ -5,7 +5,7 @@
 ## Status
 
 **General Status**: Merged  
-**Summary**: Not started; missing Implementation details (How it was implemented and How it works).
+**Summary**: Implemented custom approval predicates feature: configuration parsing, predicate invocation logic, tests, and documentation.
 
 ## Goal
 
@@ -30,10 +30,19 @@ Allow users to plug in an external executable that makes approval decisions for 
 ## Implementation
 
 **How it was implemented**  
-*(Not implemented yet)*
+- Added `approval_predicates` field to `ConfigToml` and `Config` in `codex_core::config`, supporting a `python_predicate_binary: PathBuf` and an implicit `never_expire = true`.
+- Hooked into the command-approval code path in `codex_core::safety` to invoke each configured predicate executable before showing the approval prompt. Predicates are launched via `std::process::Command` with context passed in environment variables (`CODEX_SESSION_ID`, `CODEX_CONTAINER_CWD`, `CODEX_HOST_CWD`, `CODEX_COMMAND`).
+- Parsed each predicate’s stdout for exactly `allow`, `deny`, or `ask`, short-circuiting on `allow` or `deny` (auto-approve/auto-reject) and treating failures or unexpected output as `ask` to continue to the next predicate.
+- Wrote unit tests for configuration parsing and predicate-invocation behavior, covering exit-code and output edge cases, plus integration tests verifying end-to-end approval decisions.
+- Updated `config.md` to document the `[[approval_predicates]]` table syntax, default semantics, and runtime behavior.
 
 **How it works**  
-*(Not implemented yet)*
+When a shell command requires approval, Codex iterates over each entry in `[[approval_predicates]]` in order. For each predicate:
+- Launch the configured binary with session context in its environment.
+- If it exits successfully and writes `allow`, Codex auto-approves and skips remaining predicates.
+- If it writes `deny`, Codex auto-rejects and skips remaining predicates.
+- Otherwise (writes `ask`, fails, or emits unexpected output), Codex moves to the next predicate or falls back to the manual approval dialog if none return `allow` or `deny`.
+This mechanism lets users automate approval decisions via custom Python scripts while retaining manual control when predicates defer.
 
 ## Notes
 
