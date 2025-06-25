@@ -46,6 +46,9 @@ This file documents the changes introduced on the `agentydragon` branch
 - Added an inline TOML snippet under “Model Context Protocol Support” in `codex-rs/README.md` showing how to configure external `mcp_servers` entries in `~/.codex/config.toml`.
 - Documented `codex mcp` behavior: JSON-RPC over stdin/stdout, optional sandbox, no ephemeral container, default `codex` tool schema, and example ListTools/CallTool schema.
 
+## codex-rs/tui: tests for interactive prompt overlay during execution
+  - Added unit tests in `tui/src/bottom_pane/mod.rs` to verify that character input and Enter during `is_task_running` forwards input to the composer, maintains the status indicator overlay, emits redraw events, and that the overlay is removed when the task completes.
+
 ## Documentation tasks
 
 Tasks live under `agentydragon/tasks/` as individual Markdown files. Please update each task’s **Status** and **Implementation** sections in place rather than maintaining a static list here.
