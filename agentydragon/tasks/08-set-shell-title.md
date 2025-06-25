@@ -1,9 +1,9 @@
 +++
 id = "08"
 title = "Set Shell Title to Reflect Session Status"
-status = "Done"
+status = "Merged"
 dependencies = "02,07,09,11,14,29"
-last_updated = "2025-06-30T12:00:00.000000"
+last_updated = "2025-06-25T04:06:55.265790"
 +++
 
 # Task 08: Set Shell Title to Reflect Session Status
