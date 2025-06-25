@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 import click
-from tasklib import load_task, save_task
+from tasklib import load_task, save_task, TaskMeta
 
 
 @click.group()
@@ -25,8 +25,9 @@ def task_dir():
 def status():
     """Show a table of task id, title, status, dependencies, last_updated"""
     rows = []
-    print(f"{task_dir = }")
     for md in sorted(task_dir().glob('*.md')):
+        if md.name == 'task-template.md' or md.name.endswith('-plan.md'):
+            continue
         try:
             meta, _ = load_task(md)
         except ValueError as e:
@@ -73,6 +74,45 @@ def status():
     ))
     for r in rows:
         print(fmt.format(*r))
+
+@cli.command()
+def applyfrontmatter():
+    """Add TOML frontmatter to task files missing it."""
+    for md in sorted(task_dir().glob('*.md')):
+        if md.name == 'task-template.md' or md.name.endswith('-plan.md'):
+            continue
+        try:
+            load_task(md)
+            continue
+        except ValueError:
+            pass
+        text = md.read_text(encoding='utf-8')
+        # parse id from filename prefix
+        task_id = md.stem.split('-', 1)[0]
+        # parse title
+        title = ''
+        for line in text.splitlines():
+            if line.startswith('# Task '):
+                parts = line.split(':', 1)
+                title = parts[1].strip() if len(parts) == 2 else line.lstrip('# ').strip()
+                break
+        if not title:
+            click.echo(f'Could not parse title from {md}', err=True)
+            continue
+        # parse status
+        status = ''
+        in_status = False
+        for line in text.splitlines():
+            if in_status and line.strip().startswith('**General Status**:'):
+                status = line.split(':', 1)[1].strip()
+                break
+            if line.strip() == '## Status':
+                in_status = True
+        if not status:
+            status = 'Not started'
+        meta = TaskMeta(id=task_id, title=title, status=status)
+        save_task(md, meta, text)
+        click.echo(f'Applied TOML frontmatter to {md}')
 
 @cli.command()
 @click.argument('task_id')
