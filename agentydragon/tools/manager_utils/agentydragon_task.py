@@ -8,6 +8,7 @@ from datetime import datetime
 
 import click
 from tasklib import load_task, repo_root, save_task, task_dir
+import shutil
 
 try:
     from tabulate import tabulate
@@ -197,9 +198,13 @@ def dispose(task_id):
     for tid in task_id:
         # Remove any matching worktree directories
         for wt_dir in wt_base.glob(f'{tid}-*'):
-            # remove worktree by path relative to repo root
+            # unregister worktree; then delete the directory if still present
             rel = wt_dir.relative_to(root)
             subprocess.run(['git', 'worktree', 'remove', str(rel), '--force'], cwd=root)
+            if wt_dir.exists():
+                shutil.rmtree(wt_dir)
+        # prune any stale worktree entries
+        subprocess.run(['git', 'worktree', 'prune'], cwd=root)
         # Delete any matching branches
         # delete any matching local branches cleanly via for-each-ref
         ref_pattern = f'refs/heads/agentydragon-{tid}-*'
