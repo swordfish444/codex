@@ -23,10 +23,14 @@ Enhance the codex-rs TUI by adding a status indicator that displays the percenta
 ## Implementation
 
 **How it was implemented**  
-- Extend the session state in `tui/src/app.rs` or relevant module to track token usage and context limit.
-- After each send/receive event, recalculate `remaining = (limit - used) * 100 / limit`.
-- Render the indicator via the status bar widget (`tui/src/status_indicator_widget.rs`), appending `"{remaining}% context left"`.
-- Add tests in `tui/tests/` that simulate message additions and assert the status rendering shows correct percentages at key usage points.
+- Added a `history_items: Vec<ResponseItem>` field to `ChatWidget` to accumulate the raw sequence of messages and function calls.
+- Created a new module `tui/src/context.rs` mirroring the JS heuristics:
+  - `approximate_tokens_used(&[ResponseItem])`: counts characters in text and function-call items, divides by 4 and rounds up.
+  - `max_tokens_for_model(&str)`: uses a registry of known model limits and heuristic fallbacks (32k, 16k, 8k, 4k, default 128k).
+  - `calculate_context_percent_remaining(&[ResponseItem], &str)`: computes `(remaining / max) * 100`.
+- Updated `ChatWidget::replay_items` and `ChatWidget::handle_codex_event` to push each incoming `ResponseItem` into `history_items`.
+- Modified `ChatComposer::render_ref` to query `calculate_context_percent_remaining`, format and display "<N>% context left" after the input area, coloring it green/yellow/red per thresholds (>40%, 25–40%, ≤25%).
+- Added unit tests in `tui/tests/context_percent.rs` covering token counting, model heuristics, percent rounding, and boundary conditions.
 
 ## Notes
 

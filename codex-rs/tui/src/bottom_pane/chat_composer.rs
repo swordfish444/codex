@@ -2,8 +2,7 @@ use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Alignment;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
-use ratatui::style::Stylize;
+use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::Line;
 use ratatui::widgets::BorderType;
 use ratatui::widgets::Borders;
@@ -38,6 +37,8 @@ pub(crate) struct ChatComposer<'a> {
     history: ChatComposerHistory,
     /// Maximum number of visible lines in the chat input composer.
     max_rows: usize,
+    /// Last computed context-left percentage
+    context_left_percent: f64,
 }
 
 impl ChatComposer<'_> {
@@ -52,6 +53,7 @@ impl ChatComposer<'_> {
             app_event_tx,
             history: ChatComposerHistory::new(),
             max_rows,
+            context_left_percent: 100.0,
         };
         this.update_border(has_input_focus);
         this
@@ -78,6 +80,11 @@ impl ChatComposer<'_> {
 
     pub fn set_input_focus(&mut self, has_focus: bool) {
         self.update_border(has_focus);
+    }
+
+    /// Update the context-left percentage for display.
+    pub fn set_context_left(&mut self, pct: f64) {
+        self.context_left_percent = pct;
     }
 
     /// Handle a key event coming from the main UI.
@@ -313,7 +320,9 @@ impl ChatComposer<'_> {
             0
         };
 
-        rows as u16 + BORDER_LINES + num_popup_rows
+        // Include an extra row for the context-left indicator when not in popup mode
+        let context_row = if self.command_popup.is_none() { 1 } else { 0 };
+        rows as u16 + BORDER_LINES + num_popup_rows + context_row
     }
 
     fn update_border(&mut self, has_focus: bool) {
@@ -374,6 +383,19 @@ impl WidgetRef for &ChatComposer<'_> {
             self.textarea.render(textarea_rect, buf);
         } else {
             self.textarea.render(area, buf);
+        }
+        // Render context-left indicator when not displaying a popup
+        if self.command_popup.is_none() {
+            let pct = self.context_left_percent.round();
+            let text = format!("{:.0}% context left", pct);
+            let color = if pct > 40.0 {
+                Color::Green
+            } else if pct > 25.0 {
+                Color::Yellow
+            } else {
+                Color::Red
+            };
+            buf.set_string(area.x + 1, area.y + area.height - 1, text, Style::default().fg(color));
         }
     }
 }

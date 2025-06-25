@@ -18,6 +18,9 @@ use codex_core::protocol::McpToolCallEndEvent;
 use codex_core::protocol::Op;
 use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::TaskCompleteEvent;
+use codex_core::ReasoningItemReasoningSummary;
+use codex_core::ResponseItem;
+use codex_core::ContentItem;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
@@ -34,10 +37,10 @@ use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::BottomPane;
 use crate::bottom_pane::BottomPaneParams;
 use crate::bottom_pane::InputResult;
+use crate::context::calculate_context_percent_remaining;
 use crate::conversation_history_widget::ConversationHistoryWidget;
 use crate::history_cell::PatchEventType;
 use crate::user_approval_widget::ApprovalRequest;
-use codex_core::{ContentItem, ReasoningItemReasoningSummary, ResponseItem};
 
 pub(crate) struct ChatWidget<'a> {
     app_event_tx: AppEventSender,
@@ -47,6 +50,8 @@ pub(crate) struct ChatWidget<'a> {
     input_focus: InputFocus,
     config: Config,
     initial_user_message: Option<UserMessage>,
+    /// raw ResponseItem stream for context-left calculation
+    history_items: Vec<ResponseItem>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -133,6 +138,7 @@ impl ChatWidget<'_> {
                 initial_prompt.unwrap_or_default(),
                 initial_images,
             ),
+            history_items: Vec::new(),
         }
     }
 
@@ -211,6 +217,8 @@ impl ChatWidget<'_> {
 
     /// Replay a previous session transcript into the conversation history.
     pub fn replay_items(&mut self, items: Vec<ResponseItem>) {
+        // record raw items for context-left calculation
+        self.history_items.extend(items.iter().cloned());
         for item in items {
             match item {
                 ResponseItem::Message { role, content } => {
@@ -246,6 +254,9 @@ impl ChatWidget<'_> {
             }
         }
         self.conversation_history.scroll_to_bottom();
+        // update context-left after replay
+        let pct = calculate_context_percent_remaining(&self.history_items, &self.config.model);
+        self.bottom_pane.set_context_percent(pct);
     }
 
     pub(crate) fn handle_codex_event(&mut self, event: Event) {
@@ -271,7 +282,12 @@ impl ChatWidget<'_> {
             }
             EventMsg::AgentMessage(AgentMessageEvent { message }) => {
                 self.conversation_history
-                    .add_agent_message(&self.config, message);
+                    .add_agent_message(&self.config, message.clone());
+                // record raw item for context-left calculation
+                self.history_items.push(ResponseItem::Message {
+                    role: "assistant".to_string(),
+                    content: vec![ContentItem::OutputText { text: message.clone() }],
+                });
                 self.request_redraw();
             }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
@@ -289,11 +305,17 @@ impl ChatWidget<'_> {
                 last_agent_message: _,
             }) => {
                 self.bottom_pane.set_task_running(false);
+                // update context-left after turn completes
+                let pct = calculate_context_percent_remaining(&self.history_items, &self.config.model);
+                self.bottom_pane.set_context_percent(pct);
                 self.request_redraw();
             }
             EventMsg::Error(ErrorEvent { message }) => {
                 self.conversation_history.add_error(message);
                 self.bottom_pane.set_task_running(false);
+                // update context-left after error
+                let pct = calculate_context_percent_remaining(&self.history_items, &self.config.model);
+                self.bottom_pane.set_context_percent(pct);
             }
             EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
                 command,
