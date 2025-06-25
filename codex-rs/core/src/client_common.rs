@@ -51,7 +51,10 @@ impl Prompt {
 #[derive(Debug)]
 pub enum ResponseEvent {
     OutputItemDone(ResponseItem),
-    Completed { response_id: String },
+    Completed {
+        response_id: String,
+        total_tokens: Option<u64>,
+    },
 }
 
 #[derive(Debug, Serialize)]

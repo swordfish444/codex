@@ -35,6 +35,11 @@ pub(crate) struct ChatComposer<'a> {
     command_popup: Option<CommandPopup>,
     app_event_tx: AppEventSender,
     history: ChatComposerHistory,
+
+    /// Percentage of context window remaining for the currently selected
+    /// model.  Stored as an integer 0-100 so we can easily embed it in the
+    /// placeholder text without additional formatting each render.
+    context_left_percent: Option<u8>,
 }
 
 impl ChatComposer<'_> {
@@ -48,9 +53,35 @@ impl ChatComposer<'_> {
             command_popup: None,
             app_event_tx,
             history: ChatComposerHistory::new(),
+            context_left_percent: None,
         };
         this.update_border(has_input_focus);
         this
+    }
+
+    /// Update the cached *context-left* percentage and refresh the placeholder
+    /// text. The UI relies on the placeholder to convey the remaining
+    /// context when the composer is empty (mirroring the behaviour of the
+    /// TypeScript CLI).
+    pub(crate) fn set_context_left_percent(&mut self, percent: u8) {
+        // Update only when the value actually changed to avoid unnecessary
+        // redraws.
+        if self.context_left_percent == Some(percent) {
+            return;
+        }
+
+        self.context_left_percent = Some(percent);
+
+        // Build placeholder string similar to the JS CLI.  We include the
+        // context indicator only when there is *enough* space so the hint
+        // remains concise.
+        let placeholder = if percent > 25 {
+            format!("send a message — {percent}% context left")
+        } else {
+            format!("send a message — {percent}% context left (consider /compact)")
+        };
+
+        self.textarea.set_placeholder_text(placeholder);
     }
 
     /// Record the history metadata advertised by `SessionConfiguredEvent` so

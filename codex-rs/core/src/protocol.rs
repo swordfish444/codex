@@ -275,6 +275,10 @@ pub enum EventMsg {
     /// Agent has completed all actions
     TaskComplete(TaskCompleteEvent),
 
+    /// Token count event, sent periodically to report the number of tokens
+    /// used in the current session.
+    TokenCount(TokenCountEvent),
+
     /// Agent text output message
     AgentMessage(AgentMessageEvent),
 
@@ -320,6 +324,12 @@ pub struct ErrorEvent {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskCompleteEvent {
     pub last_agent_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TokenCountEvent {
+    /// Total number of tokens used in the current session.
+    pub total_tokens: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

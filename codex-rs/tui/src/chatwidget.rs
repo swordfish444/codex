@@ -18,6 +18,7 @@ use codex_core::protocol::McpToolCallEndEvent;
 use codex_core::protocol::Op;
 use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::TaskCompleteEvent;
+use codex_core::protocol::TokenCountEvent;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
@@ -231,6 +232,7 @@ impl ChatWidget<'_> {
             EventMsg::AgentMessage(AgentMessageEvent { message }) => {
                 self.conversation_history
                     .add_agent_message(&self.config, message);
+
                 self.request_redraw();
             }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
@@ -249,6 +251,15 @@ impl ChatWidget<'_> {
             }) => {
                 self.bottom_pane.set_task_running(false);
                 self.request_redraw();
+            }
+            EventMsg::TokenCount(TokenCountEvent { total_tokens }) => {
+                let max_tokens = 128_000;
+                let percent: u8 = if total_tokens > 0 {
+                    ((1.0 - total_tokens as f32 / max_tokens as f32) * 100.0) as u8
+                } else {
+                    100
+                };
+                self.bottom_pane.set_context_left_percent(percent);
             }
             EventMsg::Error(ErrorEvent { message }) => {
                 self.conversation_history.add_error(message);
