@@ -87,7 +87,7 @@ export function TerminalChatCommandReview({
 
     if (showAlwaysApprove) {
       opts.push({
-        label: "Yes, apply this patch (a)",
+        label: "Always allow this command for the remainder of the session (a)",
         value: ReviewDecision.ALWAYS,
       });
     }

@@ -25,6 +25,7 @@ def task_dir():
 def status():
     """Show a table of task id, title, status, dependencies, last_updated"""
     rows = []
+    root = repo_root()
     for md in sorted(task_dir().glob('*.md')):
         if md.name == 'task-template.md' or md.name.endswith('-plan.md'):
             continue
@@ -35,17 +36,18 @@ def status():
             continue
         slug = md.stem
         # branch detection
+        # list matching task branch names cleanly
         branches = subprocess.run(
-            ['git', 'branch', '--list', f'agentydragon-{meta.id}-*'],
-            capture_output=True, text=True, cwd=repo_root()
+            ['git', 'for-each-ref', '--format=%(refname:short)', f'refs/heads/agentydragon-{meta.id}-*'],
+            capture_output=True, text=True, cwd=root
         ).stdout.strip().splitlines()
         branch_exists = 'Y' if branches and branches[0].strip() else 'N'
         merged = 'N'
         if branch_exists == 'Y':
-            bname = branches[0].lstrip('* ').strip()
+                bname = branches[0].lstrip('*+ ').strip()
             merged = 'Y' if subprocess.run(
                 ['git', 'merge-base', '--is-ancestor', bname, 'agentydragon'],
-                cwd=repo_root
+                cwd=root
             ).returncode == 0 else 'N'
         # worktree detection
         wt_dir = task_dir() / '.worktrees' / slug
@@ -58,12 +60,12 @@ def status():
             ).stdout.strip()
             wt_clean = 'Clean' if not status_out else 'Dirty'
         # derive branch & merge status
-        if branches and branches[0].strip():
-            bname = branches[0].lstrip('* ').strip()
+        if branches:
+            bname = branches[0]
             # merged into agentydragon?
             is_merged = subprocess.run(
                 ['git', 'merge-base', '--is-ancestor', bname, 'agentydragon'],
-                cwd=repo_root
+                cwd=root
             ).returncode == 0
             if is_merged:
                 branch_info = 'merged'
@@ -71,19 +73,19 @@ def status():
                 # ahead/behind
                 a_cnt, b_cnt = subprocess.check_output(
                     ['git', 'rev-list', '--left-right', '--count', f'{bname}...agentydragon'],
-                    cwd=repo_root
+                    cwd=root
                 ).decode().split()
                 # diffstat
                 stat = subprocess.check_output(
-                    ['git', 'diff', '--shortstat', f'{bname}...agentydragon'], cwd=repo_root
+                ['git', 'diff', '--shortstat', f'{bname}...agentydragon'], cwd=root
                 ).decode().strip()
                 diffstat = stat.replace(' file changed', '')
                 # merge conflict scan
                 base = subprocess.check_output(
-                    ['git', 'merge-base', 'agentydragon', bname], cwd=repo_root
+                ['git', 'merge-base', 'agentydragon', bname], cwd=root
                 ).decode().strip()
                 mtree = subprocess.check_output(
-                    ['git', 'merge-tree', base, 'agentydragon', bname], cwd=repo_root
+                ['git', 'merge-tree', base, 'agentydragon', bname], cwd=root
                 ).decode(errors='ignore')
                 conflict = 'conflict' if '<<<<<<<' in mtree else 'ok'
                 if a_cnt == '0' and b_cnt == '0':

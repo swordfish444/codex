@@ -64,6 +64,12 @@ const SELECT_OPTIONS: &[SelectOption] = &[
         enters_input_mode: false,
     },
     SelectOption {
+        label: "Always allow this command for the remainder of the session (a)",
+        decision: Some(ReviewDecision::ApprovedForSession),
+
+        enters_input_mode: false,
+    },
+    SelectOption {
         label: "Edit or give feedback (e)",
         decision: None,
 
@@ -370,8 +376,8 @@ impl WidgetRef for &UserApprovalWidget<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::mpsc;
 
     #[test]
     fn esc_in_input_mode_cancels_input_and_preserves_value() {
@@ -390,7 +396,10 @@ mod tests {
         widget.input.get_mut().set_value("feedback".to_string());
         widget.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(widget.mode, Mode::Select);
-        let expected_idx = SELECT_OPTIONS.iter().position(|opt| opt.enters_input_mode).unwrap();
+        let expected_idx = SELECT_OPTIONS
+            .iter()
+            .position(|opt| opt.enters_input_mode)
+            .unwrap();
         assert_eq!(widget.selected_option, expected_idx);
         assert_eq!(widget.input.value(), "feedback");
         assert!(rx.try_recv().is_err());
