@@ -22,6 +22,10 @@ use std::sync::mpsc::channel;
 use codex_core::ResponseItem;
 use uuid::Uuid;
 
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
+use std::thread;
+
 /// Top-level application state: which full-screen view is currently active.
 #[allow(clippy::large_enum_variant)]
 enum AppState<'a> {
@@ -309,6 +313,32 @@ impl<'a> App<'a> {
                     }
                     self.app_event_tx.send(AppEvent::Redraw);
                 }
+                AppEvent::InlineInspectEnv(_raw) => {
+                    let tx = self.app_event_tx.clone();
+                    thread::spawn(move || {
+                        match Command::new("codex")
+                            .arg("inspect-env")
+                            .stdout(Stdio::piped())
+                            .spawn()
+                        {
+                            Ok(mut child) => {
+                                if let Some(stdout) = child.stdout.take() {
+                                    let reader = BufReader::new(stdout);
+                                    for line in reader.lines().flatten() {
+                                        let _ = tx.send(AppEvent::LatestLog(line));
+                                    }
+                                }
+                                let _ = child.wait();
+                            }
+                            Err(err) => {
+                                let _ = tx.send(AppEvent::LatestLog(
+                                    format!("Failed to spawn inspect-env: {err}")
+                                ));
+                            }
+                        }
+                        let _ = tx.send(AppEvent::Redraw);
+                    });
+                }
                 AppEvent::MountAdd { host, container, mode } => {
                     if let Err(err) = do_mount_add(&mut self.config, &host, &container, &mode) {
                         tracing::error!("mount-add failed: {err}");
@@ -400,6 +430,10 @@ impl<'a> App<'a> {
                             widget.push_mount_remove_interactive();
                             self.app_event_tx.send(AppEvent::Redraw);
                         }
+                    }
+                    SlashCommand::InspectEnv => {
+                        let _ = self.app_event_tx.send(AppEvent::InlineInspectEnv(String::new()));
+                        let _ = self.app_event_tx.send(AppEvent::Redraw);
                     }
                 },
             }

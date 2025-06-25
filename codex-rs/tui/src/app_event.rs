@@ -34,6 +34,8 @@ pub(crate) enum AppEvent {
     InlineMountAdd(String),
     /// Inline mount-remove DSL: raw argument string (`container=...`).
     InlineMountRemove(String),
+    /// Inline inspect-env DSL: raw argument string (unused).
+    InlineInspectEnv(String),
     /// Perform mount-add: create symlink and update sandbox policy.
     MountAdd {
         host: std::path::PathBuf,
