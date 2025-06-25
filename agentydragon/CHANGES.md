@@ -1,96 +1,174 @@
-# codex-rs Changelog (HEAD vs main)
+# codex-rs: Changes between HEAD and main
 
-This document summarizes the **codex-rs** related changes introduced on the `agentydragon` branch (HEAD) compared to `main`. It covers new features, configuration options, and usage examples.
+This document summarizes new and removed features, configuration options,
+and behavioral changes in the `codex-rs` workspace between the `main`
+branch and the current `HEAD`. Only additions/deletions (not unmodified
+code) are listed, with examples of usage and configuration.
 
-## 1. Session resume and playback
+---
 
-**Added** a new `session` subcommand to resume TUI sessions by UUID:
+## CLI Enhancements
 
-```bash
-# Start or resume a session by UUID:
-codex session 123e4567-e89b-12d3-a456-426614174000
+### Build & Install from Source
+
+```shell
+cargo install --path cli --locked
+# install system-wide:
+sudo cargo install --path cli --locked --root /usr/local
 ```
 
-The TUI now records your session transcript under:
+### New `codex config` Subcommand
 
-```
-sessions/rollout-<UUID>.jsonl
-```
+Manage your `~/.codex/config.toml` directly without manually editing:
 
-APIs exposed in code (`tui` crate):
-- `set_session_id`
-- `session_id`
-- `replay_items`
-
-On exit, Codex prints a resume reminder:
-
-```text
-Resume this session with: codex session 123e4567-e89b-12d3-a456-426614174000
+```shell
+codex config edit            # open config in $EDITOR (or vi)
+codex config set KEY VALUE   # set a TOML literal, e.g. tui.auto_mount_repo true
 ```
 
-## 2. codex-core enhancements
+### New `codex inspect-env` Command
 
-Exposed core model types and added a new TUI configuration setting:
+Inspect the sandbox/container environment (mounts, permissions, network):
 
-```toml
-## config.toml
-[core]
-# Core model types available programmatically:
-# ContentItem, ReasoningItemReasoningSummary, ResponseItem
-
-[tui]
-# Maximum number of rows for the composer input area
-composer_max_rows = 10
+```shell
+codex inspect-env --full-auto
+codex inspect-env -s network=disable -s mount=/mydir=rw
 ```
 
-## 3. Dependency updates
+### Resume TUI Sessions by UUID
 
-- Added the `uuid` crate to `codex-rs/cli` and `codex-rs/tui` for stable session identifiers.
-
-## 4. Pre-commit config changes
-
-- Updated `.pre-commit-config.yaml` to fail Rust builds on warnings:
-
-```yaml
--   repo: local
-    hooks:
-      - id: rust-build
-        entry: bash -lc 'cd codex-rs && RUSTFLAGS="-D warnings" cargo build --workspace --locked'
+```shell
+codex session <SESSION_UUID>
 ```
 
-## 5. TUI improvements
+### MCP Server (JSON‑RPC) Support
 
-### 5.1 Undo feedback decision with Esc key
+Launch Codex as an MCP _server_ over stdin/stdout and speak the
+Model Context Protocol (JSON-RPC):
 
-Pressing `Esc` in feedback-entry mode now cancels feedback and returns to the select menu, preserving partially entered text.
+```shell
+npx @modelcontextprotocol/inspector codex mcp
+```
 
-```rust
-// New unit test in tui/src/user_approval_widget.rs
-#[test]
-fn esc_cancels_feedback_entry() {
-    // ...
+#### Sample JSON‑RPC Interaction
+
+```jsonc
+// ListTools request
+{ "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {} }
+
+// CallTool request
+{ "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+  "params": { "name": "codex", "arguments": { "prompt": "Hello" } }
 }
-```
 
-### 5.2 Restore inline mount DSL and slash-command dispatch
-
-Reintroduced support for inline `/mount-add` and `/mount-remove` commands, plus proper slash-command dispatch from the popup:
-
-```text
-# Within the composer, type:
-/mount-add /path/to/dir
-/mount-remove /path/to/dir
-```
-
-### 5.3 `/edit-prompt` opens external editor
-
-The `/edit-prompt` slash command now invokes your configured `$EDITOR` for prompt drafting (in addition to `Ctrl+E`):
-
-```text
-# In the TUI composer:
-/edit-prompt
+// CallTool response (abbreviated)
+{ "jsonrpc": "2.0", "id": 2, "result": {
+    "content": [ { "type": "text", "text": "Hi there", "annotations": null } ],
+    "is_error": false
+}}
 ```
 
 ---
 
-*End of codex-rs changelog.*
+## Configuration Changes
+
+### `auto_allow` Predicate Scripts
+
+Automatically approve or deny shell commands via custom scripts:
+
+```toml
+[[auto_allow]]
+script = "/path/to/approve_predicate.sh"
+[[auto_allow]]
+script = "my_predicate --flag"
+```
+
+Vote resolution:
+- A `deny` vote aborts execution.
+- An `allow` vote auto-approves.
+- Otherwise falls back to manual approval prompt.
+
+### `base_instructions_override`
+
+Override or disable the built-in system prompt (`prompt.md`):
+
+```bash
+export CODEX_BASE_INSTRUCTIONS_FILE=custom_prompt.md   # use custom prompt
+export CODEX_BASE_INSTRUCTIONS_FILE=""             # disable base prompt
+```
+
+### TUI Configuration Options
+
+In `~/.codex/config.toml`, under the `[tui]` table:
+
+```toml
+editor          = "${VISUAL:-${EDITOR:-nvim}}"  # external editor for prompt
+message_spacing = true                           # insert blank line between messages
+sender_break_line = true                         # sender label on its own line
+```
+
+---
+
+## Core Library Updates
+
+### System Prompt Composition Customization
+
+System messages now combine:
+1. Built-in prompt (`prompt.md`),
+2. User instructions (`AGENTS.md`/`instructions.md`),
+3. `apply-patch` tool instructions (for GPT-4.1),
+4. User command/prompt.
+
+Controlled via `CODEX_BASE_INSTRUCTIONS_FILE`.
+
+### Chat Completions Tool Call Buffering
+
+User turns emitted during an in-flight tool invocation are buffered
+and flushed after the tool result, preventing interleaved messages.
+
+### SandboxPolicy API Extensions
+
+```rust
+policy.allow_disk_write_folder("/path/to/folder".into());
+policy.revoke_disk_write_folder("/path/to/folder");
+```
+
+### Auto‑Approval Predicate Engine
+
+```rust
+use codex_core::safety::{evaluate_auto_allow_predicates, AutoAllowVote};
+let vote = evaluate_auto_allow_predicates(&cmd, &config.auto_allow);
+match vote {
+    AutoAllowVote::Allow => /* auto-approve */, 
+    AutoAllowVote::Deny => /* reject */, 
+    AutoAllowVote::NoOpinion => /* prompt user */, 
+}
+```
+
+---
+
+## TUI Improvements
+
+### Double Ctrl+D Exit Confirmation
+
+Prevent accidental exits by requiring two Ctrl+D within a timeout:
+
+```rust
+use codex_tui::confirm_ctrl_d::ConfirmCtrlD;
+let mut confirm = ConfirmCtrlD::new(require_double, timeout_secs);
+// confirm.handle(now) returns true to exit, false to prompt confirmation
+```
+
+### Markdown & Header Compact Rendering
+
+New rendering options (code-level) for more compact chat layout:
+- `markdown_compact`
+- `header_compact`
+
+---
+
+## Documentation & Tests
+
+- `codex-rs/config.md`, `codex-rs/README.md`, `core/README.md` updated with examples.
+- New `core/init.md` guidance for generating `AGENTS.md` templates.
+- Added tests for `codex config`, `ConfirmCtrlD`, and `evaluate_auto_allow_predicates`.

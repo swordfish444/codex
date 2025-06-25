@@ -2,3 +2,4 @@ Read the full diff between HEAD and main and produce a list of everything that w
 Include examples of how to use the features, how to configure them, etc.
 Use Markdown format. Write into $(git rev-parse --show-toplevel)/agentydragon/CHANGES.md. Delete it if it already exists.
 Only document changes under codex-rs.
+Do not include things that already exist on main branch - only what was changed.
