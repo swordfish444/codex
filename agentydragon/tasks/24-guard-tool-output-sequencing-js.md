@@ -1,10 +1,10 @@
----
++++
 id = "24"
 title = "Guard Against Missing Tool Output in JS Server Sequencing"
 status = "Not started"
 dependencies = "03,06,08,13,15,32,18,19,22,23"
 last_updated = "2025-06-25T01:40:09.600000"
-++
++++
 
 ## Summary
 Prevent out-of-order chat messages and missing tool outputs when user input interrupts tool execution in the JS backend.

@@ -1,10 +1,10 @@
----
++++
 id = "23"
 title = "Interactive Container Command Affordance via Hotkey"
 status = "Not started"
 dependencies = "02,07,09,11,14,29"
 last_updated = "2025-06-25T01:40:09.600000"
-++
++++
 
 ## Summary
 Provide a keybinding to run arbitrary shell commands in the agent’s container and display output inline.

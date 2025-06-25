@@ -1,18 +1,18 @@
-# Task Template
-
-# Valid status values: Not started | Started | Needs manual review | Done | Cancelled
-
----
----
++++
 id = "<NN>"
 title = "<Task Title>"
-status = "<<<!!! MANAGER: SET VALID STATUS !!!>>>"
+status = "<<<!!! MANAGER: SET VALID STATUS  - Not started? !!!>>>"
 summary = "Brief summary of current status."
 dependencies = "<<<!!! MANAGER: POPULATE THIS WHEN CREATING TASK !!!>>>"
 last_updated = "<timestamp in ISO format>"
 goal: |
   Describe the objective of the task here.
----
++++
+
+# Task Template
+
+# Valid status values: Not started | Started | Needs manual review | Done | Cancelled
+
 
 > *This task is specific to codex-rs.*
 

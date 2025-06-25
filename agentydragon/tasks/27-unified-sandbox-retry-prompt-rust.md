@@ -1,10 +1,10 @@
----
++++
 id = "27"
 title = "Unified Sandbox-Retry Prompt with y/a/A/n Options (Rust)"
 status = "Not started"
 dependencies = "03,06,08,13,15,32,18,19,22,23"
 last_updated = "2025-06-25T01:40:09.600000"
-++
++++
 
 ## Summary
 Implement a unified retry‑without‑sandbox prompt in the Rust TUI with one‑shot, session‑scoped, and persistent options.

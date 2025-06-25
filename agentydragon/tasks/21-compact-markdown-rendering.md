@@ -1,10 +1,10 @@
----
++++
 id = "21"
 title = "Compact Markdown Rendering Option"
 status = "Not started"
 dependencies = "03,06,08,13,15,32,18,19,22,23"
 last_updated = "2025-06-25T01:40:09.600000"
-++
++++
 
 ## Summary
 Provide an option to render Markdown without blank lines between headings and content for more vertical packing.

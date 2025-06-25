@@ -1,11 +1,16 @@
----
-id: 28
-title: Include Command Snippet in Session-Scoped Approval Label
-status: Not started  # one of: Not started, Started, Needs manual review, Done, Cancelled
-dependencies: "03,06,08,13,15,32,18,19,22,23"
-summary: When asking for session-scoped approval of a command, embed a truncated snippet of the actual command in the approval label for clarity.
-goal: |
-  Improve the session-scoped approval option label for commands by including a backtick-quoted snippet of the command itself (truncated to fit).  This makes it clear exactly which command (including parameters) will be auto-approved for the session.
++++
+id = "28"
+title = "Include Command Snippet in Session-Scoped Approval Label"
+status = "Not started"
+dependencies = "03,06,08,13,15,32,18,19,22,23"
+last_updated = "2025-06-25T01:40:09.600000"
++++
+
+## Summary
+When asking for session-scoped approval of a command, embed a truncated snippet of the actual command in the approval label for clarity.
+
+## Goal
+Improve the session-scoped approval option label for commands by including a backtick-quoted snippet of the command itself (truncated to fit).  This makes it clear exactly which command (including parameters) will be auto-approved for the session.
 
 ## Acceptance Criteria
 

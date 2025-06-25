@@ -1,16 +1,4 @@
----
-id: 19
-title: Bash Command Rendering Improvements for Less Verbosity
-status: Not started
-dependencies: "02,07,09,11,14,29"
-summary: Render bash commands more concisely and shorten tool output annotations.
-goal: |
-  Adjust agent output formatting for shell commands and tool logs to:
-  - Render bash commands without wrapping them in `bash -lc "..."`.
-  - Display role-prefixed messages on a single line (role and content space-separated).
-  - Shorten command-result annotations, using `✅ <duration>ms` for successful runs or `exit code: <code> <duration>ms` for failures.
-
-++
++++
 id = "19"
 title = "Bash Command Rendering Improvements for Less Verbosity"
 status = "Not started"
