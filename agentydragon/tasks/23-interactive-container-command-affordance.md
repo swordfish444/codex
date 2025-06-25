@@ -2,6 +2,7 @@
 id: 23
 title: Interactive Container Command Affordance via Hotkey
 status: Not started  # one of: Not started, Started, Needs manual review, Done, Cancelled
+dependencies: "02,07,09,11,14,29"
 summary: Provide a keybinding to run arbitrary shell commands in the agent’s container and display output inline.
 goal: |
   Add a user-facing affordance (e.g. a hotkey) to invoke arbitrary shell commands within the agent's container during a session for on-demand inspection and debugging.  The typed command should be captured as a chat turn, executed via the existing shell tool, and its output rendered inline in the chat UI.

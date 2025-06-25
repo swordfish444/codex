@@ -2,6 +2,7 @@
 id: 25
 title: Guard Against Missing Tool Output in Rust Server Sequencing
 status: Not started  # one of: Not started, Started, Needs manual review, Done, Cancelled
+dependencies: "03,06,08,13,15,32,18,19,22,23"
 summary: Prevent out-of-order chat messages and missing tool output errors when user input interrupts tool execution in the Rust backend.
 goal: |
   Ensure the Rust server implementation sequences tool output and chat messages correctly. Add synchronization logic so that an in-flight tool invocation either completes or is cancelled before new messages are processed, avoiding "No tool output found" invalid_request errors.

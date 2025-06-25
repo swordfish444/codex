@@ -2,6 +2,7 @@
 id: 29
 title: Auto-Approve Empty-Array Tool Invocations
 status: Not started  # one of: Not started, Started, Needs manual review, Done, Cancelled
+dependencies: "03,06,08,13,15,32,18,19,22,23"
 summary: Automatically approve tool-use requests where the command array is empty, bypassing the approval prompt.
 goal: |
   In rare cases the model may emit a tool invocation event with an empty `command: []`.  These invocations cannot succeed and continually trigger errors.  Automatically treat empty-array tool requests as approved (once), suppressing the approval UI, to allow downstream error handling rather than perpetual prompts.

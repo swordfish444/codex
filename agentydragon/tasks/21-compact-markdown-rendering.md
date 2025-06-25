@@ -2,6 +2,7 @@
 id: 21
 title: Compact Markdown Rendering Option
 status: Not started  # one of: Not started, Started, Needs manual review, Done, Cancelled
+dependencies: "03,06,08,13,15,32,18,19,22,23"
 summary: Provide an option to render Markdown without blank lines between headings and content for more vertical packing.
 goal: |
   Add a configuration flag to control Markdown rendering in the chat UI and logs so that headings render immediately adjacent to their content with no separating blank line.

@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 import click
-from tasklib import load_task, save_task, TaskMeta
+from agentydragon.tools.manager_utils.tasklib import load_task, save_task, TaskMeta
 
 
 @click.group()

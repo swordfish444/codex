@@ -2,6 +2,7 @@
 id: 26
 title: Render Approval Requests in Separate Dialog from Draft Window
 status: Not started  # one of: Not started, Started, Needs manual review, Done, Cancelled
+dependencies: "03,06,08,13,15,32,18,19,22,23"
 summary: Display patch approval prompts in a distinct dialog or panel to avoid overlaying the draft editor.
 goal: |
   Change the chat UI so that approval requests (patch diffs for approve/deny) appear in a separate dialog element or panel, positioned adjacent to or below the chat window, rather than overlaying the draft input area.
