@@ -18,6 +18,9 @@ This file documents the changes introduced on the `agentydragon` branch
 ## Dependency updates
 - Added `uuid` crate to `codex-rs/cli` and `codex-rs/tui`.
 
+## Pre-commit config changes
+- Configured Rust build hook in `.pre-commit-config.yaml` to fail on warnings by setting `RUSTFLAGS="-D warnings"`.
+
 ## codex-rs/tui: Undo feedback decision with Esc key
 - Pressing `Esc` in feedback-entry mode now cancels feedback entry and returns to the select menu, preserving the partially entered feedback text.
 - Added a unit test for the ESC cancellation behavior in `tui/src/user_approval_widget.rs`.

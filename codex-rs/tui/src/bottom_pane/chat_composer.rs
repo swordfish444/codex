@@ -132,6 +132,27 @@ impl ChatComposer<'_> {
             }
             Input { key: Key::Enter, shift: false, alt: false, ctrl: false } => {
                 if let Some(cmd) = popup.selected_command() {
+                    // Inline DSL for mount-add/remove with args or dispatch other commands.
+                    let first_line = self
+                        .textarea
+                        .lines()
+                        .first()
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+                    let stripped = first_line.trim_start().strip_prefix('/').unwrap_or(first_line);
+                    let mut parts = stripped.splitn(2, char::is_whitespace);
+                    let _cmd_token = parts.next().unwrap_or("");
+                    let args = parts.next().unwrap_or("").trim_start();
+                    if !args.is_empty() && (*cmd == SlashCommand::MountAdd || *cmd == SlashCommand::MountRemove) {
+                        let ev = if *cmd == SlashCommand::MountAdd {
+                            AppEvent::InlineMountAdd(args.to_string())
+                        } else {
+                            AppEvent::InlineMountRemove(args.to_string())
+                        };
+                        self.app_event_tx.send(ev);
+                    } else {
+                        self.app_event_tx.send(AppEvent::DispatchCommand(*cmd));
+                    }
                     self.textarea.select_all();
                     self.textarea.cut();
                     self.command_popup = None;
