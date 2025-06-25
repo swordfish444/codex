@@ -31,7 +31,8 @@ def resolve_slug(input_id: str) -> str:
 @click.option('-a', '--agent', is_flag=True,
               help='Launch Developer Codex agent after setting up worktree.')
 @click.option('-t', '--tmux', 'tmux_mode', is_flag=True,
-              help='Open each task in its own tmux pane; implies --agent.')
+              help='Open each task in its own tmux pane; implies --agent. '
+                   'Attaches to an existing session if already running.')
 @click.option('-i', '--interactive', is_flag=True,
               help='Run agent in interactive mode (no exec); implies --agent.')
 @click.option('-s', '--shell', 'shell_mode', is_flag=True,
@@ -45,6 +46,12 @@ def main(agent, tmux_mode, interactive, shell_mode, task_inputs):
     if tmux_mode:
         agent = True
         session = 'agentydragon_' + '_'.join(task_inputs)
+        # If a tmux session already exists, skip setup and attach
+        if subprocess.call(['tmux', 'has-session', '-t', session]) == 0:
+            click.echo(f"Session {session} already exists; attaching")
+            run(['tmux', 'attach', '-t', session])
+            return
+        # Create a new session and windows for each task
         for idx, inp in enumerate(task_inputs):
             slug = resolve_slug(inp)
             cmd = [sys.executable, '-u', __file__]
@@ -77,24 +84,17 @@ def main(agent, tmux_mode, interactive, shell_mode, task_inputs):
         run(['git', 'worktree', 'add', '--no-checkout', str(wt_path), branch])
         src = str(repo_root())
         dst = str(wt_path)
-        if sys.platform == 'darwin':
-            reflink_cmd = [
-                'cp', '-cRp', f'{src}/.', f'{dst}/',
-                '--exclude=.git', '--exclude=.gitlink'
-            ]
-        else:
-            reflink_cmd = [
-                'cp', '--reflink=auto', '-Rp', f'{src}/.', f'{dst}/',
-                '--exclude=.git', '--exclude=.gitlink'
-            ]
-        try:
-            run(reflink_cmd)
-        except subprocess.CalledProcessError:
-            # Fallback on filesystems without reflink support
-            run([
-                'rsync', '-a', '--delete', f'{src}/', f'{dst}/',
-                '--exclude=.git*'
-            ])
+        # Hydrate the worktree filesystem excluding .git and other worktrees to avoid recursion
+        # Use rsync with reflink if possible
+        worktrees_rel = str(worktrees_dir().relative_to(repo_root()))
+        rsync_cmd = [
+            'rsync', '-a', '--delete', f'{src}/', f'{dst}/',
+            '--exclude=.git*', f'--exclude={worktrees_rel}'
+        ]
+        if sys.platform != 'darwin':
+            rsync_cmd.insert(3, '--reflink=auto')
+        run(rsync_cmd)
+        # Install pre-commit hooks in the new worktree
         if shutil.which('pre-commit'):
             run(['pre-commit', 'install'], cwd=dst)
         else:

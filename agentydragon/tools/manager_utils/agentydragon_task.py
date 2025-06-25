@@ -215,7 +215,7 @@ def status():
     unblocked = [tid for tid in sorted_ids if tid not in merged_ids and not deps_map.get(tid)]
     if unblocked:
         print(f"\n\033[1mUnblocked:\033[0m {' '.join(unblocked)}")
-        print(f"\033[1mLaunch unblocked in tmux:\033[0m create-task-worktree.sh --agent --tmux {' '.join(unblocked)}")
+        print(f"\033[1mLaunch unblocked in tmux:\033[0m python agentydragon/tools/create_task_worktree.py --agent --tmux {' '.join(unblocked)}")
 
 @cli.command()
 @click.argument('task_id')
