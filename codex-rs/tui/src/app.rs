@@ -499,7 +499,7 @@ impl<'a> App<'a> {
                         widget.handle_shell_command_result(call_id, stdout, stderr, exit_code);
                         self.app_event_tx.send(AppEvent::Redraw);
                     }
-                },
+                }
             }
         }
         terminal.clear()?;

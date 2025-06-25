@@ -1,4 +1,4 @@
-use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent};
+use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::Widget;
@@ -29,6 +29,12 @@ impl ShellCommandView {
 
 impl<'a> BottomPaneView<'a> for ShellCommandView {
     fn handle_key_event(&mut self, pane: &mut BottomPane<'a>, key_event: KeyEvent) {
+        // Exit shell prompt on Ctrl+M
+        if let KeyEvent { code: KeyCode::Char('m'), modifiers: KeyModifiers::CONTROL, .. } = key_event {
+            self.done = true;
+            pane.request_redraw();
+            return;
+        }
         if self.done {
             return;
         }

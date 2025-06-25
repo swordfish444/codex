@@ -257,9 +257,9 @@ impl WidgetRef for &BottomPane<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::sync::mpsc;
     use crate::app_event::AppEvent;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     /// Construct a BottomPane with default parameters for testing.
     fn make_pane() -> BottomPane<'static> {
@@ -301,6 +301,17 @@ mod tests {
         assert!(pane.active_view.is_some());
         // The overlay should be a StatusIndicatorView
         assert!(pane.active_view.as_mut().unwrap().should_hide_when_task_is_done());
+    }
+
+    #[test]
+    fn ctrl_m_toggles_shell_mode() {
+        let mut pane = make_pane();
+        assert!(!pane.composer.is_shell_mode());
+        let key = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL);
+        pane.handle_key_event(key);
+        assert!(pane.composer.is_shell_mode());
+        pane.handle_key_event(key);
+        assert!(!pane.composer.is_shell_mode());
     }
 
     #[test]

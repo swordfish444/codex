@@ -48,6 +48,12 @@ This file documents the changes introduced on the `agentydragon` branch
 
 ## Documentation tasks
 
+## codex-rs/tui: interactive shell-command affordance via hotkey
+- Bound `Ctrl+M` to open a ShellCommandView overlay for arbitrary container shell input.
+- Toggled shell-command mode with `Ctrl+M` to enter or exit prompt, with styled border in shell mode.
+- Executed commands asynchronously (`sh -c`) and recorded outputs inline in conversation history.
+- Added unit tests for ShellCommandView event emission and shell-mode toggling behavior.
+
 Tasks live under `agentydragon/tasks/` as individual Markdown files. Please update each task’s **Status** and **Implementation** sections in place rather than maintaining a static list here.
 
 ### Branch & Worktree Workflow

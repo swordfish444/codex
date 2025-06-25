@@ -3,7 +3,7 @@ id = "23"
 title = "Interactive Container Command Affordance via Hotkey"
 status = "Done"
 dependencies = "01" # Rationale: depends on Task 01 for mount-add/remove affordance
-last_updated = "2025-06-26T15:00:00.000000"
+last_updated = "2025-06-30T12:00:00.000001"
 +++
 
 ## Summary
@@ -22,7 +22,7 @@ Add a user-facing affordance (e.g. a hotkey) to invoke arbitrary shell commands 
 
 ## Implementation
 
-**How it was implemented**  
+**How it was implemented**
 - Added a new slash command `Shell` and updated dispatch logic in `app.rs` to push a shell-command view.
 - Bound `Ctrl+M` in `ChatComposer` to dispatch `SlashCommand::Shell` for hotkey-driven shell prompt.
 - Created `ShellCommandView` (bottom pane overlay) to capture arbitrary user input and emit `AppEvent::ShellCommand(cmd)`.
@@ -32,6 +32,7 @@ Add a user-facing affordance (e.g. a hotkey) to invoke arbitrary shell commands 
 - Added tests:
   - Unit test in `shell_command_view.rs` asserting correct event emission (skipping redraws).
   - Integration test in `chat_composer.rs` asserting `Ctrl+M` opens the shell prompt view and allows input.
+
 
 ## Notes
 

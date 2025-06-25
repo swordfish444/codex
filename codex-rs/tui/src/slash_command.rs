@@ -40,7 +40,7 @@ impl SlashCommand {
             SlashCommand::MountRemove => "Remove a mount by container path.",
             SlashCommand::InspectEnv => "Inspect sandbox and container environment (mounts, permissions, network)",
             SlashCommand::Shell => "Run a shell command in the container.",
-            SlashCommand::Quit => "Quit",
+            SlashCommand::Quit => "Exit the application.",
         }
     }
 
