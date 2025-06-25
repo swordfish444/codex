@@ -209,6 +209,12 @@ def status():
         items = ' '.join(f"{tid} ({title})" for tid, title in ready_tasks)
         print(f"\n\033[33mReady to merge:\033[0m {items}")
 
+    # identify unblocked tasks (no remaining dependencies)
+    unblocked = [tid for tid in sorted_ids if tid not in merged_ids and not deps_map.get(tid)]
+    if unblocked:
+        print(f"\n\033[1mUnblocked:\033[0m {' '.join(unblocked)}")
+        print(f"\033[1mLaunch unblocked in tmux:\033[0m create-task-worktree.sh --agent --tmux {' '.join(unblocked)}")
+
 @cli.command()
 @click.argument('task_id')
 @click.argument('status')
