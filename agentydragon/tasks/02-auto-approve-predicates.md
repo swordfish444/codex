@@ -1,3 +1,11 @@
++++
+id = "02"
+title = "Granular Auto-Approval Predicates"
+status = "Merged"
+dependencies = ""
+last_updated = "2025-06-25T01:40:09.503983"
++++
+
 # Task 02: Granular Auto-Approval Predicates
 
 > *This task is specific to codex-rs.*

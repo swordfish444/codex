@@ -1,3 +1,11 @@
++++
+id = "18"
+title = "Chat UI Textarea Overlay and Border Styling Fix"
+status = "Not started"
+dependencies = ""
+last_updated = "2025-06-25T01:40:09.514379"
++++
+
 # Task 18: Chat UI Textarea Overlay and Border Styling Fix
 
 ---

@@ -1,3 +1,11 @@
++++
+id = "03"
+title = "Live Config Reload and Prompt on Changes"
+status = "Not started"
+dependencies = ""
+last_updated = "2025-06-25T01:40:09.504758"
++++
+
 # Task 03: Live Config Reload and Prompt on Changes
 
 > *This task is specific to codex-rs.*

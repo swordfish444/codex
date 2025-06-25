@@ -1,3 +1,11 @@
++++
+id = "06"
+title = "External Editor Integration for Prompt Entry"
+status = "Done"
+dependencies = ""
+last_updated = "2025-06-25T01:40:09.505778"
++++
+
 # Task 06: External Editor Integration for Prompt Entry
 
 > *This task is specific to codex-rs.*

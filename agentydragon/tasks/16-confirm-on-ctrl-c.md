@@ -1,3 +1,11 @@
++++
+id = "16"
+title = "Confirm on Ctrl+C to Exit"
+status = "Not started"
+dependencies = ""
+last_updated = "2025-06-25T01:40:09.513723"
++++
+
 # Task 16: Confirm on Ctrl+C to Exit
 
 > *This task is specific to codex-rs.*

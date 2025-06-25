@@ -1,3 +1,11 @@
++++
+id = "15"
+title = "Agent Worktree Sandbox Configuration"
+status = "Not started"
+dependencies = ""
+last_updated = "2025-06-25T01:40:09.512675"
++++
+
 # Task 15: Agent Worktree Sandbox Configuration
 
 ## Status

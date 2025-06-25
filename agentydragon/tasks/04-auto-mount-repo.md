@@ -1,3 +1,11 @@
++++
+id = "04"
+title = "Auto-Mount Entire Repo and Auto-CD to Subfolder"
+status = "Not started"
+dependencies = ""
+last_updated = "2025-06-25T01:40:09.505291"
++++
+
 # Task 04: Auto-Mount Entire Repo and Auto-CD to Subfolder
 
 > *This task is specific to codex-rs.*

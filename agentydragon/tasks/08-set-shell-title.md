@@ -1,3 +1,11 @@
++++
+id = "08"
+title = "Set Shell Title to Reflect Session Status"
+status = "Complete"
+dependencies = ""
+last_updated = "2025-06-25T01:40:09.506643"
++++
+
 # Task 08: Set Shell Title to Reflect Session Status
 
 > *This task is specific to codex-rs.*

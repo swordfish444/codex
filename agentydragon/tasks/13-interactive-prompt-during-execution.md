@@ -1,3 +1,11 @@
++++
+id = "13"
+title = "Interactive Prompting and Commands While Executing"
+status = "Merged"
+dependencies = ""
+last_updated = "2025-06-25T01:40:09.509881"
++++
+
 # Task 13: Interactive Prompting and Commands While Executing
 
 > *This task is specific to codex-rs.*

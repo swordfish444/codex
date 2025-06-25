@@ -1,3 +1,11 @@
++++
+id = "01"
+title = "Dynamic Mount-Add and Mount-Remove Commands"
+status = "Merged"
+dependencies = ""
+last_updated = "2025-06-25T01:40:09.501150"
++++
+
 # Task 01: Dynamic Mount-Add and Mount-Remove Commands
 
 > *This task is specific to codex-rs.*

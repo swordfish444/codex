@@ -1,3 +1,11 @@
++++
+id = "11"
+title = "User-Configurable Approval Predicates"
+status = "Merged"
+dependencies = ""
+last_updated = "2025-06-25T01:40:09.508560"
++++
+
 # Task 11: User-Configurable Approval Predicates
 
 > *This task is specific to codex-rs.*

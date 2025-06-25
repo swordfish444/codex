@@ -1,3 +1,11 @@
++++
+id = "10"
+title = "Inspect Container State (Mounts, Permissions, Network)"
+status = "Not started"
+dependencies = ""
+last_updated = "2025-06-25T01:40:09.508031"
++++
+
 # Task 10: Inspect Container State (Mounts, Permissions, Network)
 
 > *This task is specific to codex-rs.*
