@@ -5,6 +5,7 @@ check_tasks.py: Run all task-directory validation checks in one go.
   - Detect circular dependencies among non-merged tasks.
   - Enforce only .md files under agentydragon/tasks/ (excluding .worktrees/ and .done/).
 """
+import os
 import re
 import sys
 from pathlib import Path
@@ -23,6 +24,19 @@ def skip_path(p: Path) -> bool:
     return False
 
 
+def iter_task_markdown() -> Path:
+    """Yield all task markdown files under agentydragon/tasks, pruning .worktrees and .done dirs."""
+    wt = worktree_dir()
+    done = task_dir() / ".done"
+    root = task_dir()
+    for base, dirs, files in os.walk(str(root)):
+        # do not descend into .worktrees or .done
+        dirs[:] = [d for d in dirs if (Path(base) / d) not in (wt, done)]
+        for fn in files:
+            if re.fullmatch(r"[0-9]{2}-.*\.md", fn):
+                yield Path(base) / fn
+
+
 def check_file_types():
     failures: list[Path] = []
     for p in task_dir().iterdir():
@@ -35,10 +49,7 @@ def check_file_types():
 
 def check_frontmatter():
     failures: list[tuple[Path, str]] = []
-    wt = worktree_dir()
-    for md in task_dir().rglob("[0-9][0-9]-*.md"):
-        if skip_path(md):
-            continue
+    for md in iter_task_markdown():
         try:
             load_task(md)
         except Exception as e:
@@ -49,10 +60,7 @@ def check_frontmatter():
 def check_cycles():
     merged = set()
     deps_map: dict[str, list[str]] = {}
-    wt = worktree_dir()
-    for md in task_dir().rglob("[0-9][0-9]-*.md"):
-        if skip_path(md):
-            continue
+    for md in iter_task_markdown():
         meta, _ = load_task(md)
         if meta.status == "Merged":
             merged.add(meta.id)

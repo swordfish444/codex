@@ -77,19 +77,17 @@ def main(agent, tmux_mode, interactive, shell_mode, task_inputs):
 
     wt_root.mkdir(parents=True, exist_ok=True)
     if not wt_path.exists():
-        # --- COW hydration logic ---
+        # --- COW hydration logic via rsync ---
         # Instead of checking out files normally, register the worktree empty and then
-        # perform a filesystem-level reflink of tracked + untracked files for near-instant setup.
-        # On macOS/APFS this uses `cp -cRp` (clonefile); on Linux we pass `--reflink=auto`.
+        # perform a filesystem-level hydration via rsync (with reflink if supported) for
+        # near-instant setup while excluding VCS metadata and other worktrees.
         run(['git', 'worktree', 'add', '--no-checkout', str(wt_path), branch])
         src = str(repo_root())
         dst = str(wt_path)
-        # Hydrate the worktree filesystem excluding .git and other worktrees to avoid recursion
-        # Use rsync with reflink if possible
-        worktrees_rel = str(worktrees_dir().relative_to(repo_root()))
+        # Hydrate the worktree filesystem via rsync, excluding .git and any .worktrees to avoid recursion
         rsync_cmd = [
             'rsync', '-a', '--delete', f'{src}/', f'{dst}/',
-            '--exclude=.git*', f'--exclude={worktrees_rel}'
+            '--exclude=.git*', '--exclude=.worktrees/'
         ]
         if sys.platform != 'darwin':
             rsync_cmd.insert(3, '--reflink=auto')
