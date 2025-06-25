@@ -190,8 +190,8 @@ impl ConversationHistoryWidget {
         ));
     }
 
-    pub fn add_user_message(&mut self, message: String) {
-        self.add_to_history(HistoryCell::new_user_prompt(message));
+    pub fn add_user_message(&mut self, config: &Config, message: String) {
+        self.add_to_history(HistoryCell::new_user_prompt(config, message));
     }
 
     pub fn add_agent_message(&mut self, config: &Config, message: String) {
@@ -213,10 +213,11 @@ impl ConversationHistoryWidget {
     /// Add a pending patch entry (before user approval).
     pub fn add_patch_event(
         &mut self,
+        config: &Config,
         event_type: PatchEventType,
         changes: HashMap<PathBuf, FileChange>,
     ) {
-        self.add_to_history(HistoryCell::new_patch_event(event_type, changes));
+        self.add_to_history(HistoryCell::new_patch_event(config, event_type, changes));
     }
 
     pub fn add_active_exec_command(&mut self, call_id: String, command: Vec<String>) {

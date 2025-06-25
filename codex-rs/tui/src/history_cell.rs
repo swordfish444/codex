@@ -6,11 +6,11 @@ use crate::text_formatting::format_and_truncate_tool_result;
 use base64::Engine;
 use codex_ansi_escape::ansi_escape_line;
 use codex_common::elapsed::format_duration;
-use codex_core::WireApi;
 use codex_core::config::Config;
 use codex_core::model_supports_reasoning_summaries;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::SessionConfiguredEvent;
+use codex_core::WireApi;
 use image::DynamicImage;
 use image::GenericImageView;
 use image::ImageReader;
@@ -22,15 +22,44 @@ use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line as RtLine;
 use ratatui::text::Span as RtSpan;
+use ratatui_image::picker::ProtocolType;
 use ratatui_image::Image as TuiImage;
 use ratatui_image::Resize as ImgResize;
-use ratatui_image::picker::ProtocolType;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 use tracing::error;
+
+/// Render a header label and body lines, optionally collapsing the header with the first line.
+fn render_header_body(
+    config: &Config,
+    label: RtSpan<'static>,
+    mut body: Vec<RtLine<'static>>,
+) -> Vec<RtLine<'static>> {
+    let mut lines = Vec::new();
+    if config.tui.header_compact {
+        if let Some(first) = body.get(0) {
+            let mut spans = Vec::new();
+            spans.push(label.clone());
+            spans.push(RtSpan::raw(" ".to_string()));
+            spans.extend(first.spans.clone());
+            lines.push(RtLine::from(spans).style(first.style));
+            let indent = " ".repeat(label.content.len() + 1);
+            for ln in body.iter().skip(1) {
+                let text: String = ln.spans.iter().map(|s| s.content.clone()).collect();
+                lines.push(RtLine::from(indent.clone() + &text));
+            }
+        } else {
+            lines.push(RtLine::from(vec![label.clone()]));
+        }
+    } else {
+        lines.push(RtLine::from(vec![label.clone()]));
+        lines.append(&mut body);
+    }
+    lines
+}
 
 pub(crate) struct CommandOutput {
     pub(crate) exit_code: i32,
@@ -190,38 +219,49 @@ impl HistoryCell {
         }
     }
 
-    pub(crate) fn new_user_prompt(message: String) -> Self {
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(Line::from("user".cyan().bold()));
-        lines.extend(message.lines().map(|l| Line::from(l.to_string())));
-        lines.push(Line::from(""));
-
-        HistoryCell::UserPrompt {
-            view: TextBlock::new(lines),
-        }
+pub(crate) fn new_user_prompt(config: &Config, message: String) -> Self {
+    let body: Vec<RtLine<'static>> = message
+        .lines()
+        .map(|l| RtLine::from(l.to_string()))
+        .collect();
+    let label = RtSpan::styled(
+        "user".to_string(),
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+    );
+    let mut lines = render_header_body(config, label, body);
+    lines.push(RtLine::from(""));
+    HistoryCell::UserPrompt {
+        view: TextBlock::new(lines),
     }
+}
 
     pub(crate) fn new_agent_message(config: &Config, message: String) -> Self {
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(Line::from("codex".magenta().bold()));
-        append_markdown(&message, &mut lines, config);
-        lines.push(Line::from(""));
-
-        HistoryCell::AgentMessage {
-            view: TextBlock::new(lines),
-        }
+        let mut md_lines: Vec<RtLine<'static>> = Vec::new();
+        append_markdown(&message, &mut md_lines, config);
+    let label = RtSpan::styled(
+        "codex".to_string(),
+        Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+    );
+    let mut lines = render_header_body(config, label, md_lines);
+    lines.push(RtLine::from(""));
+    HistoryCell::AgentMessage {
+        view: TextBlock::new(lines),
     }
+}
 
     pub(crate) fn new_agent_reasoning(config: &Config, text: String) -> Self {
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(Line::from("thinking".magenta().italic()));
-        append_markdown(&text, &mut lines, config);
-        lines.push(Line::from(""));
-
-        HistoryCell::AgentReasoning {
-            view: TextBlock::new(lines),
-        }
+        let mut md_lines: Vec<RtLine<'static>> = Vec::new();
+        append_markdown(&text, &mut md_lines, config);
+    let label = RtSpan::styled(
+        "thinking".to_string(),
+        Style::default().fg(Color::Magenta).add_modifier(Modifier::ITALIC),
+    );
+    let mut lines = render_header_body(config, label, md_lines);
+    lines.push(RtLine::from(""));
+    HistoryCell::AgentReasoning {
+        view: TextBlock::new(lines),
     }
+}
 
     pub(crate) fn new_active_exec_command(call_id: String, command: Vec<String>) -> Self {
         let command_escaped = strip_bash_lc_and_escape(&command);
@@ -251,24 +291,41 @@ impl HistoryCell {
 
         let mut lines: Vec<Line<'static>> = Vec::new();
 
-        // Title depends on whether we have output yet.
-        // Annotate success or failure: checkmark or exit code plus duration in ms
-        let duration_ms = duration.as_millis();
-        let annotation = if exit_code == 0 {
-            format!("✅ {}ms", duration_ms)
+        // Render each line of the completed command: green ✓ / red ✗ + timing, padded, then multi-line command.
+        let timing = if duration < Duration::from_secs(5) {
+            format!("{}ms", duration.as_millis())
         } else {
-            format!("exit code: {} {}ms", exit_code, duration_ms)
+            let secs = duration.as_secs();
+            format!("{}:{:02}", secs / 60, secs % 60)
         };
-        let title_line = Line::from(vec![
-            "command".magenta(),
-            format!(" {annotation}").dim(),
-        ]);
-        lines.push(title_line);
-
-        let src = if exit_code == 0 { stdout } else { stderr };
-
-        lines.push(Line::from(format!("$ {command}")));
-        let mut lines_iter = src.lines();
+        let ann = if exit_code == 0 {
+            format!("✓ {}", timing)
+        } else {
+            format!("✗ exit {} {}", exit_code, timing)
+        };
+        let pad = format!("{:<8}", ann);
+        let ann_span = if exit_code == 0 {
+            Span::styled(pad.clone(), Style::default().fg(Color::Green))
+        } else {
+            Span::styled(pad.clone(), Style::default().fg(Color::Red))
+        };
+        for (i, cmd_line) in command.split('\n').enumerate() {
+            if i == 0 {
+                lines.push(Line::from(vec![
+                    ann_span.clone(),
+                    "$ ".into(),
+                    cmd_line.to_string().into(),
+                ]));
+            } else {
+                let indent = " ".repeat(pad.len() + 2);
+                lines.push(Line::from(indent + cmd_line));
+            }
+        }
+        let mut lines_iter = if exit_code == 0 {
+            stdout.lines()
+        } else {
+            stderr.lines()
+        };
         for raw in lines_iter.by_ref().take(TOOL_CALL_MAX_LINES) {
             lines.push(ansi_escape_line(raw).dim());
         }
@@ -474,66 +531,44 @@ impl HistoryCell {
     /// Create a new `PendingPatch` cell that lists the file‑level summary of
     /// a proposed patch. The summary lines should already be formatted (e.g.
     /// "A path/to/file.rs").
-    pub(crate) fn new_patch_event(
-        event_type: PatchEventType,
-        changes: HashMap<PathBuf, FileChange>,
-    ) -> Self {
-        let title = match event_type {
-            PatchEventType::ApprovalRequest => "proposed patch",
-            PatchEventType::ApplyBegin {
-                auto_approved: true,
-            } => "applying patch",
-            PatchEventType::ApplyBegin {
-                auto_approved: false,
-            } => {
-                let lines = vec![Line::from("patch applied".magenta().bold())];
-                return Self::PendingPatch {
-                    view: TextBlock::new(lines),
-                };
-            }
-        };
-
-        let summary_lines = create_diff_summary(changes);
-
-        let mut lines: Vec<Line<'static>> = Vec::new();
-
-        // Header similar to the command formatter so patches are visually
-        // distinct while still fitting the overall colour scheme.
-        lines.push(Line::from(title.magenta().bold()));
-
-        for line in summary_lines {
-            if line.starts_with('+') {
-                lines.push(line.green().into());
-            } else if line.starts_with('-') {
-                lines.push(line.red().into());
-            } else if let Some(space_idx) = line.find(' ') {
-                let kind_owned = line[..space_idx].to_string();
-                let rest_owned = line[space_idx + 1..].to_string();
-
-                let style_for = |fg: Color| Style::default().fg(fg).add_modifier(Modifier::BOLD);
-
-                let styled_kind = match kind_owned.as_str() {
-                    "A" => RtSpan::styled(kind_owned.clone(), style_for(Color::Green)),
-                    "D" => RtSpan::styled(kind_owned.clone(), style_for(Color::Red)),
-                    "M" => RtSpan::styled(kind_owned.clone(), style_for(Color::Yellow)),
-                    "R" | "C" => RtSpan::styled(kind_owned.clone(), style_for(Color::Cyan)),
-                    _ => RtSpan::raw(kind_owned.clone()),
-                };
-
-                let styled_line =
-                    RtLine::from(vec![styled_kind, RtSpan::raw(" "), RtSpan::raw(rest_owned)]);
-                lines.push(styled_line);
-            } else {
-                lines.push(Line::from(line));
-            }
-        }
-
-        lines.push(Line::from(""));
-
-        HistoryCell::PendingPatch {
-            view: TextBlock::new(lines),
-        }
+pub(crate) fn new_patch_event(config: &Config, event_type: PatchEventType, changes: HashMap<PathBuf, FileChange>) -> Self {
+    // Handle applied patch immediately.
+    if let PatchEventType::ApplyBegin { auto_approved: false } = event_type {
+        let lines = vec![RtLine::from("patch applied".magenta().bold())];
+        return Self::PendingPatch { view: TextBlock::new(lines) };
     }
+    let title = match event_type {
+        PatchEventType::ApprovalRequest => "proposed patch",
+        PatchEventType::ApplyBegin { auto_approved: true } => "applying patch",
+        _ => unreachable!(),
+    };
+    let summary = create_diff_summary(changes);
+    let body: Vec<RtLine<'static>> = summary.into_iter().map(|line| {
+        if line.starts_with('+') {
+            RtLine::from(line).green()
+        } else if line.starts_with('-') {
+            RtLine::from(line).red()
+        } else if let Some(idx) = line.find(' ') {
+            let kind = line[..idx].to_string();
+            let rest = line[idx + 1..].to_string();
+            let style_for = |fg| Style::default().fg(fg).add_modifier(Modifier::BOLD);
+            let kind_span = match kind.as_str() {
+                "A" => RtSpan::styled(kind.clone(), style_for(Color::Green)),
+                "D" => RtSpan::styled(kind.clone(), style_for(Color::Red)),
+                "M" => RtSpan::styled(kind.clone(), style_for(Color::Yellow)),
+                "R" | "C" => RtSpan::styled(kind.clone(), style_for(Color::Cyan)),
+                _ => RtSpan::raw(kind.clone()),
+            };
+            RtLine::from(vec![kind_span, RtSpan::raw(" "), RtSpan::raw(rest)])
+        } else {
+            RtLine::from(line)
+        }
+    }).collect();
+    let label = RtSpan::styled(title.to_string(), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD));
+    let mut lines = render_header_body(config, label, body);
+    lines.push(RtLine::from(""));
+    HistoryCell::PendingPatch { view: TextBlock::new(lines) }
+}
 }
 
 // ---------------------------------------------------------------------------

@@ -94,6 +94,9 @@ pub struct Tui {
     /// (levels 1–6) in TUI rendering for more compact vertical spacing.
     #[serde(default)]
     pub markdown_compact: bool,
+    /// When true, collapse the header and first line of chat/prompt/patch events into one line
+    #[serde(default)]
+    pub header_compact: bool,
 
     /// Maximum number of visible lines in the chat input composer before scrolling.
     /// The composer will expand up to this many lines; additional content will enable
@@ -131,6 +134,7 @@ impl Default for Tui {
         Self {
             disable_mouse_capture: Default::default(),
             markdown_compact: Default::default(),
+            header_compact: Default::default(),
             composer_max_rows: default_composer_max_rows(),
             editor: default_editor(),
             require_double_ctrl_d: false,

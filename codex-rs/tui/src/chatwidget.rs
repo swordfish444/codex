@@ -210,7 +210,7 @@ impl ChatWidget<'_> {
 
         // Only show text portion in conversation history for now.
         if !text.is_empty() {
-            self.conversation_history.add_user_message(text);
+            self.conversation_history.add_user_message(&self.config, text);
         }
         self.conversation_history.scroll_to_bottom();
     }
@@ -233,7 +233,7 @@ impl ChatWidget<'_> {
                         .collect::<Vec<_>>()
                         .join("");
                     if role.eq_ignore_ascii_case("user") {
-                        self.conversation_history.add_user_message(text);
+                        self.conversation_history.add_user_message(&self.config, text);
                     } else {
                         self.conversation_history
                             .add_agent_message(&self.config, text);
@@ -347,7 +347,7 @@ impl ChatWidget<'_> {
                 // ------------------------------------------------------------------
 
                 self.conversation_history
-                    .add_patch_event(PatchEventType::ApprovalRequest, changes);
+                    .add_patch_event(&self.config, PatchEventType::ApprovalRequest, changes);
 
                 self.conversation_history.scroll_to_bottom();
 
@@ -377,7 +377,7 @@ impl ChatWidget<'_> {
                 // Even when a patch is auto‑approved we still display the
                 // summary so the user can follow along.
                 self.conversation_history
-                    .add_patch_event(PatchEventType::ApplyBegin { auto_approved }, changes);
+                    .add_patch_event(&self.config, PatchEventType::ApplyBegin { auto_approved }, changes);
                 if !auto_approved {
                     self.conversation_history.scroll_to_bottom();
                 }
