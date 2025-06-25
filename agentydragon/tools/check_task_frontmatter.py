@@ -23,12 +23,12 @@ except ImportError:
     sys.exit(1)
 
 REQUIRED_KEYS = ["id", "title", "status", "summary", "goal"]
-ALLOWED_STATUSES = ["Not started", "Started", "Needs manual review", "Done", "Cancelled"]
+ALLOWED_STATUSES = ["Not started", "Started", "Needs manual review", "Done", "Cancelled", "Merged"]
 
 def main():
     failures = 0
 
-    for md in tasklib.task_dir().glob('[0-9][0-9]-*.md'):
+    for md in tasklib.task_dir().rglob('[0-9][0-9]-*.md'):
         if md.name == 'task-template.md' or md.name.endswith('-plan.md'):
             continue
         try:

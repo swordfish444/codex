@@ -31,7 +31,7 @@ def status():
     # Load all task metadata, reporting load errors with file path
     all_meta: dict[str, TaskMeta] = {}
     path_map: dict[str, Path] = {}
-    for md in sorted(task_dir().glob('*.md')):
+    for md in sorted(task_dir().rglob('[0-9][0-9]-*.md')):
         if md.name in ('task-template.md',) or md.name.endswith('-plan.md'):
             continue
         try:
@@ -133,9 +133,17 @@ def status():
                 ['git', 'rev-list', '--left-right', '--count',
                  f'{branches[0]}...agentydragon'], cwd=root
             ).decode().split()
-            stat = subprocess.check_output(
-                ['git', 'diff', '--shortstat', f'{branches[0]}...agentydragon'], cwd=root
-            ).decode().strip().replace(' file changed', '')
+        # compact diffstat: e.g. "56 files changed, 1265 insertions(+), 342 deletions(-)" -> "56f,1265i,342d"
+        raw = subprocess.check_output(
+            ['git', 'diff', '--shortstat', f'{branches[0]}...agentydragon'], cwd=root
+        ).decode().strip()
+        stat = (
+            raw.replace(' files changed', 'f')
+               .replace(' file changed', 'f')
+               .replace(' insertions(+)', 'i')
+               .replace(' deletions(-)', 'd')
+               .replace(', ', ',')
+        )
             base = subprocess.check_output(
                 ['git', 'merge-base', 'agentydragon', branches[0]], cwd=root
             ).decode().strip()
@@ -175,7 +183,7 @@ def status():
     # summary of fully merged tasks (no branch, no worktree)
     if merged_tasks:
         items = ' '.join(f"{tid} ({title})" for tid, title in merged_tasks)
-        print(f"\n\033[32mDone & merged:\033[0m {items}")
+        print(f"\n\033[32mMerged:\033[0m {items}")
 
     # summary of tasks Ready to merge (Done with branch commits)
     ready_tasks: list[tuple[str, str]] = []
