@@ -32,8 +32,8 @@ Multiple scripts cast votes: if any script returns `deny`, the command is denied
    - On `allow`, auto-approve under sandbox.
    - On script errors or unrecognized outputs, immediately prompt the user (via `request_command_approval`) with a reason string describing the error/output, then run or reject based on their decision.
    - On `no-opinion`, fall through to the next script.
-6. Write async unit tests for `get_auto_allow_vote`, covering allow, deny, no-opinion, and error-exit cases.  
-7. Update documentation (`config.md`) to document the new auto-approval predicates feature.
+5. Write async unit tests for `get_auto_allow_vote`, covering allow, deny, no-opinion, and error-exit cases.  
+6. Update documentation (`config.md`) to document the new auto-approval predicates feature.
 
 ## Notes
 - This pairs with the existing `approval_policy = "unless-allow-listed"` but now ensures script errors or unexpected outputs trigger a targeted manual approval prompt with context.
