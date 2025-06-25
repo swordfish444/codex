@@ -13,6 +13,7 @@ use crate::user_approval_widget::ApprovalRequest;
 
 mod approval_modal_view;
 mod mount_view;
+mod inspect_env_view;
 mod bottom_pane_view;
 mod chat_composer;
 mod chat_composer_history;
@@ -25,6 +26,7 @@ pub(crate) use chat_composer::InputResult;
 
 use approval_modal_view::ApprovalModalView;
 use mount_view::{MountAddView, MountRemoveView};
+use inspect_env_view::InspectEnvView;
 use status_indicator_view::StatusIndicatorView;
 use config_reload_view::ConfigReloadView;
 
@@ -157,6 +159,13 @@ impl BottomPane<'_> {
     /// Launch interactive mount-add dialog (host, container, [mode]).
     pub fn push_mount_add_interactive(&mut self) {
         let view = MountAddView::new(self.app_event_tx.clone());
+        self.active_view = Some(Box::new(view));
+        self.request_redraw();
+    }
+
+    /// Launch inspect-env output view.
+    pub fn push_inspect_env(&mut self) {
+        let view = InspectEnvView::new();
         self.active_view = Some(Box::new(view));
         self.request_redraw();
     }

@@ -463,6 +463,12 @@ impl ChatWidget<'_> {
         self.request_redraw();
     }
 
+    /// Launch inspect-env output view.
+    pub fn push_inspect_env(&mut self) {
+        self.bottom_pane.push_inspect_env();
+        self.request_redraw();
+    }
+
     /// Update the running config and reconstruct bottom pane settings.
     pub fn update_config(&mut self, config: Config) {
         self.config = config.clone();

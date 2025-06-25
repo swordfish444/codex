@@ -29,6 +29,29 @@ pub(crate) struct CommandPopup {
     selected_idx: Option<usize>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::slash_command::SlashCommand;
+
+    #[test]
+    fn filter_inspect_env_in_command_popup() {
+        let mut popup = CommandPopup::new();
+        popup.on_composer_text_change("/inspect-env".to_string());
+        let filtered: Vec<&SlashCommand> = popup.filtered_commands();
+        // Ensure InspectEnv command is among filtered results
+        assert!(filtered.contains(&&SlashCommand::InspectEnv));
+    }
+
+    #[test]
+    fn select_inspect_env_as_selected_command() {
+        let mut popup = CommandPopup::new();
+        popup.on_composer_text_change("/inspect-env".to_string());
+        popup.selected_idx = Some(0);
+        assert_eq!(popup.selected_command(), Some(&SlashCommand::InspectEnv));
+    }
+}
+
 impl CommandPopup {
     pub(crate) fn new() -> Self {
         Self {
