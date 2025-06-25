@@ -37,7 +37,8 @@ def main(task_input):
         prompt_content = prompt_file.read_text(encoding='utf-8')
         task_content = task_file.read_text(encoding='utf-8')
         subprocess.check_call(cmd + [prompt_content + '\n\n' + task_content])
-        subprocess.check_call(['git', 'add', '-u'])
+        # Stage all changes, including new files (not just modifications)
+        subprocess.check_call(['git', 'add', '-A'])
         subprocess.check_call(['git', 'commit', '-F', str(msg_file)])
     finally:
         msg_file.unlink()
