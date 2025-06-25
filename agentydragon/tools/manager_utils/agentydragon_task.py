@@ -1,32 +1,42 @@
 """
 CLI for managing agentydragon tasks: status, set-status, set-deps, dispose, launch.
 """
-import sys
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
-import click
-from tasklib import load_task, save_task, TaskMeta
 
-TASK_DIR = Path(__file__).parent.parent / 'tasks'
+import click
+from tasklib import load_task, save_task
+
 
 @click.group()
 def cli():
     """Manage agentydragon tasks."""
     pass
 
+def repo_root():
+    return Path(subprocess.check_output(['git', 'rev-parse', '--show-toplevel']).decode().strip())
+
+def task_dir():
+    return repo_root() / "agentydragon/tasks"
+
 @cli.command()
 def status():
     """Show a table of task id, title, status, dependencies, last_updated"""
     rows = []
-    repo_root = Path.cwd()
-    for md in sorted(TASK_DIR.glob('[0-9][0-9]-*.md')):
-        meta, _ = load_task(md)
+    print(f"{task_dir = }")
+    for md in sorted(task_dir().glob('*.md')):
+        try:
+            meta, _ = load_task(md)
+        except ValueError as e:
+            print(e)
+            continue
         slug = md.stem
         # branch detection
         branches = subprocess.run(
             ['git', 'branch', '--list', f'agentydragon-{meta.id}-*'],
-            capture_output=True, text=True, cwd=repo_root
+            capture_output=True, text=True, cwd=repo_root()
         ).stdout.strip().splitlines()
         branch_exists = 'Y' if branches and branches[0].strip() else 'N'
         merged = 'N'
@@ -34,10 +44,10 @@ def status():
             bname = branches[0].lstrip('* ').strip()
             merged = 'Y' if subprocess.run(
                 ['git', 'merge-base', '--is-ancestor', bname, 'agentydragon'],
-                cwd=repo_root
+                cwd=repo_root()
             ).returncode == 0 else 'N'
         # worktree detection
-        wt_dir = TASK_DIR / '.worktrees' / slug
+        wt_dir = task_dir() / '.worktrees' / slug
         wt_exists = wt_dir.exists()
         wt_clean = 'NA'
         if wt_exists:
@@ -69,8 +79,8 @@ def status():
 @click.argument('status')
 def set_status(task_id, status):
     """Set status of TASK_ID to STATUS"""
-    md = TASK_DIR / f"{task_id}-*.md"
-    files = list(TASK_DIR.glob(f'{task_id}-*.md'))
+    md = task_dir() / f"{task_id}-*.md"
+    files = list(task_dir().glob(f'{task_id}-*.md'))
     if not files:
         click.echo(f'Task {task_id} not found', err=True)
         sys.exit(1)
@@ -85,7 +95,7 @@ def set_status(task_id, status):
 @click.argument('deps', nargs=-1)
 def set_deps(task_id, deps):
     """Set dependencies of TASK_ID"""
-    files = list(TASK_DIR.glob(f'{task_id}-*.md'))
+    files = list(task_dir().glob(f'{task_id}-*.md'))
     if not files:
         click.echo(f'Task {task_id} not found', err=True)
         sys.exit(1)
