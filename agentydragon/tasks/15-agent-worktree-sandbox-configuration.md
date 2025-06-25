@@ -1,9 +1,9 @@
 +++
 id = "15"
 title = "Agent Worktree Sandbox Configuration"
-status = "Done"
+status = "Merged"
 dependencies = "02,07,09,11,14,29"
-last_updated = "2025-06-25T12:00:00.000000"
+last_updated = "2025-06-25T07:26:13.570520"
 +++
 
 # Task 15: Agent Worktree Sandbox Configuration

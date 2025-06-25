@@ -18,6 +18,9 @@ def repo_root():
 def task_dir():
     return repo_root() / "agentydragon/tasks"
 
+def worktree_dir():
+    return task_dir() / ".worktrees"
+
 class TaskMeta(BaseModel):
     id: str
     title: str

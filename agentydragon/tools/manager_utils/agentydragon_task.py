@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 
 import click
-from tasklib import load_task, repo_root, save_task, task_dir, TaskMeta
+from tasklib import load_task, repo_root, save_task, task_dir, TaskMeta, worktree_dir
 import shutil
 
 try:
@@ -105,7 +105,7 @@ def status():
             if subprocess.run(['git', 'merge-base', '--is-ancestor', b, 'agentydragon'], cwd=root).returncode == 0:
                 merged_flag = 'Y'
         # worktree detection
-        wt_dir = task_dir() / '.worktrees' / slug
+        wt_dir = worktree_dir() / slug
         wt_info = 'none'
         if wt_dir.exists():
             st = subprocess.run(['git', 'status', '--porcelain'], cwd=wt_dir,
@@ -212,15 +212,20 @@ def set_deps(task_id, deps):
 def dispose(task_id):
     """Dispose worktree and delete branch for TASK_ID(s)"""
     root = repo_root()
-    wt_base = task_dir() / '.worktrees'
+    wt_base = worktree_dir()
     for tid in task_id:
         # Remove any matching worktree directories
-        for wt_dir in wt_base.glob(f'{tid}-*'):
+        g = f'{tid}-*'
+        matching_wts = wt_base.glob(g)
+        for wt_dir in matching_wts:
+            click.echo(f"Disposing worktree {wt_dir}")
             # unregister worktree; then delete the directory if still present
             rel = wt_dir.relative_to(root)
             subprocess.run(['git', 'worktree', 'remove', str(rel), '--force'], cwd=root)
             if wt_dir.exists():
                 shutil.rmtree(wt_dir)
+        else:
+            print(f"No worktrees matching {g} in {wt_base}")
         # prune any stale worktree entries
         subprocess.run(['git', 'worktree', 'prune'], cwd=root)
         # Delete any matching branches
@@ -230,9 +235,12 @@ def dispose(task_id):
             ['git', 'for-each-ref', '--format=%(refname:short)', ref_pattern],
             capture_output=True, text=True, cwd=root
         ).stdout.splitlines()
-        for br in branches:
-            if br:
-                subprocess.run(['git', 'branch', '-D', br], cwd=root)
+        branches = [br for br in branches if br]
+        if branches:
+            click.echo(f"Disposing branches: {branches}")
+            subprocess.run(['git', 'branch', '-D', *branches], cwd=root)
+        else:
+            click.echo(f"No branches matching {ref_pattern}")
         click.echo(f'Disposed task {tid}')
 
 @cli.command()
