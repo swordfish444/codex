@@ -125,16 +125,17 @@ fi
 echo "Done."
 
 if [ "$agent_mode" = true ]; then
-  echo "Launching codex agent for task $task_slug in $worktree_path"
+  echo "Launching Codex agent for task $task_slug in sandboxed worktree"
   prompt_file="$repo_root/agentydragon/prompts/developer.md"
   if [ ! -f "$prompt_file" ]; then
     echo "Error: developer prompt file not found at $prompt_file" >&2
     exit 1
   fi
-  cd "$worktree_path"
-  if [ "$interactive_mode" = true ]; then
-    codex "$(<"$prompt_file")"
-  else
-    codex exec "$(<"$prompt_file")"
+  # Launch the agent under Landlock+seccomp sandbox: writable only in cwd and TMPDIR, network disabled
+  cmd=(codex debug landlock --full-auto --cd $worktree_path)
+  if [ "${interactive_mode:-}" != true ]; then
+    cmd+=(exec)
   fi
+  prompt=$(<"$prompt_file")
+  "${cmd[@]}" "$prompt"
 fi
