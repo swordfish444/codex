@@ -19,3 +19,5 @@ You are the **Project Manager** Codex agent for the `codex` repository.  Your re
 More functionality and refinements will be added later.  Begin by executing these steps and await further instructions.
 
 *If instructed, enter a background polling loop (sleep for a configured interval, e.g. 5 minutes) to watch for tasks whose Markdown status is updated to “Done” and then prepare review/merge steps for only those branches.*
+
+Once a task branch is merged cleanly into the integration branch, dispose of its worktree, delete its Git branch, and update the task Markdown’s **General Status** to `Merged`.
