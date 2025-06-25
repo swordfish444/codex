@@ -10,6 +10,7 @@ use crate::exec::SandboxType;
 use crate::is_safe_command::is_known_safe_command;
 use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPolicy;
+use crate::config::AutoAllowPredicate;
 
 #[derive(Debug)]
 pub enum SafetyCheck {
@@ -113,6 +114,55 @@ pub fn get_platform_sandbox() -> Option<SandboxType> {
     }
 }
 
+/// Vote returned by auto-approval predicate scripts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoAllowVote {
+    /// Script approved the command.
+    Allow,
+    /// Script denied the command.
+    Deny,
+    /// Script had no opinion (or errored).
+    NoOpinion,
+}
+
+/// Evaluate user-configured auto-approval predicates for the given command.
+/// Invokes each script in order, passing the full candidate command as the only argument.
+/// Returns the first `Allow` or `Deny` vote, or `NoOpinion` if none asserted.
+pub fn evaluate_auto_allow_predicates(
+    command: &[String],
+    predicates: &[AutoAllowPredicate],
+) -> AutoAllowVote {
+    if predicates.is_empty() {
+        return AutoAllowVote::NoOpinion;
+    }
+    let cmd_text = command.join(" ");
+    for pred in predicates {
+        let output = std::process::Command::new(&pred.script)
+            .arg(&cmd_text)
+            .output();
+        let vote = match output {
+            Ok(output) if output.status.success() => match String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "allow" => AutoAllowVote::Allow,
+                "deny" => AutoAllowVote::Deny,
+                "no-opinion" => AutoAllowVote::NoOpinion,
+                _ => AutoAllowVote::NoOpinion,
+            },
+            _ => AutoAllowVote::NoOpinion,
+        };
+        if vote == AutoAllowVote::Deny {
+            return AutoAllowVote::Deny;
+        }
+        if vote == AutoAllowVote::Allow {
+            return AutoAllowVote::Allow;
+        }
+    }
+    AutoAllowVote::NoOpinion
+}
+
 fn is_write_patch_constrained_to_writable_paths(
     action: &ApplyPatchAction,
     writable_roots: &[PathBuf],
@@ -192,6 +242,10 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
 
+    use crate::config::AutoAllowPredicate;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
     #[test]
     fn test_writable_roots_constraint() {
         let cwd = std::env::current_dir().unwrap();
@@ -223,5 +277,95 @@ mod tests {
             &[PathBuf::from("..")],
             &cwd,
         ))
+    }
+
+    #[test]
+    fn test_evaluate_auto_allow_predicates_votes() {
+        let dir = tempdir().unwrap();
+        let allow_script = dir.path().join("allow.sh");
+        std::fs::write(&allow_script, "#!/usr/bin/env bash\necho allow\n").unwrap();
+        let mut perms = std::fs::metadata(&allow_script).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&allow_script, perms).unwrap();
+
+        let deny_script = dir.path().join("deny.sh");
+        std::fs::write(&deny_script, "#!/usr/bin/env bash\necho deny\n").unwrap();
+        let mut perms2 = std::fs::metadata(&deny_script).unwrap().permissions();
+        perms2.set_mode(0o755);
+        std::fs::set_permissions(&deny_script, perms2).unwrap();
+
+        // Allow script should return Allow
+        let preds = vec![AutoAllowPredicate { script: allow_script.to_string_lossy().into() }];
+        let vote = evaluate_auto_allow_predicates(&["cmd".to_string()], &preds);
+        assert_eq!(vote, AutoAllowVote::Allow);
+
+        // Deny script takes precedence over allow
+        let preds2 = vec![AutoAllowPredicate { script: deny_script.to_string_lossy().into() },
+                          AutoAllowPredicate { script: allow_script.to_string_lossy().into() }];
+        let vote2 = evaluate_auto_allow_predicates(&["cmd".to_string()], &preds2);
+        assert_eq!(vote2, AutoAllowVote::Deny);
+
+        // No predicates yields NoOpinion
+        let vote3 = evaluate_auto_allow_predicates(&["cmd".to_string()], &[]);
+        assert_eq!(vote3, AutoAllowVote::NoOpinion);
+    }
+
+    #[test]
+    fn test_evaluate_auto_allow_predicates_various_no_opinion_cases() {
+        let dir = tempdir().unwrap();
+        // Script that explicitly returns no-opinion
+        let noop_script = dir.path().join("noop.sh");
+        std::fs::write(&noop_script, "#!/usr/bin/env bash\necho no-opinion\n").unwrap();
+        let mut perms = std::fs::metadata(&noop_script).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&noop_script, perms).unwrap();
+
+        // Script that returns unknown output
+        let unknown_script = dir.path().join("unknown.sh");
+        std::fs::write(&unknown_script, "#!/usr/bin/env bash\necho maybe\n").unwrap();
+        let mut perms2 = std::fs::metadata(&unknown_script).unwrap().permissions();
+        perms2.set_mode(0o755);
+        std::fs::set_permissions(&unknown_script, perms2).unwrap();
+
+        // Script that exits with an error
+        let error_script = dir.path().join("error.sh");
+        std::fs::write(&error_script, "#!/usr/bin/env bash\nexit 1\n").unwrap();
+        let mut perms3 = std::fs::metadata(&error_script).unwrap().permissions();
+        perms3.set_mode(0o755);
+        std::fs::set_permissions(&error_script, perms3).unwrap();
+
+        // All scripts no-opinion or error yields NoOpinion
+        let preds = vec![
+            AutoAllowPredicate { script: noop_script.to_string_lossy().into() },
+            AutoAllowPredicate { script: unknown_script.to_string_lossy().into() },
+            AutoAllowPredicate { script: error_script.to_string_lossy().into() },
+        ];
+        let vote = evaluate_auto_allow_predicates(&["cmd".to_string()], &preds);
+        assert_eq!(vote, AutoAllowVote::NoOpinion);
+    }
+
+    #[test]
+    fn test_evaluate_auto_allow_predicates_short_circuits_after_no_opinion() {
+        let dir = tempdir().unwrap();
+        // First script no-opinion
+        let noop_script = dir.path().join("noop2.sh");
+        std::fs::write(&noop_script, "#!/usr/bin/env bash\necho no-opinion\n").unwrap();
+        let mut perms = std::fs::metadata(&noop_script).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&noop_script, perms).unwrap();
+
+        // Second script allow
+        let allow_script = dir.path().join("allow2.sh");
+        std::fs::write(&allow_script, "#!/usr/bin/env bash\necho allow\n").unwrap();
+        let mut perms2 = std::fs::metadata(&allow_script).unwrap().permissions();
+        perms2.set_mode(0o755);
+        std::fs::set_permissions(&allow_script, perms2).unwrap();
+
+        let preds = vec![
+            AutoAllowPredicate { script: noop_script.to_string_lossy().into() },
+            AutoAllowPredicate { script: allow_script.to_string_lossy().into() },
+        ];
+        let vote = evaluate_auto_allow_predicates(&["cmd".to_string()], &preds);
+        assert_eq!(vote, AutoAllowVote::Allow);
     }
 }
