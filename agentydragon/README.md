@@ -63,6 +63,9 @@ Tasks live under `agentydragon/tasks/` as individual Markdown files. Please upda
 -
 -  Without `--agent`, this creates or reuses a worktree at
 -  `agentydragon/tasks/.worktrees/<task-id>-<task-slug>` off the `agentydragon` branch.
+-  Internally, the helper uses CoW hydration instead of a normal checkout: it registers the worktree with `git worktree add --no-checkout`, then performs a filesystem-level reflink
+-  of all files (macOS: `cp -cRp`; Linux: `cp --reflink=auto`), falling back to `rsync` if reflinks aren’t supported. This makes new worktrees appear nearly instantly on supported filesystems while
+-  preserving untracked files.
   -  With `--agent`, after setup it runs pre-commit checks (aborting on failure), then launches the Developer Codex agent in that workspace (using `prompts/developer.md` and the task file),
   -  and when the developer agent exits, it automatically runs the Commit agent helper to stage fixes and commit the work.
 **Commit agent helper**: in `agentydragon/tasks/`, run:

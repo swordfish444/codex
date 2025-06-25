@@ -70,19 +70,31 @@ def main(agent, tmux_mode, interactive, shell_mode, task_inputs):
 
     wt_root.mkdir(parents=True, exist_ok=True)
     if not wt_path.exists():
-        # Create worktree without checkout, then hydrate via reflink/rsync for COW performance
+        # --- COW hydration logic ---
+        # Instead of checking out files normally, register the worktree empty and then
+        # perform a filesystem-level reflink of tracked + untracked files for near-instant setup.
+        # On macOS/APFS this uses `cp -cRp` (clonefile); on Linux we pass `--reflink=auto`.
         run(['git', 'worktree', 'add', '--no-checkout', str(wt_path), branch])
         src = str(repo_root())
         dst = str(wt_path)
-        # Use filesystem-specific reflink options: macOS (clonefile via cp -c), Linux (--reflink=auto)
         if sys.platform == 'darwin':
-            reflink_cmd = ['cp', '-cRp', f'{src}/.', f'{dst}/', '--exclude=.git', '--exclude=.gitlink']
+            reflink_cmd = [
+                'cp', '-cRp', f'{src}/.', f'{dst}/',
+                '--exclude=.git', '--exclude=.gitlink'
+            ]
         else:
-            reflink_cmd = ['cp', '--reflink=auto', '-Rp', f'{src}/.', f'{dst}/', '--exclude=.git', '--exclude=.gitlink']
+            reflink_cmd = [
+                'cp', '--reflink=auto', '-Rp', f'{src}/.', f'{dst}/',
+                '--exclude=.git', '--exclude=.gitlink'
+            ]
         try:
             run(reflink_cmd)
         except subprocess.CalledProcessError:
-            run(['rsync', '-a', '--delete', f'{src}/', f'{dst}/', '--exclude=.git*'])
+            # Fallback on filesystems without reflink support
+            run([
+                'rsync', '-a', '--delete', f'{src}/', f'{dst}/',
+                '--exclude=.git*'
+            ])
         if shutil.which('pre-commit'):
             run(['pre-commit', 'install'], cwd=dst)
         else:
