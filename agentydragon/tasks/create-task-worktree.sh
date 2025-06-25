@@ -22,12 +22,18 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      echo "Usage: $0 [-a|--agent] [-i|--interactive] [-t|--tmux] <task-slug|NN> [<task-slug|NN>...]"
-      echo "  -a, --agent         after creating/reusing, launch a codex agent in the task workspace"
-      echo "                      (by default runs 'codex exec' if --interactive is not given)"
-      echo "  -i, --interactive   launch codex agent in interactive mode (implies --agent)"
-      echo "                      (uses normal 'codex', do not exec)"
-      echo "  -t, --tmux          launch each agent review in a tiled tmux session (implies --agent)"
+      cat << EOF
+Usage: $0 [-a|--agent] [-s|--shell] [-i|--interactive] [-t|--tmux] <task-slug|NN> [<task-slug|NN>...]
+
+Options:
+  -a, --agent         create/reuse worktree and launch a Codex agent with prompt injection;
+                      when the agent exits, auto-run commit helper
+  -s, --shell         create/reuse worktree and launch an interactive Codex shell
+                      (no prompt injection, skip auto-commit)
+  -i, --interactive   run the agent in interactive mode (no 'exec'); implies --agent
+  -t, --tmux          open each task in its own tmux window; implies --agent
+  -h, --help          show this help message and exit
+EOF
       exit 0
       ;;
     -i|--interactive)
@@ -133,6 +139,15 @@ echo "Done."
 
 if [ "$agent_mode" = true ]; then
   echo "Launching Developer Codex agent for task $task_slug in sandboxed worktree"
+  cd "${worktree_path}"
+  echo "Launching Developer Codex agent for task $task_slug in sandboxed worktree"
+  if [ "$shell_mode" = true ]; then
+    # Interactive shell mode: no prompt, skip commit helper
+    cmd=(codex --full-auto)
+    echo "${cmd[*]}"
+    exec "${cmd[@]}"
+  fi
+
   prompt_file="$repo_root/agentydragon/prompts/developer.md"
   task_file="$repo_root/agentydragon/tasks/$task_slug.md"
   if [ ! -f "$prompt_file" ]; then
@@ -140,15 +155,13 @@ if [ "$agent_mode" = true ]; then
     exit 1
   fi
   # Launch the agent under Landlock+seccomp sandbox: writable only in cwd and TMPDIR, network disabled
-  cd ${worktree_path}
-  # cmd=(codex debug landlock --full-auto)
   cmd=(codex --full-auto)
   if [ "${interactive_mode:-}" != true ]; then
     cmd+=(exec)
   fi
-  echo "${cmd[@]}"
+  echo "${cmd[*]}"
   # Run Developer agent (non-interactive by default) to implement the task
-  "${cmd[@]}" "$(<"$prompt_file")\n\n$(<"$task_file")"
+  "${cmd[@]}" "$(<"$prompt_file")"$'\n\n'"$(<"$task_file")"
 
   # After the Developer agent exits, stage and commit via the Commit agent helper
   echo "Running Commit agent to finalize task $task_slug"
