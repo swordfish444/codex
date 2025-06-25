@@ -1,16 +1,10 @@
-use crossterm::event::Event as CrosstermEvent;
-use crossterm::event::KeyCode;
-use crossterm::event::KeyEvent;
+use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::Widget;
 use ratatui::text::Line;
-use ratatui::widgets::Block;
-use ratatui::widgets::BorderType;
-use ratatui::widgets::Borders;
-use ratatui::widgets::Paragraph;
-use tui_input::Input;
-use tui_input::backend::crossterm::EventHandler;
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use tui_input::{Input, backend::crossterm::EventHandler};
 
 use super::BottomPane;
 use super::BottomPaneView;
