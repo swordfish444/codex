@@ -2,7 +2,7 @@
 id = "08"
 title = "Set Shell Title to Reflect Session Status"
 status = "Complete"
-dependencies = ""
+dependencies = "02,07,09,11,14,29"
 last_updated = "2025-06-25T01:40:09.506643"
 +++
 

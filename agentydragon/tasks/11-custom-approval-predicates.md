@@ -2,7 +2,7 @@
 id = "11"
 title = "User-Configurable Approval Predicates"
 status = "Merged"
-dependencies = ""
+dependencies = "01,04,10,12,16,17"
 last_updated = "2025-06-25T01:40:09.508560"
 +++
 

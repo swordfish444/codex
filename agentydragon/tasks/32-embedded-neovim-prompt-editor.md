@@ -1,12 +1,12 @@
 +++
-id = "15"
+id = "32"
 title = "Embedded Neovim Prompt Editor"
 status = "Not started"
 dependencies = ""
 last_updated = "2025-06-25T01:40:09.513224"
 +++
 
-# Task 15: Embedded Neovim Prompt Editor
+# Task 32: Embedded Neovim Prompt Editor
 
 > *This task is specific to codex-rs.*
 

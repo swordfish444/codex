@@ -2,7 +2,7 @@
 id = "06"
 title = "External Editor Integration for Prompt Entry"
 status = "Done"
-dependencies = ""
+dependencies = "02,07,09,11,14,29"
 last_updated = "2025-06-25T01:40:09.505778"
 +++
 
