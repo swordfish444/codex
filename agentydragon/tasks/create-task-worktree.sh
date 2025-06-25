@@ -9,6 +9,7 @@ set -euo pipefail
 
 agent_mode=false
 tmux_mode=false
+interactive_mode=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -a|--agent)
@@ -20,10 +21,18 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      echo "Usage: $0 [-a|--agent] [-t|--tmux] <task-slug|NN> [<task-slug|NN>...]"
-      echo "  -a, --agent    after creating/reusing, launch a codex agent in the task workspace"
-      echo "  -t, --tmux     launch each agent review in a tiled tmux session (implies --agent)"
+      echo "Usage: $0 [-a|--agent] [-i|--interactive] [-t|--tmux] <task-slug|NN> [<task-slug|NN>...]"
+      echo "  -a, --agent         after creating/reusing, launch a codex agent in the task workspace"
+      echo "                      (by default runs 'codex exec' if --interactive is not given)"
+      echo "  -i, --interactive   launch codex agent in interactive mode (implies --agent)"
+      echo "                      (uses normal 'codex', do not exec)"
+      echo "  -t, --tmux          launch each agent review in a tiled tmux session (implies --agent)"
       exit 0
+      ;;
+    -i|--interactive)
+      interactive_mode=true
+      agent_mode=true
+      shift
       ;;
     *)
       break
@@ -123,5 +132,9 @@ if [ "$agent_mode" = true ]; then
     exit 1
   fi
   cd "$worktree_path"
-  codex "$(<"$prompt_file")"
+  if [ "$interactive_mode" = true ]; then
+    codex "$(<"$prompt_file")"
+  else
+    codex exec "$(<"$prompt_file")"
+  fi
 fi

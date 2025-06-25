@@ -11,7 +11,7 @@ goal: |
 
 # Task Template
 
-# Valid status values: Not started | Started | Needs manual review | Done | Cancelled
+# Valid status values: Not started | Started | Needs input | Needs manual review | Done | Cancelled
 
 
 > *This task is specific to codex-rs.*

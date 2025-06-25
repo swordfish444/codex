@@ -12,6 +12,8 @@ Then proceed directly to implement the full functionality in the codebase as a s
 Do not pause to seek user confirmation after editing the Markdown;
 only ask clarifying questions if you encounter genuine ambiguities in the requirements.
 
+At any point, you may set the task’s **Status** to any valid state (e.g. Not started, Started, Needs input, Needs manual review, Done, Cancelled) as appropriate. Use **Needs input** to request further clarification or resources before proceeding.
+
 When you have completed the implementation and updated the task file:
 - set the task’s **Status** to "Done".
 - stage and commit all changes (including your code and the updated Markdown) with a commit message prefixed `agentydragon(tasks):`, summarizing the work performed. You **MUST** commit these changes **BEFORE** pausing or stopping.
