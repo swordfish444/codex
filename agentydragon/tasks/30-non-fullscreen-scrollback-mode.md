@@ -2,6 +2,7 @@
 id: 30
 title: Non-Fullscreen Scrollback Mode with Native Terminal Scroll
 status: Not started  # one of: Not started, Started, Needs manual review, Done, Cancelled
+dependencies: "03,06,08,13,15,32,18,19,22,23"
 summary: Offer a non-fullscreen TUI mode that appends conversation output and defers scrolling to the terminal scrollback.
 goal: |
   Provide an optional non-fullscreen mode for the chat UI where:

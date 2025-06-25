@@ -3,10 +3,13 @@
 # Valid status values: Not started | Started | Needs manual review | Done | Cancelled
 
 ---
-id: <NN>
-title: <Task Title>
-status: Not started  # one of: Not started, Started, Needs manual review, Done, Cancelled
-summary: Brief summary of current status.
+---
+id = "<NN>"
+title = "<Task Title>"
+status = "<<<!!! MANAGER: SET VALID STATUS !!!>>>"
+summary = "Brief summary of current status."
+dependencies = "<<<!!! MANAGER: POPULATE THIS WHEN CREATING TASK !!!>>>"
+last_updated = "<timestamp in ISO format>"
 goal: |
   Describe the objective of the task here.
 ---
