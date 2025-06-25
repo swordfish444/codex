@@ -249,8 +249,8 @@ def status():
 @click.argument('status')
 def set_status(task_id, status):
     """Set status of TASK_ID to STATUS"""
-    md = task_dir() / f"{task_id}-*.md"
-    files = list(task_dir().glob(f'{task_id}-*.md'))
+    # search both in tasks/ and tasks/.done/ for the task file
+    files = list(task_dir().rglob(f'{task_id}-*.md'))
     if not files:
         click.echo(f'Task {task_id} not found', err=True)
         sys.exit(1)
@@ -259,8 +259,16 @@ def set_status(task_id, status):
     meta.status = status
     meta.last_updated = datetime.utcnow()
     save_task(path, meta, body)
-    # If the task was previously in .done/ and is being re-opened, move it back to tasks/
-    if path.parent.name == '.done' and meta.status not in (TaskStatus.DONE, TaskStatus.MERGED):
+    # Move between tasks/ and tasks/.done according to status transitions
+    done_dir = task_dir() / '.done'
+    # Move to .done on Merged
+    if meta.status == TaskStatus.MERGED and path.parent.name != '.done':
+        done_dir.mkdir(exist_ok=True)
+        dest = done_dir / path.name
+        click.echo(f"Archiving task: moving {path.name} -> {done_dir.relative_to(repo_root())}")
+        subprocess.run(['git', 'mv', str(path), str(dest)], cwd=repo_root())
+    # Move back to main tasks/ when status changes away from Done/Merged
+    elif path.parent.name == '.done' and meta.status not in (TaskStatus.DONE, TaskStatus.MERGED):
         dest = task_dir() / path.name
         click.echo(f"Reopening task: moving {path.name} -> {dest.parent.relative_to(repo_root())}")
         subprocess.run(['git', 'mv', str(path), str(dest)], cwd=repo_root())
