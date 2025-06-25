@@ -10,6 +10,7 @@ set -euo pipefail
 agent_mode=false
 tmux_mode=false
 interactive_mode=false
+shell_mode=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -a|--agent)
@@ -31,6 +32,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     -i|--interactive)
       interactive_mode=true
+      agent_mode=true
+      shift
+      ;;
+    -s|--shell)
+      # Launch agent in an interactive shell (no prompt injection, no auto-commit)
+      shell_mode=true
       agent_mode=true
       shift
       ;;

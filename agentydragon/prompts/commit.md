@@ -11,3 +11,6 @@ When you run, **output exactly** the desired commit message (with no extra comme
 - Concisely summarize the work performed as described in the task’s **Implementation** section.
 
 Stop immediately after emitting the commit message. An external orchestrator will stage, run hooks, and commit using this message.
+
+Below, you will get the task description the agent got. But still verify that the agent actually did what it was supposed to, and adjust the commit message according to what is actually implemented, DO NOT just copy what's in the task file.
+
