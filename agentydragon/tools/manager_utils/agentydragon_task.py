@@ -42,10 +42,12 @@ def status():
         all_meta[meta.id] = meta
         path_map[meta.id] = md
 
-    # Build dependency graph
+    # Build dependency graph, excluding already merged tasks
+    merged_ids = {tid for tid, m in all_meta.items() if m.status == 'Merged'}
     deps_map: dict[str, list[str]] = {}
     for tid, meta in all_meta.items():
-        deps_map[tid] = [d for d in re.findall(r"\d+", meta.dependencies) if d in all_meta]
+        deps_map[tid] = [d for d in re.findall(r"\d+", meta.dependencies)
+                         if d in all_meta and d not in merged_ids]
 
     # Topologically sort tasks by dependencies, fall back on filename order on error
     try:
