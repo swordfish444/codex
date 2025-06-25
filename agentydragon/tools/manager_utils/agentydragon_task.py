@@ -133,17 +133,17 @@ def status():
                 ['git', 'rev-list', '--left-right', '--count',
                  f'{branches[0]}...agentydragon'], cwd=root
             ).decode().split()
-        # compact diffstat: e.g. "56 files changed, 1265 insertions(+), 342 deletions(-)" -> "56f,1265i,342d"
-        raw = subprocess.check_output(
-            ['git', 'diff', '--shortstat', f'{branches[0]}...agentydragon'], cwd=root
-        ).decode().strip()
-        stat = (
-            raw.replace(' files changed', 'f')
-               .replace(' file changed', 'f')
-               .replace(' insertions(+)', 'i')
-               .replace(' deletions(-)', 'd')
-               .replace(', ', ',')
-        )
+            # compact diffstat: e.g. "56 files changed, 1265 insertions(+), 342 deletions(-)" -> "56f,1265i,342d"
+            raw = subprocess.check_output(
+                ['git', 'diff', '--shortstat', f'{branches[0]}...agentydragon'], cwd=root
+            ).decode().strip()
+            stat = (
+                raw.replace(' files changed', 'f')
+                   .replace(' file changed', 'f')
+                   .replace(' insertions(+)', 'i')
+                   .replace(' deletions(-)', 'd')
+                   .replace(', ', ',')
+            )
             base = subprocess.check_output(
                 ['git', 'merge-base', 'agentydragon', branches[0]], cwd=root
             ).decode().strip()
