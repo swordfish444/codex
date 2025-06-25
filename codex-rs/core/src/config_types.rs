@@ -104,6 +104,12 @@ pub struct Tui {
     /// Defaults to the `VISUAL` or `EDITOR` environment variable, falling back to `nvim`.
     #[serde(default = "default_editor")]
     pub editor: String,
+    /// Require two consecutive Ctrl+D keystrokes to exit the TUI when enabled.
+    #[serde(default)]
+    pub require_double_ctrl_d: bool,
+    /// Timeout in seconds for requiring second Ctrl+D to confirm exit.
+    #[serde(default = "default_double_ctrl_d_timeout_secs")]
+    pub double_ctrl_d_timeout_secs: u64,
 }
 
 fn default_composer_max_rows() -> usize {
@@ -115,6 +121,11 @@ fn default_editor() -> String {
     std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "nvim".into())
 }
 
+/// Default timeout in seconds for the second Ctrl+D confirmation to exit the TUI.
+fn default_double_ctrl_d_timeout_secs() -> u64 {
+    2
+}
+
 impl Default for Tui {
     fn default() -> Self {
         Self {
@@ -122,6 +133,8 @@ impl Default for Tui {
             markdown_compact: Default::default(),
             composer_max_rows: default_composer_max_rows(),
             editor: default_editor(),
+            require_double_ctrl_d: false,
+            double_ctrl_d_timeout_secs: default_double_ctrl_d_timeout_secs(),
         }
     }
 }

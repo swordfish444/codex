@@ -435,6 +435,17 @@ impl ChatWidget<'_> {
         self.bottom_pane.update_status_text(line);
     }
 
+    /// Show the Ctrl+D exit confirmation prompt via the status overlay.
+    pub(crate) fn show_exit_confirmation_prompt(&mut self, msg: String) {
+        self.bottom_pane.set_task_running(true);
+        self.bottom_pane.update_status_text(msg);
+    }
+
+    /// Clear any pending exit confirmation prompt.
+    pub(crate) fn clear_exit_confirmation_prompt(&mut self) {
+        self.bottom_pane.set_task_running(false);
+    }
+
     /// Launch interactive mount-add dialog.
     pub fn push_mount_add_interactive(&mut self) {
         self.bottom_pane.push_mount_add_interactive();
