@@ -14,10 +14,14 @@ def main():
     # Load all tasks and separate merged vs non-merged
     merged = set()
     deps_map = {}
+    id_to_path = {}
+    # skip template/plan files and any worktree copies
+    wt_root = task_dir() / '.worktrees'
     for md in task_dir().rglob('[0-9][0-9]-*.md'):
-        if md.name == 'task-template.md' or md.name.endswith('-plan.md'):
+        if md.name == 'task-template.md' or md.name.endswith('-plan.md') or md.is_relative_to(wt_root):
             continue
         meta, _ = load_task(md)
+        id_to_path[meta.id] = md
         if meta.status == 'Merged':
             merged.add(meta.id)
         else:
@@ -36,7 +40,11 @@ def main():
     def visit(n):
         if n in stack:
             cycle = stack[stack.index(n):] + [n]
-            print(f"Circular dependency detected: {' -> '.join(cycle)}")
+            cycle_str = ' -> '.join(cycle)
+            print(f"Circular dependency detected: {cycle_str}", file=sys.stderr)
+            print("Paths involved in cycle:", file=sys.stderr)
+            for tid in cycle:
+                print(f"  {id_to_path.get(tid, tid)}", file=sys.stderr)
             sys.exit(1)
         if n in visited:
             return

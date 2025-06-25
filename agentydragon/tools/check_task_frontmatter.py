@@ -28,13 +28,15 @@ ALLOWED_STATUSES = ["Not started", "Started", "Needs manual review", "Done", "Ca
 def main():
     failures = 0
 
+    # skip template/plan files and any worktree copies
+    wt_root = tasklib.worktree_dir()
     for md in tasklib.task_dir().rglob('[0-9][0-9]-*.md'):
-        if md.name == 'task-template.md' or md.name.endswith('-plan.md'):
+        if md.name == 'task-template.md' or md.name.endswith('-plan.md') or md.is_relative_to(wt_root):
             continue
         try:
             task, _body = tasklib.load_task(md)
         except ValueError as e:
-            print(e)
+            print(f"{md}: {e}", file=sys.stderr)
             failures += 1
 
     if failures:

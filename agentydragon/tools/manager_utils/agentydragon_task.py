@@ -31,8 +31,10 @@ def status():
     # Load all task metadata, reporting load errors with file path
     all_meta: dict[str, TaskMeta] = {}
     path_map: dict[str, Path] = {}
+    wt_root = worktree_dir()
     for md in sorted(task_dir().rglob('[0-9][0-9]-*.md')):
-        if md.name in ('task-template.md',) or md.name.endswith('-plan.md'):
+        # skip task template, plan files, and any worktree copies
+        if md.name in ('task-template.md',) or md.name.endswith('-plan.md') or md.is_relative_to(wt_root):
             continue
         try:
             meta, _ = load_task(md)

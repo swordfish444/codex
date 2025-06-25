@@ -59,7 +59,7 @@ Tasks live under `agentydragon/tasks/` as individual Markdown files. Please upda
 -
 -  Without `--agent`, this creates or reuses a worktree at
 -  `agentydragon/tasks/.worktrees/<task-id>-<task-slug>` off the `agentydragon` branch.
-  -  With `--agent`, after setup it launches the Developer Codex agent in that workspace (using `prompts/developer.md` and the task file),
+  -  With `--agent`, after setup it runs pre-commit checks (aborting on failure), then launches the Developer Codex agent in that workspace (using `prompts/developer.md` and the task file),
   -  and when the developer agent exits, it automatically runs the Commit agent helper to stage fixes and commit the work.
 **Commit agent helper**: in `agentydragon/tasks/`, run:
 

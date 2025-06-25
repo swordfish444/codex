@@ -26,8 +26,9 @@ while [[ $# -gt 0 ]]; do
 Usage: $0 [-a|--agent] [-s|--shell] [-i|--interactive] [-t|--tmux] <task-slug|NN> [<task-slug|NN>...]
 
 Options:
-  -a, --agent         create/reuse worktree and launch a Codex agent with prompt injection;
-                      when the agent exits, auto-run commit helper
+  -a, --agent         create/reuse worktree, run pre-commit checks (aborting on failure),
+                      and launch a Codex agent with prompt injection; when the agent exits,
+                      auto-run commit helper
   -s, --shell         create/reuse worktree and launch an interactive Codex shell
                       (no prompt injection, skip auto-commit)
   -i, --interactive   run the agent in interactive mode (no 'exec'); implies --agent
@@ -140,6 +141,16 @@ echo "Done."
 if [ "$agent_mode" = true ]; then
   echo "Launching Developer Codex agent for task $task_slug in sandboxed worktree"
   cd "${worktree_path}"
+  # Before launching the developer agent, run pre-commit checks and abort if hooks fail
+  if command -v pre-commit >/dev/null 2>&1; then
+    echo "Running pre-commit checks in $(pwd)"
+    if ! pre-commit run --all-files; then
+      echo "Error: pre-commit checks failed. Fix issues before launching the developer agent." >&2
+      exit 1
+    fi
+  else
+    echo "Warning: pre-commit is not installed; skipping pre-commit checks." >&2
+  fi
   echo "Launching Developer Codex agent for task $task_slug in sandboxed worktree"
   if [ "$shell_mode" = true ]; then
     # Interactive shell mode: no prompt, skip commit helper
