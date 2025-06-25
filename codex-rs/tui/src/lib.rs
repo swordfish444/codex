@@ -31,6 +31,7 @@ mod conversation_history_widget;
 mod exec_command;
 mod git_warning_screen;
 mod history_cell;
+mod get_git_diff;
 mod log_layer;
 mod login_screen;
 mod markdown;
