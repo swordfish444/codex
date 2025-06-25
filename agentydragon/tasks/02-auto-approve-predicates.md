@@ -1,7 +1,7 @@
 +++
 id = "02"
 title = "Granular Auto-Approval Predicates"
-status = "Merged"
+status = "Not started"
 dependencies = "01,04,10,12,16,17"
 last_updated = "2025-06-25T01:40:09.503983"
 +++
@@ -12,8 +12,8 @@ last_updated = "2025-06-25T01:40:09.503983"
 
 ## Status
 
-**General Status**: Merged  
-**Summary**: Not started; missing Implementation details (How it was implemented and How it works).
+**General Status**: Not started  
+**Summary**: Feature stub only; implementation missing.
 
 ## Goal
 Let users configure one or more scripts in `config.toml` that examine each proposed shell command and return exactly one of:
