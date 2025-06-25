@@ -1,7 +1,7 @@
 +++
 id = "25"
 title = "Guard Against Missing Tool Output in Rust Server Sequencing"
-status = "Not started"
+status = "In progress"
 dependencies = "03,06,08,13,15,32,18,19,22,23"
 last_updated = "2025-06-25T01:40:09.600000"
 +++
@@ -20,12 +20,17 @@ Ensure the Rust server implementation sequences tool output and chat messages co
 
 ## Implementation
 
-**How it was implemented**  
-- Introduce a pending-invocation registry (`HashMap<InvocationId, PendingState>`) in the Rust message pipeline.
-- Modify `handle_user_message` and `handle_model_event` in the broker to check for unresolved pending invocations and enqueue incoming events accordingly.
-- On receiving the corresponding tool output or tool abort event, dequeue and dispatch any buffered messages in order.
-- Implement a timeout or explicit cancel path to avoid stuck invocations in case of unresponsive tools.
-- Extend the Rust test suite (e.g. in `broker/tests/`) with scenarios covering normal, aborted, and concurrent messages.
+We will implement the following high-level plan:
+
+- Locate where the ChatCompletion request messages array is built in Rust:
+  the `stream_chat_completions` function in `codex-rs/core/src/chat_completions.rs`.
+- In that loop, track pending tool invocations by their call IDs when encountering `ResponseItem::FunctionCall` entries.
+- Buffer any subsequent `ResponseItem::Message { role: "user" }` or new turn inputs until the matching `ResponseItem::FunctionCallOutput` (tool result) appears.
+- Once the tool output is seen, flush buffered user messages in order immediately before continuing to build the next API call.
+- Add tests under `codex-rs/core/tests/` (e.g. `guard_tool_output_sequencing.rs`) that exercise interleaved input sequences:
+  - A user message mid-rollout before tool output, ensuring it is delayed until after the tool result.
+  - Normal flow where no buffering is needed.
+  - Cancellation or error-result paths that also trigger a flush of buffered messages.
 
 ## Notes
 

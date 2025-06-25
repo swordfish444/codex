@@ -35,57 +35,60 @@ pub(crate) async fn stream_chat_completions(
     client: &reqwest::Client,
     provider: &ModelProviderInfo,
 ) -> Result<ResponseStream> {
-    // Build messages array
+    // Build messages array, buffering user turns that arrive mid-tool invocation
     let mut messages = Vec::<serde_json::Value>::new();
+    let mut pending_call: Option<String> = None;
+    let mut buf_user: Vec<serde_json::Value> = Vec::new();
 
     let full_instructions = prompt.get_full_instructions(model);
     messages.push(json!({"role": "system", "content": full_instructions}));
 
     for item in &prompt.input {
         match item {
+            ResponseItem::Message { role, content } if role == "user" && pending_call.is_some() => {
+                // Buffer user message until pending tool result arrives
+                let mut text = String::new();
+                for c in content {
+                    if let ContentItem::InputText { text: t } = c {
+                        text.push_str(t);
+                    }
+                }
+                buf_user.push(json!({"role": "user", "content": text}));
+            }
             ResponseItem::Message { role, content } => {
                 let mut text = String::new();
                 for c in content {
                     match c {
                         ContentItem::InputText { text: t }
-                        | ContentItem::OutputText { text: t } => {
-                            text.push_str(t);
-                        }
+                        | ContentItem::OutputText { text: t } => text.push_str(t),
                         _ => {}
                     }
                 }
                 messages.push(json!({"role": role, "content": text}));
             }
-            ResponseItem::FunctionCall {
-                name,
-                arguments,
-                call_id,
-            } => {
+            ResponseItem::FunctionCall { name, arguments, call_id } => {
+                // Mark tool invocation in-flight
+                pending_call = Some(call_id.clone());
                 messages.push(json!({
                     "role": "assistant",
                     "content": null,
                     "tool_calls": [{
                         "id": call_id,
                         "type": "function",
-                        "function": {
-                            "name": name,
-                            "arguments": arguments,
-                        }
+                        "function": { "name": name, "arguments": arguments }
                     }]
                 }));
             }
-            ResponseItem::LocalShellCall {
-                id,
-                call_id: _,
-                status,
-                action,
-            } => {
-                // Confirm with API team.
+            ResponseItem::LocalShellCall { id, status, action, .. } => {
+                // Mark shell-call invocation in-flight by id
+                if let Some(call_id) = id {
+                    pending_call = Some(call_id.clone());
+                }
                 messages.push(json!({
                     "role": "assistant",
                     "content": null,
                     "tool_calls": [{
-                        "id": id.clone().unwrap_or_else(|| "".to_string()),
+                        "id": id.clone().unwrap_or_default(),
                         "type": "local_shell_call",
                         "status": status,
                         "action": action,
@@ -98,9 +101,16 @@ pub(crate) async fn stream_chat_completions(
                     "tool_call_id": call_id,
                     "content": output.content,
                 }));
+                if pending_call.as_ref() == Some(call_id) {
+                    // Flush any buffered user messages now that tool result arrived
+                    pending_call = None;
+                    for msg in buf_user.drain(..) {
+                        messages.push(msg);
+                    }
+                }
             }
             ResponseItem::Reasoning { .. } | ResponseItem::Other => {
-                // Omit these items from the conversation history.
+                // Skip these items in the conversation history.
                 continue;
             }
         }
