@@ -147,6 +147,11 @@ impl BottomPane<'_> {
         }
     }
 
+    /// Update the context-left percentage displayed in the composer.
+    pub fn set_context_percent(&mut self, pct: f64) {
+        self.composer.set_context_left(pct);
+    }
+
     /// Launch interactive mount-add dialog (host, container, [mode]).
     pub fn push_mount_add_interactive(&mut self) {
         let view = MountAddView::new(self.app_event_tx.clone());
