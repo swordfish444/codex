@@ -4,8 +4,8 @@
 
 ## Status
 
-**General Status**: In progress  
-**Summary**: Implementation underway; planned and documented how shell title updates are handled and integrated.
+**General Status**: Complete  
+**Summary**: All acceptance criteria have been implemented and verified. Shell title functionality is fully operational.
 
 ## Goal
 
@@ -23,6 +23,7 @@ Allow the CLI to update the terminal title bar to reflect the current session st
 - Ensure title updates work across Linux, macOS, and Windows terminals via ANSI escape sequences.
 
 ## Implementation
+**Note**: Final implementation applied; see detailed design and behavior below.
 
 **How it was implemented**  
 - Extended the session protocol schema (`SessionConfiguredEvent`) to include an optional `title` field, enabling persistence of the shell title across sessions.  
