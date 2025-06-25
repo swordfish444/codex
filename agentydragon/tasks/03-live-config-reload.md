@@ -1,8 +1,8 @@
 +++
 id = "03"
 title = "Live Config Reload and Prompt on Changes"
-status = "Not started"
-dependencies = "" # No prerequisites
+status = "Done"
+dependencies = "02,07,09,11,14,29"
 last_updated = "2025-06-25T01:40:09.504758"
 +++
 
@@ -12,8 +12,8 @@ last_updated = "2025-06-25T01:40:09.504758"
 
 ## Status
 
-**General Status**: Not started  
-**Summary**: Not started; missing Implementation details (How it was implemented and How it works).
+**General Status**: Done  
+**Summary**: Live config watcher, diff prompt, and reload integration implemented.
 
 ## Goal
 Detect changes to the user `config.toml` file while a session is running and prompt the user to apply or ignore the updated settings.
@@ -27,10 +27,16 @@ Detect changes to the user `config.toml` file while a session is running and pro
 ## Implementation
 
 **How it was implemented**  
-*(Not implemented yet)*
+- Added `codex_tui::config_reload::generate_diff` to compute unified diffs via the `similar` crate (with a unit test).  
+- Spawned a `notify`-based filesystem watcher thread in `tui::run_main` that debounces write events on `$CODEX_HOME/config.toml`, generates diffs against the last-read contents, and posts `AppEvent::ConfigReloadRequest(diff)`.
+- Introduced `AppEvent` variants (`ConfigReloadRequest`, `ConfigReloadApply`, `ConfigReloadIgnore`) and wired them in `App::run` to display a new `BottomPaneView` overlay.
+- Created `BottomPaneView` implementation `ConfigReloadView` to render the diff and handle `<Enter>`/`<Esc>` for apply or ignore.
+- On apply, reloaded `Config` via `Config::load_with_cli_overrides`, updated both `App.config` and `ChatWidget` (rebuilding its bottom pane with updated settings).
 
 **How it works**  
-*(Not implemented yet)*
+- The watcher thread detects on-disk changes and pushes a diff request into the UI event loop.
+- Upon `ConfigReloadRequest`, the TUI bottom pane overlays the diff view and blocks normal input.
+- `<Enter>` applies the new config (re-parses and updates runtime state); `<Esc>` dismisses the overlay and continues with the old settings.
 
 ## Notes
 - Leverage a crate such as `notify` for FS events and `similar` or `diff` for unified diff generation.

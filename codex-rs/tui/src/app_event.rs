@@ -44,4 +44,10 @@ pub(crate) enum AppEvent {
     MountRemove {
         container: std::path::PathBuf,
     },
+    /// Notify that the on-disk config.toml has changed and present diff.
+    ConfigReloadRequest(String),
+    /// Apply the new on-disk config.toml.
+    ConfigReloadApply,
+    /// Ignore on-disk config.toml changes and continue with old config.
+    ConfigReloadIgnore,
 }
