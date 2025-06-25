@@ -231,11 +231,6 @@ impl ChatComposer<'_> {
                 self.textarea.insert_newline();
                 (InputResult::None, true)
             }
-            Input { key: Key::Char('e'), ctrl: true, alt: false, shift: false } => {
-                // Launch external editor for prompt drafting
-                self.open_external_editor();
-                (InputResult::None, true)
-            }
             Input { key: Key::Char('m'), ctrl: true, alt: false, shift: false } => {
                 // Launch shell-command prompt
                 self.app_event_tx.send(AppEvent::DispatchCommand(SlashCommand::Shell));
