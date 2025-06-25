@@ -47,6 +47,7 @@ mod text_block;
 mod text_formatting;
 mod tui;
 mod user_approval_widget;
+mod config_reload;
 
 pub use cli::Cli;
 
@@ -208,6 +209,43 @@ fn run_ratatui_app(
         tokio::spawn(async move {
             while let Some(line) = log_rx.recv().await {
                 app_event_tx.send(crate::app_event::AppEvent::LatestLog(line));
+            }
+        });
+    }
+
+    // Watch config.toml for changes and prompt reload.
+    {
+        let app_event_tx = app.event_sender();
+        let config_path = config.codex_home.join("config.toml");
+        std::thread::spawn(move || {
+            use notify::{Watcher, RecursiveMode, RecommendedWatcher, EventKind};
+            use std::sync::mpsc::channel;
+            use std::time::Duration;
+            let (tx, rx) = channel();
+            let mut watcher: RecommendedWatcher =
+                Watcher::new(tx, notify::Config::default()).unwrap_or_else(|e| {
+                    tracing::error!("config watcher failed: {e}");
+                    std::process::exit(1);
+                });
+            if watcher.watch(&config_path, RecursiveMode::NonRecursive).is_err() {
+                tracing::error!("Failed to watch config.toml");
+                return;
+            }
+            let mut last = std::fs::read_to_string(&config_path).unwrap_or_default();
+            for res in rx {
+                if let Ok(event) = res {
+                    if matches!(event.kind, EventKind::Modify(_)) {
+                        std::thread::sleep(Duration::from_millis(100));
+                        let new = std::fs::read_to_string(&config_path).unwrap_or_default();
+                        if new != last {
+                            let diff = crate::config_reload::generate_diff(&last, &new);
+                            last = new.clone();
+                            app_event_tx.send(
+                                crate::app_event::AppEvent::ConfigReloadRequest(diff)
+                            );
+                        }
+                    }
+                }
             }
         });
     }

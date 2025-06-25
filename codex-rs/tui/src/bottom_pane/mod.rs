@@ -25,6 +25,7 @@ pub(crate) use chat_composer::InputResult;
 use approval_modal_view::ApprovalModalView;
 use mount_view::{MountAddView, MountRemoveView};
 use status_indicator_view::StatusIndicatorView;
+use config_reload_view::ConfigReloadView;
 
 /// Pane displayed in the lower half of the chat UI.
 pub(crate) struct BottomPane<'a> {
@@ -166,6 +167,13 @@ impl BottomPane<'_> {
         self.request_redraw();
     }
 
+    /// Launch config reload diff prompt.
+    pub fn push_config_reload(&mut self, diff: String) {
+        let view = ConfigReloadView::new(diff, self.app_event_tx.clone());
+        self.active_view = Some(Box::new(view));
+        self.request_redraw();
+    }
+
     /// Called when the agent requests user approval.
     pub fn push_approval_request(&mut self, request: ApprovalRequest) {
         let request = if let Some(view) = self.active_view.as_mut() {
@@ -271,6 +279,7 @@ mod tests {
 
     #[test]
     fn remove_status_indicator_after_task_complete() {
+mod config_reload_view;
         let mut pane = make_pane();
         pane.set_task_running(true);
         assert!(pane.active_view.is_some());

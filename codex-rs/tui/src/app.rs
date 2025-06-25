@@ -8,7 +8,7 @@ use crate::mouse_capture::MouseCapture;
 use crate::scroll_event_helper::ScrollEventHelper;
 use crate::slash_command::SlashCommand;
 use crate::tui;
-use codex_core::config::Config;
+use codex_core::config::{Config, ConfigOverrides};
 use codex_core::protocol::{Event, EventMsg, Op, SessionConfiguredEvent};
 use color_eyre::eyre::Result;
 use crossterm::event::KeyCode;
@@ -319,6 +319,27 @@ impl<'a> App<'a> {
                     if let Err(err) = do_mount_remove(&mut self.config, &container) {
                         tracing::error!("mount-remove failed: {err}");
                     }
+                    self.app_event_tx.send(AppEvent::Redraw);
+                }
+                AppEvent::ConfigReloadRequest(diff) => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.push_config_reload(diff);
+                    }
+                    self.app_event_tx.send(AppEvent::Redraw);
+                }
+                AppEvent::ConfigReloadApply => {
+                    match Config::load_with_cli_overrides(Vec::new(), ConfigOverrides::default()) {
+                        Ok(new_cfg) => {
+                            self.config = new_cfg.clone();
+                            if let AppState::Chat { widget } = &mut self.app_state {
+                                widget.update_config(new_cfg);
+                            }
+                        }
+                        Err(e) => tracing::error!("Failed to reload config.toml: {e}"),
+                    }
+                    self.app_event_tx.send(AppEvent::Redraw);
+                }
+                AppEvent::ConfigReloadIgnore => {
                     self.app_event_tx.send(AppEvent::Redraw);
                 }
                 AppEvent::KeyEvent(key_event) => {
