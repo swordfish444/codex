@@ -1,15 +1,11 @@
----
-id: 20
-title: Render Patch Content in Chat Display Window for Approve/Deny
-status: Not started  # one of: Not started, Started, Needs manual review, Done, Cancelled
-summary: Improve inline display of patch hunks in chat messages for approval workflows.
-goal: |
-  Adjust the chat UI so that when the assistant proposes patches for approval or denial:
-  - The current patch being queried is shown in full, with file paths relative to the CWD (or absolute if outside CWD).
-  - Previous patches collapse to a configurable number of context lines (e.g. first and last X lines).
-  - Omit verbose event logs (e.g. `PatchApplyEnd(PatchApplyEndEvent { ... })`), replacing them with concise annotations like "patch applied".
-  - Maintain clear separation between patches and conversational messages.
----
++++
+id = "20"
+title = "Render Patch Content in Chat Display Window for Approve/Deny"
+status = "Not started"
+dependencies = ""
+last_updated = "2025-06-25T01:41:34.738344"
++++
+
 > *This task is specific to the chat UI renderer.*
 
 ## Acceptance Criteria

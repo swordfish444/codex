@@ -1,11 +1,10 @@
----
-id: 17
-title: Sandbox Pre-commit Permission Error
-status: Not started
-summary: Pre-commit hooks fail in sandbox due to inability to lock user gitconfig.
-goal: |
-  Investigate and resolve pre-commit setup failures in sandbox environments caused by permission errors on ~/.gitconfig so that pre-commit checks can run reliably within agent worktrees.
----
++++
+id = "17"
+title = "Sandbox Pre-commit Permission Error"
+status = "Not started"
+dependencies = ""
+last_updated = "2025-06-25T01:41:34.737190"
++++
 
 > *This task addresses scaffolding/setup for Agent worktrees.*
 
