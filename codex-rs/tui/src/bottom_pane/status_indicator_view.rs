@@ -39,6 +39,10 @@ impl<'a> BottomPaneView<'a> for StatusIndicatorView {
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        self.view.render_ref(area, buf);
+        // Render the status overlay in a floating box immediately above the textarea
+        let h = self.view.get_height();
+        let y = area.y.saturating_sub(h);
+        let rect = Rect { x: area.x, y, width: area.width, height: h };
+        self.view.render_ref(rect, buf);
     }
 }

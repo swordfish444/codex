@@ -347,7 +347,7 @@ impl ChatComposer<'_> {
         self.textarea.set_block(
             ratatui::widgets::Block::default()
                 .title_bottom(bs.right_title)
-                .borders(Borders::ALL)
+                .borders(Borders::BOTTOM)
                 .border_type(BorderType::Rounded)
                 .border_style(bs.border_style),
         );
