@@ -142,7 +142,8 @@ def main(agent, tmux_mode, interactive, shell_mode, skip_presubmit, task_inputs)
     if status and status.lower() == 'done':
         click.echo(f"Task {slug} marked Done; running Commit agent helper")
         commit_script = repo_root() / 'agentydragon' / 'tools' / 'launch_commit_agent.py'
-        run([sys.executable, str(commit_script), slug])
+        # Launch commit agent from the main repo root, not inside the task worktree
+        run([sys.executable, str(commit_script), slug], cwd=str(repo_root()))
     else:
         click.echo(f"Task {slug} status is '{status or 'unknown'}'; skipping Commit agent helper")
 
