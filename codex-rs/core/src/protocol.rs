@@ -120,7 +120,7 @@ pub enum AskForApproval {
     /// Everything else will ask the user to approve.
     #[default]
     #[serde(rename = "untrusted")]
-    UnlessAllowListed,
+    UnlessTrusted,
 
     /// *All* commands are auto‑approved, but they are expected to run inside a
     /// sandbox where network access is disabled and writes are confined to a
@@ -230,12 +230,6 @@ impl SandboxPolicy {
                 roots
             }
         }
-    }
-
-    // TODO(mbolin): This conflates sandbox policy and approval policy and
-    // should go away.
-    pub fn is_unrestricted(&self) -> bool {
-        matches!(self, SandboxPolicy::DangerFullAccess)
     }
 }
 
