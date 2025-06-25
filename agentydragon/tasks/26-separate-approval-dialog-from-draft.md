@@ -2,7 +2,7 @@
 id = "26"
 title = "Render Approval Requests in Separate Dialog from Draft Window"
 status = "Not started"
-dependencies = "03,06,08,13,15,32,18,19,22,23"
+dependencies = "09,23" # Rationale: depends on Tasks 09 and 23 for file-level approvals and interactive command affordance
 last_updated = "2025-06-25T01:40:09.600000"
 +++
 

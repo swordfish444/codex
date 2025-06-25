@@ -2,7 +2,7 @@
 id = "23"
 title = "Interactive Container Command Affordance via Hotkey"
 status = "Not started"
-dependencies = "02,07,09,11,14,29"
+dependencies = "01" # Rationale: depends on Task 01 for mount-add/remove affordance
 last_updated = "2025-06-25T01:40:09.600000"
 +++
 

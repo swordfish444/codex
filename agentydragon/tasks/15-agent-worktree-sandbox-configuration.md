@@ -2,7 +2,7 @@
 id = "15"
 title = "Agent Worktree Sandbox Configuration"
 status = "Not started"
-dependencies = "02,07,09,11,14,29"
+dependencies = "" # No prerequisites
 last_updated = "2025-06-25T01:40:09.512675"
 +++
 

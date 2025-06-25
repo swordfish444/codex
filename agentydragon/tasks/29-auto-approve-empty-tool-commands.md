@@ -2,7 +2,7 @@
 id = "29"
 title = "Auto-Approve Empty-Array Tool Invocations"
 status = "Not started"
-dependencies = "03,06,08,13,15,32,18,19,22,23"
+dependencies = "02" # Rationale: depends on Task 02 for auto-approval logic
 last_updated = "2025-06-25T01:40:09.600000"
 +++
 

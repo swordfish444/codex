@@ -2,7 +2,7 @@
 id = "14"
 title = "AI‑Generated Approval Predicate Suggestions"
 status = "Not started"
-dependencies = "01,04,10,12,16,17"
+dependencies = "02,11" # Rationale: depends on Task 02 for auto-approval predicates and Task 11 for predicate invocation logic
 last_updated = "2025-06-25T01:40:09.511783"
 +++
 

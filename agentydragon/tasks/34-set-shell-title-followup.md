@@ -2,7 +2,7 @@
 id = "34"
 title = "Complete Set Shell Title to Reflect Session Status"
 status = "Not started"
-dependencies = "08"
+dependencies = "08" # Rationale: depends on Task 08 for initial shell title change
 last_updated = "2025-06-25T04:45:29Z"
 +++
 

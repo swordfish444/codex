@@ -2,7 +2,7 @@
 id = "09"
 title = "File- and Directory-Level Approvals"
 status = "Not started"
-dependencies = "01,04,10,12,16,17"
+dependencies = "11" # Rationale: depends on Task 11 for custom approval predicate infrastructure
 last_updated = "2025-06-25T01:40:09.507043"
 +++
 

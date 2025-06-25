@@ -2,7 +2,7 @@
 id = "16"
 title = "Confirm on Ctrl+D to Exit"
 status = "Not started"
-dependencies = ""
+dependencies = "" # No prerequisites
 last_updated = "2025-06-25T01:40:09.513723"
 +++
 

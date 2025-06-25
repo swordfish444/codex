@@ -2,7 +2,7 @@
 id = "02"
 title = "Granular Auto-Approval Predicates"
 status = "Not started"
-dependencies = "01,04,10,12,16,17"
+dependencies = "11" # Rationale: depends on Task 11 for user-configurable approval predicates
 last_updated = "2025-06-25T01:40:09.503983"
 +++
 
