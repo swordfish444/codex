@@ -201,15 +201,15 @@ def dispose(task_id):
             rel = wt_dir.relative_to(root)
             subprocess.run(['git', 'worktree', 'remove', str(rel), '--force'], cwd=root)
         # Delete any matching branches
+        # delete any matching local branches cleanly via for-each-ref
+        ref_pattern = f'refs/heads/agentydragon-{tid}-*'
         branches = subprocess.run(
-            ['git', 'branch', '--list', f'agentydragon-{tid}-*'],
+            ['git', 'for-each-ref', '--format=%(refname:short)', ref_pattern],
             capture_output=True, text=True, cwd=root
         ).stdout.splitlines()
         for br in branches:
-            # strip markers for current (*) or other worktrees (+) and whitespace
-            name = br.lstrip('*+ ').strip()
-            if name:
-                subprocess.run(['git', 'branch', '-D', name], cwd=root)
+            if br:
+                subprocess.run(['git', 'branch', '-D', br], cwd=root)
         click.echo(f'Disposed task {tid}')
 
 @cli.command()
