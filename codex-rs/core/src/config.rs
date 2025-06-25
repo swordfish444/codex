@@ -25,6 +25,13 @@ use toml::Value as TomlValue;
 /// the context window.
 pub(crate) const PROJECT_DOC_MAX_BYTES: usize = 32 * 1024; // 32 KiB
 
+/// Predicate for auto-approval: external script that examines a shell command and votes.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct AutoAllowPredicate {
+    /// Command line to invoke, receiving the candidate shell command as its only argument.
+    pub script: String,
+}
+
 /// Application configuration loaded from disk and merged with overrides.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -39,6 +46,8 @@ pub struct Config {
 
     /// Approval policy for executing commands.
     pub approval_policy: AskForApproval,
+    /// Auto-approval predicate scripts that cast votes on each shell command.
+    pub auto_allow: Vec<AutoAllowPredicate>,
 
     pub sandbox_policy: SandboxPolicy,
 
@@ -237,6 +246,10 @@ pub struct ConfigToml {
 
     /// Default approval policy for executing commands.
     pub approval_policy: Option<AskForApproval>,
+
+    /// Auto-approval predicate scripts that cast votes on each shell command.
+    #[serde(default)]
+    pub auto_allow: Vec<AutoAllowPredicate>,
 
     #[serde(default)]
     pub shell_environment_policy: ShellEnvironmentPolicyToml,
@@ -439,6 +452,9 @@ impl Config {
                 .or(config_profile.approval_policy)
                 .or(cfg.approval_policy)
                 .unwrap_or_else(AskForApproval::default),
+            auto_allow: config_profile
+                .auto_allow
+                .unwrap_or(cfg.auto_allow),
             sandbox_policy,
             shell_environment_policy,
             disable_response_storage: config_profile

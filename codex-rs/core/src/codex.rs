@@ -37,7 +37,7 @@ use crate::WireApi;
 use crate::client::ModelClient;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
-use crate::config::Config;
+use crate::config::{Config, AutoAllowPredicate};
 use crate::config_types::ShellEnvironmentPolicy;
 use crate::conversation_history::ConversationHistory;
 use crate::error::CodexErr;
@@ -83,7 +83,7 @@ use crate::protocol::Submission;
 use crate::protocol::TaskCompleteEvent;
 use crate::rollout::RolloutRecorder;
 use crate::safety::SafetyCheck;
-use crate::safety::assess_command_safety;
+use crate::safety::{assess_command_safety, evaluate_auto_allow_predicates, get_platform_sandbox, AutoAllowVote};
 use crate::safety::assess_patch_safety;
 use crate::user_notification::UserNotification;
 use crate::util::backoff;
@@ -175,6 +175,8 @@ pub(crate) struct Session {
     cwd: PathBuf,
     instructions: Option<String>,
     approval_policy: AskForApproval,
+    /// External predicate scripts for auto-approval or rejection of shell commands.
+    pub auto_allow: Vec<AutoAllowPredicate>,
     sandbox_policy: SandboxPolicy,
     shell_environment_policy: ShellEnvironmentPolicy,
     writable_roots: Mutex<Vec<PathBuf>>,
@@ -658,6 +660,7 @@ async fn submission_loop(
                     ctrl_c: Arc::clone(&ctrl_c),
                     instructions,
                     approval_policy,
+                    auto_allow: config.auto_allow.clone(),
                     sandbox_policy,
                     shell_environment_policy: config.shell_environment_policy.clone(),
                     cwd,
@@ -1278,15 +1281,34 @@ async fn handle_container_exec_with_params(
         MaybeApplyPatchVerified::NotApplyPatch => (),
     }
 
-    // safety checks
-    let safety = {
-        let state = sess.state.lock().unwrap();
-        assess_command_safety(
-            &params.command,
-            sess.approval_policy,
-            &sess.sandbox_policy,
-            &state.approved_commands,
-        )
+    // safety checks with auto-approval predicates
+    let safety = match evaluate_auto_allow_predicates(&params.command, &sess.auto_allow) {
+        AutoAllowVote::Deny => {
+            return ResponseInputItem::FunctionCallOutput {
+                call_id,
+                output: crate::models::FunctionCallOutputPayload {
+                    content: "exec command denied by auto-approval predicate".to_string(),
+                    success: None,
+                },
+            };
+        }
+        AutoAllowVote::Allow => {
+            let sandbox_type = if sess.sandbox_policy.is_unrestricted() {
+                SandboxType::None
+            } else {
+                get_platform_sandbox().unwrap_or(SandboxType::None)
+            };
+            SafetyCheck::AutoApprove { sandbox_type }
+        }
+        AutoAllowVote::NoOpinion => {
+            let state = sess.state.lock().unwrap();
+            assess_command_safety(
+                &params.command,
+                sess.approval_policy,
+                &sess.sandbox_policy,
+                &state.approved_commands,
+            )
+        }
     };
     let sandbox_type = match safety {
         SafetyCheck::AutoApprove { sandbox_type } => sandbox_type,

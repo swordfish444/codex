@@ -1,6 +1,7 @@
 use serde::Deserialize;
 
 use crate::protocol::AskForApproval;
+use crate::config::AutoAllowPredicate;
 
 /// Collection of common configuration options that a user can define as a unit
 /// in `config.toml`.
@@ -12,4 +13,6 @@ pub struct ConfigProfile {
     pub model_provider: Option<String>,
     pub approval_policy: Option<AskForApproval>,
     pub disable_response_storage: Option<bool>,
+    /// External predicate scripts for auto-approval or rejection of shell commands.
+    pub auto_allow: Option<Vec<AutoAllowPredicate>>,
 }

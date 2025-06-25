@@ -195,6 +195,23 @@ sandbox_permissions = [
 ]
 ```
 
+## auto_allow
+
+User-defined predicate scripts that vote on each shell command before manual approval.
+Each script is invoked with the full candidate command as its only argument and must
+write exactly one of `allow`, `deny`, or `no-opinion` to stdout.
+
+```toml
+[[auto_allow]]
+script = "/path/to/approve_predicate.sh"
+[[auto_allow]]
+script = "my_predicate --flag"
+```
+
+If any predicate returns `deny`, Codex rejects the command; otherwise if any returns
+`allow`, Codex auto-approves and proceeds under the sandbox; if all return `no-opinion`
+or error, Codex falls back to the manual approval prompt.
+
 ## mcp_servers
 
 Defines the list of MCP servers that Codex can consult for tool use. Currently, only servers that are launched by executing a program that communicate over stdio are supported. For servers that use the SSE transport, consider an adapter like [mcp-proxy](https://github.com/sparfenyuk/mcp-proxy).
