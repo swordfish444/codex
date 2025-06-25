@@ -236,6 +236,11 @@ impl ChatComposer<'_> {
                 self.open_external_editor();
                 (InputResult::None, true)
             }
+            Input { key: Key::Char('m'), ctrl: true, alt: false, shift: false } => {
+                // Launch shell-command prompt
+                self.app_event_tx.send(AppEvent::DispatchCommand(SlashCommand::Shell));
+                (InputResult::None, true)
+            }
             input => self.handle_input_basic(input),
         }
     }
@@ -278,6 +283,12 @@ impl ChatComposer<'_> {
         self.textarea.select_all();
         self.textarea.cut();
         let _ = self.textarea.insert_str(new_text);
+    }
+
+    /// Return the current text in the composer input.
+    #[allow(dead_code)]
+    pub fn get_input_text(&self) -> String {
+        self.textarea.lines().join("\n")
     }
 
     /// Synchronize `self.command_popup` with the current text in the

@@ -401,6 +401,24 @@ impl<'a> App<'a> {
                             self.app_event_tx.send(AppEvent::Redraw);
                         }
                     }
+                    SlashCommand::Shell => {
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.push_shell_command_interactive();
+                            self.app_event_tx.send(AppEvent::Redraw);
+                        }
+                    }
+                },
+                AppEvent::ShellCommand(cmd) => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.handle_shell_command(cmd);
+                        self.app_event_tx.send(AppEvent::Redraw);
+                    }
+                },
+                AppEvent::ShellCommandResult { call_id, stdout, stderr, exit_code } => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.handle_shell_command_result(call_id, stdout, stderr, exit_code);
+                        self.app_event_tx.send(AppEvent::Redraw);
+                    }
                 },
             }
         }
