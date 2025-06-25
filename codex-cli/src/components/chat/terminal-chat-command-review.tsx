@@ -6,6 +6,7 @@ import { ReviewDecision } from "../../utils/agent/review";
 import { Select } from "../vendor/ink-select/select";
 import TextInput from "../vendor/ink-text-input";
 import { Box, Text, useInput } from "ink";
+import { sessionScopedApprovalLabel } from "../../utils/string-utils";
 import React from "react";
 
 // default deny‑reason:
@@ -86,10 +87,17 @@ export function TerminalChatCommandReview({
     ];
 
     if (showAlwaysApprove) {
-      opts.push({
-        label: "Always allow this command for the remainder of the session (a)",
-        value: ReviewDecision.ALWAYS,
-      });
+      let label: string;
+      if (
+        React.isValidElement(confirmationPrompt) &&
+        typeof (confirmationPrompt as any).props?.commandForDisplay === "string"
+      ) {
+        const cmd: string = (confirmationPrompt as any).props.commandForDisplay;
+        label = sessionScopedApprovalLabel(cmd, 30);
+      } else {
+        label = "Always allow this command for the remainder of the session (a)";
+      }
+      opts.push({ label, value: ReviewDecision.ALWAYS });
     }
 
     opts.push(
@@ -117,7 +125,7 @@ export function TerminalChatCommandReview({
     );
 
     return opts;
-  }, [showAlwaysApprove]);
+  }, [showAlwaysApprove, confirmationPrompt]);
 
   useInput(
     (input, key) => {

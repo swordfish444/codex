@@ -89,6 +89,30 @@ const SELECT_OPTIONS: &[SelectOption] = &[
     },
 ];
 
+/// Maximum length of the command snippet to display in the session-scoped approval label.
+const MAX_SNIPPET_LEN: usize = 30;
+
+/// Truncate a string in the middle to fit within max_len, inserting a single-character ellipsis if needed.
+fn truncate_middle(text: &str, max_len: usize) -> String {
+    if text.len() <= max_len {
+        text.to_string()
+    } else {
+        let ellipsis = '…';
+        let trim_len = max_len.saturating_sub(ellipsis.len_utf8());
+        let start_len = (trim_len + 1) / 2;
+        let end_len = trim_len / 2;
+        let start = &text[..start_len];
+        let end = &text[text.len() - end_len..];
+        format!("{}{}{}", start, ellipsis, end)
+    }
+}
+
+/// Build the dynamic session-scoped approval label for the given command string.
+fn session_scoped_label(cmd: &str, max_len: usize) -> String {
+    let snippet = truncate_middle(cmd, max_len);
+    format!("Yes, always allow running `{}` for this session (a)", snippet)
+}
+
 /// Internal mode the widget is in – mirrors the TypeScript component.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -347,18 +371,33 @@ impl WidgetRef for &UserApprovalWidget<'_> {
         // non-wrapping lines rather than a Paragraph because get_height(Rect)
         // depends on this behavior for its calculation.
         let lines = match self.mode {
-            Mode::Select => SELECT_OPTIONS
-                .iter()
-                .enumerate()
-                .map(|(idx, opt)| {
-                    let (prefix, style) = if idx == self.selected_option {
-                        ("▶", BLUE_FG)
-                    } else {
-                        (" ", PLAIN)
-                    };
-                    Line::styled(format!("  {prefix} {}", opt.label), style)
-                })
-                .collect(),
+            Mode::Select => {
+                // Generate a dynamic label for session-scoped approval when executing a shell command.
+                let dynamic_label = match &self.approval_request {
+                    ApprovalRequest::Exec { command, .. } => {
+                        let cmd_str = strip_bash_lc_and_escape(command);
+                        Some(session_scoped_label(&cmd_str, MAX_SNIPPET_LEN))
+                    }
+                    _ => None,
+                };
+                SELECT_OPTIONS
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, opt)| {
+                        let label = if idx == 1 {
+                            dynamic_label.clone().unwrap_or_else(|| opt.label.to_string())
+                        } else {
+                            opt.label.to_string()
+                        };
+                        let (prefix, style) = if idx == self.selected_option {
+                            ("▶", BLUE_FG)
+                        } else {
+                            (" ", PLAIN)
+                        };
+                        Line::styled(format!("  {prefix} {}", label), style)
+                    })
+                    .collect()
+            }
             Mode::Input => {
                 vec![
                     Line::from("Give the model feedback on this command:"),
@@ -404,5 +443,27 @@ mod tests {
         assert_eq!(widget.input.value(), "feedback");
         assert!(rx.try_recv().is_err());
         assert!(!widget.done);
+    }
+
+    #[test]
+    fn test_truncate_middle_shorter_or_equal() {
+        assert_eq!(truncate_middle("short", 10), "short");
+        assert_eq!(truncate_middle("exact", 5), "exact");
+    }
+
+    #[test]
+    fn test_truncate_middle_truncates() {
+        // max_len 5 -> trim_len 4, start_len 2, end_len 2
+        assert_eq!(truncate_middle("abcdef", 5), "ab…ef");
+    }
+
+    #[test]
+    fn test_session_scoped_label_embeds_snippet() {
+        let label = session_scoped_label("say hello", 50);
+        assert_eq!(label, "Yes, always allow running `say hello` for this session (a)");
+        let long_cmd = "x".repeat(100);
+        let truncated = session_scoped_label(&long_cmd, 10);
+        assert!(truncated.starts_with("Yes, always allow running `"));
+        assert!(truncated.ends_with("` for this session (a)"));
     }
 }
