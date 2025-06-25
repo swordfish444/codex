@@ -176,5 +176,5 @@ if [ "$agent_mode" = true ]; then
 
   # After the Developer agent exits, stage and commit via the Commit agent helper
   echo "Running Commit agent to finalize task $task_slug"
-  "$repo_root/agentydragon/tasks/launch-commit-agent.sh" "$task_slug"
+  "$repo_root/agentydragon/tools/launch-commit-agent.sh" "$task_slug"
 fi

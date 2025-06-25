@@ -7,7 +7,7 @@ tydragon-driven task workflow:
 e, “Status”, “Goal”, and sections for “Acceptance Criteria”, “Implementation”, and “Notes”.
 
 2. **Worktree launcher**
-   - Implement `agentydragon/tasks/create-task-worktree.sh` with:
+   - Implement `agentydragon/tools/create-task-worktree.sh` with:
      - `--agent` mode to spin up a Codex agent in the worktree,
      - `--tmux` to tile panes for multiple tasks in a single tmux session,
      - two‑digit or slug ID resolution.
@@ -15,7 +15,7 @@ e, “Status”, “Goal”, and sections for “Acceptance Criteria”, “Impl
 
 3. **Helper scripts**
    - Add `agentydragon/tasks/review-unmerged-task-branches.sh` to review and merge task branches.
-   - Add `agentydragon/tasks/launch-project-manager.sh` to invoke the Project Manager agent prompt.
+   - Add `agentydragon/tools/launch-project-manager.sh` to invoke the Project Manager agent prompt.
 
 4. **Project‑manager prompts**
    - Create `agentydragon/prompts/manager.md` containing the following Project Manager agent prompt:
@@ -64,4 +64,3 @@ the next step.
 ---
 
 Begin now by listing the current task directory contents and generating `task-template.md`.
-

@@ -13,6 +13,11 @@ repos:
         language: python
         additional_dependencies: [toml, pydantic]
         files: ^agentydragon/tasks/(?:\.done/)?[0-9]{2}-.*\.md$
+      - id: enforce-tasks-md-only
+        name: Enforce only Markdown files in agentydragon/tasks/
+        entry: python3 agentydragon/tools/check_tasks_files.py
+        language: python
+        files: ^agentydragon/tasks/(?!\.worktrees/)(?!\.done/).*
       - id: cargo-build
         name: Check Rust workspace builds
         entry: bash -lc 'cd codex-rs && RUSTFLAGS="-D warnings" cargo build --workspace --locked'

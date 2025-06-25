@@ -54,7 +54,7 @@ Tasks live under `agentydragon/tasks/` as individual Markdown files. Please upda
 -
 -   ```sh
 -   # Accept a full slug (NN-slug) or two-digit task ID (NN), optionally multiple; use --tmux to open each in a tmux window:
--   agentydragon/tasks/create-task-worktree.sh [--agent] [--tmux] <task-slug|NN> [<task-slug|NN>...]
+-   agentydragon/tools/create-task-worktree.sh [--agent] [--tmux] <task-slug|NN> [<task-slug|NN>...]
 -   ```
 -
 -  Without `--agent`, this creates or reuses a worktree at
@@ -65,7 +65,7 @@ Tasks live under `agentydragon/tasks/` as individual Markdown files. Please upda
 
 ```sh
 # Generate and apply commit(s) for completed task(s) in their worktrees:
-agentydragon/tasks/launch-commit-agent.sh <task-slug|NN> [<task-slug|NN>...]
+agentydragon/tools/launch-commit-agent.sh <task-slug|NN> [<task-slug|NN>...]
 ```
 
 After the Developer agent finishes and updates the task file, the Commit agent will write the commit message to a temporary file and then commit using that file (`git commit -F`). An external orchestrator can then stage files and run pre-commit hooks as usual. You do not need to run `git commit` manually.

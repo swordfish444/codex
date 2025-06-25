@@ -11,4 +11,4 @@ if [ -z "$ready" ]; then
 fi
 
 echo "Launching tasks: $ready"
-agentydragon/tasks/create-task-worktree.sh --agent --tmux $ready
+agentydragon/tools/create-task-worktree.sh --agent --tmux $ready
