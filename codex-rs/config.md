@@ -396,6 +396,14 @@ hide_agent_reasoning = true   # defaults to false
 
 Maximum number of bytes to read from an `AGENTS.md` file to include in the instructions sent with the first turn of a session. Defaults to 32 KiB.
 
+## base_instructions_override
+
+The built-in system prompt (from `prompt.md`) can be overridden or disabled via environment variables:
+
+- `CODEX_BASE_INSTRUCTIONS_FILE`: If unset, the built-in prompt (`prompt.md`) is used.
+  If set to a valid file path, that file's contents will be used instead.
+  If set to an empty string or `-`, no system prompt will be sent.
+
 ## tui
 
 Options that are specific to the TUI.

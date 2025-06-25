@@ -36,13 +36,37 @@ pub struct Prompt {
 }
 
 impl Prompt {
+    /// Assemble the system prompt sent to the model, in order:
+    /// 1. Base instructions (built-in prompt.md), unless disabled via
+    ///    the CODEX_DISABLE_BASE_INSTRUCTIONS env var.
+    /// 2. Or, if CODEX_BASE_INSTRUCTIONS_FILE is set, load that file instead of the built-in prompt.
+    /// 3. User instructions (e.g. from instructions.md and AGENTS.md), if any.
+    /// 4. Apply-patch tool instructions when using GPT-4.1 models.
     pub(crate) fn get_full_instructions(&self, model: &str) -> Cow<str> {
-        let mut sections: Vec<&str> = vec![BASE_INSTRUCTIONS];
+        // Determine base instructions or override/disable via CODEX_BASE_INSTRUCTIONS_FILE
+        let mut sections = Vec::new();
+        match std::env::var("CODEX_BASE_INSTRUCTIONS_FILE") {
+            Ok(ref path) if !path.is_empty() && path != "-" => {
+                // Override built-in prompt: read file or abort
+                let contents = std::fs::read_to_string(path)
+                    .unwrap_or_else(|e| panic!(
+                        "failed to read CODEX_BASE_INSTRUCTIONS_FILE '{}': {e}",
+                        path
+                    ));
+                sections.push(contents);
+            }
+            Ok(_) => {
+                // Explicitly disabled (empty or "-"): skip base instructions
+            }
+            Err(_) => {
+                sections.push(BASE_INSTRUCTIONS.to_string());
+            }
+        }
         if let Some(ref user) = self.user_instructions {
-            sections.push(user);
+            sections.push(user.clone());
         }
         if model.starts_with("gpt-4.1") {
-            sections.push(APPLY_PATCH_TOOL_INSTRUCTIONS);
+            sections.push(APPLY_PATCH_TOOL_INSTRUCTIONS.to_string());
         }
         Cow::Owned(sections.join("\n"))
     }

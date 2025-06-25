@@ -1,23 +1,12 @@
 repos:
 -   repo: local
     hooks:
-      - id: check-task-frontmatter
-        name: Check agentydragon task frontmatter
-        entry: python3 agentydragon/tools/check_task_frontmatter.py
+      - id: check-tasks
+        name: Run all task-directory validation checks
+        entry: python3 agentydragon/tools/check_tasks.py
         language: python
         additional_dependencies: [PyYAML, toml, pydantic]
-        files: ^agentydragon/tasks/(?:\.done/)?[0-9]{2}-.*\.md$
-      - id: check-task-dependency-cycles
-        name: Check for circular task dependencies
-        entry: python3 agentydragon/tools/check_task_cycles.py
-        language: python
-        additional_dependencies: [toml, pydantic]
-        files: ^agentydragon/tasks/(?:\.done/)?[0-9]{2}-.*\.md$
-      - id: enforce-tasks-md-only
-        name: Enforce only Markdown files in agentydragon/tasks/
-        entry: python3 agentydragon/tools/check_tasks_files.py
-        language: python
-        files: ^agentydragon/tasks/(?!\.worktrees/)(?!\.done/).*
+        files: ^agentydragon/tasks/.*
       - id: cargo-build
         name: Check Rust workspace builds
         entry: bash -lc 'cd codex-rs && RUSTFLAGS="-D warnings" cargo build --workspace --locked'

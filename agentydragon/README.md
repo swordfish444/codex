@@ -43,6 +43,10 @@ This file documents the changes introduced on the `agentydragon` branch
   - Updated Markdown rendering in chat UI and logs to honor compact mode globally (diffs, docs, help messages).
   - Added unit tests covering H1–H6 heading spacing for both compact and default modes.
 
+## codex-rs: document MCP servers example in README
+- Added an inline TOML snippet under “Model Context Protocol Support” in `codex-rs/README.md` showing how to configure external `mcp_servers` entries in `~/.codex/config.toml`.
+- Documented `codex mcp` behavior: JSON-RPC over stdin/stdout, optional sandbox, no ephemeral container, default `codex` tool schema, and example ListTools/CallTool schema.
+
 ## Documentation tasks
 
 Tasks live under `agentydragon/tasks/` as individual Markdown files. Please update each task’s **Status** and **Implementation** sections in place rather than maintaining a static list here.
