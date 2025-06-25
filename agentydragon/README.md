@@ -46,13 +46,6 @@ This file documents the changes introduced on the `agentydragon` branch
 - Added an inline TOML snippet under “Model Context Protocol Support” in `codex-rs/README.md` showing how to configure external `mcp_servers` entries in `~/.codex/config.toml`.
 - Documented `codex mcp` behavior: JSON-RPC over stdin/stdout, optional sandbox, no ephemeral container, default `codex` tool schema, and example ListTools/CallTool schema.
 
-## codex-rs/tui: tests for interactive prompt overlay during execution
-  - Added unit tests in `tui/src/bottom_pane/mod.rs` to verify that character input and Enter during `is_task_running` forwards input to the composer, maintains the status indicator overlay, emits redraw events, and that the overlay is removed when the task completes.
-
-## codex-rs/tui: opaque approval dialog background
-- Filled the approval dialog area with a DarkGray background to block underlying prompt text.
-- Added a unit test in `tui/src/user_approval_widget.rs` to assert no transparent or sentinel background remains in the dialog region.
-
 ## Documentation tasks
 
 Tasks live under `agentydragon/tasks/` as individual Markdown files. Please update each task’s **Status** and **Implementation** sections in place rather than maintaining a static list here.
@@ -64,7 +57,7 @@ Tasks live under `agentydragon/tasks/` as individual Markdown files. Please upda
 -
 -   ```sh
 -   # Accept a full slug (NN-slug) or two-digit task ID (NN), optionally multiple; --tmux opens each in its own tmux pane and auto-commits each task as its Developer agent finishes:
--   agentydragon/tools/create_task_worktree.py [--agent] [--tmux] [--skip-presubmit] <task-slug|NN> [<task-slug|NN>...]
+-   agentydragon/tools/create_task_worktree.py [--agent] [--tmux] [--interactive] [--shell] [--skip-presubmit] <task-slug|NN> [<task-slug|NN>...]
 -   ```
 -
 -  Without `--agent`, this creates or reuses a worktree at
