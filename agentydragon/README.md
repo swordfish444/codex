@@ -32,6 +32,11 @@ This file documents the changes introduced on the `agentydragon` branch
 ## codex-rs/tui: slash-command `/edit-prompt` opens external editor
 - Fixed slash-command `/edit-prompt` to invoke the configured external editor for prompt drafting (in addition to Ctrl+E).
 
+## codex-rs/tui: display context remaining percentage
+- Added module `tui/src/context.rs` with heuristics (`approximate_tokens_used`, `max_tokens_for_model`, `calculate_context_percent_remaining`).
+- Updated `ChatWidget` and `ChatComposer::render_ref` to track history items and render `<N>% context left` indicator with color thresholds.
+- Added unit tests in `tui/tests/context_percent.rs` for token counting and percent formatting boundary conditions.
+
 ## Documentation tasks
 
 Tasks live under `agentydragon/tasks/` as individual Markdown files. Please update each task’s **Status** and **Implementation** sections in place rather than maintaining a static list here.
