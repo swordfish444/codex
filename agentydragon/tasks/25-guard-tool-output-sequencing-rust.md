@@ -63,5 +63,16 @@ event                                                                           
 
 this is a lot of the problem still happening
 ```
-- Mirror the JS implementation guard patterns for consistency across backends.
-- Provide clear logging at the debug level to trace sequencing steps during development.
+
+## Next Steps / Debugging
+
+The above change did not resolve the issue. We need to gather more debug information to understand why missing tool output errors still occur.
+
+Suggested approaches:
+- Enable detailed debug logging in the Rust message broker (e.g. set `RUST_LOG=debug` or add tracing spans around function calls).
+- Dump the sequence of incoming and outgoing `ResponseItem` events to a log file for offline analysis.
+- Instrument timing and ordering by recording timestamps when tool invocations start, complete, and when user input is received.
+- Write a minimal reproduction harness that reliably triggers the missing output error under controlled conditions.
+- Capture full request/response payloads to/from the OpenAI API to verify whether the function output is delivered but not processed.
+
+Please expand this section with specific examples or helper scripts to collect the necessary data.
