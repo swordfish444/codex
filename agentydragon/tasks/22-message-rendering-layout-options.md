@@ -1,9 +1,9 @@
 +++
 id = "22"
 title = "Message Separation and Sender-Content Layout Options"
-status = "Not started"
+status = "Done"
 dependencies = "" # No prerequisites
-last_updated = "2025-06-25T01:40:09.600000"
+last_updated = "2025-06-25T11:05:55.000000"
 +++
 
 ## Summary
@@ -24,6 +24,7 @@ Provide users with flexibility in how chat messages are visually separated and h
 - Add unit tests to verify the layout produces the correct sequence of lines.
 
 ## Implementation
+### Plan
 
 **How it was implemented**  
 - Extend the chat UI renderer to read `message_spacing` from config.

@@ -98,6 +98,14 @@ pub struct Tui {
     #[serde(default)]
     pub header_compact: bool,
 
+    /// When `true`, insert a blank line between messages for visual separation.
+    #[serde(default)]
+    pub message_spacing: bool,
+
+    /// When `true`, render the sender label on its own line above the message content.
+    #[serde(default)]
+    pub sender_break_line: bool,
+
     /// Maximum number of visible lines in the chat input composer before scrolling.
     /// The composer will expand up to this many lines; additional content will enable
     /// an internal scrollbar.
@@ -135,6 +143,8 @@ impl Default for Tui {
             disable_mouse_capture: Default::default(),
             markdown_compact: Default::default(),
             header_compact: Default::default(),
+            message_spacing: Default::default(),
+            sender_break_line: Default::default(),
             composer_max_rows: default_composer_max_rows(),
             editor: default_editor(),
             require_double_ctrl_d: false,

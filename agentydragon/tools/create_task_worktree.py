@@ -37,12 +37,15 @@ def resolve_slug(input_id: str) -> str:
 @click.option('-i', '--interactive', is_flag=True,
               help='Run agent in interactive mode (no exec); implies --agent.')
 @click.option('-s', '--shell', 'shell_mode', is_flag=True,
-              help='Launch an interactive Codex shell (skip auto-commit); implies --agent.')
+              help='Launch an interactive Codex shell (skip exec and auto-commit); implies --agent and --interactive.')
 @click.option('--skip-presubmit', is_flag=True,
               help='Skip the initial presubmit pre-commit checks when creating a new worktree.')
 @click.argument('task_inputs', nargs=-1, required=True)
 def main(agent, tmux_mode, interactive, shell_mode, skip_presubmit, task_inputs):
     """Create/reuse a task worktree and optionally launch a Dev agent or tmux session."""
+    # shell mode implies interactive (skip exec within the worktree)
+    if shell_mode:
+        interactive = True
     if interactive or shell_mode:
         agent = True
 

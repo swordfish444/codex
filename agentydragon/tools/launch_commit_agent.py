@@ -32,6 +32,11 @@ def main(task_input):
     msg_file = Path(subprocess.check_output(['mktemp']).decode().strip())
     try:
         os.chdir(wt)
+        # Abort early if no pending changes in this worktree
+        status_out = subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip()
+        if not status_out:
+            click.echo(f"No changes detected in worktree for '{slug}'; nothing to commit.", err=True)
+            sys.exit(0)
         cmd = ['codex', '--full-auto', 'exec', '--output-last-message', str(msg_file)]
         click.echo(f"Running: {' '.join(cmd)}")
         prompt_content = prompt_file.read_text(encoding='utf-8')
