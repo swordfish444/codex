@@ -13,10 +13,10 @@ pub enum ApprovalModeCliArg {
     /// will escalate to the user to ask for un-sandboxed execution.
     OnFailure,
 
-    /// Only run "known safe" commands (e.g. ls, cat, sed) without
-    /// asking for user approval. Will escalate to the user if the model
-    /// proposes a command that is not allow-listed.
-    UnlessAllowListed,
+    /// Only run "trusted" commands (e.g. ls, cat, sed) without asking for user
+    /// approval. Will escalate to the user if the model proposes a command that
+    /// is not in the "trusted" set.
+    Untrusted,
 
     /// Never ask for user approval
     /// Execution failures are immediately returned to the model.
@@ -27,7 +27,7 @@ impl From<ApprovalModeCliArg> for AskForApproval {
     fn from(value: ApprovalModeCliArg) -> Self {
         match value {
             ApprovalModeCliArg::OnFailure => AskForApproval::OnFailure,
-            ApprovalModeCliArg::UnlessAllowListed => AskForApproval::UnlessAllowListed,
+            ApprovalModeCliArg::Untrusted => AskForApproval::UnlessAllowListed,
             ApprovalModeCliArg::Never => AskForApproval::Never,
         }
     }
