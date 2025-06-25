@@ -1,7 +1,7 @@
 ---
 id: 31
 title: Display Remaining Context Percentage in codex-rs TUI
-status: In progress  # one of: Not started, Started, Needs manual review, Done, Cancelled
+status: Done  # one of: Not started, Started, Needs manual review, Done, Cancelled
 dependencies: "03,06,08,13,15,32,18,19,22,23"
 summary: Show a live "x% context left" indicator in the TUI (Rust) to inform users of remaining model context buffer.
 goal: |
