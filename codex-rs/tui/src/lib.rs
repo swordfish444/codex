@@ -122,7 +122,7 @@ pub fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> std::io::
 
     // Channel that carries formatted log lines to the UI.
     let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let tui_layer = TuiLogLayer::new(log_tx.clone(), 120).with_filter(env_filter());
+    let tui_layer = TuiLogLayer::new(log_tx.clone()).with_filter(env_filter());
 
     let _ = tracing_subscriber::registry()
         .with(file_layer)

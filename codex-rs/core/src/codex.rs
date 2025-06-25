@@ -565,7 +565,7 @@ async fn submission_loop(
                 notify,
                 cwd,
             } => {
-                info!("Configuring session: model={model}; provider={provider:?}");
+                debug!("Configuring session: model={model}; provider={provider:?}");
                 if !cwd.is_absolute() {
                     let message = format!("cwd is not absolute: {cwd:?}");
                     error!(message);
@@ -989,10 +989,6 @@ async fn run_turn(
     sub_id: String,
     input: Vec<ResponseItem>,
 ) -> CodexResult<Vec<ProcessedResponseItem>> {
-    debug!("[GABE] codex#run_turn");
-    info!("[GABE] codex#run_turn");
-    error!("[GABE] codex#run_turn");
-
     // Decide whether to use server-side storage (previous_response_id) or disable it
     let (prev_id, store) = {
         let state = sess.state.lock().unwrap();
@@ -1139,7 +1135,7 @@ async fn handle_response_item(
             action,
         } => {
             let LocalShellAction::Exec(action) = action;
-            tracing::info!("LocalShellCall: {action:?}");
+            debug!("LocalShellCall: {action:?}");
             let params = ShellToolCallParams {
                 command: action.command,
                 workdir: action.working_directory,
