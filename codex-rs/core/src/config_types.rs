@@ -90,6 +90,11 @@ pub struct Tui {
     #[serde(default)]
     pub disable_mouse_capture: bool,
 
+    /// When `true`, omit blank lines immediately following Markdown headings
+    /// (levels 1–6) in TUI rendering for more compact vertical spacing.
+    #[serde(default)]
+    pub markdown_compact: bool,
+
     /// Maximum number of visible lines in the chat input composer before scrolling.
     /// The composer will expand up to this many lines; additional content will enable
     /// an internal scrollbar.
@@ -114,6 +119,7 @@ impl Default for Tui {
     fn default() -> Self {
         Self {
             disable_mouse_capture: Default::default(),
+            markdown_compact: Default::default(),
             composer_max_rows: default_composer_max_rows(),
             editor: default_editor(),
         }

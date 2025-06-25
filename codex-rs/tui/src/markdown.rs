@@ -12,7 +12,15 @@ pub(crate) fn append_markdown(
     lines: &mut Vec<Line<'static>>,
     config: &Config,
 ) {
-    append_markdown_with_opener_and_cwd(markdown_source, lines, config.file_opener, &config.cwd);
+    let mut new_lines = Vec::new();
+    append_markdown_with_opener_and_cwd(markdown_source, &mut new_lines, config.file_opener, &config.cwd);
+    if config.tui.markdown_compact {
+        for line in collapse_heading_blank_lines(new_lines) {
+            lines.push(line);
+        }
+    } else {
+        lines.extend(new_lines);
+    }
 }
 
 fn append_markdown_with_opener_and_cwd(
@@ -51,6 +59,29 @@ fn append_markdown_with_opener_and_cwd(
 
         lines.push(owned_line);
     }
+}
+
+/// Remove blank lines immediately following Markdown headings (levels 1–6).
+fn collapse_heading_blank_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    let mut result = Vec::with_capacity(lines.len());
+    let mut prev_was_heading = false;
+    for line in lines {
+        let content = line.spans.iter().map(|s| s.content.clone()).collect::<String>();
+        if prev_was_heading && content.trim().is_empty() {
+            continue;
+        }
+        prev_was_heading = {
+            let s = content.as_str();
+            s.starts_with("# ")
+                || s.starts_with("## ")
+                || s.starts_with("### ")
+                || s.starts_with("#### ")
+                || s.starts_with("##### ")
+                || s.starts_with("###### ")
+        };
+        result.push(line);
+    }
+    result
 }
 
 /// Rewrites file citations in `src` into markdown hyperlinks using the
@@ -103,6 +134,52 @@ fn rewrite_file_citations<'a>(
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn collapse_blank_after_heading() {
+        let lines = vec![
+            Line::from(vec![Span::raw("# Heading")]),
+            Line::from(vec![Span::raw("")]),
+            Line::from(vec![Span::raw("Paragraph")]),
+        ];
+        let collapsed = collapse_heading_blank_lines(lines);
+        let rendered: Vec<String> = collapsed
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.clone()).collect())
+            .collect();
+        assert_eq!(rendered, vec!["# Heading", "Paragraph"]);
+    }
+
+    #[test]
+    fn preserve_blank_not_after_heading() {
+        let lines = vec![
+            Line::from(vec![Span::raw("Normal")]),
+            Line::from(vec![Span::raw("")]),
+            Line::from(vec![Span::raw("Paragraph")]),
+        ];
+        let collapsed = collapse_heading_blank_lines(lines);
+        let rendered: Vec<String> = collapsed
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.clone()).collect())
+            .collect();
+        assert_eq!(rendered, vec!["Normal", "", "Paragraph"]);
+    }
+
+    #[test]
+    fn collapse_multiple_blanks_after_heading() {
+        let lines = vec![
+            Line::from(vec![Span::raw("## Heading2")]),
+            Line::from(vec![Span::raw("")]),
+            Line::from(vec![Span::raw("")]),
+            Line::from(vec![Span::raw("Para")]),
+        ];
+        let collapsed = collapse_heading_blank_lines(lines);
+        let rendered: Vec<String> = collapsed
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.clone()).collect())
+            .collect();
+        assert_eq!(rendered, vec!["## Heading2", "Para"]);
+    }
 
     #[test]
     fn citation_is_rewritten_with_absolute_path() {
