@@ -15,6 +15,7 @@ only ask clarifying questions if you encounter genuine ambiguities in the requir
 At any point, you may set the task’s **Status** to any valid state (e.g. Not started, Started, Needs input, Needs manual review, Done, Cancelled) as appropriate. Use **Needs input** to request further clarification or resources before proceeding.
 
 When you have completed the implementation and updated the task file:
-- set the task’s **Status** to "Done".
-- stage and commit all changes (including your code and the updated Markdown) with a commit message prefixed `agentydragon(tasks):`, summarizing the work performed. You **MUST** commit these changes **BEFORE** pausing or stopping.
+set the task’s **Status** to "Done".
+- Run the repository’s pre-commit hooks on all changed files (e.g. `pre-commit run --files <changed-files>`), and stage any autofix changes.
+- Do **not** stage or commit beyond hook-driven fixes. Instead, stop and await the Commit agent to record your updates.
 Then stop and await further instructions.
