@@ -6,11 +6,25 @@ This crate implements the business logic for Codex. It is designed to be used by
 
 Codex composes the initial system message that seeds every chat completion turn as follows:
 
-1. Load the built-in system prompt from `prompt.md` (unless disabled).
+1. Load the built-in system prompt from `prompt.md` (unless overridden/disabled).
 2. If the `CODEX_BASE_INSTRUCTIONS_FILE` env var is set, use that file instead of `prompt.md`.
 3. Append any user instructions (e.g. from `instructions.md` and merged `AGENTS.md`).
 4. Append the apply-patch tool instructions when using GPT-4.1 models.
 5. Finally, the user's command or prompt is sent as the first user message.
+
+This “system” prompt is delivered to the OpenAI Chat Completions API as the very first message with role `system` in the JSON `messages` array, e.g.:
+```json
+{
+  "model": "gpt-4.1",
+  "messages": [
+    {"role": "system", "content": "<base instructions here>"},
+    {"role": "system", "content": "<user_instructions here>"},
+    {"role": "system", "content": "<apply-patch tool instructions>"},
+    {"role": "user",   "content": "<your prompt>"}
+  ],
+  ...
+}
+```
 
 The base instructions behavior can be customized with `CODEX_BASE_INSTRUCTIONS_FILE`:
 

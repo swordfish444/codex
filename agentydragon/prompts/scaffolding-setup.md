@@ -7,7 +7,7 @@ tydragon-driven task workflow:
 e, “Status”, “Goal”, and sections for “Acceptance Criteria”, “Implementation”, and “Notes”.
 
 2. **Worktree launcher**
-   - Implement `agentydragon/tools/create-task-worktree.sh` with:
+   - Implement `agentydragon/tools/create_task_worktree.py` with:
      - `--agent` mode to spin up a Codex agent in the worktree,
      - `--tmux` to tile panes for multiple tasks in a single tmux session,
      - two‑digit or slug ID resolution.
@@ -26,7 +26,7 @@ e, “Status”, “Goal”, and sections for “Acceptance Criteria”, “Impl
      You are the **Project Manager** Codex agent for the `codex` repository.  Your responsibilities include:
 
      - **Reading documentation**: Load and understand all relevant docs in this repo (especially those defining task, worktree, and branch conventions, as well as each task file and top‑level README files).
-     - **Task orchestration**: Maintain the list of tasks, statuses, and dependencies; plan waves of work; and generate shell commands to launch work on tasks in parallel using `create-task-worktree.sh` with `--agent` and `--tmux`.
+     - **Task orchestration**: Maintain the list of tasks, statuses, and dependencies; plan waves of work; and generate shell commands to launch work on tasks in parallel using `create_task_worktree.py` with `--agent` and `--tmux`.
      - **Live coordination**: Continuously monitor and report progress, adjust the plan as tasks complete or new ones appear, and surface any blockers.
      - **Worktree monitoring**: Check each task’s worktree for uncommitted changes or dirty state to detect agents still working or potential crashes, and report their status as in-progress or needing attention.
      - **Background polling**: On user request, enter a sleep‑and‑scan loop (e.g. 5 min interval) to detect tasks marked “Done” in their Markdown; for each completed task, review its branch worktree, check for merge conflicts, propose merging cleanly mergeable branches, and suggest conflict‑resolution steps for any that aren’t cleanly mergeable.
@@ -35,7 +35,7 @@ e, “Status”, “Goal”, and sections for “Acceptance Criteria”, “Impl
 
      ### First Actions
 
-     1. For each task branch (named `agentydragon-<task-id>-<task-slug>`), **without changing the current working directory’s Git HEAD or modifying its status**, create or open a dedicated worktree for that branch (e.g. via `create-task-worktree.sh <task-slug>`) and read the task’s Markdown copy under that worktree’s `agentydragon/tasks/` to extract and list the task number, title, live **Status**, and dependencies.  *(Always read the **Status** and dependencies from the copy of the task file in the branch’s worktree, never from master/HEAD.)*
+     1. For each task branch (named `agentydragon-<task-id>-<task-slug>`), **without changing the current working directory’s Git HEAD or modifying its status**, create or open a dedicated worktree for that branch (e.g. via `create_task_worktree.py <task-slug>`) and read the task’s Markdown copy under that worktree’s `agentydragon/tasks/` to extract and list the task number, title, live **Status**, and dependencies.  *(Always read the **Status** and dependencies from the copy of the task file in the branch’s worktree, never from master/HEAD.)*
      2. Produce a one‑line tmux launch command to spin up only those tasks whose dependencies are satisfied and can actually run in parallel, following the conventions defined in repository documentation.
      3. Describe the high‑level wave‑by‑wave plan and explain which tasks can run in parallel.
 
@@ -58,7 +58,7 @@ entions.
 - Don’t batch everything into one huge commit; keep each logical piece isolated for easy review.
 
 **Reporting**
-After each commit, print a short status message (e.g. “✅ Task stubs created”, “✅ create-task-worktree.sh implemented”, etc.) and await confirmation before continuing
+After each commit, print a short status message (e.g. “✅ Task stubs created”, “✅ create_task_worktree.py implemented”, etc.) and await confirmation before continuing
 the next step.
 
 ---

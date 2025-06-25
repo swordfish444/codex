@@ -33,6 +33,6 @@
    - **Merged:** tasks with no branch/worktree.
    - **Ready to merge:** tasks marked Done with branch commits ahead.
    - **Unblocked:** tasks with no outstanding dependencies.
- - The script also prints a `create-task-worktree.sh --agent --tmux <IDs>` command for all unblocked tasks.
+- The script also prints a `agentydragon/tools/create_task_worktree.py --agent --tmux <IDs>` command for all unblocked tasks.
 
 This guide centralizes the handoff workflow for all agents.
