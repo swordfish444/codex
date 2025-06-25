@@ -10,6 +10,14 @@ goal: |
   - Display role-prefixed messages on a single line (role and content space-separated).
   - Shorten command-result annotations, using `✅ <duration>ms` for successful runs or `exit code: <code> <duration>ms` for failures.
 
+++
+id = "19"
+title = "Bash Command Rendering Improvements for Less Verbosity"
+status = "Not started"
+dependencies = "02,07,09,11,14,29"
+last_updated = "2025-06-25T01:40:09.600000"
++++
+
 > *This task is specific to per-agent UI conventions and log readability.*
 
 ## Acceptance Criteria

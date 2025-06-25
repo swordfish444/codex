@@ -1,11 +1,16 @@
 ---
-id: 24
-title: Guard Against Missing Tool Output in JS Server Sequencing
-status: Not started  # one of: Not started, Started, Needs manual review, Done, Cancelled
-dependencies: "03,06,08,13,15,32,18,19,22,23"
-summary: Prevent out-of-order chat messages and missing tool outputs when user input interrupts tool execution in the JS backend.
-goal: |
-  Ensure the JS server never emits a user or model message before the corresponding tool output has been delivered. Add sequencing guards to the message dispatcher so that aborted rollouts or interleaved user messages cannot cause "No tool output found" errors.
+id = "24"
+title = "Guard Against Missing Tool Output in JS Server Sequencing"
+status = "Not started"
+dependencies = "03,06,08,13,15,32,18,19,22,23"
+last_updated = "2025-06-25T01:40:09.600000"
+++
+
+## Summary
+Prevent out-of-order chat messages and missing tool outputs when user input interrupts tool execution in the JS backend.
+
+## Goal
+Ensure the JS server never emits a user or model message before the corresponding tool output has been delivered. Add sequencing guards to the message dispatcher so that aborted rollouts or interleaved user messages cannot cause "No tool output found" errors.
 
 ## Acceptance Criteria
 

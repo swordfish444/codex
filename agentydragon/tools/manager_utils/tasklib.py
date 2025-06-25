@@ -3,12 +3,20 @@ Simple library for loading and saving task metadata embedded as TOML front-matte
 in task Markdown files.
 """
 import re
-import toml
-from pathlib import Path
+import subprocess
 from datetime import datetime
+from pathlib import Path
+
+import toml
 from pydantic import BaseModel, Field
 
 FRONTMATTER_RE = re.compile(r"^\+\+\+\s*(.*?)\s*\+\+\+", re.S | re.M)
+
+def repo_root():
+    return Path(subprocess.check_output(['git', 'rev-parse', '--show-toplevel']).decode().strip())
+
+def task_dir():
+    return repo_root() / "agentydragon/tasks"
 
 class TaskMeta(BaseModel):
     id: str

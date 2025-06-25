@@ -4,10 +4,14 @@ CLI for managing agentydragon tasks: status, set-status, set-deps, dispose, laun
 import subprocess
 import sys
 from datetime import datetime
-from pathlib import Path
 
 import click
-from tasklib import load_task, save_task, TaskMeta
+from tasklib import load_task, repo_root, save_task, task_dir
+
+try:
+    from tabulate import tabulate
+except ImportError:
+    tabulate = None
 
 
 @click.group()
@@ -15,15 +19,13 @@ def cli():
     """Manage agentydragon tasks."""
     pass
 
-def repo_root():
-    return Path(subprocess.check_output(['git', 'rev-parse', '--show-toplevel']).decode().strip())
-
-def task_dir():
-    return repo_root() / "agentydragon/tasks"
-
 @cli.command()
 def status():
-    """Show a table of task id, title, status, dependencies, last_updated"""
+    """Show a table of task id, title, status, dependencies, last_updated.
+
+    If tabulate is installed, render as GitHub-flavored Markdown table;
+    otherwise fallback to fixed-width formatting.
+    """
     rows = []
     root = repo_root()
     for md in sorted(task_dir().glob('*.md')):
@@ -110,16 +112,19 @@ def status():
             meta.last_updated.strftime('%Y-%m-%d %H:%M'),
             branch_info, wt_info
         ))
-    # table header
-    fmt = (
-        '{:>2}  {:<30}  {:<12}  {:<20}  {:<16}  {:<40}  {:<10}'
-    )
-    print(fmt.format(
-        'ID','Title','Status','Dependencies','Updated',
-        'Branch Status','Worktree Status'
-    ))
-    for r in rows:
-        print(fmt.format(*r))
+    headers = ['ID', 'Title', 'Status', 'Dependencies', 'Updated',
+               'Branch Status', 'Worktree Status']
+    if tabulate:
+        # render as Markdown table if tabulate is available
+        print(tabulate(rows, headers=headers, tablefmt='github'))
+    else:
+        # fallback to plain fixed-width formatting
+        fmt = (
+            '{:>2}  {:<30}  {:<12}  {:<20}  {:<16}  {:<40}  {:<10}'
+        )
+        print(fmt.format(*headers))
+        for r in rows:
+            print(fmt.format(*r))
 
 @cli.command()
 @click.argument('task_id')

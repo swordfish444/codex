@@ -5,7 +5,7 @@ repos:
         name: Check agentydragon task frontmatter
         entry: python3 agentydragon/tools/check_task_frontmatter.py
         language: python
-        additional_dependencies: [PyYAML]
+        additional_dependencies: [PyYAML, toml, pydantic]
         files: ^agentydragon/tasks/[0-9]{2}-.*\.md$
       - id: cargo-build
         name: Check Rust workspace builds
