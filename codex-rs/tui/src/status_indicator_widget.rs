@@ -100,8 +100,9 @@ impl Drop for StatusIndicatorWidget {
 impl WidgetRef for StatusIndicatorWidget {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let widget_style = Style::default();
+        // Flush status text to the top of the input border, without extra padding
         let block = Block::default()
-            .padding(Padding::new(1, 0, 0, 0))
+            .padding(Padding::new(0, 0, 0, 0))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(widget_style.dim());
@@ -120,16 +121,12 @@ impl WidgetRef for StatusIndicatorWidget {
 
         header_spans.push(Span::styled(
             "Working ",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+            Style::default().add_modifier(Modifier::BOLD),
         ));
 
         header_spans.push(Span::styled(
             "[",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+            Style::default().add_modifier(Modifier::BOLD),
         ));
 
         for i in 0..DOT_COUNT {
@@ -145,9 +142,7 @@ impl WidgetRef for StatusIndicatorWidget {
 
         header_spans.push(Span::styled(
             "] ",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+            Style::default().add_modifier(Modifier::BOLD),
         ));
 
         // Ensure we do not overflow width.
