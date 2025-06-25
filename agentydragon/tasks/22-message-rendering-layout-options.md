@@ -2,6 +2,7 @@
 id: 22
 title: Message Separation and Sender-Content Layout Options
 status: Not started  # one of: Not started, Started, Needs manual review, Done, Cancelled
+dependencies: "02,07,09,11,14,29"
 summary: Add configurable options for inter-message spacing and sender-content line breaks in chat rendering.
 goal: |
   Provide users with flexibility in how chat messages are visually separated and how sender labels are displayed relative to message content:

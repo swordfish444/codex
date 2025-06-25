@@ -2,6 +2,7 @@
 id: 19
 title: Bash Command Rendering Improvements for Less Verbosity
 status: Not started
+dependencies: "02,07,09,11,14,29"
 summary: Render bash commands more concisely and shorten tool output annotations.
 goal: |
   Adjust agent output formatting for shell commands and tool logs to:
