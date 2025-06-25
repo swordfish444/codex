@@ -94,23 +94,26 @@ pub fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> std::io::
         }
     };
 
-    let log_dir = codex_core::config::log_dir(&config)?;
-    std::fs::create_dir_all(&log_dir)?;
+    // Determine log file path: use --debug-log if set, otherwise default under config log_dir
+    let log_path = if let Some(path) = &cli.debug_log {
+        path.clone()
+    } else {
+        let log_dir = codex_core::config::log_dir(&config)?;
+        std::fs::create_dir_all(&log_dir)?;
+        log_dir.join("codex-tui.log")
+    };
     // Open (or create) your log file, appending to it.
     let mut log_file_opts = OpenOptions::new();
     log_file_opts.create(true).append(true);
 
-    // Ensure the file is only readable and writable by the current user.
-    // Doing the equivalent to `chmod 600` on Windows is quite a bit more code
-    // and requires the Windows API crates, so we can reconsider that when
-    // Codex CLI is officially supported on Windows.
+    // Ensure the file is only readable and writable by the current user on Unix.
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         log_file_opts.mode(0o600);
     }
 
-    let log_file = log_file_opts.open(log_dir.join("codex-tui.log"))?;
+    let log_file = log_file_opts.open(log_path)?;
 
     // Wrap file in non‑blocking writer.
     let (non_blocking, _guard) = non_blocking(log_file);

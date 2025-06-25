@@ -49,6 +49,10 @@ pub struct Cli {
     #[arg(long = "skip-git-repo-check", default_value_t = false)]
     pub skip_git_repo_check: bool,
 
+    /// Optional path where debug logs will be written (overrides default log file).
+    #[arg(long = "debug-log", value_name = "FILE")]
+    pub debug_log: Option<PathBuf>,
+
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 }
