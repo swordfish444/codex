@@ -1,9 +1,9 @@
 +++
 id = "28"
 title = "Include Command Snippet in Session-Scoped Approval Label"
-status = "Done"
+status = "Merged"
 dependencies = "03,06,08,13,15,32,18,19,22,23"
-last_updated = "2025-06-25T01:40:09.600000"
+last_updated = "2025-06-25T04:04:47.399379"
 +++
 
 ## Summary
