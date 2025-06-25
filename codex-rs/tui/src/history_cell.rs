@@ -49,16 +49,24 @@ pub(crate) enum PatchEventType {
 /// scrollable list.
 pub(crate) enum HistoryCell {
     /// Welcome message.
-    WelcomeMessage { view: TextBlock },
+    WelcomeMessage {
+        view: TextBlock,
+    },
 
     /// Message from the user.
-    UserPrompt { view: TextBlock },
+    UserPrompt {
+        view: TextBlock,
+    },
 
     /// Message from the agent.
-    AgentMessage { view: TextBlock },
+    AgentMessage {
+        view: TextBlock,
+    },
 
     /// Reasoning event from the agent.
-    AgentReasoning { view: TextBlock },
+    AgentReasoning {
+        view: TextBlock,
+    },
 
     /// An exec tool call that has not finished yet.
     ActiveExecCommand {
@@ -70,7 +78,9 @@ pub(crate) enum HistoryCell {
     },
 
     /// Completed exec tool call.
-    CompletedExecCommand { view: TextBlock },
+    CompletedExecCommand {
+        view: TextBlock,
+    },
 
     /// An MCP tool call that has not finished yet.
     ActiveMcpToolCall {
@@ -82,7 +92,9 @@ pub(crate) enum HistoryCell {
     },
 
     /// Completed MCP tool call where we show the result serialized as JSON.
-    CompletedMcpToolCall { view: TextBlock },
+    CompletedMcpToolCall {
+        view: TextBlock,
+    },
 
     /// Completed MCP tool call where the result is an image.
     /// Admittedly, [mcp_types::CallToolResult] can have multiple content types,
@@ -101,20 +113,30 @@ pub(crate) enum HistoryCell {
     },
 
     /// Background event.
-    BackgroundEvent { view: TextBlock },
+    BackgroundEvent {
+        view: TextBlock,
+    },
 
     /// Error event from the backend.
-    ErrorEvent { view: TextBlock },
+    ErrorEvent {
+        view: TextBlock,
+    },
 
     /// Info describing the newly-initialized session.
-    SessionInfo { view: TextBlock },
+    SessionInfo {
+        view: TextBlock,
+    },
 
     /// A pending code patch that is awaiting user approval. Mirrors the
     /// behaviour of `ActiveExecCommand` so the user sees *what* patch the
     /// model wants to apply before being prompted to approve or deny it.
-    PendingPatch { view: TextBlock },
+    PendingPatch {
+        view: TextBlock,
+    },
 
-    Log { view: TextBlock }
+    Log {
+        view: TextBlock,
+    },
 }
 
 const TOOL_CALL_MAX_LINES: usize = 5;
@@ -467,7 +489,6 @@ impl HistoryCell {
         HistoryCell::Log {
             view: TextBlock::new(lines),
         }
-
     }
 
     pub(crate) fn new_error_event(message: String) -> Self {

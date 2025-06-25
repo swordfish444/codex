@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use codex_core::codex_wrapper::init_codex;
 use codex_core::config::Config;
-use codex_core::protocol::{AgentMessageEvent, LogEvent};
 use codex_core::protocol::AgentReasoningEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::ErrorEvent;
@@ -18,6 +17,7 @@ use codex_core::protocol::McpToolCallEndEvent;
 use codex_core::protocol::Op;
 use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::TaskCompleteEvent;
+use codex_core::protocol::{AgentMessageEvent, LogEvent};
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;

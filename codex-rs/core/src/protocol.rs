@@ -352,7 +352,7 @@ pub enum EventMsg {
     ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent),
 
     BackgroundEvent(BackgroundEventEvent),
-    
+
     Log(LogEvent),
 
     /// Notification that the agent is about to apply a code patch. Mirrors

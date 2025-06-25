@@ -25,9 +25,7 @@ pub struct TuiLogLayer {
 
 impl TuiLogLayer {
     pub fn new(tx: UnboundedSender<String>) -> Self {
-        Self {
-            tx,
-        }
+        Self { tx }
     }
 }
 
