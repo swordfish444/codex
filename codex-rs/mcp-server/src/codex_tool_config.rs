@@ -47,7 +47,6 @@ pub(crate) struct CodexToolCallParam {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum CodexToolCallApprovalPolicy {
-    AutoEdit,
     UnlessAllowListed,
     OnFailure,
     Never,
@@ -56,7 +55,6 @@ pub(crate) enum CodexToolCallApprovalPolicy {
 impl From<CodexToolCallApprovalPolicy> for AskForApproval {
     fn from(value: CodexToolCallApprovalPolicy) -> Self {
         match value {
-            CodexToolCallApprovalPolicy::AutoEdit => AskForApproval::AutoEdit,
             CodexToolCallApprovalPolicy::UnlessAllowListed => AskForApproval::UnlessAllowListed,
             CodexToolCallApprovalPolicy::OnFailure => AskForApproval::OnFailure,
             CodexToolCallApprovalPolicy::Never => AskForApproval::Never,
