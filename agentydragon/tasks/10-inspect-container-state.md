@@ -1,9 +1,9 @@
 +++
 id = "10"
 title = "Inspect Container State (Mounts, Permissions, Network)"
-status = "Not started"
+status = "Merged"
 dependencies = ""
-last_updated = "2025-06-25T01:40:09.508031"
+last_updated = "2025-06-25T04:07:56.197523"
 +++
 
 # Task 10: Inspect Container State (Mounts, Permissions, Network)
