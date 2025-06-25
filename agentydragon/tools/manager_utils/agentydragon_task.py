@@ -197,7 +197,9 @@ def dispose(task_id):
     for tid in task_id:
         # Remove any matching worktree directories
         for wt_dir in wt_base.glob(f'{tid}-*'):
-            subprocess.run(['git', 'worktree', 'remove', str(wt_dir), '--force'], cwd=root)
+            # remove worktree by path relative to repo root
+            rel = wt_dir.relative_to(root)
+            subprocess.run(['git', 'worktree', 'remove', str(rel), '--force'], cwd=root)
         # Delete any matching branches
         branches = subprocess.run(
             ['git', 'branch', '--list', f'agentydragon-{tid}-*'],
