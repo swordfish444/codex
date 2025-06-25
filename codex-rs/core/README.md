@@ -12,10 +12,11 @@ Codex composes the initial system message that seeds every chat completion turn 
 4. Append the apply-patch tool instructions when using GPT-4.1 models.
 5. Finally, the user's command or prompt is sent as the first user message.
 
-The base instructions behavior can be customized via environment variables:
+The base instructions behavior can be customized with `CODEX_BASE_INSTRUCTIONS_FILE`:
 
-- `CODEX_BASE_INSTRUCTIONS_FILE`: path to a Markdown file to override the built-in prompt
-- `CODEX_DISABLE_BASE_INSTRUCTIONS=1`: skip sending any system prompt entirely
+- If unset, the built-in prompt (`prompt.md`) is used.
+- If set to a valid file path, that file's contents will be used instead (failure to read will abort).
+- If set to an empty string or `-`, no system prompt will be sent.
 
 For implementation details, see `client_common.rs` and `project_doc.rs`.
 

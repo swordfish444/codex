@@ -401,7 +401,7 @@ Maximum number of bytes to read from an `AGENTS.md` file to include in the instr
 The built-in system prompt (from `prompt.md`) can be overridden or disabled via environment variables:
 
 - `CODEX_BASE_INSTRUCTIONS_FILE`: If unset, the built-in prompt (`prompt.md`) is used.
-  If set to a valid file path, that file's contents will be used instead.
+If set to a valid file path, that file's contents will be used instead (failure to read will abort).
   If set to an empty string or `-`, no system prompt will be sent.
 
 ## tui

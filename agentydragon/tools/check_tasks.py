@@ -9,28 +9,35 @@ import re
 import sys
 from pathlib import Path
 
-import toml
-import yaml
-from manager_utils.tasklib import TaskMeta, task_dir, worktree_dir, load_task
+from manager_utils.tasklib import task_dir, worktree_dir, load_task
+
+
+def skip_path(p: Path) -> bool:
+    """Return True for paths we should ignore in validations."""
+    wt = worktree_dir()
+    done = task_dir() / ".done"
+    if p.is_relative_to(wt) or p.is_relative_to(done):
+        return True
+    if p.name in ("task-template.md",) or p.name.endswith("-plan.md"):
+        return True
+    return False
+
 
 def check_file_types():
-    failures = []
-    wt_root = worktree_dir()
-    done_root = task_dir() / '.done'
-    for f in task_dir().iterdir():
-        if not f.is_file():
+    failures: list[Path] = []
+    for p in task_dir().iterdir():
+        if skip_path(p) or p.is_dir():
             continue
-        if f.is_relative_to(wt_root) or f.is_relative_to(done_root):
-            continue
-        if f.suffix.lower() != '.md':
-            failures.append(f)
+        if p.suffix.lower() != ".md":
+            failures.append(p)
     return failures
 
+
 def check_frontmatter():
-    failures = []
-    wt_root = worktree_dir()
-    for md in task_dir().rglob('[0-9][0-9]-*.md'):
-        if md.name in ('task-template.md',) or md.name.endswith('-plan.md') or md.is_relative_to(wt_root):
+    failures: list[tuple[Path, str]] = []
+    wt = worktree_dir()
+    for md in task_dir().rglob("[0-9][0-9]-*.md"):
+        if skip_path(md):
             continue
         try:
             load_task(md)
@@ -38,27 +45,28 @@ def check_frontmatter():
             failures.append((md, str(e)))
     return failures
 
+
 def check_cycles():
     merged = set()
-    deps_map = {}
-    wt_root = worktree_dir()
-    for md in task_dir().rglob('[0-9][0-9]-*.md'):
-        if md.name in ('task-template.md',) or md.name.endswith('-plan.md') or md.is_relative_to(wt_root):
+    deps_map: dict[str, list[str]] = {}
+    wt = worktree_dir()
+    for md in task_dir().rglob("[0-9][0-9]-*.md"):
+        if skip_path(md):
             continue
         meta, _ = load_task(md)
-        if meta.status == 'Merged':
+        if meta.status == "Merged":
             merged.add(meta.id)
         else:
-            deps = re.findall(r"\d+", meta.dependencies)
+            deps = [d for d in re.findall(r"\d+", meta.dependencies)]
             deps_map[meta.id] = [d for d in deps if d not in merged]
 
-    failures = []
-    visited = set()
-    stack = []
+    failures: list[list[str]] = []
+    visited: set[str] = set()
+    stack: list[str] = []
 
-    def visit(n):
+    def visit(n: str):
         if n in stack:
-            cycle = stack[stack.index(n):] + [n]
+            cycle = stack[stack.index(n) :] + [n]
             failures.append(cycle)
             return
         if n in visited:
@@ -73,36 +81,38 @@ def check_cycles():
         visit(node)
     return failures
 
+
 def main():
     err = False
 
     # File type check
     ft_fail = check_file_types()
     if ft_fail:
-        print('Non-md files under tasks/:', file=sys.stderr)
+        print("Non-md files under tasks/:", file=sys.stderr)
         for f in ft_fail:
-            print(f'  {f}', file=sys.stderr)
+            print(f"  {f}", file=sys.stderr)
         err = True
 
     # Frontmatter check
     fm_fail = check_frontmatter()
     if fm_fail:
-        print('\nFrontmatter errors:', file=sys.stderr)
+        print("\nFrontmatter errors:", file=sys.stderr)
         for md, msg in fm_fail:
-            print(f'  {md}: {msg}', file=sys.stderr)
+            print(f"  {md}: {msg}", file=sys.stderr)
         err = True
 
     # Dependency cycles
     cyc_fail = check_cycles()
     if cyc_fail:
-        print('\nCircular dependency errors:', file=sys.stderr)
+        print("\nCircular dependency errors:", file=sys.stderr)
         for cycle in cyc_fail:
-            print('  ' + ' -> '.join(cycle), file=sys.stderr)
+            print("  " + " -> ".join(cycle), file=sys.stderr)
         err = True
 
     if err:
         sys.exit(1)
-    print('All task checks passed.')
+    print("All task checks passed.")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
