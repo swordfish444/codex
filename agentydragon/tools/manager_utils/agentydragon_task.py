@@ -45,7 +45,7 @@ def status():
             bname = branches[0].lstrip('* ').strip()
             merged = 'Y' if subprocess.run(
                 ['git', 'merge-base', '--is-ancestor', bname, 'agentydragon'],
-                cwd=repo_root()
+                cwd=repo_root
             ).returncode == 0 else 'N'
         # worktree detection
         wt_dir = task_dir() / '.worktrees' / slug
@@ -57,20 +57,64 @@ def status():
                 capture_output=True, text=True
             ).stdout.strip()
             wt_clean = 'Clean' if not status_out else 'Dirty'
+        # derive branch & merge status
+        if branches and branches[0].strip():
+            bname = branches[0].lstrip('* ').strip()
+            # merged into agentydragon?
+            is_merged = subprocess.run(
+                ['git', 'merge-base', '--is-ancestor', bname, 'agentydragon'],
+                cwd=repo_root
+            ).returncode == 0
+            if is_merged:
+                branch_info = 'merged'
+            else:
+                # ahead/behind
+                a_cnt, b_cnt = subprocess.check_output(
+                    ['git', 'rev-list', '--left-right', '--count', f'{bname}...agentydragon'],
+                    cwd=repo_root
+                ).decode().split()
+                # diffstat
+                stat = subprocess.check_output(
+                    ['git', 'diff', '--shortstat', f'{bname}...agentydragon'], cwd=repo_root
+                ).decode().strip()
+                diffstat = stat.replace(' file changed', '')
+                # merge conflict scan
+                base = subprocess.check_output(
+                    ['git', 'merge-base', 'agentydragon', bname], cwd=repo_root
+                ).decode().strip()
+                mtree = subprocess.check_output(
+                    ['git', 'merge-tree', base, 'agentydragon', bname], cwd=repo_root
+                ).decode(errors='ignore')
+                conflict = 'conflict' if '<<<<<<<' in mtree else 'ok'
+                if a_cnt == '0' and b_cnt == '0':
+                    branch_info = f'up-to-date (+{diffstat or 0})'
+                else:
+                    branch_info = f'{b_cnt} behind / {a_cnt} ahead (+{diffstat or 0}) {conflict}'
+        else:
+            branch_info = 'no branch'
+        # worktree status
+        wt_dir = task_dir() / '.worktrees' / slug
+        if wt_dir.exists():
+            wt_clean = 'clean' if not subprocess.run(
+                ['git', 'status', '--porcelain'], cwd=wt_dir,
+                capture_output=True, text=True
+            ).stdout.strip() else 'dirty'
+            wt_info = wt_clean
+        else:
+            wt_info = 'none'
         rows.append((
             meta.id, meta.title, meta.status,
             meta.dependencies.replace('\n', ' '),
             meta.last_updated.strftime('%Y-%m-%d %H:%M'),
-            branch_exists, merged,
-            'Y' if wt_exists else 'N', wt_clean
+            branch_info, wt_info
         ))
     # table header
     fmt = (
-        '{:>2}  {:<40}  {:<12}  {:<30}  {:<16}  {:<2}  {:<2}  {:<1}  {:<6}'
+        '{:>2}  {:<30}  {:<12}  {:<20}  {:<16}  {:<40}  {:<10}'
     )
     print(fmt.format(
         'ID','Title','Status','Dependencies','Updated',
-        'B','M','W','W-T'
+        'Branch Status','Worktree Status'
     ))
     for r in rows:
         print(fmt.format(*r))
