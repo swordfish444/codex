@@ -10,7 +10,7 @@ last_updated = "2025-06-25T04:45:29Z"
 
 ## Status
 
-**General Status**: In progress  
+**General Status**: Done  
 **Summary**: Follow-up to Task 10; add slash-command and TUI bindings for `inspect-env`.
 
 ## Goal
