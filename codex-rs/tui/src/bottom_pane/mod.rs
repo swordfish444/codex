@@ -249,6 +249,8 @@ impl WidgetRef for &BottomPane<'_> {
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::mpsc;
+    use crate::app_event::AppEvent;
 
     /// Construct a BottomPane with default parameters for testing.
     fn make_pane() -> BottomPane<'static> {
@@ -259,6 +261,18 @@ mod tests {
             has_input_focus: true,
             composer_max_rows: 3,
         })
+    }
+
+    /// Construct a BottomPane and return it along with the associated event receiver.
+    fn make_pane_and_rx() -> (BottomPane<'static>, mpsc::Receiver<AppEvent>) {
+        let (tx, rx) = mpsc::channel();
+        let app_event_tx = AppEventSender::new(tx);
+        let pane = BottomPane::new(BottomPaneParams {
+            app_event_tx,
+            has_input_focus: true,
+            composer_max_rows: 3,
+        });
+        (pane, rx)
     }
 
     #[test]
@@ -276,16 +290,51 @@ mod tests {
         assert_eq!(content, "h");
         // Status indicator overlay remains active
         assert!(pane.active_view.is_some());
+        // The overlay should be a StatusIndicatorView
+        assert!(pane.active_view.as_mut().unwrap().should_hide_when_task_is_done());
     }
 
     #[test]
     fn remove_status_indicator_after_task_complete() {
-mod config_reload_view;
         let mut pane = make_pane();
         pane.set_task_running(true);
         assert!(pane.active_view.is_some());
         pane.set_task_running(false);
         // Overlay should be removed when task finishes
         assert!(pane.active_view.is_none());
+    }
+
+    #[test]
+    fn redraw_requested_on_char_input_during_status_indicator() {
+        let (mut pane, rx) = make_pane_and_rx();
+        pane.set_task_running(true);
+        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+        let _ = pane.handle_key_event(key);
+        // Char input should trigger a redraw event
+        assert_eq!(rx.try_recv(), Ok(AppEvent::Redraw));
+    }
+
+    #[test]
+    fn submit_and_redraw_during_status_indicator() {
+        let (mut pane, rx) = make_pane_and_rx();
+        pane.set_task_running(true);
+        // Type "hi"
+        pane.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        pane.handle_key_event(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        // Drain intermediate redraws
+        while rx.try_recv().is_ok() {}
+        // Submit with Enter
+        let result = pane.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        // Should submit the buffered text
+        assert!(matches!(result, InputResult::Submitted(ref txt) if txt == "hi"));
+        // Enter should also trigger a redraw
+        assert_eq!(rx.try_recv(), Ok(AppEvent::Redraw));
+        // Overlay remains active until task is marked done
+        assert!(pane.active_view.is_some());
+        // Should still be showing the status indicator overlay
+        assert!(pane.active_view.as_mut().unwrap().should_hide_when_task_is_done());
+        // The composer buffer should be cleared after submission
+        let content = pane.composer.textarea.lines().join("\n");
+        assert_eq!(content, "");
     }
 }
