@@ -2,13 +2,14 @@
 id = "<NN>"
 title = "<Task Title>"
 status = "<<<!!! MANAGER: SET VALID STATUS  - Not started? !!!>>>"
+freeform_status = "<<<!!! MANAGER/DEVELOPER: Freeform status text, optional. E.g. progress notes or developer comments. !!!>>>"
 dependencies = [<<<!!! MANAGER: LIST TASK IDS THAT MUST BE COMPLETED BEFORE STARTING; SEPARATED BY COMMAS, E.G. "02","05" !!!>>>] # <!-- Manager rationale: explain why these dependencies are required and why other tasks are not. -->
 last_updated = "<timestamp in ISO format>"
 +++
 
 # Task Template
 
-# Valid status values: Not started | Started | Needs input | Needs manual review | Done | Cancelled
+# Valid status values: Not started | In progress | Needs input | Needs manual review | Done | Cancelled | Merged
 
 
 > *This task is specific to codex-rs.*

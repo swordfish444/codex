@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import toml
+from enum import Enum
 from pydantic import BaseModel, Field
 
 FRONTMATTER_RE = re.compile(r"^\+\+\+\s*(.*?)\s*\+\+\+", re.S | re.M)
@@ -21,10 +22,20 @@ def task_dir():
 def worktree_dir():
     return task_dir() / ".worktrees"
 
+class TaskStatus(str, Enum):
+    NOT_STARTED = "Not started"
+    IN_PROGRESS = "In progress"
+    NEEDS_INPUT = "Needs input"
+    NEEDS_MANUAL_REVIEW = "Needs manual review"
+    DONE = "Done"
+    CANCELLED = "Cancelled"
+    MERGED = "Merged"
+
 class TaskMeta(BaseModel):
     id: str
     title: str
-    status: str
+    status: TaskStatus
+    freeform_status: str = Field(default="")
     dependencies: str = Field(default="")
     last_updated: datetime = Field(default_factory=datetime.utcnow)
 
@@ -40,6 +51,9 @@ def load_task(path: Path) -> (TaskMeta, str):
 
 def save_task(path: Path, meta: TaskMeta, body: str) -> None:
     tm = meta.dict()
+    # Serialize enum to its string value for front-matter
+    if isinstance(tm.get('status'), Enum):
+        tm['status'] = tm['status'].value
     tm['last_updated'] = meta.last_updated.isoformat()
     fm = toml.dumps(tm).strip()
     content = f"+++\n{fm}\n+++\n\n{body.lstrip()}"

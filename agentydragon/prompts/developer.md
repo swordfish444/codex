@@ -14,10 +14,11 @@ Then proceed directly to implement the full functionality in the codebase as a s
 Do not pause to seek user confirmation after editing the Markdown;
 only ask clarifying questions if you encounter genuine ambiguities in the requirements.
 
-At any point, you may set the task’s **Status** to any valid state (e.g. Not started, Started, Needs input, Needs manual review, Done, Cancelled) as appropriate. Use **Needs input** to request further clarification or resources before proceeding.
+At any point, you may set the task’s **Status** to any valid state (e.g. Not started, In progress, Needs input, Needs manual review, Done, Cancelled) as appropriate. Use **Needs input** to request further clarification or resources before proceeding.
 
-When you have completed the implementation and updated the task file:
-set the task’s **Status** to "Done".
-- Run the repository’s pre-commit hooks on all changed files (e.g. `pre-commit run --files <changed-files>`), and stage any autofix changes.
-- Do **not** stage or commit beyond hook-driven fixes. Instead, stop and await the Commit agent to record your updates.
+When you have finished working on the task file:
+- If the task’s **Status** is "Needs input", stop immediately and await further instructions; do **not** run pre-commit hooks or invoke the Commit agent.
+- Otherwise, set the task’s **Status** to "Done".
+  - Run the repository’s pre-commit hooks on all changed files (e.g. `pre-commit run --files <changed-files>`), and stage any autofix changes.
+  - Do **not** stage or commit beyond hook-driven fixes. Instead, stop and await the Commit agent to record your updates.
 Then stop and await further instructions.

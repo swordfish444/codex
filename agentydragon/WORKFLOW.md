@@ -6,11 +6,12 @@
 
  ## 1. Developer Agent
  - **Scope**: Runs inside a sandboxed git worktree for a single task branch (`agentydragon-<ID>-<slug>`).
- - **Actions**:
-   1. Update the task Markdown file’s **Status** to `Done` when implementation is complete.
-   2. Implement the code changes for the task.
-   3. Run `pre-commit run --files $(git diff --name-only)` to apply and stage any autofix changes.
-   4. **Do not** run `git commit`.
+- **Actions**:
+  1. If the task’s **Status** is `Needs input`, stop immediately and await further instructions; do **not** implement code changes or run pre-commit hooks.
+  2. Update the task Markdown file’s **Status** to `Done` when implementation is complete.
+  3. Implement the code changes for the task.
+  4. Run `pre-commit run --files $(git diff --name-only)` to apply and stage any autofix changes.
+  5. **Do not** run `git commit`.
 
  ## 2. Commit Agent
  - **Scope**: Runs in the sandbox (read-only `.git`) or equivalent environment.
