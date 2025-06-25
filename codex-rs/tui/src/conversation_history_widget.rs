@@ -332,7 +332,7 @@ impl WidgetRef for ConversationHistoryWidget {
 
         let block = Block::default()
             .title(title)
-            .borders(Borders::ALL)
+            .borders(Borders::TOP | Borders::BOTTOM)
             .border_type(BorderType::Rounded)
             .border_style(border_style);
 
