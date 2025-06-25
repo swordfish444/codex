@@ -21,7 +21,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h|--help)
       echo "Usage: $0 [-a|--agent] [-t|--tmux] <task-slug|NN> [<task-slug|NN>...]"
-      echo "  -a, --agent    after creating/reusing, launch a codex agent in the task workspace"
+      echo "  -a, --agent    after creating/reusing, launch a Codex agent in a Landlock+seccomp sandbox with write access only to the worktree and TMPDIR"
       echo "  -t, --tmux     launch each agent review in a tiled tmux session (implies --agent)"
       exit 0
       ;;
@@ -116,12 +116,13 @@ fi
 echo "Done."
 
 if [ "$agent_mode" = true ]; then
-  echo "Launching codex agent for task $task_slug in $worktree_path"
+  echo "Launching Codex agent for task $task_slug in sandboxed worktree"
   prompt_file="$repo_root/agentydragon/prompts/developer.md"
   if [ ! -f "$prompt_file" ]; then
     echo "Error: developer prompt file not found at $prompt_file" >&2
     exit 1
   fi
   cd "$worktree_path"
-  codex "$(<"$prompt_file")"
+  # Launch the agent under Landlock+seccomp sandbox: writable only in cwd and TMPDIR, network disabled
+  codex debug landlock --full-auto codex "$(<"$prompt_file")"
 fi

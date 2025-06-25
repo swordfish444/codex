@@ -1,17 +1,17 @@
 +++
 id = "15"
 title = "Agent Worktree Sandbox Configuration"
-status = "Not started"
+status = "Done"
 dependencies = "02,07,09,11,14,29"
-last_updated = "2025-06-25T01:40:09.512675"
+last_updated = "2025-06-25T12:00:00.000000"
 +++
 
 # Task 15: Agent Worktree Sandbox Configuration
 
 ## Status
 
-**General Status**: Not started  
-**Summary**: Enhance the task scaffolding script to launch a Codex agent in a sandboxed worktree where only the task directory (and system temp dir) is writable, Git commands run without prompts, and all file I/O under the worktree is auto-approved.
+**General Status**: Done  
+**Summary**: Enhanced the task scaffolding script to launch a Codex agent in a sandboxed worktree with writable worktree and TMPDIR, auto-approved file I/O and Git operations, and network disabled.
 
 ## Goal
 
@@ -34,17 +34,18 @@ The `create-task-worktree.sh --agent` invocation:
 ## Implementation
 
 **How it was implemented**  
-*(Not implemented yet)*
-- Modify `create-task-worktree.sh --agent`:
-  - Detect `$TMPDIR` (or default `/tmp`) and include it in the writable mount list.
-  - Invoke the agent via `codex debug landlock` (or chosen sandbox command) with `--writable-root` for the worktree and tempdir.
-  - Add approval predicates to auto-allow any file I/O under the worktree path and Git commands there.
-- Update the script’s help text (`-h|--help`) to document the sandbox behavior and tempdir whitelist.
-- Add tests or example runs verifying sandbox restrictions and approvals.
+- Extended `create-task-worktree.sh` `--agent` mode to launch the Codex agent under a Landlock+seccomp sandbox by invoking `codex debug landlock --full-auto`, which grants write access only to the worktree (`cwd`) and the platform temp folder (`TMPDIR`), and disables network.  
+- Updated the `-a|--agent` help text to reflect the new sandbox behavior and tempdir whitelist.  
+- Added `agentydragon/tasks/15-sandbox-test.sh`, a test script demonstrating allowed writes inside the worktree and TMPDIR and blocked writes to directories outside those paths.  
 
 **How it works**  
-*(Not implemented yet)*  
-When `--agent` is used, the script switches to the task worktree, then starts the sandbox so that only the worktree and the system tempdir are writable. Inside that sandbox, Git and other file operations under the worktree proceed without prompts, while writes elsewhere on the host are blocked.
+When invoked with `--agent`, `create-task-worktree.sh` changes into the task worktree and launches:
+
+```bash
+codex debug landlock --full-auto codex "$(< \"$repo_root/agentydragon/prompts/developer.md\")"
+```
+
+The `--full-auto` flag configures Landlock to allow disk writes under the current directory and the system temp directory, disable network access, and automatically approve commands on success. As a result, any file I/O and Git operations in the worktree proceed without approval prompts, while writes outside the worktree and TMPDIR are blocked by the sandbox.
 
 ## Notes
 
