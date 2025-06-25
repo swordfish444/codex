@@ -453,7 +453,14 @@ impl HistoryCell {
     pub(crate) fn new_background_event(message: String) -> Self {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from("event".dim()));
-        lines.extend(message.lines().map(|l| Line::from(l.to_string()).dim()));
+
+        for raw in message.lines() {
+            // Parse ANSI color sequences so they render correctly in Ratatui.
+            // We preserve any colors encoded in the input; additionally mark
+            // the text as dim to distinguish background events from regular
+            // conversation.
+            lines.push(ansi_escape_line(raw).dim());
+        }
         lines.push(Line::from(""));
         HistoryCell::BackgroundEvent {
             view: TextBlock::new(lines),
