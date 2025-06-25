@@ -3,7 +3,7 @@
 ---
 id: 18
 title: Chat UI Textarea Overlay and Border Styling Fix
-status: Not started  # one of: Not started, Started, Needs manual review, Done, Cancelled
+status: Not started
 summary: Fix overlay of waiting messages and streamline borders between chat window and input area to improve visibility and reclaim terminal space.
 goal: |
   Adjust the TUI chat interface so that waiting/status messages no longer overlay the first line of the input textarea (ensuring user drafts remain visible), and merge/remove borders as follows:
