@@ -89,3 +89,5 @@ CHANGELOG.ignore.md
 .envrc
 
 __pycache__
+
+codex-rs/target
