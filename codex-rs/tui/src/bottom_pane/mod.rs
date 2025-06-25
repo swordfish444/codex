@@ -13,6 +13,7 @@ use crate::user_approval_widget::ApprovalRequest;
 
 mod approval_modal_view;
 mod mount_view;
+mod shell_command_view;
 mod bottom_pane_view;
 mod chat_composer;
 mod chat_composer_history;
@@ -25,6 +26,7 @@ pub(crate) use chat_composer::InputResult;
 
 use approval_modal_view::ApprovalModalView;
 use mount_view::{MountAddView, MountRemoveView};
+use shell_command_view::ShellCommandView;
 use status_indicator_view::StatusIndicatorView;
 use config_reload_view::ConfigReloadView;
 
@@ -175,6 +177,13 @@ impl BottomPane<'_> {
         self.request_redraw();
     }
 
+    /// Launch interactive shell-command dialog (prompt for arbitrary command).
+    pub fn push_shell_command_interactive(&mut self) {
+        let view = ShellCommandView::new(self.app_event_tx.clone());
+        self.active_view = Some(Box::new(view));
+        self.request_redraw();
+    }
+
     /// Called when the agent requests user approval.
     pub fn push_approval_request(&mut self, request: ApprovalRequest) {
         let request = if let Some(view) = self.active_view.as_mut() {
@@ -272,7 +281,7 @@ mod tests {
         // No submission event is returned
         assert!(matches!(result, InputResult::None));
         // Composer should have recorded the input
-        let content = pane.composer.textarea.lines().join("\n");
+        let content = pane.composer.get_input_text();
         assert_eq!(content, "h");
         // Status indicator overlay remains active
         assert!(pane.active_view.is_some());

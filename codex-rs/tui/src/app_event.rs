@@ -4,6 +4,7 @@ use crossterm::event::KeyEvent;
 use crate::slash_command::SlashCommand;
 
 #[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
 pub(crate) enum AppEvent {
     CodexEvent(Event),
 
@@ -52,4 +53,13 @@ pub(crate) enum AppEvent {
     ConfigReloadApply,
     /// Ignore on-disk config.toml changes and continue with old config.
     ConfigReloadIgnore,
+    /// Run an arbitrary shell command in the agent's container (from hotkey prompt).
+    ShellCommand(String),
+    /// Result of a previously-invoked shell command: call ID, stdout, stderr, and exit code.
+    ShellCommandResult {
+        call_id: String,
+        stdout: String,
+        stderr: String,
+        exit_code: i32,
+    },
 }

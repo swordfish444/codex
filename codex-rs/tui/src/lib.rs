@@ -43,7 +43,7 @@ mod scroll_event_helper;
 mod slash_command;
 mod confirm_ctrl_d;
 mod status_indicator_widget;
-mod context;
+pub mod context;
 mod text_block;
 mod text_formatting;
 mod tui;

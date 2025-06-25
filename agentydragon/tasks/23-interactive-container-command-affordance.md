@@ -1,9 +1,9 @@
 +++
 id = "23"
 title = "Interactive Container Command Affordance via Hotkey"
-status = "Not started"
+status = "Done"
 dependencies = "01" # Rationale: depends on Task 01 for mount-add/remove affordance
-last_updated = "2025-06-25T01:40:09.600000"
+last_updated = "2025-06-26T15:00:00.000000"
 +++
 
 ## Summary
@@ -23,11 +23,15 @@ Add a user-facing affordance (e.g. a hotkey) to invoke arbitrary shell commands 
 ## Implementation
 
 **How it was implemented**  
-- Define a new keybinding (configurable, default Ctrl+M) in the TUI to trigger a `ShellCommandPrompt` overlay.
-- In the overlay, accept arbitrary user input and dispatch it as a `ToolInvocation(ShellTool, command)` event in the agent’s event loop.
-- Leverage the existing shell tool backend to execute the command in the container and capture its output.
-- Render the command invocation and result inline in the chat UI using the command-rendering logic (honoring compact mode and spacing options).
-- Add integration tests to simulate the hotkey, input prompt, and verify the shell tool call and inline rendering.
+- Added a new slash command `Shell` and updated dispatch logic in `app.rs` to push a shell-command view.
+- Bound `Ctrl+M` in `ChatComposer` to dispatch `SlashCommand::Shell` for hotkey-driven shell prompt.
+- Created `ShellCommandView` (bottom pane overlay) to capture arbitrary user input and emit `AppEvent::ShellCommand(cmd)`.
+- Extended `AppEvent` with `ShellCommand(String)` and `ShellCommandResult { call_id, stdout, stderr, exit_code }` variants for round-trip messaging.
+- Implemented `ChatWidget::handle_shell_command` to execute `sh -c <cmd>` asynchronously (tokio::spawn) and send back `ShellCommandResult`.
+- Updated `ConversationHistoryWidget` to reuse existing exec-command cells to display shell commands and their output inline.
+- Added tests:
+  - Unit test in `shell_command_view.rs` asserting correct event emission (skipping redraws).
+  - Integration test in `chat_composer.rs` asserting `Ctrl+M` opens the shell prompt view and allows input.
 
 ## Notes
 

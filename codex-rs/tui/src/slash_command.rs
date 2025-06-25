@@ -23,6 +23,8 @@ pub enum SlashCommand {
     MountRemove,
     /// Inspect sandbox and container environment (mounts, permissions, network).
     InspectEnv,
+    /// Prompt to run a shell command in the container.
+    Shell,
 }
 
 impl SlashCommand {
@@ -34,10 +36,11 @@ impl SlashCommand {
                 "Toggle mouse mode (enable for scrolling, disable for text selection)",
             SlashCommand::EditPrompt =>
                 "Open external editor to edit the current prompt.",
-            SlashCommand::Quit => "Exit the application.",
             SlashCommand::MountAdd => "Add a mount: host path → container path.",
             SlashCommand::MountRemove => "Remove a mount by container path.",
             SlashCommand::InspectEnv => "Inspect sandbox and container environment (mounts, permissions, network)",
+            SlashCommand::Shell => "Run a shell command in the container.",
+            SlashCommand::Quit => "Quit",
         }
     }
 

@@ -38,8 +38,10 @@ def resolve_slug(input_id: str) -> str:
               help='Run agent in interactive mode (no exec); implies --agent.')
 @click.option('-s', '--shell', 'shell_mode', is_flag=True,
               help='Launch an interactive Codex shell (skip auto-commit); implies --agent.')
+@click.option('--skip-presubmit', is_flag=True,
+              help='Skip the initial presubmit pre-commit checks when creating a new worktree.')
 @click.argument('task_inputs', nargs=-1, required=True)
-def main(agent, tmux_mode, interactive, shell_mode, task_inputs):
+def main(agent, tmux_mode, interactive, shell_mode, skip_presubmit, task_inputs):
     """Create/reuse a task worktree and optionally launch a Dev agent or tmux session."""
     if interactive or shell_mode:
         agent = True
@@ -77,6 +79,7 @@ def main(agent, tmux_mode, interactive, shell_mode, task_inputs):
         run(['git', 'branch', '--track', branch, 'agentydragon'])
 
     wt_root.mkdir(parents=True, exist_ok=True)
+    new_wt = False
     if not wt_path.exists():
         # --- COW hydration logic via rsync ---
         # Instead of checking out files normally, register the worktree empty and then
@@ -98,17 +101,27 @@ def main(agent, tmux_mode, interactive, shell_mode, task_inputs):
             run(['pre-commit', 'install'], cwd=dst)
         else:
             click.echo('Warning: pre-commit not found; skipping hook install', err=True)
+        new_wt = True
     else:
         click.echo(f'Worktree already exists at {wt_path}')
 
     if not agent:
         return
 
-    # Pre-commit checks
-    if shutil.which('pre-commit'):
-        run(['pre-commit', 'run', '--all-files'], cwd=str(wt_path))
-    else:
-        click.echo('Warning: pre-commit not installed; skipping checks', err=True)
+    # Initial presubmit: only on new worktree & branch, unless skipped or in shell mode
+    if new_wt and not skip_presubmit and not shell_mode:
+        if shutil.which('pre-commit'):
+            try:
+                run(['pre-commit', 'run', '--all-files'], cwd=str(wt_path))
+            except subprocess.CalledProcessError:
+                click.echo(
+                    'Pre-commit checks failed. Please fix the issues in the worktree or ' +
+                    're-run with --skip-presubmit to bypass these checks.', err=True)
+                sys.exit(1)
+        else:
+            click.echo('Warning: pre-commit not installed; skipping presubmit checks', err=True)
+
+    click.echo(f'Launching Developer Codex agent for task {slug} in sandboxed worktree')
 
     click.echo(f'Launching Developer Codex agent for task {slug} in sandboxed worktree')
     os.chdir(wt_path)

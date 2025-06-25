@@ -1,15 +1,31 @@
 # AGENTS.md
 
-**Agents:**
-- Update `agentydragon/README.md` with a brief summary of your work (features, fixes, refactors, documentation, etc.) whenever you make changes to this repository.
-- Read `agentydragon/README.md` for the branch-level changelog and guidelines on task conventions.
-- For work on tasks, “add task” means creating a new Markdown file under `agentydragon/tasks/` using `task-template.md`:
-  - Name it with a two-digit prefix and kebab-case slug (e.g. `14-new-feature.md`).
-  - Fill in the **Status**, **Goal**, **Acceptance Criteria**, and **Implementation** sections.
-- No central task list should be maintained. The AI assistant will include these branch-level notes in its context.
+This file provides guidance to OpenAI Codex (openai.com/codex) when working with
+code in this repository.
 
-# Rust/codex-rs
+## Build, Lint & Test
 
-In the codex-rs folder where the rust code lives:
+### JavaScript/TypeScript
+- Install dependencies: `pnpm install`
+- Run all tests: `pnpm test`
+- Run a single test: `pnpm test -- -t <pattern>` or `pnpm test -- path/to/file.spec.ts`
+- Watch tests: `pnpm test:watch`
+- Lint: `pnpm lint && pnpm lint:fix`
+- Type-check: `pnpm typecheck`
+- Format: `pnpm format:fix`
+- Build: `pnpm build`
 
-- Never add or modify any code related to `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR`. You operate in a sandbox where `CODEX_SANDBOX_NETWORK_DISABLED=1` will be set whenever you use the `shell` tool. Any existing code that uses `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` was authored with this fact in mind. It is often used to early exit out of tests that the author knew you would not be able to run given your sandbox limitations.
+### Rust (codex-rs workspace)
+- Build: `cargo build --workspace --locked`
+- Test all: `cargo test --workspace`
+- Test crate: `cargo test -p <crate>`
+- Single test: `cargo test -p <crate> -- <test_name>`
+- Format & check: `cargo fmt --all -- --check`
+- Lint: `cargo clippy --all-targets --all-features -- -D warnings`
+
+## Code Style Guidelines
+
+- JS/TS: ESLint + Prettier; group imports; camelCase vars & funcs; PascalCase types/components; catch specific errors
+- Rust: rustfmt & Clippy (see `codex-rs/rustfmt.toml`); snake_case vars & funcs; PascalCase types; prefer early return; avoid `unwrap()` in prod
+- General: Do not swallow exceptions; use DRY; generate/validate ASCII art programmatically
+- Include any Cursor rules from `.cursor/rules/` or Copilot rules from `.github/copilot-instructions.md` if present

@@ -42,7 +42,6 @@ This file documents the changes introduced on the `agentydragon` branch
   - When enabled, headings render immediately adjacent to content with no blank line between them.
   - Updated Markdown rendering in chat UI and logs to honor compact mode globally (diffs, docs, help messages).
   - Added unit tests covering H1–H6 heading spacing for both compact and default modes.
-
 ## codex-rs: document MCP servers example in README
 - Added an inline TOML snippet under “Model Context Protocol Support” in `codex-rs/README.md` showing how to configure external `mcp_servers` entries in `~/.codex/config.toml`.
 - Documented `codex mcp` behavior: JSON-RPC over stdin/stdout, optional sandbox, no ephemeral container, default `codex` tool schema, and example ListTools/CallTool schema.
@@ -58,7 +57,7 @@ Tasks live under `agentydragon/tasks/` as individual Markdown files. Please upda
 -
 -   ```sh
 -   # Accept a full slug (NN-slug) or two-digit task ID (NN), optionally multiple; --tmux opens each in its own tmux pane and auto-commits each task as its Developer agent finishes:
--   agentydragon/tools/create_task_worktree.py [--agent] [--tmux] <task-slug|NN> [<task-slug|NN>...]
+-   agentydragon/tools/create_task_worktree.py [--agent] [--tmux] [--skip-presubmit] <task-slug|NN> [<task-slug|NN>...]
 -   ```
 -
 -  Without `--agent`, this creates or reuses a worktree at
@@ -66,7 +65,7 @@ Tasks live under `agentydragon/tasks/` as individual Markdown files. Please upda
 -  Internally, the helper uses CoW hydration instead of a normal checkout: it registers the worktree with `git worktree add --no-checkout`, then performs a filesystem-level reflink
 -  of all files (macOS: `cp -cRp`; Linux: `cp --reflink=auto`), falling back to `rsync` if reflinks aren’t supported. This makes new worktrees appear nearly instantly on supported filesystems while
 -  preserving untracked files.
-  -  With `--agent`, after setup it runs pre-commit checks (aborting on failure), then launches the Developer Codex agent (using `prompts/developer.md` and the task file).
+  -  With `--agent`, after setting up a new worktree it runs presubmit pre-commit checks (aborting with a clear message on failure unless `--skip-presubmit` is passed), then launches the Developer Codex agent (using `prompts/developer.md` and the task file).
   -  After the Developer agent exits, if the task’s **Status** is set to `Done`, it automatically runs the Commit agent helper to stage fixes and commit the work.
 **Commit agent helper**: in `agentydragon/tasks/`, run:
 
