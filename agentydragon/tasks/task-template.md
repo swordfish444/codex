@@ -2,11 +2,8 @@
 id = "<NN>"
 title = "<Task Title>"
 status = "<<<!!! MANAGER: SET VALID STATUS  - Not started? !!!>>>"
-summary = "Brief summary of current status."
 dependencies = [<<<!!! MANAGER: LIST TASK IDS THAT MUST BE COMPLETED BEFORE STARTING; SEPARATED BY COMMAS, E.G. "02","05" !!!>>>] # <!-- Manager rationale: explain why these dependencies are required and why other tasks are not. -->
 last_updated = "<timestamp in ISO format>"
-goal: |
-  Describe the objective of the task here.
 +++
 
 # Task Template

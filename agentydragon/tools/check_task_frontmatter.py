@@ -23,7 +23,7 @@ except ImportError:
     sys.exit(1)
 
 REQUIRED_KEYS = ["id", "title", "status", "summary", "goal"]
-ALLOWED_STATUSES = ["Not started", "Started", "Needs manual review", "Done", "Cancelled", "Merged"]
+ALLOWED_STATUSES = ["Not started", "Started", "Needs manual review", "Done", "Cancelled", "Merged", "Reopened"]
 
 def main():
     failures = 0
