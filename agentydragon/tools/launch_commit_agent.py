@@ -38,13 +38,17 @@ def main(task_input):
             click.echo(f"No changes detected in worktree for '{slug}'; nothing to commit.", err=True)
             sys.exit(0)
         cmd = ['codex', '--full-auto', 'exec', '--output-last-message', str(msg_file)]
-        click.echo(f"Running: {' '.join(cmd)}")
+        # Run the Commit agent in silent mode (suppressing its full stdout)
+        click.echo(f"Running commit agent: {' '.join(cmd)}")
         prompt_content = prompt_file.read_text(encoding='utf-8')
         task_content = task_file.read_text(encoding='utf-8')
-        subprocess.check_call(cmd + [prompt_content + '\n\n' + task_content])
+        subprocess.check_call(cmd + [prompt_content + '\n\n' + task_content], stdout=subprocess.DEVNULL)
         # Stage all changes, including new files (not just modifications)
         subprocess.check_call(['git', 'add', '-A'])
         subprocess.check_call(['git', 'commit', '-F', str(msg_file)])
+        # Print the commit message for visibility
+        msg = msg_file.read_text(encoding='utf-8').strip()
+        click.echo("Commit message:\n" + msg)
     finally:
         msg_file.unlink()
 

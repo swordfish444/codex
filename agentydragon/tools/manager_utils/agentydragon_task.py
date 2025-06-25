@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 
 import click
-from tasklib import load_task, repo_root, save_task, task_dir, TaskMeta, worktree_dir
+from tasklib import load_task, repo_root, save_task, task_dir, TaskMeta, worktree_dir, TaskStatus
 import shutil
 
 try:
@@ -311,6 +311,17 @@ def dispose(task_id):
         else:
             click.echo(f"No branches matching {ref_pattern}")
         click.echo(f'Disposed task {tid}')
+        # If the task was marked Done, auto-move it into .done/
+        files = list(task_dir().glob(f"{tid}-*.md"))
+        if len(files) == 1:
+            path = files[0]
+            meta, _ = load_task(path)
+            if meta.status == TaskStatus.DONE:
+                done_dir = task_dir() / '.done'
+                done_dir.mkdir(exist_ok=True)
+                target = done_dir / path.name
+                click.echo(f"Moving {path.name} -> .done/ (status Done)")
+                subprocess.run(['git', 'mv', str(path), str(target)], cwd=repo_root())
 
 @cli.command()
 @click.argument('task_id', nargs=-1)
