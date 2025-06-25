@@ -74,8 +74,13 @@ def main(agent, tmux_mode, interactive, shell_mode, task_inputs):
         run(['git', 'worktree', 'add', '--no-checkout', str(wt_path), branch])
         src = str(repo_root())
         dst = str(wt_path)
+        # Use filesystem-specific reflink options: macOS (clonefile via cp -c), Linux (--reflink=auto)
+        if sys.platform == 'darwin':
+            reflink_cmd = ['cp', '-cRp', f'{src}/.', f'{dst}/', '--exclude=.git', '--exclude=.gitlink']
+        else:
+            reflink_cmd = ['cp', '--reflink=auto', '-Rp', f'{src}/.', f'{dst}/', '--exclude=.git', '--exclude=.gitlink']
         try:
-            run(['cp', '-cRp', f'{src}/.', f'{dst}/', '--exclude=.git', '--exclude=.gitlink'])
+            run(reflink_cmd)
         except subprocess.CalledProcessError:
             run(['rsync', '-a', '--delete', f'{src}/', f'{dst}/', '--exclude=.git*'])
         if shutil.which('pre-commit'):
