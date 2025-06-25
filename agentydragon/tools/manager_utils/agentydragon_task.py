@@ -192,12 +192,21 @@ def set_deps(task_id, deps):
 @click.argument('task_id', nargs=-1)
 def dispose(task_id):
     """Dispose worktree and delete branch for TASK_ID(s)"""
+    root = repo_root()
+    wt_base = task_dir() / '.worktrees'
     for tid in task_id:
-        branch = f'agentydragon-{tid}-*'
-        # remove worktree
-        subprocess.run(['git', 'worktree', 'remove', f'tasks/.worktrees/{tid}-*', '--force'])
-        # delete branch
-        subprocess.run(['git', 'branch', '-D', f'agentydragon-{tid}-*'])
+        # Remove any matching worktree directories
+        for wt_dir in wt_base.glob(f'{tid}-*'):
+            subprocess.run(['git', 'worktree', 'remove', str(wt_dir), '--force'], cwd=root)
+        # Delete any matching branches
+        branches = subprocess.run(
+            ['git', 'branch', '--list', f'agentydragon-{tid}-*'],
+            capture_output=True, text=True, cwd=root
+        ).stdout.splitlines()
+        for br in branches:
+            name = br.strip().lstrip('* ').strip()
+            if name:
+                subprocess.run(['git', 'branch', '-D', name], cwd=root)
         click.echo(f'Disposed task {tid}')
 
 @cli.command()
