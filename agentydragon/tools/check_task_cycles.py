@@ -4,8 +4,11 @@ check_task_cycles.py: Pre-commit hook to detect circular dependencies among non-
 """
 import re
 import sys
+from pathlib import Path
 
-from agentydragon.tools.manager_utils.tasklib import task_dir, load_task
+# allow importing from manager_utils by adding tool directory to PYTHONPATH
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from manager_utils.tasklib import task_dir, load_task
 
 def main():
     # Load all tasks and separate merged vs non-merged
