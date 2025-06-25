@@ -1,7 +1,7 @@
 +++
 id = "36"
 title = "Add Tests for Interactive Prompting While Executing"
-status = "Done"
+status = "Not started"
 dependencies = "06,13" # Rationale: depends on Tasks 06 and 13 for external editor and interactive prompt support
 last_updated = "2025-06-25T11:05:55Z"
 +++

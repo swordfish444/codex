@@ -259,6 +259,11 @@ def set_status(task_id, status):
     meta.status = status
     meta.last_updated = datetime.utcnow()
     save_task(path, meta, body)
+    # If the task was previously in .done/ and is being re-opened, move it back to tasks/
+    if path.parent.name == '.done' and meta.status not in (TaskStatus.DONE, TaskStatus.MERGED):
+        dest = task_dir() / path.name
+        click.echo(f"Reopening task: moving {path.name} -> {dest.parent.relative_to(repo_root())}")
+        subprocess.run(['git', 'mv', str(path), str(dest)], cwd=repo_root())
 
 @cli.command()
 @click.argument('task_id')
