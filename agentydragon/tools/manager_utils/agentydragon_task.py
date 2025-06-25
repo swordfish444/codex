@@ -176,28 +176,19 @@ def status():
             else:
                 branch_info = f'{b_cnt} behind / {a_cnt} ahead (+{stat or 0}) {conflict}'
 
-        # Normalize and colorize status/worktree
-        raw_status = str(meta.status)
-        # Strip enum class prefix if present (e.g. TaskStatus.Done)
-        cls_name = meta.status.__class__.__name__
-        prefix = cls_name + "."
-        if raw_status.startswith(prefix):
-            raw_status = raw_status[len(prefix):]
-        # Color-map statuses
+        # Use the human-readable enum value and apply a color map
+        label = meta.status.value
         status_colors = {
-            'Not started': '\033[90m',   # dim gray
-            'In progress': '\033[33m',   # yellow
-            'Needs input': '\033[31m',    # red
-            'Needs manual review': '\033[31m',
-            'Done': '\033[32m',           # green
-            'Cancelled': '\033[31m',      # red
-            'Merged': '\033[34m',         # blue
+            'Not started':         '\033[90m',  # dim gray
+            'In progress':         '\033[33m',  # yellow
+            'Needs input':         '\033[31m',  # red
+            'Needs manual review': '\033[31m',  # red
+            'Done':                '\033[32m',  # green
+            'Cancelled':           '\033[31m',  # red
+            'Merged':              '\033[34m',  # blue
         }
-        color = status_colors.get(raw_status, '')
-        if color:
-            stat_disp = f"{color}{raw_status}\033[0m"
-        else:
-            stat_disp = raw_status
+        color = status_colors.get(label, '')
+        stat_disp = f"{color}{label}\033[0m" if color else label
         wt_disp = wt_info
         if wt_info == 'dirty':
             wt_disp = f"\033[31m{wt_info}\033[0m"
