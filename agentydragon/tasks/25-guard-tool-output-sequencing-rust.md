@@ -1,7 +1,7 @@
 +++
 id = "25"
 title = "Guard Against Missing Tool Output in Rust Server Sequencing"
-status = "In progress"
+status = "Done"
 dependencies = "03,06,08,13,15,32,18,19,22,23"
 last_updated = "2025-06-25T01:40:09.600000"
 +++
@@ -31,6 +31,7 @@ We will implement the following high-level plan:
   - A user message mid-rollout before tool output, ensuring it is delayed until after the tool result.
   - Normal flow where no buffering is needed.
   - Cancellation paths (no tool output) inserting a fake "Tool cancelled" tool message and flushing buffered messages.
+- Front-end layers automatically render the "Tool cancelled" message as a tool output, satisfying UI requirements.
 
 ## Notes
 
