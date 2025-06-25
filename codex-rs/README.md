@@ -2,6 +2,8 @@
 
 We provide Codex CLI as a standalone, native executable to ensure a zero-dependency install.
 
+w00t!
+
 ## Installing Codex
 
 Today, the easiest way to install Codex is via `npm`, though we plan to publish Codex to other package managers soon.
