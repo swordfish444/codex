@@ -175,7 +175,7 @@ def status():
         items = ' '.join(f"{tid} ({title})" for tid, title in merged_tasks)
         print(f"\n\033[32mDone & merged:\033[0m {items}")
 
-    # summary of tasks Done with branch commits (ready to merge)
+    # summary of tasks Ready to merge (Done with branch commits)
     ready_tasks: list[tuple[str, str]] = []
     for tid in sorted_ids:
         meta = all_meta[tid]
@@ -197,7 +197,7 @@ def status():
             ready_tasks.append((tid, meta.title))
     if ready_tasks:
         items = ' '.join(f"{tid} ({title})" for tid, title in ready_tasks)
-        print(f"\n\033[33mDone & ready to merge:\033[0m {items}")
+        print(f"\n\033[33mReady to merge:\033[0m {items}")
 
 @cli.command()
 @click.argument('task_id')
