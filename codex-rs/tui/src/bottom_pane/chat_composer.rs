@@ -130,30 +130,8 @@ impl ChatComposer<'_> {
                 }
                 (InputResult::None, true)
             }
-            Input {
-                key: Key::Enter,
-                shift: false,
-                alt: false,
-                ctrl: false,
-            } => {
+            Input { key: Key::Enter, shift: false, alt: false, ctrl: false } => {
                 if let Some(cmd) = popup.selected_command() {
-                    let first_line = self.textarea.lines().first().map_or("", |v| v).to_string();
-                    let args = first_line
-                        .strip_prefix(&format!("/{}", cmd.command()))
-                        .unwrap_or("")
-                        .trim();
-                    if (*cmd == SlashCommand::MountAdd || *cmd == SlashCommand::MountRemove)
-                        && !args.is_empty()
-                    {
-                        let evt = if *cmd == SlashCommand::MountAdd {
-                            AppEvent::InlineMountAdd(args.to_string())
-                        } else {
-                            AppEvent::InlineMountRemove(args.to_string())
-                        };
-                        self.app_event_tx.send(evt);
-                    } else {
-                        self.app_event_tx.send(AppEvent::DispatchCommand(*cmd));
-                    }
                     self.textarea.select_all();
                     self.textarea.cut();
                     self.command_popup = None;
@@ -214,16 +192,14 @@ impl ChatComposer<'_> {
                     (InputResult::Submitted(text), true)
                 }
             }
-            Input {
-                key: Key::Enter, ..
-            }
-            | Input {
-                key: Key::Char('j'),
-                ctrl: true,
-                alt: false,
-                shift: false,
-            } => {
+            Input { key: Key::Enter, .. }
+            | Input { key: Key::Char('j'), ctrl: true, alt: false, shift: false } => {
                 self.textarea.insert_newline();
+                (InputResult::None, true)
+            }
+            Input { key: Key::Char('e'), ctrl: true, alt: false, shift: false } => {
+                // Launch external editor for prompt drafting
+                self.open_external_editor();
                 (InputResult::None, true)
             }
             input => self.handle_input_basic(input),
@@ -234,6 +210,40 @@ impl ChatComposer<'_> {
     fn handle_input_basic(&mut self, input: Input) -> (InputResult, bool) {
         self.textarea.input(input);
         (InputResult::None, true)
+    }
+
+    /// Launch an external editor on a temporary file pre-populated with the current draft,
+    /// then reload the edited contents back into the textarea on exit.
+    pub fn open_external_editor(&mut self) {
+        use std::io::Write;
+        use std::process::Command;
+        // Dump current draft to a temp file
+        let content = self.textarea.lines().join("\n");
+        let mut tmp = match tempfile::NamedTempFile::new() {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::error!("failed to create temp file for editor: {e}");
+                return;
+            }
+        };
+        if let Err(e) = write!(tmp, "{}", content) {
+            tracing::error!("failed to write to temp file for editor: {e}");
+            return;
+        }
+        let path = tmp.path();
+        // Determine editor: VISUAL > EDITOR > nvim
+        let editor = std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "nvim".into());
+        // Launch editor and wait for exit
+        if let Err(e) = Command::new(editor).arg(path).status() {
+            tracing::error!("failed to launch editor: {e}");
+            return;
+        }
+        // Read back edited contents (fall back to original on error)
+        let new_text = std::fs::read_to_string(path).unwrap_or(content);
+        // Replace textarea contents
+        self.textarea.select_all();
+        self.textarea.cut();
+        let _ = self.textarea.insert_str(new_text);
     }
 
     /// Synchronize `self.command_popup` with the current text in the

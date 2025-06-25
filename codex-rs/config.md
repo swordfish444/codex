@@ -415,4 +415,8 @@ disable_mouse_capture = true  # defaults to `false`
 # The composer will expand up to this many lines; additional content will enable
 # an internal scrollbar.
 composer_max_rows = 10  # defaults to `10`
+
+# Command used to launch an external editor for composing the chat prompt.
+# Defaults to `$VISUAL`, then `$EDITOR`, falling back to `nvim`.
+editor = "${VISUAL:-${EDITOR:-nvim}}"
 ```

@@ -383,6 +383,9 @@ impl<'a> App<'a> {
                             tracing::error!("Failed to toggle mouse mode: {e}");
                         }
                     }
+                    SlashCommand::EditPrompt => {
+                        // External-editor prompt handled inline by the composer; no-op here.
+                    }
                     SlashCommand::Quit => {
                         break;
                     }

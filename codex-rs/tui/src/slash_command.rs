@@ -14,6 +14,8 @@ use strum_macros::IntoStaticStr;
 pub enum SlashCommand {
     New,
     ToggleMouseMode,
+    /// Launch the external editor to edit the current prompt draft.
+    EditPrompt,
     Quit,
     /// Add a dynamic mount (host path → container path).
     MountAdd,
@@ -28,6 +30,8 @@ impl SlashCommand {
             SlashCommand::New => "Start a new chat.",
             SlashCommand::ToggleMouseMode =>
                 "Toggle mouse mode (enable for scrolling, disable for text selection)",
+            SlashCommand::EditPrompt =>
+                "Open external editor to edit the current prompt.",
             SlashCommand::Quit => "Exit the application.",
             SlashCommand::MountAdd => "Add a mount: host path → container path.",
             SlashCommand::MountRemove => "Remove a mount by container path.",

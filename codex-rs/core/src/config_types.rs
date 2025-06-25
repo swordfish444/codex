@@ -95,10 +95,19 @@ pub struct Tui {
     /// an internal scrollbar.
     #[serde(default = "default_composer_max_rows")]
     pub composer_max_rows: usize,
+    /// Command used to launch the external editor for editing the chat prompt.
+    /// Defaults to the `VISUAL` or `EDITOR` environment variable, falling back to `nvim`.
+    #[serde(default = "default_editor")]
+    pub editor: String,
 }
 
 fn default_composer_max_rows() -> usize {
     10
+}
+
+/// Default editor: `$VISUAL`, then `$EDITOR`, falling back to `nvim`.
+fn default_editor() -> String {
+    std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "nvim".into())
 }
 
 impl Default for Tui {
@@ -106,6 +115,7 @@ impl Default for Tui {
         Self {
             disable_mouse_capture: Default::default(),
             composer_max_rows: default_composer_max_rows(),
+            editor: default_editor(),
         }
     }
 }
