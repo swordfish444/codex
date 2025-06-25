@@ -478,8 +478,11 @@ impl<'a> App<'a> {
                         }
                     }
                     SlashCommand::InspectEnv => {
+                        // Activate inspect-env view and initiate output streaming
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.push_inspect_env();
+                        }
                         let _ = self.app_event_tx.send(AppEvent::InlineInspectEnv(String::new()));
-                        let _ = self.app_event_tx.send(AppEvent::Redraw);
                     }
                     SlashCommand::Shell => {
                         if let AppState::Chat { widget } = &mut self.app_state {

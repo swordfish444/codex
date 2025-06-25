@@ -1,9 +1,9 @@
 +++
 id = "35"
 title = "TUI Integration for Inspect-Env Command"
-status = "Not started"
+status = "Done"
 dependencies = "10" # Rationale: depends on Task 10 for container state inspection
-last_updated = "2025-06-25T04:45:29Z"
+last_updated = "2025-06-25T11:38:19Z"
 +++
 
 > *This task is specific to codex-rs.*
@@ -32,7 +32,7 @@ Add an `/inspect-env` slash-command in the TUI that invokes the existing `codex 
 - Add `InlineInspectEnv` variant to `AppEvent` enum to represent inline slash-command invocation.
 - Update dispatch logic in `App::run` to spawn a background thread on `InlineInspectEnv` that runs `codex inspect-env`, reads its stdout line-by-line, and sends each line as `AppEvent::LatestLog`, then triggers a redraw.
 - Wire up `/inspect-env` to dispatch `InlineInspectEnv` in the slash-command handling.
-- Add unit tests in the TUI crate to verify `built_in_slash_commands()` includes `inspect-env` mapping and description.
+- Add unit tests in the TUI crate to verify `built_in_slash_commands()` includes `inspect-env` mapping and description, and tests for the command-popup filter to ensure `InspectEnv` is listed when `/inspect-env` is entered.
 
 **How it works**  
 When the user enters `/inspect-env`, the TUI parser recognizes the command and emits `AppEvent::InlineInspectEnv`.  The main event loop handles this event by spawning a thread that invokes the external `codex inspect-env` command, captures its output line-by-line, and forwards each line into the TUI log pane via `AppEvent::LatestLog`. A redraw is scheduled once the inspection completes.
