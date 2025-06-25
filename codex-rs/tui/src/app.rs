@@ -1,4 +1,5 @@
 use crate::app_event::AppEvent;
+use crate::confirm_ctrl_d::ConfirmCtrlD;
 use crate::app_event_sender::AppEventSender;
 use crate::chatwidget::ChatWidget;
 use crate::git_warning_screen::GitWarningOutcome;
@@ -18,6 +19,7 @@ use crossterm::event::MouseEventKind;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::channel;
+use std::time::Instant;
 
 use codex_core::ResponseItem;
 use uuid::Uuid;
@@ -49,6 +51,8 @@ pub(crate) struct App<'a> {
     /// after dismissing the Git-repo warning.
     chat_args: Option<ChatWidgetArgs>,
     session_id: Option<Uuid>,
+    /// Tracks Ctrl+D confirmation state when enabled in config.
+    confirm_ctrl_d: ConfirmCtrlD,
 }
 
 /// Aggregate parameters needed to create a `ChatWidget`, as creation may be
@@ -252,9 +256,13 @@ impl<'a> App<'a> {
             app_event_tx,
             app_event_rx,
             app_state,
-            config,
+            config: config.clone(),
             chat_args,
             session_id: None,
+            confirm_ctrl_d: ConfirmCtrlD::new(
+                config.tui.require_double_ctrl_d,
+                config.tui.double_ctrl_d_timeout_secs,
+            ),
         }
     }
 
@@ -293,6 +301,14 @@ impl<'a> App<'a> {
         app_event_tx.send(AppEvent::Redraw);
 
         while let Ok(event) = self.app_event_rx.recv() {
+            // Expire pending Ctrl+D confirmation and clear any prompt overlay.
+            let now = Instant::now();
+            self.confirm_ctrl_d.expire(now);
+            if self.config.tui.require_double_ctrl_d && !self.confirm_ctrl_d.is_confirming() {
+                if let AppState::Chat { widget } = &mut self.app_state {
+                    widget.clear_exit_confirmation_prompt();
+                }
+            }
             match event {
                 AppEvent::Redraw => {
                     self.draw_next_frame(terminal)?;
@@ -338,13 +354,22 @@ impl<'a> App<'a> {
                                 }
                             }
                         }
-                        KeyEvent {
-                            code: KeyCode::Char('d'),
-                            modifiers: crossterm::event::KeyModifiers::CONTROL,
-                            ..
-                        } => {
-                            self.app_event_tx.send(AppEvent::ExitRequest);
+                    KeyEvent {
+                        code: KeyCode::Char('d'),
+                        modifiers: crossterm::event::KeyModifiers::CONTROL,
+                        ..
+                    } => {
+                        // Handle Ctrl+D exit confirmation when enabled.
+                        let now = Instant::now();
+                        if self.confirm_ctrl_d.handle(now) {
+                            break;
                         }
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.show_exit_confirmation_prompt(
+                                "Press Ctrl+D again to confirm exit".to_string(),
+                            );
+                        }
+                    }
                         _ => {
                             self.dispatch_key_event(key_event);
                         }

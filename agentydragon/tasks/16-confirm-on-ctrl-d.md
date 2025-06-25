@@ -12,8 +12,8 @@ last_updated = "2025-06-25T01:40:09.513723"
 
 ## Status
 
-**General Status**: Not started  
-**Summary**: Not started; missing Implementation details (How it was implemented and How it works).
+**General Status**: Done  
+**Summary**: Double Ctrl+D confirmation implemented and tested.
 
 ## Goal
 
@@ -33,19 +33,20 @@ Require two consecutive Ctrl+D keystrokes (within a short timeout) to exit the T
 ## Implementation
 
 **How it was implemented**  
-- Introduce `require_double_ctrl_d: bool` in `ConfigToml` → `Config` under the `tui` section, with default `false`.
-- Extend the TUI event loop (e.g. in `tui/src/app.rs`) to handle SIGINT events:
-  1. If `require_double_ctrl_d` is disabled, behave as before (exit on first Ctrl+D).
-  2. If enabled and not already confirming, enter a `ConfirmExit` state, record timestamp, and display confirmation message.
-  3. If enabled and in `ConfirmExit` state, exit immediately on second Ctrl+D.
-  4. On each TUI tick, if in `ConfirmExit` and timeout elapsed, clear `ConfirmExit` state.
-  5. Intercept EOF (Ctrl+D) events in the input handler and apply the same `ConfirmExit` logic as for Ctrl+D when `require_double_ctrl_d` is enabled.
-- Add rendering logic in the status bar (`tui/src/status_indicator_widget.rs` or similar) to show the confirmation prompt.
+- Added `require_double_ctrl_d` and `double_ctrl_d_timeout_secs` to the TUI config in `core/src/config_types.rs` with defaults.
+- Introduced `ConfirmCtrlD` helper in `tui/src/confirm_ctrl_d.rs` to manage confirmation state and expiration logic.
+- Extended `App` in `tui/src/app.rs`:
+  - Initialized `confirm_ctrl_d` from config in `App::new`.
+  - Expired stale confirmation windows each event-loop tick and cleared the status overlay when timed out.
+  - Replaced the Ctrl+D handler to invoke `ConfirmCtrlD::handle`, exiting only on confirmed press and otherwise displaying a prompt via `BottomPane`.
+- Leveraged `BottomPane::set_task_running(true)` and `update_status_text` to render the confirmation prompt overlay.
+- Added unit tests for `ConfirmCtrlD` in `tui/src/confirm_ctrl_d.rs` covering disabled mode, confirmation press, and timeout expiration.
 
 **How it works**  
-- On startup, the TUI reads `require_double_ctrl_d` from config.
-- When SIGINT is captured by the event loop, double‑Ctrl+D logic intercepts and requires confirmation.
-- Child processes continue to get raw SIGINT from the OS because the TUI should delegate signals while awaiting child termination.
+- When `require_double_ctrl_d = true`, the first Ctrl+D press shows "Press Ctrl+D again to confirm exit" in the status overlay.
+- A second Ctrl+D within `double_ctrl_d_timeout_secs` exits the TUI; otherwise the prompt and state clear after timeout.
+- When `require_double_ctrl_d = false`, Ctrl+D exits immediately as before.
+- Child processes still receive SIGINT normally since only the TUI event loop intercepts Ctrl+D.
 
 ## Notes
 
