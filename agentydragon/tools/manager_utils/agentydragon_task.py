@@ -65,10 +65,24 @@ def status():
             sorted_ids.append(n)
         for n in all_meta:
             visit(n)
-        sorted_ids.reverse()
     except Exception as e:
         print(f"Warning: cannot topo-sort tasks ({e}); falling back to filename order")
         sorted_ids = [m.id for m in sorted(all_meta.values(), key=lambda m: path_map[m.id].name)]
+
+    # Identify tasks that are merged with no branch and no worktree (bottom summary)
+    bottom_merged_ids: set[str] = set()
+    for tid in sorted_ids:
+        meta = all_meta[tid]
+        if meta.status != 'Merged':
+            continue
+        branches = subprocess.run(
+            ['git', 'for-each-ref', '--format=%(refname:short)',
+             f'refs/heads/agentydragon-{tid}-*'],
+            capture_output=True, text=True, cwd=repo_root()
+        ).stdout.strip().splitlines()
+        wt_dir = task_dir() / '.worktrees' / path_map[tid].stem
+        if not branches and not wt_dir.exists():
+            bottom_merged_ids.add(tid)
 
     rows: list[tuple] = []
     merged_tasks: list[tuple[str, str]] = []
@@ -103,8 +117,8 @@ def status():
             merged_tasks.append((tid, meta.title))
             continue
 
-        # filter out merged dependencies
-        deps = [d for d in deps_map.get(tid, []) if all_meta[d].status != 'Merged']
+        # filter out dependencies on bottom-summary merged tasks
+        deps = [d for d in deps_map.get(tid, []) if d not in bottom_merged_ids]
         deps_str = ','.join(deps)
 
         # determine branch_info text
