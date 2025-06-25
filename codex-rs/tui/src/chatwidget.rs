@@ -387,6 +387,14 @@ impl ChatWidget<'_> {
         self.app_event_tx.send(AppEvent::Redraw);
     }
 
+    /// Inject a background event into the conversation history. This is used
+    /// for displaying informational messages that originate from the UI
+    /// itself (e.g. the `/diff` command) rather than from the backend agent.
+    pub(crate) fn add_background_event(&mut self, message: String) {
+        self.conversation_history.add_background_event(message);
+        self.request_redraw();
+    }
+
     pub(crate) fn handle_scroll_delta(&mut self, scroll_delta: i32) {
         // If the user is trying to scroll exactly one line, we let them, but
         // otherwise we assume they are trying to scroll in larger increments.
