@@ -210,6 +210,29 @@ struct SseEvent {
 #[derive(Debug, Deserialize)]
 struct ResponseCompleted {
     id: String,
+    usage: Option<ResponseCompletedUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)] // Fields should print in debug output.
+struct ResponseCompletedUsage {
+    input_tokens: u64,
+    input_tokens_details: Option<ResponseCompletedInputTokensDetails>,
+    output_tokens: u64,
+    output_tokens_details: Option<ResponseCompletedOutputTokensDetails>,
+    total_tokens: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResponseCompletedInputTokensDetails {
+    #[allow(dead_code)] // Fields should print in debug output.
+    cached_tokens: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResponseCompletedOutputTokensDetails {
+    #[allow(dead_code)] // Fields should print in debug output.
+    reasoning_tokens: u64,
 }
 
 async fn process_sse<S>(stream: S, tx_event: mpsc::Sender<Result<ResponseEvent>>)
@@ -221,7 +244,7 @@ where
     // If the stream stays completely silent for an extended period treat it as disconnected.
     let idle_timeout = *OPENAI_STREAM_IDLE_TIMEOUT_MS;
     // The response id returned from the "complete" message.
-    let mut response_id = None;
+    let mut response_completed: Option<ResponseCompleted> = None;
 
     loop {
         let sse = match timeout(idle_timeout, stream.next()).await {
@@ -233,9 +256,15 @@ where
                 return;
             }
             Ok(None) => {
-                match response_id {
-                    Some(response_id) => {
-                        let event = ResponseEvent::Completed { response_id };
+                match response_completed {
+                    Some(ResponseCompleted {
+                        id: response_id,
+                        usage,
+                    }) => {
+                        let event = ResponseEvent::Completed {
+                            response_id,
+                            total_tokens: usage.map(|u| u.total_tokens),
+                        };
                         let _ = tx_event.send(Ok(event)).await;
                     }
                     None => {
@@ -301,7 +330,7 @@ where
                 if let Some(resp_val) = event.response {
                     match serde_json::from_value::<ResponseCompleted>(resp_val) {
                         Ok(r) => {
-                            response_id = Some(r.id);
+                            response_completed = Some(r);
                         }
                         Err(e) => {
                             debug!("failed to parse ResponseCompleted: {e}");

@@ -129,6 +129,13 @@ impl BottomPane<'_> {
         }
     }
 
+    /// Update the *context-window remaining* indicator in the composer. This
+    /// is forwarded directly to the underlying `ChatComposer`.
+    pub(crate) fn set_context_left_percent(&mut self, percent: u8) {
+        self.composer.set_context_left_percent(percent);
+        self.request_redraw();
+    }
+
     /// Called when the agent requests user approval.
     pub fn push_approval_request(&mut self, request: ApprovalRequest) {
         let request = if let Some(view) = self.active_view.as_mut() {

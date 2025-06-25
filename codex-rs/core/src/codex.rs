@@ -81,6 +81,7 @@ use crate::protocol::SandboxPolicy;
 use crate::protocol::SessionConfiguredEvent;
 use crate::protocol::Submission;
 use crate::protocol::TaskCompleteEvent;
+use crate::protocol::TokenCountEvent;
 use crate::rollout::RolloutRecorder;
 use crate::safety::SafetyCheck;
 use crate::safety::assess_command_safety;
@@ -1078,7 +1079,20 @@ async fn try_run_turn(
                 let response = handle_response_item(sess, sub_id, item.clone()).await?;
                 output.push(ProcessedResponseItem { item, response });
             }
-            ResponseEvent::Completed { response_id } => {
+            ResponseEvent::Completed {
+                response_id,
+                total_tokens,
+            } => {
+                if let Some(total_tokens) = total_tokens {
+                    sess.tx_event
+                        .send(Event {
+                            id: sub_id.to_string(),
+                            msg: EventMsg::TokenCount(TokenCountEvent { total_tokens }),
+                        })
+                        .await
+                        .ok();
+                }
+
                 let mut state = sess.state.lock().unwrap();
                 state.previous_response_id = Some(response_id);
                 break;
