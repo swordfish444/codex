@@ -2,7 +2,6 @@ use codex_common::elapsed::format_elapsed;
 use codex_core::WireApi;
 use codex_core::config::Config;
 use codex_core::model_supports_reasoning_summaries;
-use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::BackgroundEventEvent;
 use codex_core::protocol::ErrorEvent;
 use codex_core::protocol::Event;
@@ -15,6 +14,7 @@ use codex_core::protocol::McpToolCallEndEvent;
 use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::PatchApplyEndEvent;
 use codex_core::protocol::SessionConfiguredEvent;
+use codex_core::protocol::{AgentMessageEvent, LogEvent};
 use owo_colors::OwoColorize;
 use owo_colors::Style;
 use shlex::try_join;
@@ -175,6 +175,9 @@ impl EventProcessor {
             }
             EventMsg::BackgroundEvent(BackgroundEventEvent { message }) => {
                 ts_println!(self, "{}", message.style(self.dimmed));
+            }
+            EventMsg::Log(LogEvent { line }) => {
+                ts_println!(self, "{}", line.style(self.dimmed));
             }
             EventMsg::TaskStarted | EventMsg::TaskComplete(_) => {
                 // Ignore.

@@ -989,6 +989,10 @@ async fn run_turn(
     sub_id: String,
     input: Vec<ResponseItem>,
 ) -> CodexResult<Vec<ProcessedResponseItem>> {
+    debug!("[GABE] codex#run_turn");
+    info!("[GABE] codex#run_turn");
+    error!("[GABE] codex#run_turn");
+
     // Decide whether to use server-side storage (previous_response_id) or disable it
     let (prev_id, store) = {
         let state = sess.state.lock().unwrap();

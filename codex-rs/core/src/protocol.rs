@@ -352,6 +352,8 @@ pub enum EventMsg {
     ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent),
 
     BackgroundEvent(BackgroundEventEvent),
+    
+    Log(LogEvent),
 
     /// Notification that the agent is about to apply a code patch. Mirrors
     /// `ExecCommandBegin` so front‑ends can show progress indicators.
@@ -462,6 +464,11 @@ pub struct ApplyPatchApprovalRequestEvent {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BackgroundEventEvent {
     pub message: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LogEvent {
+    pub line: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

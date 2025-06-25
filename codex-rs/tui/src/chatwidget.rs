@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use codex_core::codex_wrapper::init_codex;
 use codex_core::config::Config;
-use codex_core::protocol::AgentMessageEvent;
+use codex_core::protocol::{AgentMessageEvent, LogEvent};
 use codex_core::protocol::AgentReasoningEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::ErrorEvent;
@@ -358,18 +358,16 @@ impl ChatWidget<'_> {
                 self.bottom_pane
                     .on_history_entry_response(log_id, offset, entry.map(|e| e.text));
             }
+            EventMsg::Log(LogEvent { line }) => {
+                self.conversation_history.add_log_line(line);
+                self.request_redraw();
+            }
             event => {
                 self.conversation_history
                     .add_background_event(format!("{event:?}"));
                 self.request_redraw();
             }
         }
-    }
-
-    /// Update the live log preview while a task is running.
-    pub(crate) fn update_latest_log(&mut self, line: String) {
-        // Forward only if we are currently showing the status indicator.
-        self.bottom_pane.update_status_text(line);
     }
 
     fn request_redraw(&mut self) {

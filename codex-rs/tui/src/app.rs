@@ -9,7 +9,7 @@ use crate::scroll_event_helper::ScrollEventHelper;
 use crate::slash_command::SlashCommand;
 use crate::tui;
 use codex_core::config::Config;
-use codex_core::protocol::Event;
+use codex_core::protocol::{Event, EventMsg, LogEvent};
 use codex_core::protocol::Op;
 use color_eyre::eyre::Result;
 use crossterm::event::KeyCode;
@@ -228,7 +228,12 @@ impl<'a> App<'a> {
                     AppState::Login { .. } | AppState::GitWarning { .. } => {}
                 },
                 AppEvent::LatestLog(line) => match &mut self.app_state {
-                    AppState::Chat { widget } => widget.update_latest_log(line),
+                    AppState::Chat { widget } => widget.handle_codex_event(Event {
+                        id: "123".to_string(),
+                        msg: EventMsg::Log(LogEvent {
+                            line: line.clone(),
+                        })
+                    }),
                     AppState::Login { .. } | AppState::GitWarning { .. } => {}
                 },
                 AppEvent::DispatchCommand(command) => match command {

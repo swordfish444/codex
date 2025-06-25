@@ -113,6 +113,8 @@ pub(crate) enum HistoryCell {
     /// behaviour of `ActiveExecCommand` so the user sees *what* patch the
     /// model wants to apply before being prompted to approve or deny it.
     PendingPatch { view: TextBlock },
+
+    Log { view: TextBlock }
 }
 
 const TOOL_CALL_MAX_LINES: usize = 5;
@@ -459,6 +461,15 @@ impl HistoryCell {
         }
     }
 
+    pub(crate) fn new_log_line(message: String) -> Self {
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.extend(message.lines().map(|l| Line::from(l.to_string()).dim()));
+        HistoryCell::Log {
+            view: TextBlock::new(lines),
+        }
+
+    }
+
     pub(crate) fn new_error_event(message: String) -> Self {
         let lines: Vec<Line<'static>> = vec![
             vec!["ERROR: ".red().bold(), message.into()].into(),
@@ -554,6 +565,7 @@ impl CellWidget for HistoryCell {
             | HistoryCell::CompletedMcpToolCall { view }
             | HistoryCell::PendingPatch { view }
             | HistoryCell::ActiveExecCommand { view, .. }
+            | HistoryCell::Log { view }
             | HistoryCell::ActiveMcpToolCall { view, .. } => view.height(width),
             HistoryCell::CompletedMcpToolCallWithImageOutput {
                 image,
@@ -575,6 +587,7 @@ impl CellWidget for HistoryCell {
             | HistoryCell::CompletedMcpToolCall { view }
             | HistoryCell::PendingPatch { view }
             | HistoryCell::ActiveExecCommand { view, .. }
+            | HistoryCell::Log { view }
             | HistoryCell::ActiveMcpToolCall { view, .. } => {
                 view.render_window(first_visible_line, area, buf)
             }

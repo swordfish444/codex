@@ -168,6 +168,7 @@ pub async fn run_codex_tool_session(
                     | EventMsg::ExecCommandBegin(_)
                     | EventMsg::ExecCommandEnd(_)
                     | EventMsg::BackgroundEvent(_)
+                    | EventMsg::Log(_)
                     | EventMsg::PatchApplyBegin(_)
                     | EventMsg::PatchApplyEnd(_)
                     | EventMsg::GetHistoryEntryResponse(_) => {

@@ -205,6 +205,10 @@ impl ConversationHistoryWidget {
     pub fn add_background_event(&mut self, message: String) {
         self.add_to_history(HistoryCell::new_background_event(message));
     }
+    
+    pub fn add_log_line(&mut self, line: String) {
+        self.add_to_history(HistoryCell::new_log_line(line))
+    }
 
     pub fn add_error(&mut self, message: String) {
         self.add_to_history(HistoryCell::new_error_event(message));
