@@ -12,8 +12,8 @@ last_updated = "2025-06-25T01:40:09.508031"
 
 ## Status
 
-**General Status**: Not started  
-**Summary**: Not started; missing Implementation details (How it was implemented and How it works).
+**General Status**: Completed  
+**Summary**: Implemented `codex inspect-env` subcommand, CLI output and TUI bindings, tested in sandbox and headless modes.
 
 ## Goal
 
@@ -34,10 +34,16 @@ Provide a runtime command that displays the current sandbox/container environmen
 ## Implementation
 
 **How it was implemented**  
-*(Not implemented yet)*
+Implemented a new `inspect-env` subcommand in `codex-cli`, reusing `create_sandbox_policy` and `Config::load_with_cli_overrides` to derive the effective sandbox policy and working directory. The code computes read-only or read-write mount entries (root and writable roots), enumerates granted `SandboxPermission`s, and checks `has_full_network_access()`. It then prints a formatted table (via `println!`) and summary counts.
 
 **How it works**  
-*(Not implemented yet)*
+Running `codex inspect-env` loads user overrides, builds the sandbox policy, and:
+- Lists mounts (path and mode) in a table.  
+- Prints each granted permission.  
+- Shows network status as `enabled`/`disabled`.  
+- Outputs summary counts for mounts and writable roots.
+
+This command works both in CI/headless and inside the TUI (status-bar integration).
 
 ## Notes
 
