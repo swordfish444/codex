@@ -1,7 +1,6 @@
 //! Bottom pane: shows the ChatComposer or a BottomPaneView, if one is active.
 
 use bottom_pane_view::BottomPaneView;
-use bottom_pane_view::ConditionalUpdate;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -75,21 +74,6 @@ impl BottomPane<'_> {
                 self.request_redraw();
             }
             input_result
-        }
-    }
-
-    /// Update the status indicator text (only when the `StatusIndicatorView` is
-    /// active).
-    pub(crate) fn update_status_text(&mut self, text: String) {
-        if let Some(view) = &mut self.active_view {
-            match view.update_status_text(text) {
-                ConditionalUpdate::NeedsRedraw => {
-                    self.request_redraw();
-                }
-                ConditionalUpdate::NoRedraw => {
-                    // No redraw needed.
-                }
-            }
         }
     }
 

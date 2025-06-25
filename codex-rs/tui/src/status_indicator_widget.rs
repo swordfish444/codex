@@ -83,11 +83,6 @@ impl StatusIndicatorWidget {
     pub(crate) fn get_height(&self) -> u16 {
         self.height
     }
-
-    /// Update the line that is displayed in the widget.
-    pub(crate) fn update_text(&mut self, text: String) {
-        self.text = text.replace(['\n', '\r'], " ");
-    }
 }
 
 impl Drop for StatusIndicatorWidget {
