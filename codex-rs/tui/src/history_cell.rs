@@ -1,5 +1,5 @@
 use crate::cell_widget::CellWidget;
-use crate::exec_command::escape_command;
+use crate::exec_command::strip_bash_lc_and_escape;
 use crate::markdown::append_markdown;
 use crate::text_block::TextBlock;
 use crate::text_formatting::format_and_truncate_tool_result;
@@ -224,7 +224,7 @@ impl HistoryCell {
     }
 
     pub(crate) fn new_active_exec_command(call_id: String, command: Vec<String>) -> Self {
-        let command_escaped = escape_command(&command);
+        let command_escaped = strip_bash_lc_and_escape(&command);
         let start = Instant::now();
 
         let lines: Vec<Line<'static>> = vec![
@@ -252,14 +252,16 @@ impl HistoryCell {
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         // Title depends on whether we have output yet.
+        // Annotate success or failure: checkmark or exit code plus duration in ms
+        let duration_ms = duration.as_millis();
+        let annotation = if exit_code == 0 {
+            format!("✅ {}ms", duration_ms)
+        } else {
+            format!("exit code: {} {}ms", exit_code, duration_ms)
+        };
         let title_line = Line::from(vec![
             "command".magenta(),
-            format!(
-                " (code: {}, duration: {})",
-                exit_code,
-                format_duration(duration)
-            )
-            .dim(),
+            format!(" {annotation}").dim(),
         ]);
         lines.push(title_line);
 

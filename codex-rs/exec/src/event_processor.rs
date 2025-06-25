@@ -174,7 +174,12 @@ impl EventProcessor {
                 ts_println!(self, "{prefix} {message}");
             }
             EventMsg::BackgroundEvent(BackgroundEventEvent { message }) => {
-                ts_println!(self, "{}", message.style(self.dimmed));
+                // Collapse verbose sandbox-denied and retry logs into exec flow; skip them here.
+                if message.contains("sandbox denied") || message.contains("retrying") {
+                    // drop verbose background messages for exec errors/retries
+                } else {
+                    ts_println!(self, "{}", message.style(self.dimmed));
+                }
             }
             EventMsg::TaskStarted | EventMsg::TaskComplete(_) => {
                 // Ignore.
@@ -470,6 +475,10 @@ impl EventProcessor {
 }
 
 fn escape_command(command: &[String]) -> String {
+    // Strip any `bash -lc` wrapper and return the inner command directly.
+    if command.len() == 3 && command[0] == "bash" && command[1] == "-lc" {
+        return command[2].clone();
+    }
     try_join(command.iter().map(|s| s.as_str())).unwrap_or_else(|_| command.join(" "))
 }
 
