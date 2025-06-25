@@ -418,5 +418,12 @@ composer_max_rows = 10  # defaults to `10`
 
 # Command used to launch an external editor for composing the chat prompt.
 # Defaults to `$VISUAL`, then `$EDITOR`, falling back to `nvim`.
+
 editor = "${VISUAL:-${EDITOR:-nvim}}"
+
+# Insert a blank line between messages for visual separation.
+message_spacing = false  # defaults to `false`
+
+# Render the sender label on its own line above the message content.
+sender_break_line = false  # defaults to `false`
 ```

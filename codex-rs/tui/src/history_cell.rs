@@ -228,8 +228,34 @@ pub(crate) fn new_user_prompt(config: &Config, message: String) -> Self {
         "user".to_string(),
         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
     );
-    let mut lines = render_header_body(config, label, body);
-    lines.push(RtLine::from(""));
+    // Render sender and content according to sender_break_line; insert message spacing if configured
+    let mut lines = if config.tui.sender_break_line {
+        let mut l = Vec::new();
+        // label on its own line
+        l.push(RtLine::from(vec![label.clone()]));
+        // then message body lines
+        l.extend(body.clone());
+        l
+    } else {
+        // combine sender label and first line of body, indenting subsequent lines
+        let mut l = Vec::new();
+        if let Some(first) = body.get(0) {
+            let mut spans = vec![label.clone(), RtSpan::raw(" ".to_string())];
+            spans.extend(first.spans.clone());
+            l.push(RtLine::from(spans).style(first.style));
+            let indent = " ".to_string();
+            for ln in body.iter().skip(1) {
+                let text: String = ln.spans.iter().map(|s| s.content.clone()).collect();
+                l.push(RtLine::from(indent.clone() + &text));
+            }
+        } else {
+            l.push(RtLine::from(vec![label.clone()]));
+        }
+        l
+    };
+    if config.tui.message_spacing {
+        lines.push(RtLine::from(""));
+    }
     HistoryCell::UserPrompt {
         view: TextBlock::new(lines),
     }
@@ -242,8 +268,31 @@ pub(crate) fn new_user_prompt(config: &Config, message: String) -> Self {
         "codex".to_string(),
         Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
     );
-    let mut lines = render_header_body(config, label, md_lines);
-    lines.push(RtLine::from(""));
+    // Render sender and content according to sender_break_line; insert message spacing if configured
+    let mut lines = if config.tui.sender_break_line {
+        let mut l = Vec::new();
+        l.push(RtLine::from(vec![label.clone()]));
+        l.extend(md_lines.clone());
+        l
+        } else {
+        let mut l = Vec::new();
+        if let Some(first) = md_lines.get(0) {
+            let mut spans = vec![label.clone(), RtSpan::raw(" ".to_string())];
+            spans.extend(first.spans.clone());
+            l.push(RtLine::from(spans).style(first.style));
+            let indent = " ".to_string();
+            for ln in md_lines.iter().skip(1) {
+                let text: String = ln.spans.iter().map(|s| s.content.clone()).collect();
+                l.push(RtLine::from(indent.clone() + &text));
+            }
+        } else {
+            l.push(RtLine::from(vec![label.clone()]));
+        }
+        l
+    };
+    if config.tui.message_spacing {
+        lines.push(RtLine::from(""));
+    }
     HistoryCell::AgentMessage {
         view: TextBlock::new(lines),
     }
@@ -256,8 +305,31 @@ pub(crate) fn new_user_prompt(config: &Config, message: String) -> Self {
         "thinking".to_string(),
         Style::default().fg(Color::Magenta).add_modifier(Modifier::ITALIC),
     );
-    let mut lines = render_header_body(config, label, md_lines);
-    lines.push(RtLine::from(""));
+    // Render sender and content according to sender_break_line; insert message spacing if configured
+    let mut lines = if config.tui.sender_break_line {
+        let mut l = Vec::new();
+        l.push(RtLine::from(vec![label.clone()]));
+        l.extend(md_lines.clone());
+        l
+    } else {
+        let mut l = Vec::new();
+        if let Some(first) = md_lines.get(0) {
+            let mut spans = vec![label.clone(), RtSpan::raw(" ".to_string())];
+            spans.extend(first.spans.clone());
+            l.push(RtLine::from(spans).style(first.style));
+            let indent = " ".to_string();
+            for ln in md_lines.iter().skip(1) {
+                let text: String = ln.spans.iter().map(|s| s.content.clone()).collect();
+                l.push(RtLine::from(indent.clone() + &text));
+            }
+        } else {
+            l.push(RtLine::from(vec![label.clone()]));
+        }
+        l
+    };
+    if config.tui.message_spacing {
+        lines.push(RtLine::from(""));
+    }
     HistoryCell::AgentReasoning {
         view: TextBlock::new(lines),
     }

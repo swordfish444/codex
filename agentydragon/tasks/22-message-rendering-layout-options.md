@@ -1,9 +1,9 @@
 +++
 id = "22"
 title = "Message Separation and Sender-Content Layout Options"
-status = "Not started"
+status = "Done"
 dependencies = "" # No prerequisites
-last_updated = "2025-06-25T01:40:09.600000"
+last_updated = "2025-06-25T11:05:55.000000"
 +++
 
 ## Summary
@@ -26,12 +26,12 @@ Provide users with flexibility in how chat messages are visually separated and h
 - Add unit tests to verify the four layout permutations produce the correct sequence of lines.
 
 ## Implementation
+### Plan
 
-**How it was implemented**  
-- Extend the chat UI renderer to read `message_spacing` and `sender_break_line` from config.
-- In the message rendering routine, after emitting each message block, conditionally insert a blank line if `message_spacing` is true.
-- When rendering a message header, split layout based on `sender_break_line`: emit sender label and content either together or in two lines.
-- Write unit tests for all combinations of `(message_spacing, sender_break_line)` covering single-line messages, multi-line content, and boundaries.
+- Add `message_spacing` and `sender_break_line` flags to the TUI config schema with default `false`.
+- Update the TUI renderer (`history_cell.rs`) to conditionally insert blank lines between messages and break sender/content lines based on these flags.
+- Document both flags under the `[tui]` section in `codex-rs/config.md`.
+- Ensure existing unit tests in `message_layout.rs` cover all flag combinations and adjust or add tests if needed.
 
 ## Notes
 
