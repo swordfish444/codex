@@ -33,11 +33,23 @@ This file documents the changes introduced on the `agentydragon` branch
 - Fixed slash-command `/edit-prompt` to invoke the configured external editor for prompt drafting (in addition to Ctrl+E).
 
 ## codex-rs/tui: display context remaining percentage
-- Added module `tui/src/context.rs` with heuristics (`approximate_tokens_used`, `max_tokens_for_model`, `calculate_context_percent_remaining`).
-- Updated `ChatWidget` and `ChatComposer::render_ref` to track history items and render `<N>% context left` indicator with color thresholds.
-- Added unit tests in `tui/tests/context_percent.rs` for token counting and percent formatting boundary conditions.
+  - Added module `tui/src/context.rs` with heuristics (`approximate_tokens_used`, `max_tokens_for_model`, `calculate_context_percent_remaining`).
+  - Updated `ChatWidget` and `ChatComposer::render_ref` to track history items and render `<N>% context left` indicator with color thresholds.
+  - Added unit tests in `tui/tests/context_percent.rs` for token counting and percent formatting boundary conditions.
+
+## codex-rs/tui: compact Markdown rendering option
+  - Added `markdown_compact` config flag under UI settings to collapse heading-content spacing when enabled.
+  - When enabled, headings render immediately adjacent to content with no blank line between them.
+  - Updated Markdown rendering in chat UI and logs to honor compact mode globally (diffs, docs, help messages).
+  - Added unit tests covering H1–H6 heading spacing for both compact and default modes.
 
 ## Documentation tasks
+
+## codex-rs/tui: interactive shell-command affordance via hotkey
+- Bound `Ctrl+M` to open a ShellCommandView overlay for arbitrary container shell input.
+- Toggled shell-command mode with `Ctrl+M` to enter or exit prompt, with styled border in shell mode.
+- Executed commands asynchronously (`sh -c`) and recorded outputs inline in conversation history.
+- Added unit tests for ShellCommandView event emission and shell-mode toggling behavior.
 
 Tasks live under `agentydragon/tasks/` as individual Markdown files. Please update each task’s **Status** and **Implementation** sections in place rather than maintaining a static list here.
 

@@ -41,6 +41,7 @@ use crate::context::calculate_context_percent_remaining;
 use crate::conversation_history_widget::ConversationHistoryWidget;
 use crate::history_cell::PatchEventType;
 use crate::user_approval_widget::ApprovalRequest;
+use shlex;
 
 pub(crate) struct ChatWidget<'a> {
     app_event_tx: AppEventSender,
@@ -52,6 +53,8 @@ pub(crate) struct ChatWidget<'a> {
     initial_user_message: Option<UserMessage>,
     /// raw ResponseItem stream for context-left calculation
     history_items: Vec<ResponseItem>,
+    /// Counter to generate unique call IDs for shell commands.
+    next_shell_call_id: usize,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -139,6 +142,7 @@ impl ChatWidget<'_> {
                 initial_images,
             ),
             history_items: Vec::new(),
+            next_shell_call_id: 0,
         }
     }
 
@@ -445,6 +449,39 @@ impl ChatWidget<'_> {
     pub fn push_mount_remove_interactive(&mut self) {
         self.bottom_pane.push_mount_remove_interactive();
         self.request_redraw();
+    }
+    /// Launch interactive shell-command dialog.
+    pub fn push_shell_command_interactive(&mut self) {
+        self.bottom_pane.push_shell_command_interactive();
+        self.request_redraw();
+    }
+    /// Handle a submitted shell command: record and execute it.
+    pub fn handle_shell_command(&mut self, cmd: String) {
+        let call_id = format!("shell-{}", self.next_shell_call_id);
+        self.next_shell_call_id += 1;
+        // Split command into arguments, fallback to raw string if parse fails
+        let args = shlex::split(&cmd).unwrap_or_else(|| vec![cmd.clone()]);
+        self.conversation_history.add_active_exec_command(call_id.clone(), args.clone());
+        let tx = self.app_event_tx.clone();
+        // Spawn execution in background
+        tokio::spawn(async move {
+            let output = std::process::Command::new("sh").arg("-c").arg(&cmd).output();
+            match output {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+                    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+                    let code = out.status.code().unwrap_or(-1);
+                    tx.send(AppEvent::ShellCommandResult { call_id, stdout, stderr, exit_code: code });
+                }
+                Err(e) => {
+                    tx.send(AppEvent::ShellCommandResult { call_id, stdout: String::new(), stderr: e.to_string(), exit_code: -1 });
+                }
+            }
+        });
+    }
+    /// Handle completion of a shell command: display its result.
+    pub fn handle_shell_command_result(&mut self, call_id: String, stdout: String, stderr: String, exit_code: i32) {
+        self.conversation_history.record_completed_exec_command(call_id, stdout, stderr, exit_code);
     }
 
     fn request_redraw(&mut self) {

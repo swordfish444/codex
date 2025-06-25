@@ -25,6 +25,7 @@ const MIN_TEXTAREA_ROWS: usize = 1;
 const BORDER_LINES: u16 = 2;
 
 /// Result returned when the user interacts with the text area.
+#[derive(Debug, PartialEq)]
 pub enum InputResult {
     Submitted(String),
     None,
@@ -39,6 +40,39 @@ pub(crate) struct ChatComposer<'a> {
     max_rows: usize,
     /// Last computed context-left percentage
     context_left_percent: f64,
+    /// Whether the composer is in shell-command mode (Ctrl+M toggles).
+    shell_mode: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_event::AppEvent;
+    use crate::app_event_sender::AppEventSender;
+    use crate::slash_command::SlashCommand;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::mpsc;
+
+    #[test]
+    fn ctrl_m_dispatches_shell_command() {
+        let (tx, rx) = mpsc::channel();
+        let evt_tx = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, evt_tx.clone(), 1);
+        // Initial shell_mode should be false.
+        assert!(!composer.shell_mode);
+        // Simulate Ctrl+M key event.
+        let key_event = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL);
+        let (res, needs_redraw) = composer.handle_key_event(key_event);
+        assert!(needs_redraw);
+        assert_eq!(res, InputResult::None);
+        // shell_mode should have toggled to true.
+        assert!(composer.shell_mode);
+        // Verify DispatchCommand(Shell) event was sent.
+        match rx.recv().unwrap() {
+            AppEvent::DispatchCommand(cmd) => assert_eq!(cmd, SlashCommand::Shell),
+            other => panic!("Expected DispatchCommand(Shell), got {:?}", other),
+        }
+    }
 }
 
 impl ChatComposer<'_> {
@@ -54,6 +88,7 @@ impl ChatComposer<'_> {
             history: ChatComposerHistory::new(),
             max_rows,
             context_left_percent: 100.0,
+            shell_mode: false,
         };
         this.update_border(has_input_focus);
         this
@@ -236,6 +271,12 @@ impl ChatComposer<'_> {
                 self.open_external_editor();
                 (InputResult::None, true)
             }
+            Input { key: Key::Char('m'), ctrl: true, alt: false, shift: false } => {
+                // Toggle shell-command mode and prompt/exit accordingly
+                self.shell_mode = !self.shell_mode;
+                self.app_event_tx.send(AppEvent::DispatchCommand(SlashCommand::Shell));
+                (InputResult::None, true)
+            }
             input => self.handle_input_basic(input),
         }
     }
@@ -278,6 +319,18 @@ impl ChatComposer<'_> {
         self.textarea.select_all();
         self.textarea.cut();
         let _ = self.textarea.insert_str(new_text);
+    }
+
+    /// Return the current text in the composer input.
+    #[allow(dead_code)]
+    pub fn get_input_text(&self) -> String {
+        self.textarea.lines().join("\n")
+    }
+
+    /// Returns true if the composer is in shell-command mode.
+    #[allow(dead_code)]
+    pub fn is_shell_mode(&self) -> bool {
+        self.shell_mode
     }
 
     /// Synchronize `self.command_popup` with the current text in the
@@ -331,7 +384,15 @@ impl ChatComposer<'_> {
             border_style: Style,
         }
 
-        let bs = if has_focus {
+        let bs = if self.shell_mode {
+            BlockState {
+                right_title: Line::from(
+                    "Shell mode – Enter to run | Ctrl+M to exit shell mode",
+                )
+                .alignment(Alignment::Right),
+                border_style: Style::default().fg(Color::Red),
+            }
+        } else if has_focus {
             BlockState {
                 right_title: Line::from("Enter to send | Ctrl+D to quit | Ctrl+J for newline")
                     .alignment(Alignment::Right),

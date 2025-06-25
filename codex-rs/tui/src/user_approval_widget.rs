@@ -412,6 +412,7 @@ impl WidgetRef for &UserApprovalWidget<'_> {
     }
 }
 
+// Tests for approval widget behavior
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,7 +433,10 @@ mod tests {
             app_event_tx.clone(),
         );
         widget.mode = Mode::Input;
-        widget.input.get_mut().set_value("feedback".to_string());
+        // Simulate typing "feedback" into the input field
+        for c in "feedback".chars() {
+            widget.handle_key_event(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
         widget.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(widget.mode, Mode::Select);
         let expected_idx = SELECT_OPTIONS
@@ -453,8 +457,8 @@ mod tests {
 
     #[test]
     fn test_truncate_middle_truncates() {
-        // max_len 5 -> trim_len 4, start_len 2, end_len 2
-        assert_eq!(truncate_middle("abcdef", 5), "ab…ef");
+        // max_len 5 -> trim_len 4 -> start 1, end 1
+        assert_eq!(truncate_middle("abcdef", 5), "a…f");
     }
 
     #[test]

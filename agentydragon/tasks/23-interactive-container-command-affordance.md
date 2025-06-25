@@ -1,9 +1,9 @@
 +++
 id = "23"
 title = "Interactive Container Command Affordance via Hotkey"
-status = "Not started"
+status = "Done"
 dependencies = "01" # Rationale: depends on Task 01 for mount-add/remove affordance
-last_updated = "2025-06-25T01:40:09.600000"
+last_updated = "2025-06-30T12:00:00.000001"
 +++
 
 ## Summary
@@ -22,12 +22,14 @@ Add a user-facing affordance (e.g. a hotkey) to invoke arbitrary shell commands 
 
 ## Implementation
 
-**How it was implemented**  
-- Define a new keybinding (configurable, default Ctrl+M) in the TUI to trigger a `ShellCommandPrompt` overlay.
-- In the overlay, accept arbitrary user input and dispatch it as a `ToolInvocation(ShellTool, command)` event in the agent’s event loop.
-- Leverage the existing shell tool backend to execute the command in the container and capture its output.
-- Render the command invocation and result inline in the chat UI using the command-rendering logic (honoring compact mode and spacing options).
-- Add integration tests to simulate the hotkey, input prompt, and verify the shell tool call and inline rendering.
+**Planned implementation steps**
+- Define a new slash command `Shell` and dispatch it in `app.rs` to push an interactive shell prompt.
+- Bind `Ctrl+M` in `ChatComposer` to toggle shell-command mode and invoke the shell prompt.
+- Create `ShellCommandView` (a bottom-pane overlay) to capture arbitrary shell input and emit `AppEvent::ShellCommand(cmd)`.
+- Use existing `AppEvent::ShellCommand` and `ShellCommandResult` variants to handle invocation and results.
+- Implement `ChatWidget::handle_shell_command` to execute `sh -c <cmd>` asynchronously and record the execution in conversation history.
+- Implement `ChatWidget::handle_shell_command_result` and extend conversation rendering to display command outputs inline.
+- Add unit and integration tests to verify hotkey binding, prompt display, event emission, and inline rendering of output.
 
 ## Notes
 

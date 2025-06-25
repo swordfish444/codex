@@ -21,6 +21,8 @@ pub enum SlashCommand {
     MountAdd,
     /// Remove a dynamic mount by container path.
     MountRemove,
+    /// Prompt to run a shell command in the container.
+    Shell,
 }
 
 impl SlashCommand {
@@ -33,8 +35,9 @@ impl SlashCommand {
             SlashCommand::EditPrompt =>
                 "Open external editor to edit the current prompt.",
             SlashCommand::Quit => "Exit the application.",
-            SlashCommand::MountAdd => "Add a mount: host path → container path.",
-            SlashCommand::MountRemove => "Remove a mount by container path.",
+        SlashCommand::MountAdd => "Add a mount: host path → container path.",
+        SlashCommand::MountRemove => "Remove a mount by container path.",
+        SlashCommand::Shell => "Run a shell command in the container.",
         }
     }
 
