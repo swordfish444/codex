@@ -4,7 +4,7 @@
 
 ## Status
 
-**General Status**: Not started  
+**General Status**: Merged  
 **Summary**: Not started; missing Implementation details (How it was implemented and How it works).
 
 ## Goal

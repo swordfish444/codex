@@ -4,7 +4,7 @@
 
 ## Status
 
-**General Status**: Completed  
+**General Status**: Merged  
 **Summary**: Implemented inline DSL and interactive dialogs for `/mount-add` and `/mount-remove`, with dynamic sandbox policy updates.
 
 ## Goal

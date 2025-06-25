@@ -4,7 +4,7 @@
 
 ## Status
 
-**General Status**: Done  
+**General Status**: Merged  
 **Summary**: Implemented interactive prompt overlay allowing user input during streaming without aborting runs.
 
 ## Goal

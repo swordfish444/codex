@@ -19,14 +19,48 @@ def cli():
 def status():
     """Show a table of task id, title, status, dependencies, last_updated"""
     rows = []
+    repo_root = Path.cwd()
     for md in sorted(TASK_DIR.glob('[0-9][0-9]-*.md')):
         meta, _ = load_task(md)
-        rows.append((meta.id, meta.title, meta.status,
-                     meta.dependencies.replace('\n', ' '),
-                     meta.last_updated.strftime('%Y-%m-%d %H:%M')))
-    # simple table
-    fmt = '{:>2}  {:<50}  {:<12}  {:<30}  {:<16}'
-    print(fmt.format('ID','Title','Status','Dependencies','Updated'))
+        slug = md.stem
+        # branch detection
+        branches = subprocess.run(
+            ['git', 'branch', '--list', f'agentydragon-{meta.id}-*'],
+            capture_output=True, text=True, cwd=repo_root
+        ).stdout.strip().splitlines()
+        branch_exists = 'Y' if branches and branches[0].strip() else 'N'
+        merged = 'N'
+        if branch_exists == 'Y':
+            bname = branches[0].lstrip('* ').strip()
+            merged = 'Y' if subprocess.run(
+                ['git', 'merge-base', '--is-ancestor', bname, 'agentydragon'],
+                cwd=repo_root
+            ).returncode == 0 else 'N'
+        # worktree detection
+        wt_dir = TASK_DIR / '.worktrees' / slug
+        wt_exists = wt_dir.exists()
+        wt_clean = 'NA'
+        if wt_exists:
+            status_out = subprocess.run(
+                ['git', 'status', '--porcelain'], cwd=wt_dir,
+                capture_output=True, text=True
+            ).stdout.strip()
+            wt_clean = 'Clean' if not status_out else 'Dirty'
+        rows.append((
+            meta.id, meta.title, meta.status,
+            meta.dependencies.replace('\n', ' '),
+            meta.last_updated.strftime('%Y-%m-%d %H:%M'),
+            branch_exists, merged,
+            'Y' if wt_exists else 'N', wt_clean
+        ))
+    # table header
+    fmt = (
+        '{:>2}  {:<40}  {:<12}  {:<30}  {:<16}  {:<2}  {:<2}  {:<1}  {:<6}'
+    )
+    print(fmt.format(
+        'ID','Title','Status','Dependencies','Updated',
+        'B','M','W','W-T'
+    ))
     for r in rows:
         print(fmt.format(*r))
 

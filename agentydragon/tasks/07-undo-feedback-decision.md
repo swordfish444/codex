@@ -4,7 +4,7 @@
 
 ## Status
 
-**General Status**: Completed  
+**General Status**: Merged  
 **Summary**: ESC key now cancels feedback entry and returns to the select menu, preserving any entered text; implementation and tests added.
 
 ## Goal

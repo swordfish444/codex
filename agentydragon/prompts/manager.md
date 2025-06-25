@@ -22,6 +22,6 @@ More functionality and refinements will be added later.  Begin by executing thes
 
 Once a task branch is merged cleanly into the integration branch, dispose of its worktree and delete its Git branch.  To record that merge, use:
 
-    agentydragon-task set-status <task-id> Merged
+    python3 agentydragon/tools/manager_utils/agentydragon_task.py set-status <task-id> Merged
 
-Use `agentydragon-task dispose <task-id>` to remove the worktree and branch without changing the status (e.g. for cancelled tasks).
+Use `python3 agentydragon/tools/manager_utils/agentydragon_task.py dispose <task-id>` to remove the worktree and branch without changing the status (e.g. for cancelled tasks).
