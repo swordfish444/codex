@@ -5,6 +5,7 @@ create_task_worktree.py: Create or reuse a git worktree for a specific task and 
 import os
 import subprocess
 import sys
+import re
 from pathlib import Path
 
 import click
@@ -117,6 +118,17 @@ def main(agent, tmux_mode, interactive, shell_mode, task_inputs):
     prompt = (repo_root() / 'agentydragon' / 'prompts' / 'developer.md').read_text()
     taskfile = (tasks_dir() / f'{slug}.md').read_text()
     run(cmd + [prompt + '\n\n' + taskfile])
+    # After Developer agent exits, if task status is Done, invoke Commit agent to stage and commit changes
+    task_path = tasks_dir() / f"{slug}.md"
+    content = task_path.read_text(encoding='utf-8')
+    m = re.search(r'^status\s*=\s*"([^"]+)"', content, re.MULTILINE)
+    status = m.group(1) if m else None
+    if status and status.lower() == 'done':
+        click.echo(f"Task {slug} marked Done; running Commit agent helper")
+        commit_script = repo_root() / 'agentydragon' / 'tools' / 'launch_commit_agent.py'
+        run([sys.executable, str(commit_script), slug])
+    else:
+        click.echo(f"Task {slug} status is '{status or 'unknown'}'; skipping Commit agent helper")
 
 
 if __name__ == '__main__':

@@ -44,6 +44,24 @@ def status():
         all_meta[meta.id] = meta
         path_map[meta.id] = md
 
+    # If a worktree exists, reload the task from that workspace (including .done paths)
+    repo = repo_root()
+    for tid, md in list(path_map.items()):
+        wt_root_dir = wt_root / md.stem
+        # derive relative path of the task file under the repo
+        try:
+            rel = md.relative_to(repo)
+        except Exception:
+            continue
+        wt_task = wt_root_dir / rel
+        if wt_task.exists():
+            try:
+                wt_meta, _ = load_task(wt_task)
+                all_meta[tid] = wt_meta
+                path_map[tid] = wt_task
+            except Exception as e:
+                print(f"Error loading {wt_task}: {e}")
+
     # Build dependency graph, excluding already merged tasks
     merged_ids = {tid for tid, m in all_meta.items() if m.status == 'Merged'}
     deps_map: dict[str, list[str]] = {}
@@ -158,10 +176,16 @@ def status():
             else:
                 branch_info = f'{b_cnt} behind / {a_cnt} ahead (+{stat or 0}) {conflict}'
 
-        # colorize status/worktree
-        stat_disp = meta.status
-        if meta.status in ('Done', 'Merged'):
-            stat_disp = f"\033[32m{meta.status}\033[0m"
+        # Normalize and colorize status/worktree
+        raw_status = str(meta.status)
+        cls_name = meta.status.__class__.__name__
+        prefix = cls_name + "."
+        if raw_status.startswith(prefix):
+            raw_status = raw_status[len(prefix):]
+        if raw_status in ('Done', 'Merged'):
+            stat_disp = f"\033[32m{raw_status}\033[0m"
+        else:
+            stat_disp = raw_status
         wt_disp = wt_info
         if wt_info == 'dirty':
             wt_disp = f"\033[31m{wt_info}\033[0m"
