@@ -49,6 +49,10 @@ This file documents the changes introduced on the `agentydragon` branch
 ## codex-rs/tui: tests for interactive prompt overlay during execution
   - Added unit tests in `tui/src/bottom_pane/mod.rs` to verify that character input and Enter during `is_task_running` forwards input to the composer, maintains the status indicator overlay, emits redraw events, and that the overlay is removed when the task completes.
 
+## codex-rs/tui: opaque approval dialog background
+- Filled the approval dialog area with a DarkGray background to block underlying prompt text.
+- Added a unit test in `tui/src/user_approval_widget.rs` to assert no transparent or sentinel background remains in the dialog region.
+
 ## Documentation tasks
 
 Tasks live under `agentydragon/tasks/` as individual Markdown files. Please update each task’s **Status** and **Implementation** sections in place rather than maintaining a static list here.
