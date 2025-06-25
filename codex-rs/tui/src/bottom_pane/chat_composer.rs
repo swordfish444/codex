@@ -143,6 +143,12 @@ impl ChatComposer<'_> {
                     let mut parts = stripped.splitn(2, char::is_whitespace);
                     let _cmd_token = parts.next().unwrap_or("");
                     let args = parts.next().unwrap_or("").trim_start();
+                    // Launch external editor for prompt drafting when slash command is /edit-prompt
+                    if *cmd == SlashCommand::EditPrompt {
+                        self.open_external_editor();
+                        self.command_popup = None;
+                        return (InputResult::None, true);
+                    }
                     if !args.is_empty() && (*cmd == SlashCommand::MountAdd || *cmd == SlashCommand::MountRemove) {
                         let ev = if *cmd == SlashCommand::MountAdd {
                             AppEvent::InlineMountAdd(args.to_string())

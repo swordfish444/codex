@@ -25,6 +25,13 @@ This file documents the changes introduced on the `agentydragon` branch
 - Pressing `Esc` in feedback-entry mode now cancels feedback entry and returns to the select menu, preserving the partially entered feedback text.
 - Added a unit test for the ESC cancellation behavior in `tui/src/user_approval_widget.rs`.
 
+## codex-rs/tui: restore inline mount DSL and slash-command dispatch
+- Reintroduced logic in `ChatComposer` to dispatch `AppEvent::InlineMountAdd` and `AppEvent::InlineMountRemove` when `/mount-add` or `/mount-remove` is entered with inline arguments.
+- Restored dispatch of `AppEvent::DispatchCommand` for slash commands selected via the command popup, including proper cleanup of the composer input.
+
+## codex-rs/tui: slash-command `/edit-prompt` opens external editor
+- Fixed slash-command `/edit-prompt` to invoke the configured external editor for prompt drafting (in addition to Ctrl+E).
+
 ## Documentation tasks
 
 Tasks live under `agentydragon/tasks/` as individual Markdown files. Please update each task’s **Status** and **Implementation** sections in place rather than maintaining a static list here.
