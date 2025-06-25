@@ -1,7 +1,7 @@
 +++
 id = "31"
 title = "Display Remaining Context Percentage in codex-rs TUI"
-status = "Not started"
+status = "Done"
 dependencies = "03,06,08,13,15,32,18,19,22,23"
 last_updated = "2025-06-25T01:40:09.600000"
 +++
