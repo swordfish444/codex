@@ -170,10 +170,34 @@ def status():
         for r in rows:
             print(fmt.format(*r))
 
-    # summary of merged tasks (no branch, no worktree)
+    # summary of fully merged tasks (no branch, no worktree)
     if merged_tasks:
         items = ' '.join(f"{tid} ({title})" for tid, title in merged_tasks)
         print(f"\n\033[32mDone & merged:\033[0m {items}")
+
+    # summary of tasks Done with branch commits (ready to merge)
+    ready_tasks: list[tuple[str, str]] = []
+    for tid in sorted_ids:
+        meta = all_meta[tid]
+        if meta.status != 'Done':
+            continue
+        # detect branch existence and ahead commits
+        branches = subprocess.run(
+            ['git', 'for-each-ref', '--format=%(refname:short)', f'refs/heads/agentydragon-{tid}-*'],
+            capture_output=True, text=True, cwd=repo_root()
+        ).stdout.strip().splitlines()
+        if not branches or not branches[0].strip():
+            continue
+        bname = branches[0].lstrip('*+ ').strip()
+        # count commits ahead of integration branch
+        a_cnt, _b_cnt = subprocess.check_output(
+            ['git', 'rev-list', '--left-right', '--count', f'{bname}...agentydragon'], cwd=repo_root()
+        ).decode().split()
+        if int(a_cnt) > 0:
+            ready_tasks.append((tid, meta.title))
+    if ready_tasks:
+        items = ' '.join(f"{tid} ({title})" for tid, title in ready_tasks)
+        print(f"\n\033[33mDone & ready to merge:\033[0m {items}")
 
 @cli.command()
 @click.argument('task_id')
