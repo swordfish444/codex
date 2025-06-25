@@ -7,8 +7,8 @@ fn build_messages(input: Vec<ResponseItem>, model: &str) -> Vec<Value> {
     let mut pending = None::<String>;
     let mut buf_user = Vec::new();
 
-    // system instructions
-    messages.push(json!({"role": "system", "content": Prompt::default().get_full_instructions(model)}));
+    // placeholder system instructions (not under test)
+    messages.push(json!({"role": "system", "content": ""}));
 
     for item in input {
         match item {
