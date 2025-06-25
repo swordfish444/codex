@@ -425,6 +425,12 @@ impl ChatWidget<'_> {
         self.request_redraw();
     }
 
+    /// Launch external editor for the current prompt.
+    pub fn open_external_editor(&mut self) {
+        self.bottom_pane.open_external_editor(&self.config.tui.prompt_editor);
+        self.request_redraw();
+    }
+
     fn request_redraw(&mut self) {
         self.app_event_tx.send(AppEvent::Redraw);
     }

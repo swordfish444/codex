@@ -39,6 +39,7 @@ use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::config::Config;
 use crate::config_types::ShellEnvironmentPolicy;
+use crate::config::AutoAllowScript;
 use crate::conversation_history::ConversationHistory;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
@@ -83,7 +84,7 @@ use crate::protocol::Submission;
 use crate::protocol::TaskCompleteEvent;
 use crate::rollout::RolloutRecorder;
 use crate::safety::SafetyCheck;
-use crate::safety::assess_command_safety;
+use crate::safety::{assess_command_safety, get_platform_sandbox};
 use crate::safety::assess_patch_safety;
 use crate::user_notification::UserNotification;
 use crate::util::backoff;
@@ -1278,16 +1279,73 @@ async fn handle_container_exec_with_params(
         MaybeApplyPatchVerified::NotApplyPatch => (),
     }
 
+    // auto-approval vote scripts: Deny, Allow, or ask human on errors/unrecognized outputs.
+    for script in &sess.auto_allow {
+        match get_auto_allow_vote(script, &params.command).await {
+            AutoAllowDecision::Deny => {
+                return ResponseInputItem::FunctionCallOutput {
+                    call_id: call_id.clone(),
+                    output: FunctionCallOutputPayload {
+                        content: "exec command denied by auto-allow script".to_string(),
+                        success: None,
+                    },
+                };
+            }
+            AutoAllowDecision::Allow => {
+                let sandbox_type = get_platform_sandbox().unwrap_or(SandboxType::None);
+                return process_exec_tool_call(
+                    params,
+                    sandbox_type,
+                    sess.ctrl_c.clone(),
+                    &sess.sandbox_policy,
+                    &sess.codex_linux_sandbox_exe,
+                )
+                .await;
+            }
+            AutoAllowDecision::AskHuman(reason) => {
+                let rx = sess
+                    .request_command_approval(
+                        call_id.clone(),
+                        params.command.clone(),
+                        params.cwd.clone(),
+                        Some(reason),
+                    )
+                    .await;
+                match rx.await.unwrap_or_default() {
+                    ReviewDecision::Approved | ReviewDecision::ApprovedForSession => {
+                        // approved by user: run without sandbox
+                        return process_exec_tool_call(
+                            params,
+                            SandboxType::None,
+                            sess.ctrl_c.clone(),
+                            &sess.sandbox_policy,
+                            &sess.codex_linux_sandbox_exe,
+                        )
+                        .await;
+                    }
+                    _ => {
+                        return ResponseInputItem::FunctionCallOutput {
+                            call_id,
+                            output: FunctionCallOutputPayload {
+                                content: "exec command rejected by user".to_string(),
+                                success: None,
+                            },
+                        };
+                    }
+                }
+            }
+            AutoAllowDecision::NoOpinion => {}
+        }
+    }
     // safety checks
-    let safety = {
-        let state = sess.state.lock().unwrap();
-        assess_command_safety(
-            &params.command,
-            sess.approval_policy,
-            &sess.sandbox_policy,
-            &state.approved_commands,
-        )
-    };
+    let state = sess.state.lock().unwrap();
+    assess_command_safety(
+        &params.command,
+        sess.approval_policy,
+        &sess.sandbox_policy,
+        &state.approved_commands,
+    )
+};
     let sandbox_type = match safety {
         SafetyCheck::AutoApprove { sandbox_type } => sandbox_type,
         SafetyCheck::AskUser => {
@@ -1383,6 +1441,47 @@ async fn handle_container_exec_with_params(
                 },
             }
         }
+    }
+}
+
+/// Decision from an external auto-allow script.
+#[derive(Debug)]
+enum AutoAllowDecision {
+    Deny,
+    Allow,
+    /// Unrecognized output or error: include message for manual approval prompt.
+    AskHuman(String),
+    /// No opinion: continue to next script.
+    NoOpinion,
+}
+
+/// Invoke an auto-allow script with the candidate command and return its vote.
+/// Non-zero exits or spawn errors are treated as no-opinion.
+async fn get_auto_allow_vote(script: &AutoAllowScript, command: &str) -> AutoAllowDecision {
+    let out = tokio::process::Command::new(&script.script)
+        .arg(command)
+        .output()
+        .await;
+    let output = match out {
+        Ok(output) => output,
+        Err(e) => {
+            return AutoAllowDecision::AskHuman(
+                format!("auto-allow script '{}' failed to spawn: {}", script.script, e)
+            );
+        }
+    };
+    if !output.status.success() {
+        return AutoAllowDecision::AskHuman(
+            format!("auto-allow script '{}' exited with {}", script.script, output.status)
+        );
+    }
+    let vote = String::from_utf8_lossy(&output.stdout).trim().to_lowercase();
+    match vote.as_str() {
+        "deny" => AutoAllowDecision::Deny,
+        "allow" => AutoAllowDecision::Allow,
+        other => AutoAllowDecision::AskHuman(
+            format!("auto-allow script '{}' returned unexpected output: {}", script.script, other)
+        ),
     }
 }
 
@@ -1935,5 +2034,45 @@ fn record_conversation_history(disable_response_storage: bool, wire_api: WireApi
     match wire_api {
         WireApi::Responses => false,
         WireApi::Chat => true,
+    }
+}
+
+#[cfg(test)]
+mod auto_allow_tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+    use std::io::Write;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[tokio::test]
+    async fn test_get_auto_allow_vote_various_cases() {
+        // deny vote
+        let script = AutoAllowScript { script: create_dummy_script("echo deny\n") };
+        assert_eq!(get_auto_allow_vote(&script, "cmd").await, AutoAllowVote::Deny);
+
+        // allow vote
+        let script = AutoAllowScript { script: create_dummy_script("echo allow\n") };
+        assert_eq!(get_auto_allow_vote(&script, "cmd").await, AutoAllowVote::Allow);
+
+        // no-opinion for other output
+        let script = AutoAllowScript { script: create_dummy_script("echo foo\n") };
+        assert_eq!(get_auto_allow_vote(&script, "cmd").await, AutoAllowVote::NoOpinion);
+
+        // non-zero exit code -> no-opinion
+        let script = AutoAllowScript { script: create_dummy_script("exit 1\n") };
+        assert_eq!(get_auto_allow_vote(&script, "cmd").await, AutoAllowVote::NoOpinion);
+
+        // spawn error -> no-opinion
+        let script = AutoAllowScript { script: "/nonexistent-path".to_string() };
+        assert_eq!(get_auto_allow_vote(&script, "cmd").await, AutoAllowVote::NoOpinion);
+    }
+
+    fn create_dummy_script(body: &str) -> String {
+        let mut file = NamedTempFile::new().expect("temp file");
+        write!(file, "#!/usr/bin/env sh\n{}", body).expect("write script");
+        let path = file.into_temp_path();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).expect("set exec");
+        path.to_str().unwrap().to_string()
     }
 }

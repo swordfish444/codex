@@ -95,6 +95,11 @@ pub struct Tui {
     /// an internal scrollbar.
     #[serde(default = "default_composer_max_rows")]
     pub composer_max_rows: usize,
+
+    /// External editor command for the `/edit-prompt` slash command (or Ctrl+E).
+    /// Defaults to the VISUAL env var, then EDITOR, then "nvim".
+    #[serde(default = "default_prompt_editor")]
+    pub prompt_editor: String,
 }
 
 fn default_composer_max_rows() -> usize {
@@ -106,8 +111,15 @@ impl Default for Tui {
         Self {
             disable_mouse_capture: Default::default(),
             composer_max_rows: default_composer_max_rows(),
+            prompt_editor: default_prompt_editor(),
         }
     }
+}
+
+fn default_prompt_editor() -> String {
+    std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "nvim".to_string())
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Default)]

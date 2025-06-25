@@ -161,6 +161,12 @@ impl BottomPane<'_> {
         self.request_redraw();
     }
 
+    /// Launch external editor for the chat composer prompt.
+    pub fn open_external_editor(&mut self, editor_cmd: &str) {
+        self.composer.open_external_editor(editor_cmd);
+        self.request_redraw();
+    }
+
     /// Called when the agent requests user approval.
     pub fn push_approval_request(&mut self, request: ApprovalRequest) {
         let request = if let Some(view) = self.active_view.as_mut() {

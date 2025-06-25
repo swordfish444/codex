@@ -12,6 +12,10 @@ use ratatui::widgets::WidgetRef;
 use tui_textarea::Input;
 use tui_textarea::Key;
 use tui_textarea::TextArea;
+use tui_textarea::CursorMove;
+use std::io::Write;
+use std::process::Command;
+use tempfile::NamedTempFile;
 
 use super::chat_composer_history::ChatComposerHistory;
 use super::command_popup::CommandPopup;
@@ -29,6 +33,28 @@ const BORDER_LINES: u16 = 2;
 pub enum InputResult {
     Submitted(String),
     None,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_event::AppEvent;
+    use crate::app_event_sender::AppEventSender;
+    use crate::slash_command::SlashCommand;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::mpsc::channel;
+
+    #[test]
+    fn ctrl_e_dispatches_edit_prompt() {
+        let (tx, rx) = channel::<AppEvent>();
+        let app_event_tx = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, app_event_tx.clone(), 5);
+        let key_event = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL);
+        let (res, _) = composer.handle_key_event(key_event);
+        assert!(matches!(res, InputResult::None));
+        let evt = rx.recv().expect("expected an AppEvent");
+        assert_eq!(evt, AppEvent::DispatchCommand(SlashCommand::EditPrompt));
+    }
 }
 
 pub(crate) struct ChatComposer<'a> {
@@ -224,6 +250,15 @@ impl ChatComposer<'_> {
                 self.textarea.insert_newline();
                 (InputResult::None, true)
             }
+            Input {
+                key: Key::Char('e'),
+                ctrl: true,
+                alt: false,
+                shift: false,
+            } => {
+                self.app_event_tx.send(AppEvent::DispatchCommand(SlashCommand::EditPrompt));
+                (InputResult::None, true)
+            }
             input => self.handle_input_basic(input),
         }
     }
@@ -275,6 +310,39 @@ impl ChatComposer<'_> {
         };
 
         rows as u16 + BORDER_LINES + num_popup_rows
+    }
+    
+    /// Open an external editor to edit the current prompt buffer.
+    pub fn open_external_editor(&mut self, editor_cmd: &str) {
+        let content = self.textarea.lines().join("\n");
+        let mut tmp = match NamedTempFile::new() {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::error!("Failed to create temp file for editor: {e}");
+                return;
+            }
+        };
+        if let Err(e) = write!(tmp, "{content}") {
+            tracing::error!("Failed to write to temp file: {e}");
+            return;
+        }
+        let path = tmp.path();
+        let status = Command::new(editor_cmd).arg(path).status();
+        match status {
+            Ok(s) if s.success() => {
+                match std::fs::read_to_string(path) {
+                    Ok(new_content) => {
+                        self.textarea.select_all();
+                        self.textarea.cut();
+                        let _ = self.textarea.insert_str(new_content);
+                        self.textarea.move_cursor(CursorMove::Jump(0, 0));
+                    }
+                    Err(e) => tracing::error!("Failed to read edited prompt: {e}"),
+                }
+            }
+            Ok(s) => tracing::error!("Editor exited with status: {s}"),
+            Err(e) => tracing::error!("Failed to launch editor '{editor_cmd}': {e}"),
+        }
     }
 
     fn update_border(&mut self, has_focus: bool) {

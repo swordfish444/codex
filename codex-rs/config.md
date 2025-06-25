@@ -415,4 +415,8 @@ disable_mouse_capture = true  # defaults to `false`
 # The composer will expand up to this many lines; additional content will enable
 # an internal scrollbar.
 composer_max_rows = 10  # defaults to `10`
+
+# External editor to launch for the `/edit-prompt` command (or Ctrl+E).
+# Defaults to $VISUAL, then $EDITOR, then `nvim`.
+prompt_editor = "${VISUAL:-${EDITOR:-nvim}}"  # defaults to VISUAL, EDITOR, or nvim
 ```

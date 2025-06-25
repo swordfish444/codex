@@ -399,7 +399,13 @@ impl<'a> App<'a> {
                         }
                     }
                 },
-            }
+                    }
+                    SlashCommand::EditPrompt => {
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.open_external_editor();
+                            self.app_event_tx.send(AppEvent::Redraw);
+                        }
+                    }
         }
         terminal.clear()?;
 

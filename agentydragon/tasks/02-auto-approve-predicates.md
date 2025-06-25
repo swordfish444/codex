@@ -4,8 +4,8 @@
 
 ## Status
 
-**General Status**: Not started  
-**Summary**: Not started; missing Implementation details (How it was implemented and How it works).
+**General Status**: In progress  
+**Summary**: Implementation underway; populating Implementation section and coding auto-approval predicates.
 
 ## Goal
 Let users configure one or more scripts in `config.toml` that examine each proposed shell command and return exactly one of:
@@ -23,12 +23,17 @@ Multiple scripts cast votes: if any script returns `deny`, the command is denied
 - After all scripts complete with only `no-opinion` results or errors, pause for manual approval (existing logic).
 
 ## Implementation
-
-**How it was implemented**  
-*(Not implemented yet)*
-
-**How it works**  
-*(Not implemented yet)*
+**Planned Implementation**  
+1. Extend `ConfigToml` and `ConfigOverrides` to parse a new `[[auto_allow]]` table with `script` entries.  
+2. Propagate `auto_allow` scripts from `Config` into `Session`.  
+3. Add a helper function `get_auto_allow_vote` that invokes a single script, treats non-zero exits as no-opinion (logging a warning), and parses stdout to a vote.  
+4. Update the exec pipeline (`handle_container_exec_with_params`) to, before safety checks, iterate through `auto_allow` scripts and handle all vote outcomes:
+   - On `deny`, auto-reject.
+   - On `allow`, auto-approve under sandbox.
+   - On script errors or unrecognized outputs, immediately prompt the user (via `request_command_approval`) with a reason string describing the error/output, then run or reject based on their decision.
+   - On `no-opinion`, fall through to the next script.
+6. Write async unit tests for `get_auto_allow_vote`, covering allow, deny, no-opinion, and error-exit cases.  
+7. Update documentation (`config.md`) to document the new auto-approval predicates feature.
 
 ## Notes
-- This pairs with the existing `approval_policy = "unless-allow-listed"` but adds custom logic before prompting.
+- This pairs with the existing `approval_policy = "unless-allow-listed"` but now ensures script errors or unexpected outputs trigger a targeted manual approval prompt with context.
