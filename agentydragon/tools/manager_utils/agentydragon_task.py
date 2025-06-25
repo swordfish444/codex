@@ -44,7 +44,7 @@ def status():
         branch_exists = 'Y' if branches and branches[0].strip() else 'N'
         merged = 'N'
         if branch_exists == 'Y':
-                bname = branches[0].lstrip('*+ ').strip()
+            bname = branches[0].lstrip('*+ ').strip()
             merged = 'Y' if subprocess.run(
                 ['git', 'merge-base', '--is-ancestor', bname, 'agentydragon'],
                 cwd=root
