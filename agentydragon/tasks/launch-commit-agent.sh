@@ -5,9 +5,12 @@
 # Launch the non-interactive Codex Commit agent for a given task worktree,
 # using the prompt in prompts/commit.md and the task's Markdown file.
 #
-# Usage: launch-commit-agent.sh <task-slug|NN>
-
+# Usage: launch-commit-agent.sh <task-slug|NN> [<task-slug|NN>...]
 set -euo pipefail
+
+# Allocate a temporary file to capture the agent's commit message
+last_message_file="$(mktemp)"
+trap 'rm -f "$last_message_file"' EXIT
 
 # Usage: one or more task IDs or slugs
 if [ "$#" -lt 1 ]; then
@@ -57,9 +60,10 @@ for input in "$@"; do
   # Perform commit in the task worktree
   echo "--- Processing task $task_slug ---"
   cd "$worktree_path"
-  cmd=(codex --full-auto exec)
+  cmd=(codex --full-auto exec --output-last-message "$last_message_file")
   echo "Running: ${cmd[*]}"
-  message=$("${cmd[@]}" "$(<"$prompt_file")"$'\n\n'"$(<"$task_file")")
+  # Write the agent's final message to file, then commit using that file
+  "${cmd[@]}" "$(<"$prompt_file")"$'\n\n'"$(<"$task_file")"
   git add -u
-  git commit -m "$message"
+  git commit -F "$last_message_file"
 done

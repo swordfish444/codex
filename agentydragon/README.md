@@ -68,7 +68,7 @@ Tasks live under `agentydragon/tasks/` as individual Markdown files. Please upda
 agentydragon/tasks/launch-commit-agent.sh <task-slug|NN> [<task-slug|NN>...]
 ```
 
-After the Developer agent finishes and updates the task file, the Commit agent will emit the commit message on stdout. An external orchestrator will then stage files, run pre-commit hooks, and perform the actual `git commit`. You do not need to run `git commit` manually.
+After the Developer agent finishes and updates the task file, the Commit agent will write the commit message to a temporary file and then commit using that file (`git commit -F`). An external orchestrator can then stage files and run pre-commit hooks as usual. You do not need to run `git commit` manually.
 
 ---
 
