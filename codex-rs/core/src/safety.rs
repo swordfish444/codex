@@ -36,7 +36,7 @@ pub fn assess_patch_safety(
         }
         // TODO(ragona): I'm not sure this is actually correct? I believe in this case
         // we want to continue to the writable paths check before asking the user.
-        AskForApproval::UnlessAllowListed => {
+        AskForApproval::UnlessTrusted => {
             return SafetyCheck::AskUser;
         }
     }
@@ -63,40 +63,87 @@ pub fn assess_patch_safety(
     }
 }
 
+/// If `sandbox_policy` is not `DangerFullAccess` and a sandbox is available for
+/// the current platform, then even a _trusted_ command will be run inside the
+/// sandbox. To run a command _without_ a sandbox, one of the following must
+/// be true:
+///
+/// - `DangerFullAccess` was specified
+/// - the user has explicitly approved the command
+/// - the command is "trusted," but there is no sandbox available
 pub fn assess_command_safety(
     command: &[String],
     approval_policy: AskForApproval,
     sandbox_policy: &SandboxPolicy,
     approved: &HashSet<Vec<String>>,
 ) -> SafetyCheck {
-    let approve_without_sandbox = || SafetyCheck::AutoApprove {
-        sandbox_type: SandboxType::None,
-    };
+    use AskForApproval::*;
+    use SandboxPolicy::*;
 
-    // Previously approved or allow-listed commands
-    // All approval modes allow these commands to continue without sandboxing
-    if is_known_safe_command(command) || approved.contains(command) {
-        // TODO(ragona): I think we should consider running even these inside the sandbox, but it's
-        // a change in behavior so I'm keeping it at parity with upstream for now.
-        return approve_without_sandbox();
-    }
+    // A command is "trusted" because either:
+    // - it belongs to a set of commands we consider "safe" by default, or
+    // - the user has explicitly approved the command for this session
+    let is_trusted_command = is_known_safe_command(command) || approved.contains(command);
 
-    // Command was not known-safe or allow-listed
-    if sandbox_policy.is_unrestricted() {
-        approve_without_sandbox()
-    } else {
-        match get_platform_sandbox() {
-            // We have a sandbox, so we can approve the command in all modes
-            Some(sandbox_type) => SafetyCheck::AutoApprove { sandbox_type },
-            None => {
-                // We do not have a sandbox, so we need to consider the approval policy
-                match approval_policy {
-                    // Never is our "non-interactive" mode; it must automatically reject
-                    AskForApproval::Never => SafetyCheck::Reject {
-                        reason: "auto-rejected by user approval settings".to_string(),
-                    },
-                    // Otherwise, we ask the user for approval
-                    _ => SafetyCheck::AskUser,
+    match (approval_policy, sandbox_policy) {
+        (UnlessTrusted, DangerFullAccess) => {
+            if is_trusted_command {
+                SafetyCheck::AutoApprove {
+                    sandbox_type: SandboxType::None,
+                }
+            } else {
+                // Even though the user has opted into DangerFullAccess, they
+                // also requested that we ask for approval for untrusted
+                // commands.
+                SafetyCheck::AskUser
+            }
+        }
+        (UnlessTrusted, ReadOnly) | (UnlessTrusted, WorkspaceWrite { .. }) => {
+            if is_trusted_command {
+                // Currently, whether a command is "trusted" is a simple boolean,
+                // but we should expand this definition to indicate whether it
+                // should be run inside a sandbox or not.
+                match get_platform_sandbox() {
+                    Some(sandbox_type) => SafetyCheck::AutoApprove { sandbox_type },
+                    // The user has requested a sandboxed environment, but we do
+                    // not have one available. If the user explicitly approves
+                    // the command, we interpret that as justification to run it
+                    // without a sandbox.
+                    None => SafetyCheck::AskUser,
+                }
+            } else {
+                SafetyCheck::AskUser
+            }
+        }
+        (OnFailure, DangerFullAccess) | (Never, DangerFullAccess) => SafetyCheck::AutoApprove {
+            sandbox_type: SandboxType::None,
+        },
+        (Never, ReadOnly)
+        | (Never, WorkspaceWrite { .. })
+        | (OnFailure, ReadOnly)
+        | (OnFailure, WorkspaceWrite { .. }) => {
+            match get_platform_sandbox() {
+                Some(sandbox_type) => SafetyCheck::AutoApprove { sandbox_type },
+                None => {
+                    if is_trusted_command {
+                        // If the command is trusted, run it even though we do
+                        // not have a sandbox available.
+                        SafetyCheck::AutoApprove {
+                            sandbox_type: SandboxType::None,
+                        }
+                    } else if matches!(approval_policy, OnFailure) {
+                        // If the command is not trusted, even though the user
+                        // has requested to only ask for approval on failure, we
+                        // will ask the user because no sandbox is available.
+                        SafetyCheck::AskUser
+                    } else {
+                        // We are in non-interactive mode and lack approval, so
+                        // all we can do is reject the command.
+                        SafetyCheck::Reject {
+                            reason: "auto-rejected because command is not on trusted list"
+                                .to_string(),
+                        }
+                    }
                 }
             }
         }
