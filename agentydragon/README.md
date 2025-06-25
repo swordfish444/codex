@@ -54,14 +54,21 @@ Tasks live under `agentydragon/tasks/` as individual Markdown files. Please upda
 -
 -   ```sh
 -   # Accept a full slug (NN-slug) or two-digit task ID (NN), optionally multiple; use --tmux to open each in a tmux window:
--   create-task-worktree.sh [--agent] [--tmux] <task-slug|NN> [<task-slug|NN>...]
+-   agentydragon/tasks/create-task-worktree.sh [--agent] [--tmux] <task-slug|NN> [<task-slug|NN>...]
 -   ```
 -
 -  Without `--agent`, this creates or reuses a worktree at
 -  `agentydragon/tasks/.worktrees/<task-id>-<task-slug>` off the `agentydragon` branch.
-  -  With `--agent`, after setup it launches a Codex agent in that workspace,
-  -  preloaded to work on the specified task from its Markdown file.
-- After the Developer agent finishes and updates the task file, the Commit agent will emit the commit message on stdout. An external orchestrator will then stage files, run pre-commit hooks, and perform the actual `git commit`. You do not need to run `git commit` manually.
+  -  With `--agent`, after setup it launches the Developer Codex agent in that workspace (using `prompts/developer.md` and the task file),
+  -  and when the developer agent exits, it automatically runs the Commit agent helper to stage fixes and commit the work.
+- **Commit agent helper**: in `agentydragon/tasks/`, run:
+-
+-   ```sh
+-   # Generate and apply commit for completed task in its worktree:
+-   agentydragon/tasks/launch-commit-agent.sh <task-slug|NN>
+-   ```
+-
+-After the Developer agent finishes and updates the task file, the Commit agent will emit the commit message on stdout. An external orchestrator will then stage files, run pre-commit hooks, and perform the actual `git commit`. You do not need to run `git commit` manually.
 
 ---
 

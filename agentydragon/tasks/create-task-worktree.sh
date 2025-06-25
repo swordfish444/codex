@@ -125,7 +125,7 @@ fi
 echo "Done."
 
 if [ "$agent_mode" = true ]; then
-  echo "Launching Codex agent for task $task_slug in sandboxed worktree"
+  echo "Launching Developer Codex agent for task $task_slug in sandboxed worktree"
   prompt_file="$repo_root/agentydragon/prompts/developer.md"
   task_file="$repo_root/agentydragon/tasks/$task_slug.md"
   if [ ! -f "$prompt_file" ]; then
@@ -140,5 +140,10 @@ if [ "$agent_mode" = true ]; then
     cmd+=(exec)
   fi
   echo "${cmd[@]}"
+  # Run Developer agent (non-interactive by default) to implement the task
   "${cmd[@]}" "$(<"$prompt_file")\n\n$(<"$task_file")"
+
+  # After the Developer agent exits, stage and commit via the Commit agent helper
+  echo "Running Commit agent to finalize task $task_slug"
+  "$repo_root/agentydragon/tasks/launch-commit-agent.sh" "$task_slug"
 fi
