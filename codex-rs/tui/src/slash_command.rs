@@ -15,6 +15,8 @@ pub enum SlashCommand {
     New,
     ToggleMouseMode,
     Quit,
+    /// Show git diff of the working directory.
+    Diff,
 }
 
 impl SlashCommand {
@@ -26,6 +28,9 @@ impl SlashCommand {
                 "Toggle mouse mode (enable for scrolling, disable for text selection)"
             }
             SlashCommand::Quit => "Exit the application.",
+            SlashCommand::Diff => {
+                "Show git diff of the working directory (including untracked files)"
+            }
         }
     }
 

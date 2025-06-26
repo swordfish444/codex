@@ -250,6 +250,30 @@ impl<'a> App<'a> {
                     SlashCommand::Quit => {
                         break;
                     }
+                    SlashCommand::Diff => {
+                        use crate::get_git_diff::get_git_diff;
+
+                        let (is_repo, diff_text) = match get_git_diff() {
+                            Ok(v) => v,
+                            Err(e) => {
+                                let msg = format!("Failed to compute diff: {e}");
+                                if let AppState::Chat { widget } = &mut self.app_state {
+                                    widget.add_background_event(msg);
+                                }
+                                continue;
+                            }
+                        };
+
+                        let text = if is_repo {
+                            diff_text
+                        } else {
+                            "`/diff` — _not inside a git repository_".to_string()
+                        };
+
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.add_background_event(text);
+                        }
+                    }
                 },
             }
         }
