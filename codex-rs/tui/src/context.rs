@@ -1,8 +1,8 @@
 //! Utilities for computing approximate token usage and remaining context percentage
 //! in the TUI, mirroring the JS heuristics in `calculateContextPercentRemaining`.
 
-use codex_core::ResponseItem;
 use codex_core::ContentItem;
+use codex_core::ResponseItem;
 
 /// Roughly estimate number of model tokens represented by the given response items.
 /// Counts characters in text and function-call items, divides by 4 and rounds up.
@@ -10,18 +10,21 @@ pub fn approximate_tokens_used(items: &[ResponseItem]) -> usize {
     let mut char_count = 0;
     for item in items {
         match item {
-            ResponseItem::Message { role, content } if role.eq_ignore_ascii_case("user")
-                || role.eq_ignore_ascii_case("assistant") =>
+            ResponseItem::Message { role, content }
+                if role.eq_ignore_ascii_case("user") || role.eq_ignore_ascii_case("assistant") =>
             {
                 for ci in content {
                     match ci {
-                        ContentItem::InputText { text }
-                        | ContentItem::OutputText { text } => char_count += text.len(),
+                        ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                            char_count += text.len()
+                        }
                         _ => {}
                     }
                 }
             }
-            ResponseItem::FunctionCall { name, arguments, .. } => {
+            ResponseItem::FunctionCall {
+                name, arguments, ..
+            } => {
                 char_count += name.len();
                 char_count += arguments.len();
             }
@@ -54,10 +57,7 @@ pub fn max_tokens_for_model(model: &str) -> usize {
 
 /// Compute the percentage of tokens remaining in context for a given model.
 /// Returns a floating-point percent (0.0–100.0).
-pub fn calculate_context_percent_remaining(
-    items: &[ResponseItem],
-    model: &str,
-) -> f64 {
+pub fn calculate_context_percent_remaining(items: &[ResponseItem], model: &str) -> f64 {
     let used = approximate_tokens_used(items);
     let max = max_tokens_for_model(model);
     let remaining = max.saturating_sub(used);

@@ -2,8 +2,8 @@
 /// This uses `CARGO_BIN_EXE_codex` to locate the compiled binary.
 #[cfg(test)]
 mod cli_config {
-    use std::process::Command;
     use std::fs;
+    use std::process::Command;
     use tempfile;
     use toml;
 

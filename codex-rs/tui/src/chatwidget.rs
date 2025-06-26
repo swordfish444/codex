@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use codex_core::ContentItem;
+use codex_core::ReasoningItemReasoningSummary;
+use codex_core::ResponseItem;
 use codex_core::codex_wrapper::init_codex;
 use codex_core::config::Config;
 use codex_core::protocol::AgentMessageEvent;
@@ -18,9 +21,6 @@ use codex_core::protocol::McpToolCallEndEvent;
 use codex_core::protocol::Op;
 use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::TaskCompleteEvent;
-use codex_core::ReasoningItemReasoningSummary;
-use codex_core::ResponseItem;
-use codex_core::ContentItem;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
@@ -214,7 +214,8 @@ impl ChatWidget<'_> {
 
         // Only show text portion in conversation history for now.
         if !text.is_empty() {
-            self.conversation_history.add_user_message(&self.config, text);
+            self.conversation_history
+                .add_user_message(&self.config, text);
         }
         self.conversation_history.scroll_to_bottom();
     }
@@ -237,7 +238,8 @@ impl ChatWidget<'_> {
                         .collect::<Vec<_>>()
                         .join("");
                     if role.eq_ignore_ascii_case("user") {
-                        self.conversation_history.add_user_message(&self.config, text);
+                        self.conversation_history
+                            .add_user_message(&self.config, text);
                     } else {
                         self.conversation_history
                             .add_agent_message(&self.config, text);
@@ -290,7 +292,9 @@ impl ChatWidget<'_> {
                 // record raw item for context-left calculation
                 self.history_items.push(ResponseItem::Message {
                     role: "assistant".to_string(),
-                    content: vec![ContentItem::OutputText { text: message.clone() }],
+                    content: vec![ContentItem::OutputText {
+                        text: message.clone(),
+                    }],
                 });
                 self.request_redraw();
             }
@@ -310,7 +314,8 @@ impl ChatWidget<'_> {
             }) => {
                 self.bottom_pane.set_task_running(false);
                 // update context-left after turn completes
-                let pct = calculate_context_percent_remaining(&self.history_items, &self.config.model);
+                let pct =
+                    calculate_context_percent_remaining(&self.history_items, &self.config.model);
                 self.bottom_pane.set_context_percent(pct);
                 self.request_redraw();
             }
@@ -318,7 +323,8 @@ impl ChatWidget<'_> {
                 self.conversation_history.add_error(message);
                 self.bottom_pane.set_task_running(false);
                 // update context-left after error
-                let pct = calculate_context_percent_remaining(&self.history_items, &self.config.model);
+                let pct =
+                    calculate_context_percent_remaining(&self.history_items, &self.config.model);
                 self.bottom_pane.set_context_percent(pct);
             }
             EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
@@ -350,8 +356,11 @@ impl ChatWidget<'_> {
                 // prompt before they have seen *what* is being requested.
                 // ------------------------------------------------------------------
 
-                self.conversation_history
-                    .add_patch_event(&self.config, PatchEventType::ApprovalRequest, changes);
+                self.conversation_history.add_patch_event(
+                    &self.config,
+                    PatchEventType::ApprovalRequest,
+                    changes,
+                );
 
                 self.conversation_history.scroll_to_bottom();
 
@@ -380,8 +389,11 @@ impl ChatWidget<'_> {
             }) => {
                 // Even when a patch is auto‑approved we still display the
                 // summary so the user can follow along.
-                self.conversation_history
-                    .add_patch_event(&self.config, PatchEventType::ApplyBegin { auto_approved }, changes);
+                self.conversation_history.add_patch_event(
+                    &self.config,
+                    PatchEventType::ApplyBegin { auto_approved },
+                    changes,
+                );
                 if !auto_approved {
                     self.conversation_history.scroll_to_bottom();
                 }
@@ -494,27 +506,48 @@ impl ChatWidget<'_> {
         self.next_shell_call_id += 1;
         // Split command into arguments, fallback to raw string if parse fails
         let args = shlex::split(&cmd).unwrap_or_else(|| vec![cmd.clone()]);
-        self.conversation_history.add_active_exec_command(call_id.clone(), args.clone());
+        self.conversation_history
+            .add_active_exec_command(call_id.clone(), args.clone());
         let tx = self.app_event_tx.clone();
         // Spawn execution in background
         tokio::spawn(async move {
-            let output = std::process::Command::new("sh").arg("-c").arg(&cmd).output();
+            let output = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&cmd)
+                .output();
             match output {
                 Ok(out) => {
                     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
                     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
                     let code = out.status.code().unwrap_or(-1);
-                    tx.send(AppEvent::ShellCommandResult { call_id, stdout, stderr, exit_code: code });
+                    tx.send(AppEvent::ShellCommandResult {
+                        call_id,
+                        stdout,
+                        stderr,
+                        exit_code: code,
+                    });
                 }
                 Err(e) => {
-                    tx.send(AppEvent::ShellCommandResult { call_id, stdout: String::new(), stderr: e.to_string(), exit_code: -1 });
+                    tx.send(AppEvent::ShellCommandResult {
+                        call_id,
+                        stdout: String::new(),
+                        stderr: e.to_string(),
+                        exit_code: -1,
+                    });
                 }
             }
         });
     }
     /// Handle completion of a shell command: display its result.
-    pub fn handle_shell_command_result(&mut self, call_id: String, stdout: String, stderr: String, exit_code: i32) {
-        self.conversation_history.record_completed_exec_command(call_id, stdout, stderr, exit_code);
+    pub fn handle_shell_command_result(
+        &mut self,
+        call_id: String,
+        stdout: String,
+        stderr: String,
+        exit_code: i32,
+    ) {
+        self.conversation_history
+            .record_completed_exec_command(call_id, stdout, stderr, exit_code);
     }
 
     fn request_redraw(&mut self) {

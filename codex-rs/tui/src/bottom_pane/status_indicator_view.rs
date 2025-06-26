@@ -42,7 +42,12 @@ impl<'a> BottomPaneView<'a> for StatusIndicatorView {
         // Render the status overlay in a floating box immediately above the textarea
         let h = self.view.get_height();
         let y = area.y.saturating_sub(h);
-        let rect = Rect { x: area.x, y, width: area.width, height: h };
+        let rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: h,
+        };
         self.view.render_ref(rect, buf);
     }
 }

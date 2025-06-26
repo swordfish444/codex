@@ -172,7 +172,12 @@ impl ChatComposer<'_> {
                 }
                 (InputResult::None, true)
             }
-            Input { key: Key::Enter, shift: false, alt: false, ctrl: false } => {
+            Input {
+                key: Key::Enter,
+                shift: false,
+                alt: false,
+                ctrl: false,
+            } => {
                 if let Some(cmd) = popup.selected_command() {
                     // Inline DSL for mount-add/remove with args or dispatch other commands.
                     let first_line = self
@@ -181,7 +186,10 @@ impl ChatComposer<'_> {
                         .first()
                         .map(|s| s.as_str())
                         .unwrap_or("");
-                    let stripped = first_line.trim_start().strip_prefix('/').unwrap_or(first_line);
+                    let stripped = first_line
+                        .trim_start()
+                        .strip_prefix('/')
+                        .unwrap_or(first_line);
                     let mut parts = stripped.splitn(2, char::is_whitespace);
                     let _cmd_token = parts.next().unwrap_or("");
                     let args = parts.next().unwrap_or("").trim_start();
@@ -191,7 +199,9 @@ impl ChatComposer<'_> {
                         self.command_popup = None;
                         return (InputResult::None, true);
                     }
-                    if !args.is_empty() && (*cmd == SlashCommand::MountAdd || *cmd == SlashCommand::MountRemove) {
+                    if !args.is_empty()
+                        && (*cmd == SlashCommand::MountAdd || *cmd == SlashCommand::MountRemove)
+                    {
                         let ev = if *cmd == SlashCommand::MountAdd {
                             AppEvent::InlineMountAdd(args.to_string())
                         } else {
@@ -261,15 +271,28 @@ impl ChatComposer<'_> {
                     (InputResult::Submitted(text), true)
                 }
             }
-            Input { key: Key::Enter, .. }
-            | Input { key: Key::Char('j'), ctrl: true, alt: false, shift: false } => {
+            Input {
+                key: Key::Enter, ..
+            }
+            | Input {
+                key: Key::Char('j'),
+                ctrl: true,
+                alt: false,
+                shift: false,
+            } => {
                 self.textarea.insert_newline();
                 (InputResult::None, true)
             }
-            Input { key: Key::Char('m'), ctrl: true, alt: false, shift: false } => {
+            Input {
+                key: Key::Char('m'),
+                ctrl: true,
+                alt: false,
+                shift: false,
+            } => {
                 // Toggle shell-command mode and prompt/exit accordingly
                 self.shell_mode = !self.shell_mode;
-                self.app_event_tx.send(AppEvent::DispatchCommand(SlashCommand::Shell));
+                self.app_event_tx
+                    .send(AppEvent::DispatchCommand(SlashCommand::Shell));
                 (InputResult::None, true)
             }
             input => self.handle_input_basic(input),
@@ -302,7 +325,9 @@ impl ChatComposer<'_> {
         }
         let path = tmp.path();
         // Determine editor: VISUAL > EDITOR > nvim
-        let editor = std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "nvim".into());
+        let editor = std::env::var("VISUAL")
+            .or_else(|_| std::env::var("EDITOR"))
+            .unwrap_or_else(|_| "nvim".into());
         // Launch editor and wait for exit
         if let Err(e) = Command::new(editor).arg(path).status() {
             tracing::error!("failed to launch editor: {e}");
@@ -381,10 +406,8 @@ impl ChatComposer<'_> {
 
         let bs = if self.shell_mode {
             BlockState {
-                right_title: Line::from(
-                    "Shell mode – Enter to run | Ctrl+M to exit shell mode",
-                )
-                .alignment(Alignment::Right),
+                right_title: Line::from("Shell mode – Enter to run | Ctrl+M to exit shell mode")
+                    .alignment(Alignment::Right),
                 border_style: Style::default().fg(Color::Red),
             }
         } else if has_focus {
@@ -451,7 +474,12 @@ impl WidgetRef for &ChatComposer<'_> {
             } else {
                 Color::Red
             };
-            buf.set_string(area.x + 1, area.y + area.height - 1, text, Style::default().fg(color));
+            buf.set_string(
+                area.x + 1,
+                area.y + area.height - 1,
+                text,
+                Style::default().fg(color),
+            );
         }
     }
 }

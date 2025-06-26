@@ -110,7 +110,10 @@ fn truncate_middle(text: &str, max_len: usize) -> String {
 /// Build the dynamic session-scoped approval label for the given command string.
 fn session_scoped_label(cmd: &str, max_len: usize) -> String {
     let snippet = truncate_middle(cmd, max_len);
-    format!("Yes, always allow running `{}` for this session (a)", snippet)
+    format!(
+        "Yes, always allow running `{}` for this session (a)",
+        snippet
+    )
 }
 
 /// Internal mode the widget is in – mirrors the TypeScript component.
@@ -385,7 +388,9 @@ impl WidgetRef for &UserApprovalWidget<'_> {
                     .enumerate()
                     .map(|(idx, opt)| {
                         let label = if idx == 1 {
-                            dynamic_label.clone().unwrap_or_else(|| opt.label.to_string())
+                            dynamic_label
+                                .clone()
+                                .unwrap_or_else(|| opt.label.to_string())
                         } else {
                             opt.label.to_string()
                         };
@@ -423,10 +428,10 @@ impl WidgetRef for &UserApprovalWidget<'_> {
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use std::sync::mpsc;
-    use ratatui::buffer::{Buffer, Cell};
+    use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
-    use ratatui::style::{Color, Style};
+    use ratatui::style::Color;
+    use std::sync::mpsc;
 
     #[test]
     fn esc_in_input_mode_cancels_input_and_preserves_value() {
@@ -473,7 +478,10 @@ mod tests {
     #[test]
     fn test_session_scoped_label_embeds_snippet() {
         let label = session_scoped_label("say hello", 50);
-        assert_eq!(label, "Yes, always allow running `say hello` for this session (a)");
+        assert_eq!(
+            label,
+            "Yes, always allow running `say hello` for this session (a)"
+        );
         let long_cmd = "x".repeat(100);
         let truncated = session_scoped_label(&long_cmd, 10);
         assert!(truncated.starts_with("Yes, always allow running `"));
@@ -515,8 +523,20 @@ mod tests {
         for row in area.y..area.y + area.height {
             for col in area.x..area.x + area.width {
                 let cell = buf.cell((col, row)).unwrap();
-                assert_ne!(cell.bg, Color::Reset, "Found transparent cell at ({}, {})", col, row);
-                assert_ne!(cell.bg, Color::Red, "Found unfilled cell at ({}, {})", col, row);
+                assert_ne!(
+                    cell.bg,
+                    Color::Reset,
+                    "Found transparent cell at ({}, {})",
+                    col,
+                    row
+                );
+                assert_ne!(
+                    cell.bg,
+                    Color::Red,
+                    "Found unfilled cell at ({}, {})",
+                    col,
+                    row
+                );
             }
         }
     }

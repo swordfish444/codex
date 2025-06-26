@@ -256,7 +256,8 @@ impl SandboxPolicy {
 impl SandboxPolicy {
     /// Grant disk-write permission for the specified folder.
     pub fn allow_disk_write_folder(&mut self, folder: std::path::PathBuf) {
-        self.permissions.push(SandboxPermission::DiskWriteFolder { folder });
+        self.permissions
+            .push(SandboxPermission::DiskWriteFolder { folder });
     }
 
     /// Revoke any disk-write permission for the specified folder.

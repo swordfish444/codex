@@ -17,6 +17,10 @@ mod tests {
         let old = "a\nb\nc\n";
         let new = "a\nx\nc\n";
         let diff = generate_diff(old, new);
-        assert!(diff.contains("-b\n+x\n"), "Unexpected diff output: {}", diff);
+        assert!(
+            diff.contains("-b\n+x\n"),
+            "Unexpected diff output: {}",
+            diff
+        );
     }
 }

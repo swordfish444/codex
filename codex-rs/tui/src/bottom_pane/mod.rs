@@ -12,25 +12,25 @@ use crate::app_event_sender::AppEventSender;
 use crate::user_approval_widget::ApprovalRequest;
 
 mod approval_modal_view;
-mod mount_view;
-mod shell_command_view;
-mod inspect_env_view;
 mod bottom_pane_view;
 mod chat_composer;
 mod chat_composer_history;
 mod command_popup;
-mod status_indicator_view;
 mod config_reload_view;
+mod inspect_env_view;
+mod mount_view;
+mod shell_command_view;
+mod status_indicator_view;
 
 pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
 
 use approval_modal_view::ApprovalModalView;
+use config_reload_view::ConfigReloadView;
+use inspect_env_view::InspectEnvView;
 use mount_view::{MountAddView, MountRemoveView};
 use shell_command_view::ShellCommandView;
-use inspect_env_view::InspectEnvView;
 use status_indicator_view::StatusIndicatorView;
-use config_reload_view::ConfigReloadView;
 
 /// Pane displayed in the lower half of the chat UI.
 pub(crate) struct BottomPane<'a> {
@@ -266,9 +266,9 @@ impl WidgetRef for &BottomPane<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc;
     use crate::app_event::AppEvent;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::mpsc;
 
     /// Construct a BottomPane with default parameters for testing.
     fn make_pane() -> BottomPane<'static> {
@@ -309,7 +309,12 @@ mod tests {
         // Status indicator overlay remains active
         assert!(pane.active_view.is_some());
         // The overlay should be a StatusIndicatorView
-        assert!(pane.active_view.as_mut().unwrap().should_hide_when_task_is_done());
+        assert!(
+            pane.active_view
+                .as_mut()
+                .unwrap()
+                .should_hide_when_task_is_done()
+        );
     }
 
     #[test]
@@ -361,9 +366,14 @@ mod tests {
         // Overlay remains active until task is marked done
         assert!(pane.active_view.is_some());
         // Should still be showing the status indicator overlay
-        assert!(pane.active_view.as_mut().unwrap().should_hide_when_task_is_done());
+        assert!(
+            pane.active_view
+                .as_mut()
+                .unwrap()
+                .should_hide_when_task_is_done()
+        );
         // The composer buffer should be cleared after submission
-        let content = pane.composer.textarea.lines().join("\n");
+        let content = pane.composer.get_input_text();
         assert_eq!(content, "");
     }
 }

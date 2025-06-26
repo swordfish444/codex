@@ -3,13 +3,16 @@ use ratatui::prelude::*;
 
 /// A simple widget that just displays a list of `Line`s via a `Paragraph`.
 /// This is the default rendering backend for most `HistoryCell` variants.
+/// A simple widget that displays a list of lines via a paragraph.
 #[derive(Clone)]
-pub(crate) struct TextBlock {
-    pub(crate) lines: Vec<Line<'static>>,
+pub struct TextBlock {
+    /// The content lines to render.
+    pub lines: Vec<Line<'static>>,
 }
 
 impl TextBlock {
-    pub(crate) fn new(lines: Vec<Line<'static>>) -> Self {
+    /// Create a new text block from preformatted lines.
+    pub fn new(lines: Vec<Line<'static>>) -> Self {
         Self { lines }
     }
 }

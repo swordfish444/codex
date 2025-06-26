@@ -8,8 +8,8 @@ repos:
         additional_dependencies: [PyYAML, toml, pydantic]
         files: ^agentydragon/tasks/.*
       - id: cargo-build
-        name: Check Rust workspace builds
-        entry: bash -lc 'cd codex-rs && RUSTFLAGS="-D warnings" cargo build --workspace --locked'
+        name: Check Rust workspace and linux-sandbox compile
+        entry: bash -lc 'cd codex-rs && RUSTFLAGS="-D warnings" cargo build --workspace --locked --all-targets && cargo build -p codex-linux-sandbox --locked --all-targets'
         language: system
         pass_filenames: false
         require_serial: true

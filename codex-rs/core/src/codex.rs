@@ -37,7 +37,7 @@ use crate::WireApi;
 use crate::client::ModelClient;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
-use crate::config::{Config, AutoAllowPredicate};
+use crate::config::{AutoAllowPredicate, Config};
 use crate::config_types::ShellEnvironmentPolicy;
 use crate::conversation_history::ConversationHistory;
 use crate::error::CodexErr;
@@ -83,8 +83,10 @@ use crate::protocol::Submission;
 use crate::protocol::TaskCompleteEvent;
 use crate::rollout::RolloutRecorder;
 use crate::safety::SafetyCheck;
-use crate::safety::{assess_command_safety, evaluate_auto_allow_predicates, get_platform_sandbox, AutoAllowVote};
 use crate::safety::assess_patch_safety;
+use crate::safety::{
+    AutoAllowVote, assess_command_safety, evaluate_auto_allow_predicates, get_platform_sandbox,
+};
 use crate::user_notification::UserNotification;
 use crate::util::backoff;
 

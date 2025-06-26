@@ -66,7 +66,11 @@ pub(crate) async fn stream_chat_completions(
                 }
                 messages.push(json!({"role": role, "content": text}));
             }
-            ResponseItem::FunctionCall { name, arguments, call_id } => {
+            ResponseItem::FunctionCall {
+                name,
+                arguments,
+                call_id,
+            } => {
                 // Mark tool invocation in-flight
                 pending_call = Some(call_id.clone());
                 messages.push(json!({
@@ -79,7 +83,9 @@ pub(crate) async fn stream_chat_completions(
                     }]
                 }));
             }
-            ResponseItem::LocalShellCall { id, status, action, .. } => {
+            ResponseItem::LocalShellCall {
+                id, status, action, ..
+            } => {
                 // Mark shell-call invocation in-flight by id
                 if let Some(call_id) = id {
                     pending_call = Some(call_id.clone());

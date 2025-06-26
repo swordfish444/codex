@@ -1,7 +1,7 @@
 use crate::app_event::AppEvent;
-use crate::confirm_ctrl_d::ConfirmCtrlD;
 use crate::app_event_sender::AppEventSender;
 use crate::chatwidget::ChatWidget;
+use crate::confirm_ctrl_d::ConfirmCtrlD;
 use crate::git_warning_screen::GitWarningOutcome;
 use crate::git_warning_screen::GitWarningScreen;
 use crate::login_screen::LoginScreen;
@@ -69,14 +69,18 @@ struct ChatWidgetArgs {
 }
 
 /// Parse raw argument string for `/mount-add host=... container=... mode=...`.
-fn parse_mount_add_args(raw: &str) -> Result<(std::path::PathBuf, std::path::PathBuf, String), String> {
+fn parse_mount_add_args(
+    raw: &str,
+) -> Result<(std::path::PathBuf, std::path::PathBuf, String), String> {
     let mut host = None;
     let mut container = None;
     let mut mode = "rw".to_string();
     for token in raw.split_whitespace() {
         let mut parts = token.splitn(2, '=');
         let key = parts.next().unwrap();
-        let value = parts.next().ok_or_else(|| format!("invalid argument '{}'", token))?;
+        let value = parts
+            .next()
+            .ok_or_else(|| format!("invalid argument '{}'", token))?;
         match key {
             "host" => host = Some(std::path::PathBuf::from(value)),
             "container" => container = Some(std::path::PathBuf::from(value)),
@@ -95,7 +99,9 @@ fn parse_mount_remove_args(raw: &str) -> Result<std::path::PathBuf, String> {
     for token in raw.split_whitespace() {
         let mut parts = token.splitn(2, '=');
         let key = parts.next().unwrap();
-        let value = parts.next().ok_or_else(|| format!("invalid argument '{}'", token))?;
+        let value = parts
+            .next()
+            .ok_or_else(|| format!("invalid argument '{}'", token))?;
         if key == "container" {
             container = Some(std::path::PathBuf::from(value));
         } else {
@@ -347,15 +353,19 @@ impl<'a> App<'a> {
                                 let _ = child.wait();
                             }
                             Err(err) => {
-                                let _ = tx.send(AppEvent::LatestLog(
-                                    format!("Failed to spawn inspect-env: {err}")
-                                ));
+                                let _ = tx.send(AppEvent::LatestLog(format!(
+                                    "Failed to spawn inspect-env: {err}"
+                                )));
                             }
                         }
                         let _ = tx.send(AppEvent::Redraw);
                     });
                 }
-                AppEvent::MountAdd { host, container, mode } => {
+                AppEvent::MountAdd {
+                    host,
+                    container,
+                    mode,
+                } => {
                     if let Err(err) = do_mount_add(&mut self.config, &host, &container, &mode) {
                         tracing::error!("mount-add failed: {err}");
                     }
@@ -405,22 +415,22 @@ impl<'a> App<'a> {
                                 }
                             }
                         }
-                    KeyEvent {
-                        code: KeyCode::Char('d'),
-                        modifiers: crossterm::event::KeyModifiers::CONTROL,
-                        ..
-                    } => {
-                        // Handle Ctrl+D exit confirmation when enabled.
-                        let now = Instant::now();
-                        if self.confirm_ctrl_d.handle(now) {
-                            break;
+                        KeyEvent {
+                            code: KeyCode::Char('d'),
+                            modifiers: crossterm::event::KeyModifiers::CONTROL,
+                            ..
+                        } => {
+                            // Handle Ctrl+D exit confirmation when enabled.
+                            let now = Instant::now();
+                            if self.confirm_ctrl_d.handle(now) {
+                                break;
+                            }
+                            if let AppState::Chat { widget } = &mut self.app_state {
+                                widget.show_exit_confirmation_prompt(
+                                    "Press Ctrl+D again to confirm exit".to_string(),
+                                );
+                            }
                         }
-                        if let AppState::Chat { widget } = &mut self.app_state {
-                            widget.show_exit_confirmation_prompt(
-                                "Press Ctrl+D again to confirm exit".to_string(),
-                            );
-                        }
-                    }
                         _ => {
                             self.dispatch_key_event(key_event);
                         }
@@ -482,7 +492,9 @@ impl<'a> App<'a> {
                         if let AppState::Chat { widget } = &mut self.app_state {
                             widget.push_inspect_env();
                         }
-                        let _ = self.app_event_tx.send(AppEvent::InlineInspectEnv(String::new()));
+                        let _ = self
+                            .app_event_tx
+                            .send(AppEvent::InlineInspectEnv(String::new()));
                     }
                     SlashCommand::Shell => {
                         if let AppState::Chat { widget } = &mut self.app_state {
@@ -496,8 +508,13 @@ impl<'a> App<'a> {
                         widget.handle_shell_command(cmd);
                         self.app_event_tx.send(AppEvent::Redraw);
                     }
-                },
-                AppEvent::ShellCommandResult { call_id, stdout, stderr, exit_code } => {
+                }
+                AppEvent::ShellCommandResult {
+                    call_id,
+                    stdout,
+                    stderr,
+                    exit_code,
+                } => {
                     if let AppState::Chat { widget } = &mut self.app_state {
                         widget.handle_shell_command_result(call_id, stdout, stderr, exit_code);
                         self.app_event_tx.send(AppEvent::Redraw);

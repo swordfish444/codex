@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
-use crate::protocol::AskForApproval;
 use crate::config::AutoAllowPredicate;
+use crate::protocol::AskForApproval;
 
 /// Collection of common configuration options that a user can define as a unit
 /// in `config.toml`.

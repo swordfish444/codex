@@ -99,8 +99,7 @@ impl WidgetRef for StatusIndicatorWidget {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         // Flush status text to the top of the input border, without extra padding
         // Remove surrounding border for a cleaner in-line status display
-        let block = Block::default()
-            .padding(Padding::new(0, 0, 0, 0));
+        let block = Block::default().padding(Padding::new(0, 0, 0, 0));
         // Animated 3‑dot pattern inside brackets. The *active* dot is bold
         // white, the others are dim.
         const DOT_COUNT: usize = 3;

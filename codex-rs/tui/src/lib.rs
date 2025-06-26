@@ -31,24 +31,24 @@ mod cell_widget;
 mod chatwidget;
 mod citation_regex;
 mod cli;
+mod config_reload;
+mod confirm_ctrl_d;
+pub mod context;
 mod conversation_history_widget;
 mod exec_command;
 mod git_warning_screen;
-mod history_cell;
+pub mod history_cell;
 mod log_layer;
 mod login_screen;
 mod markdown;
 mod mouse_capture;
 mod scroll_event_helper;
 mod slash_command;
-mod confirm_ctrl_d;
 mod status_indicator_widget;
-pub mod context;
-mod text_block;
+pub mod text_block;
 mod text_formatting;
 mod tui;
 mod user_approval_widget;
-mod config_reload;
 
 pub use cli::Cli;
 
@@ -222,16 +222,19 @@ fn run_ratatui_app(
         let app_event_tx = app.event_sender();
         let config_path = config.codex_home.join("config.toml");
         std::thread::spawn(move || {
-            use notify::{Watcher, RecursiveMode, RecommendedWatcher, EventKind};
+            use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
             use std::sync::mpsc::channel;
             use std::time::Duration;
             let (tx, rx) = channel();
-            let mut watcher: RecommendedWatcher =
-                Watcher::new(tx, notify::Config::default()).unwrap_or_else(|e| {
+            let mut watcher: RecommendedWatcher = Watcher::new(tx, notify::Config::default())
+                .unwrap_or_else(|e| {
                     tracing::error!("config watcher failed: {e}");
                     std::process::exit(1);
                 });
-            if watcher.watch(&config_path, RecursiveMode::NonRecursive).is_err() {
+            if watcher
+                .watch(&config_path, RecursiveMode::NonRecursive)
+                .is_err()
+            {
                 tracing::error!("Failed to watch config.toml");
                 return;
             }
@@ -244,9 +247,8 @@ fn run_ratatui_app(
                         if new != last {
                             let diff = crate::config_reload::generate_diff(&last, &new);
                             last = new.clone();
-                            app_event_tx.send(
-                                crate::app_event::AppEvent::ConfigReloadRequest(diff)
-                            );
+                            app_event_tx
+                                .send(crate::app_event::AppEvent::ConfigReloadRequest(diff));
                         }
                     }
                 }

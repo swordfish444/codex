@@ -129,7 +129,9 @@ fn default_composer_max_rows() -> usize {
 
 /// Default editor: `$VISUAL`, then `$EDITOR`, falling back to `nvim`.
 fn default_editor() -> String {
-    std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "nvim".into())
+    std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "nvim".into())
 }
 
 /// Default timeout in seconds for the second Ctrl+D confirmation to exit the TUI.

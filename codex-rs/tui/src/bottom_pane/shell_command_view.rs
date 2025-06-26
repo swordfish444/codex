@@ -3,7 +3,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::Widget;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
-use tui_input::{backend::crossterm::EventHandler, Input};
+use tui_input::{Input, backend::crossterm::EventHandler};
 
 use super::BottomPane;
 use super::BottomPaneView;
@@ -30,7 +30,12 @@ impl ShellCommandView {
 impl<'a> BottomPaneView<'a> for ShellCommandView {
     fn handle_key_event(&mut self, pane: &mut BottomPane<'a>, key_event: KeyEvent) {
         // Exit shell prompt on Ctrl+M
-        if let KeyEvent { code: KeyCode::Char('m'), modifiers: KeyModifiers::CONTROL, .. } = key_event {
+        if let KeyEvent {
+            code: KeyCode::Char('m'),
+            modifiers: KeyModifiers::CONTROL,
+            ..
+        } = key_event
+        {
             self.done = true;
             pane.request_redraw();
             return;
@@ -91,7 +96,10 @@ mod tests {
             composer_max_rows: 1,
         });
         // Enter command 'a'
-        view.handle_key_event(&mut pane, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        view.handle_key_event(
+            &mut pane,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+        );
         view.handle_key_event(&mut pane, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         // Skip initial redraw event(s)
         let mut event;

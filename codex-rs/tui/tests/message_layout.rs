@@ -1,6 +1,6 @@
-use tempfile::TempDir;
-use codex_core::config::{Config, ConfigToml, ConfigOverrides};
+use codex_core::config::{Config, ConfigOverrides, ConfigToml};
 use codex_tui::history_cell::HistoryCell;
+use tempfile::TempDir;
 
 /// Extract plain string content of each line for comparison.
 fn lines_from_userprompt(view: &codex_tui::text_block::TextBlock) -> Vec<String> {
@@ -42,9 +42,11 @@ fn test_user_message_layout_combinations() {
             if message_spacing {
                 expected.push(String::new());
             }
-            assert_eq!(got, expected,
+            assert_eq!(
+                got, expected,
                 "Layout mismatch for sender_break_line={}, message_spacing={}",
-                sender_break, message_spacing);
+                sender_break, message_spacing
+            );
         }
     }
 }
@@ -81,9 +83,11 @@ fn test_agent_message_layout_combinations() {
             if message_spacing {
                 expected.push(String::new());
             }
-            assert_eq!(got, expected,
+            assert_eq!(
+                got, expected,
                 "Agent layout mismatch for sender_break_line={}, message_spacing={}",
-                sender_break, message_spacing);
+                sender_break, message_spacing
+            );
         }
     }
 }
@@ -120,9 +124,11 @@ fn test_agent_reasoning_layout_combinations() {
             if message_spacing {
                 expected.push(String::new());
             }
-            assert_eq!(got, expected,
+            assert_eq!(
+                got, expected,
                 "Reasoning layout mismatch for sender_break_line={}, message_spacing={}",
-                sender_break, message_spacing);
+                sender_break, message_spacing
+            );
         }
     }
 }

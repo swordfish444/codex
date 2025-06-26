@@ -452,9 +452,7 @@ impl Config {
                 .or(config_profile.approval_policy)
                 .or(cfg.approval_policy)
                 .unwrap_or_else(AskForApproval::default),
-            auto_allow: config_profile
-                .auto_allow
-                .unwrap_or(cfg.auto_allow),
+            auto_allow: config_profile.auto_allow.unwrap_or(cfg.auto_allow),
             sandbox_policy,
             shell_environment_policy,
             disable_response_storage: config_profile
@@ -802,6 +800,7 @@ disable_response_storage = true
                 model_provider_id: "openai".to_string(),
                 model_provider: fixture.openai_provider.clone(),
                 approval_policy: AskForApproval::Never,
+                auto_allow: Vec::new(),
                 sandbox_policy: SandboxPolicy::new_read_only_policy(),
                 shell_environment_policy: ShellEnvironmentPolicy::default(),
                 disable_response_storage: false,
@@ -844,6 +843,7 @@ disable_response_storage = true
             model_provider_id: "openai-chat-completions".to_string(),
             model_provider: fixture.openai_chat_completions_provider.clone(),
             approval_policy: AskForApproval::UnlessAllowListed,
+            auto_allow: Vec::new(),
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             shell_environment_policy: ShellEnvironmentPolicy::default(),
             disable_response_storage: false,
@@ -901,6 +901,7 @@ disable_response_storage = true
             model_provider_id: "openai".to_string(),
             model_provider: fixture.openai_provider.clone(),
             approval_policy: AskForApproval::OnFailure,
+            auto_allow: Vec::new(),
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             shell_environment_policy: ShellEnvironmentPolicy::default(),
             disable_response_storage: true,

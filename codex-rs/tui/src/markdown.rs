@@ -13,7 +13,12 @@ pub(crate) fn append_markdown(
     config: &Config,
 ) {
     let mut new_lines = Vec::new();
-    append_markdown_with_opener_and_cwd(markdown_source, &mut new_lines, config.file_opener, &config.cwd);
+    append_markdown_with_opener_and_cwd(
+        markdown_source,
+        &mut new_lines,
+        config.file_opener,
+        &config.cwd,
+    );
     if config.tui.markdown_compact {
         for line in collapse_heading_blank_lines(new_lines) {
             lines.push(line);
@@ -66,7 +71,11 @@ fn collapse_heading_blank_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>>
     let mut result = Vec::with_capacity(lines.len());
     let mut prev_was_heading = false;
     for line in lines {
-        let content = line.spans.iter().map(|s| s.content.clone()).collect::<String>();
+        let content = line
+            .spans
+            .iter()
+            .map(|s| s.content.clone())
+            .collect::<String>();
         if prev_was_heading && content.trim().is_empty() {
             continue;
         }

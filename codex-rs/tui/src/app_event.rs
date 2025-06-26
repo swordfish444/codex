@@ -63,3 +63,54 @@ pub(crate) enum AppEvent {
         exit_code: i32,
     },
 }
+
+impl PartialEq for AppEvent {
+    fn eq(&self, other: &Self) -> bool {
+        use AppEvent::*;
+        match (self, other) {
+            (CodexEvent(_), CodexEvent(_)) => true,
+            (Redraw, Redraw) => true,
+            (KeyEvent(a), KeyEvent(b)) => a == b,
+            (Scroll(a), Scroll(b)) => a == b,
+            (ExitRequest, ExitRequest) => true,
+            (CodexOp(a), CodexOp(b)) => a == b,
+            (LatestLog(a), LatestLog(b)) => a == b,
+            (DispatchCommand(a), DispatchCommand(b)) => a == b,
+            (InlineMountAdd(a), InlineMountAdd(b)) => a == b,
+            (InlineMountRemove(a), InlineMountRemove(b)) => a == b,
+            (InlineInspectEnv(a), InlineInspectEnv(b)) => a == b,
+            (
+                MountAdd {
+                    host: h1,
+                    container: c1,
+                    mode: m1,
+                },
+                MountAdd {
+                    host: h2,
+                    container: c2,
+                    mode: m2,
+                },
+            ) => h1 == h2 && c1 == c2 && m1 == m2,
+            (MountRemove { container: c1 }, MountRemove { container: c2 }) => c1 == c2,
+            (ConfigReloadRequest(a), ConfigReloadRequest(b)) => a == b,
+            (ConfigReloadApply, ConfigReloadApply) => true,
+            (ConfigReloadIgnore, ConfigReloadIgnore) => true,
+            (ShellCommand(a), ShellCommand(b)) => a == b,
+            (
+                ShellCommandResult {
+                    call_id: i1,
+                    stdout: o1,
+                    stderr: e1,
+                    exit_code: x1,
+                },
+                ShellCommandResult {
+                    call_id: i2,
+                    stdout: o2,
+                    stderr: e2,
+                    exit_code: x2,
+                },
+            ) => i1 == i2 && o1 == o2 && e1 == e2 && x1 == x2,
+            _ => false,
+        }
+    }
+}

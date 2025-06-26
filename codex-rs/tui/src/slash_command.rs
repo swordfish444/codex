@@ -32,13 +32,15 @@ impl SlashCommand {
     pub fn description(self) -> &'static str {
         match self {
             SlashCommand::New => "Start a new chat.",
-            SlashCommand::ToggleMouseMode =>
-                "Toggle mouse mode (enable for scrolling, disable for text selection)",
-            SlashCommand::EditPrompt =>
-                "Open external editor to edit the current prompt.",
+            SlashCommand::ToggleMouseMode => {
+                "Toggle mouse mode (enable for scrolling, disable for text selection)"
+            }
+            SlashCommand::EditPrompt => "Open external editor to edit the current prompt.",
             SlashCommand::MountAdd => "Add a mount: host path → container path.",
             SlashCommand::MountRemove => "Remove a mount by container path.",
-            SlashCommand::InspectEnv => "Inspect sandbox and container environment (mounts, permissions, network)",
+            SlashCommand::InspectEnv => {
+                "Inspect sandbox and container environment (mounts, permissions, network)"
+            }
             SlashCommand::Shell => "Run a shell command in the container.",
             SlashCommand::Quit => "Exit the application.",
         }

@@ -1,19 +1,25 @@
 use codex_core::{ContentItem, ResponseItem};
-use codex_tui::context::{approximate_tokens_used, calculate_context_percent_remaining, max_tokens_for_model};
+use codex_tui::context::{
+    approximate_tokens_used, calculate_context_percent_remaining, max_tokens_for_model,
+};
 
 #[test]
 fn test_approximate_tokens_used_texts() {
     // 4 chars -> 1 token
     let items = vec![ResponseItem::Message {
         role: "user".into(),
-        content: vec![ContentItem::InputText { text: "abcd".into() }],
+        content: vec![ContentItem::InputText {
+            text: "abcd".into(),
+        }],
     }];
     assert_eq!(approximate_tokens_used(&items), 1);
 
     // 7 chars -> 2 tokens
     let items = vec![ResponseItem::Message {
         role: "assistant".into(),
-        content: vec![ContentItem::OutputText { text: "example".into() }],
+        content: vec![ContentItem::OutputText {
+            text: "example".into(),
+        }],
     }];
     assert_eq!(approximate_tokens_used(&items), 2);
 }

@@ -6,11 +6,11 @@ use std::path::PathBuf;
 use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
 
+use crate::config::AutoAllowPredicate;
 use crate::exec::SandboxType;
 use crate::is_safe_command::is_known_safe_command;
 use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPolicy;
-use crate::config::AutoAllowPredicate;
 
 #[derive(Debug)]
 pub enum SafetyCheck {
@@ -295,13 +295,21 @@ mod tests {
         std::fs::set_permissions(&deny_script, perms2).unwrap();
 
         // Allow script should return Allow
-        let preds = vec![AutoAllowPredicate { script: allow_script.to_string_lossy().into() }];
+        let preds = vec![AutoAllowPredicate {
+            script: allow_script.to_string_lossy().into(),
+        }];
         let vote = evaluate_auto_allow_predicates(&["cmd".to_string()], &preds);
         assert_eq!(vote, AutoAllowVote::Allow);
 
         // Deny script takes precedence over allow
-        let preds2 = vec![AutoAllowPredicate { script: deny_script.to_string_lossy().into() },
-                          AutoAllowPredicate { script: allow_script.to_string_lossy().into() }];
+        let preds2 = vec![
+            AutoAllowPredicate {
+                script: deny_script.to_string_lossy().into(),
+            },
+            AutoAllowPredicate {
+                script: allow_script.to_string_lossy().into(),
+            },
+        ];
         let vote2 = evaluate_auto_allow_predicates(&["cmd".to_string()], &preds2);
         assert_eq!(vote2, AutoAllowVote::Deny);
 
@@ -336,9 +344,15 @@ mod tests {
 
         // All scripts no-opinion or error yields NoOpinion
         let preds = vec![
-            AutoAllowPredicate { script: noop_script.to_string_lossy().into() },
-            AutoAllowPredicate { script: unknown_script.to_string_lossy().into() },
-            AutoAllowPredicate { script: error_script.to_string_lossy().into() },
+            AutoAllowPredicate {
+                script: noop_script.to_string_lossy().into(),
+            },
+            AutoAllowPredicate {
+                script: unknown_script.to_string_lossy().into(),
+            },
+            AutoAllowPredicate {
+                script: error_script.to_string_lossy().into(),
+            },
         ];
         let vote = evaluate_auto_allow_predicates(&["cmd".to_string()], &preds);
         assert_eq!(vote, AutoAllowVote::NoOpinion);
@@ -362,8 +376,12 @@ mod tests {
         std::fs::set_permissions(&allow_script, perms2).unwrap();
 
         let preds = vec![
-            AutoAllowPredicate { script: noop_script.to_string_lossy().into() },
-            AutoAllowPredicate { script: allow_script.to_string_lossy().into() },
+            AutoAllowPredicate {
+                script: noop_script.to_string_lossy().into(),
+            },
+            AutoAllowPredicate {
+                script: allow_script.to_string_lossy().into(),
+            },
         ];
         let vote = evaluate_auto_allow_predicates(&["cmd".to_string()], &preds);
         assert_eq!(vote, AutoAllowVote::Allow);

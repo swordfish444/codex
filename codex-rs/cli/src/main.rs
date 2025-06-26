@@ -4,14 +4,14 @@ use codex_cli::SeatbeltCommand;
 use codex_cli::login::run_login_with_chatgpt;
 use codex_cli::proto;
 use codex_common::CliConfigOverrides;
+use codex_core::config::find_codex_home;
 use codex_exec::Cli as ExecCli;
 use codex_tui::Cli as TuiCli;
+use serde::de::Error as SerdeError;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::{env, fs, process};
-use std::io::ErrorKind;
-use toml::{self, value::Table, Value};
-use serde::de::Error as SerdeError;
-use codex_core::config::find_codex_home;
+use toml::{self, Value, value::Table};
 use uuid::Uuid;
 
 use crate::proto::ProtoCli;
@@ -42,7 +42,8 @@ struct MultitoolCli {
 fn parse_toml_value(raw: &str) -> Result<Value, toml::de::Error> {
     let wrapped = format!("_x_ = {raw}");
     let table: Table = toml::from_str(&wrapped)?;
-    table.get("_x_")
+    table
+        .get("_x_")
         .cloned()
         .ok_or_else(|| SerdeError::custom("missing sentinel"))
 }
@@ -152,9 +153,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                     }
                     // Open in editor from $EDITOR or fall back to vi.
                     let editor = env::var_os("EDITOR").unwrap_or_else(|| "vi".into());
-                    let status = process::Command::new(editor)
-                        .arg(&config_path)
-                        .status()?;
+                    let status = process::Command::new(editor).arg(&config_path).status()?;
                     if !status.success() {
                         std::process::exit(status.code().unwrap_or(1));
                     }
@@ -243,13 +242,15 @@ fn apply_override(root: &mut toml::Value, path: &str, value: toml::Value) {
         }
         match current {
             toml::Value::Table(tbl) => {
-                current = tbl.entry((*part).to_string())
+                current = tbl
+                    .entry((*part).to_string())
                     .or_insert_with(|| toml::Value::Table(Table::new()));
             }
             _ => {
                 *current = toml::Value::Table(Table::new());
                 if let toml::Value::Table(tbl) = current {
-                    current = tbl.entry((*part).to_string())
+                    current = tbl
+                        .entry((*part).to_string())
                         .or_insert_with(|| toml::Value::Table(Table::new()));
                 }
             }
@@ -268,7 +269,9 @@ mod tests {
     #[test]
     fn config_subcommands_help() {
         let mut cmd = MultitoolCli::command();
-        let cfg = cmd.find_subcommand_mut("config").expect("config subcommand not found");
+        let cfg = cmd
+            .find_subcommand_mut("config")
+            .expect("config subcommand not found");
         let mut buf = Vec::new();
         cfg.write_long_help(&mut buf).unwrap();
         let help = String::from_utf8(buf).unwrap();

@@ -48,11 +48,12 @@ impl Prompt {
         match std::env::var("CODEX_BASE_INSTRUCTIONS_FILE") {
             Ok(ref path) if !path.is_empty() && path != "-" => {
                 // Override built-in prompt: read file or abort
-                let contents = std::fs::read_to_string(path)
-                    .unwrap_or_else(|e| panic!(
+                let contents = std::fs::read_to_string(path).unwrap_or_else(|e| {
+                    panic!(
                         "failed to read CODEX_BASE_INSTRUCTIONS_FILE '{}': {e}",
                         path
-                    ));
+                    )
+                });
                 sections.push(contents);
             }
             Ok(_) => {

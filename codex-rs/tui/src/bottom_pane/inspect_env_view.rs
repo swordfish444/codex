@@ -1,11 +1,11 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, Borders, BorderType, Paragraph};
 use ratatui::prelude::Widget;
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
-use super::{BottomPane, BottomPaneView};
 use super::bottom_pane_view::ConditionalUpdate;
+use super::{BottomPane, BottomPaneView};
 
 /// View for displaying the output of `codex inspect-env` in the bottom pane.
 pub(crate) struct InspectEnvView {
@@ -16,7 +16,10 @@ pub(crate) struct InspectEnvView {
 impl InspectEnvView {
     /// Create a new inspect-env view.
     pub fn new() -> Self {
-        Self { lines: Vec::new(), done: false }
+        Self {
+            lines: Vec::new(),
+            done: false,
+        }
     }
 }
 
@@ -71,14 +74,19 @@ mod tests {
         let mut view = InspectEnvView::new();
         view.update_status_text("line1".to_string());
         view.update_status_text("line2".to_string());
-        let area = Rect { x: 0, y: 0, width: 10, height: 3 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 3,
+        };
         let mut buf = Buffer::empty(area);
         view.render(area, &mut buf);
         // Collect all cell symbols into a flat string and verify the lines are present
-        let content: String = buf
-            .content()
-            .iter()
-            .fold(String::new(), |mut acc, cell| { acc.push_str(cell.symbol()); acc });
+        let content: String = buf.content().iter().fold(String::new(), |mut acc, cell| {
+            acc.push_str(cell.symbol());
+            acc
+        });
         assert!(content.contains("line1"));
         assert!(content.contains("line2"));
     }

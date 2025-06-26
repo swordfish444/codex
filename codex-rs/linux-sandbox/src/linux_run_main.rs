@@ -5,8 +5,6 @@ use std::ffi::CString;
 use libc;
 
 use crate::landlock::apply_sandbox_policy_to_current_thread;
-use codex_core::config::{Config, ConfigOverrides};
-use codex_core::util::{find_git_root, relative_path_from_git_root};
 
 #[derive(Debug, Parser)]
 pub struct LandlockCommand {
@@ -26,48 +24,11 @@ pub fn run_main() -> ! {
         None => codex_core::protocol::SandboxPolicy::new_read_only_policy(),
     };
 
-    // Determine working directory inside the session, possibly auto-mounting the repo.
+    // Determine working directory inside the session.
     let mut cwd = match std::env::current_dir() {
         Ok(cwd) => cwd,
         Err(e) => panic!("failed to getcwd(): {e:?}"),
     };
-    // Load configuration to check auto_mount_repo flag
-    let config = match codex_core::config::Config::load_with_cli_overrides(
-        Vec::new(),
-        codex_core::config::ConfigOverrides::default(),
-    ) {
-        Ok(cfg) => cfg,
-        Err(e) => panic!("failed to load config for auto-mount: {e:?}"),
-    };
-    if config.tui.auto_mount_repo {
-        if let Some(root) = codex_core::util::find_git_root(&cwd) {
-            // Compute relative subpath
-            let rel = codex_core::util::relative_path_from_git_root(&cwd).unwrap_or_default();
-            let mount_prefix = std::path::PathBuf::from(&config.tui.mount_prefix);
-            // Create mount target
-            std::fs::create_dir_all(&mount_prefix).unwrap_or_else(|e| {
-                panic!("failed to create mount prefix {mount_prefix:?}: {e:?}")
-            });
-            // Bind-mount repository root into session
-            let src = std::ffi::CString::new(root.to_string_lossy().as_ref())
-                .expect("invalid git root path");
-            let dst = std::ffi::CString::new(mount_prefix.to_string_lossy().as_ref())
-                .expect("invalid mount prefix path");
-            unsafe {
-                libc::mount(
-                    src.as_ptr(),
-                    dst.as_ptr(),
-                    std::ptr::null(),
-                    libc::MS_BIND,
-                    std::ptr::null(),
-                );
-            }
-            // Change working directory to corresponding subfolder under mount
-            cwd = mount_prefix.join(rel);
-            std::env::set_current_dir(&cwd)
-                .unwrap_or_else(|e| panic!("failed to chdir to {cwd:?}: {e:?}"));
-        }
-    }
 
     if let Err(e) = apply_sandbox_policy_to_current_thread(&sandbox_policy, &cwd) {
         panic!("error running landlock: {e:?}");
