@@ -17,6 +17,7 @@ mod bottom_pane_view;
 mod chat_composer;
 mod chat_composer_history;
 mod command_popup;
+mod file_search_popup;
 mod status_indicator_view;
 
 pub(crate) use chat_composer::ChatComposer;
