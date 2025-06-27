@@ -199,6 +199,14 @@ pub async fn run(
     })
 }
 
+/// Sort matches in-place by descending score, then ascending path.
+fn sort_matches(matches: &mut [(u32, String)]) {
+    matches.sort_by(|a, b| match b.0.cmp(&a.0) {
+        std::cmp::Ordering::Equal => a.1.cmp(&b.1),
+        other => other,
+    });
+}
+
 /// Maintains the `max_count` best matches for a given pattern.
 struct BestMatchesList {
     max_count: usize,
