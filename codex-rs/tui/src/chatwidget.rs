@@ -126,6 +126,7 @@ impl ChatWidget<'_> {
             bottom_pane: BottomPane::new(BottomPaneParams {
                 app_event_tx,
                 has_input_focus: true,
+                cwd: config.cwd.clone(),
             }),
             input_focus: InputFocus::BottomPane,
             config,
@@ -143,7 +144,7 @@ impl ChatWidget<'_> {
         // However, when the slash-command popup is visible we forward the key
         // to the bottom pane so it can handle auto-completion.
         if matches!(key_event.code, crossterm::event::KeyCode::Tab)
-            && !self.bottom_pane.is_command_popup_visible()
+            && !self.bottom_pane.is_popup_visible()
         {
             self.input_focus = match self.input_focus {
                 InputFocus::HistoryPane => InputFocus::BottomPane,
