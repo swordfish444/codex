@@ -126,6 +126,7 @@ impl ChatWidget<'_> {
             bottom_pane: BottomPane::new(BottomPaneParams {
                 app_event_tx,
                 has_input_focus: true,
+                cwd: config.cwd.clone(),
             }),
             input_focus: InputFocus::BottomPane,
             config,

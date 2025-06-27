@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use codex_core::protocol::TokenUsage;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
@@ -16,6 +18,7 @@ use tui_textarea::TextArea;
 
 use super::chat_composer_history::ChatComposerHistory;
 use super::command_popup::CommandPopup;
+use super::file_search_popup::FileSearchPopup;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -39,10 +42,15 @@ pub(crate) struct ChatComposer<'a> {
     app_event_tx: AppEventSender,
     history: ChatComposerHistory,
     ctrl_c_quit_hint: bool,
+
+    /// Current working directory for the conversation.
+    cwd: PathBuf,
+    file_search_popup: Option<FileSearchPopup>,
+    dismissed_file_popup_token: Option<String>,
 }
 
 impl ChatComposer<'_> {
-    pub fn new(has_input_focus: bool, app_event_tx: AppEventSender) -> Self {
+    pub fn new(has_input_focus: bool, app_event_tx: AppEventSender, cwd: PathBuf) -> Self {
         let mut textarea = TextArea::default();
         textarea.set_placeholder_text(BASE_PLACEHOLDER_TEXT);
         textarea.set_cursor_line_style(ratatui::style::Style::default());
@@ -53,6 +61,9 @@ impl ChatComposer<'_> {
             app_event_tx,
             history: ChatComposerHistory::new(),
             ctrl_c_quit_hint: false,
+            cwd,
+            file_search_popup: None,
+            dismissed_file_popup_token: None,
         };
         this.update_border(has_input_focus);
         this
@@ -123,19 +134,23 @@ impl ChatComposer<'_> {
 
     /// Handle a key event coming from the main UI.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
-        let result = match self.command_popup {
-            Some(_) => self.handle_key_event_with_popup(key_event),
-            None => self.handle_key_event_without_popup(key_event),
+        let result = if self.command_popup.is_some() {
+            self.handle_key_event_with_slash_popup(key_event)
+        } else if self.file_search_popup.is_some() {
+            self.handle_key_event_with_file_popup(key_event)
+        } else {
+            self.handle_key_event_without_popup(key_event)
         };
 
         // Update (or hide/show) popup after processing the key.
         self.sync_command_popup();
+        self.sync_file_search_popup();
 
         result
     }
 
     /// Handle key event when the slash-command popup is visible.
-    fn handle_key_event_with_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+    fn handle_key_event_with_slash_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
         let Some(popup) = self.command_popup.as_mut() else {
             tracing::error!("handle_key_event_with_popup called without an active popup");
             return (InputResult::None, false);
@@ -193,6 +208,126 @@ impl ChatComposer<'_> {
                 self.handle_key_event_without_popup(key_event)
             }
             input => self.handle_input_basic(input),
+        }
+    }
+
+    /// Handle key events when file search popup is visible.
+    fn handle_key_event_with_file_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        let Some(popup) = self.file_search_popup.as_mut() else {
+            return (InputResult::None, false);
+        };
+
+        match key_event.into() {
+            Input { key: Key::Up, .. } => {
+                popup.move_up();
+                (InputResult::None, true)
+            }
+            Input { key: Key::Down, .. } => {
+                popup.move_down();
+                (InputResult::None, true)
+            }
+            Input { key: Key::Esc, .. } => {
+                // Hide popup without modifying text, remember token to avoid immediate reopen.
+                if let Some(tok) = Self::current_at_token(&self.textarea) {
+                    self.dismissed_file_popup_token = Some(tok.to_string());
+                }
+                self.file_search_popup = None;
+                (InputResult::None, true)
+            }
+            Input { key: Key::Tab, .. }
+            | Input {
+                key: Key::Enter,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            } => {
+                if let Some(sel) = popup.selected_match() {
+                    let sel_path = sel.to_string();
+                    // Drop popup borrow before using self mutably again.
+                    self.insert_selected_path(&sel_path);
+                    self.file_search_popup = None;
+                    return (InputResult::None, true);
+                }
+                (InputResult::None, false)
+            }
+            input => self.handle_input_basic(input),
+        }
+    }
+
+    /// Extract the `@token` that the cursor is currently positioned on, if any.
+    ///
+    /// The returned string **does not** include the leading `@`.
+    ///
+    /// Behaviour:
+    ///   • The cursor may be anywhere *inside* the token (including on the
+    ///     leading `@`). It does **not** need to be at the end of the line.
+    ///   • A token is delimited by ASCII whitespace (space, tab, newline).
+    ///   • If the token under the cursor starts with `@` and contains at least
+    ///     one additional character, that token (without `@`) is returned.
+    fn current_at_token(textarea: &tui_textarea::TextArea) -> Option<String> {
+        let (row, col) = textarea.cursor();
+
+        // Guard against out-of-bounds rows.
+        let line = textarea.lines().get(row)?.as_str();
+
+        // Clamp the cursor column to the line length to avoid slicing panics
+        // when the cursor is at the end of the line.
+        let col = col.min(line.len());
+
+        // Split the line at the cursor position so we can search for word
+        // boundaries on both sides.
+        let before_cursor = &line[..col];
+        let after_cursor = &line[col..];
+
+        // Find start index (first character **after** the previous whitespace).
+        let start_idx = before_cursor
+            .rfind(|c: char| c.is_whitespace())
+            .map(|idx| idx + 1)
+            .unwrap_or(0);
+
+        // Find end index (first whitespace **after** the cursor position).
+        let end_rel_idx = after_cursor
+            .find(|c: char| c.is_whitespace())
+            .unwrap_or(after_cursor.len());
+        let end_idx = col + end_rel_idx;
+
+        if start_idx >= end_idx {
+            return None;
+        }
+
+        let token = &line[start_idx..end_idx];
+
+        if token.starts_with('@') && token.len() > 1 {
+            Some(token[1..].to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Replace the active @token with the provided path.
+    fn insert_selected_path(&mut self, path: &str) {
+        // Gather full text.
+        let mut lines: Vec<String> = self.textarea.lines().to_vec();
+        if let Some(last) = lines.last_mut() {
+            let mut parts = last.rsplitn(2, char::is_whitespace);
+            let _token = parts.next().unwrap_or("");
+            let prefix = parts.next().unwrap_or("");
+
+            // Build new last line.
+            let mut new_last = String::new();
+            new_last.push_str(prefix);
+            if !prefix.is_empty() {
+                new_last.push(' ');
+            }
+            new_last.push_str(path);
+            new_last.push(' '); // trailing space after completion
+
+            *last = new_last;
+
+            let new_text = lines.join("\n");
+            self.textarea.select_all();
+            self.textarea.cut();
+            let _ = self.textarea.insert_str(new_text);
         }
     }
 
@@ -293,9 +428,34 @@ impl ChatComposer<'_> {
         }
     }
 
+    /// Synchronize `self.file_search_popup` with the current text in the textarea.
+    fn sync_file_search_popup(&mut self) {
+        // Determine if there is an @token underneath the cursor.
+        if let Some(token) = Self::current_at_token(&self.textarea) {
+            let query = token;
+
+            // If user dismissed popup for this exact query, don't reopen until text changes.
+            if self.dismissed_file_popup_token.as_ref() == Some(&query) {
+                return;
+            }
+
+            let popup = self
+                .file_search_popup
+                .get_or_insert_with(|| FileSearchPopup::new(self.cwd.clone()));
+            popup.update_query(&query);
+            self.dismissed_file_popup_token = None; // popup visible again, reset dismissal record
+        } else {
+            // Hide the popup when no valid @token is active.
+            self.file_search_popup = None;
+            self.dismissed_file_popup_token = None;
+        }
+    }
+
     pub fn calculate_required_height(&self, area: &Rect) -> u16 {
         let rows = self.textarea.lines().len().max(MIN_TEXTAREA_ROWS);
         let num_popup_rows = if let Some(popup) = &self.command_popup {
+            popup.calculate_required_height(area)
+        } else if let Some(popup) = &self.file_search_popup {
             popup.calculate_required_height(area)
         } else {
             0
@@ -351,6 +511,25 @@ impl WidgetRef for &ChatComposer<'_> {
 
             // Split the provided rect so that the popup is rendered at the
             // *top* and the textarea occupies the remaining space below.
+            let popup_rect = Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: popup_height.min(area.height),
+            };
+
+            let textarea_rect = Rect {
+                x: area.x,
+                y: area.y + popup_rect.height,
+                width: area.width,
+                height: area.height.saturating_sub(popup_rect.height),
+            };
+
+            popup.render(popup_rect, buf);
+            self.textarea.render(textarea_rect, buf);
+        } else if let Some(popup) = &self.file_search_popup {
+            let popup_height = popup.calculate_required_height(&area);
+
             let popup_rect = Rect {
                 x: area.x,
                 y: area.y,
