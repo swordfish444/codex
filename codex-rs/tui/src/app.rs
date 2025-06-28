@@ -43,6 +43,11 @@ pub(crate) struct App<'a> {
     /// Config is stored here so we can recreate ChatWidgets as needed.
     config: Config,
 
+    /// Handle to a background file-search thread (if any). Older threads are
+    /// not actively cancelled but we keep the JoinHandle so they remain
+    /// detachable.
+    file_search_inflight: Option<std::thread::JoinHandle<()>>,
+
     /// Stored parameters needed to instantiate the ChatWidget later, e.g.,
     /// after dismissing the Git-repo warning.
     chat_args: Option<ChatWidgetArgs>,
@@ -162,6 +167,7 @@ impl<'a> App<'a> {
             app_state,
             config,
             chat_args,
+            file_search_inflight: None,
         }
     }
 
@@ -273,6 +279,53 @@ impl<'a> App<'a> {
                         }
                     }
                 },
+                AppEvent::StartFileSearch(query) => {
+                    use codex_file_search as file_search;
+                    use std::num::NonZeroUsize;
+
+                    // spawn background search
+                    let tx = self.app_event_tx.clone();
+                    let search_dir = self.config.cwd.clone();
+
+                    // Optionally detach previous thread.
+                    if let Some(handle) = self.file_search_inflight.take() {
+                        // let _ = handle.join();
+                        // TODO(mbolin): Cancel the task.
+                        let _ = handle;
+                    }
+
+                    let handle = std::thread::spawn(move || {
+                        let limit = NonZeroUsize::new(32).unwrap();
+                        let threads = NonZeroUsize::new(4).unwrap();
+                        let runtime = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .expect("runtime");
+                        let matches = runtime
+                            .block_on(file_search::run(
+                                &query,
+                                limit,
+                                &search_dir,
+                                Vec::new(),
+                                threads,
+                            ))
+                            .map(|res| {
+                                res.matches
+                                    .into_iter()
+                                    .map(|(_, p)| p)
+                                    .collect::<Vec<String>>()
+                            })
+                            .unwrap_or_default();
+                        tx.send(AppEvent::FileSearchResult { query, matches });
+                    });
+
+                    self.file_search_inflight = Some(handle);
+                }
+                AppEvent::FileSearchResult { query, matches } => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.apply_file_search_result(query, matches);
+                    }
+                }
             }
         }
         terminal.clear()?;
