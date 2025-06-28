@@ -11,14 +11,25 @@ use crate::slash_command::SlashCommand;
 use crate::tui;
 use codex_core::config::Config;
 use codex_core::protocol::Event;
+use codex_file_search as file_search;
 use color_eyre::eyre::Result;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::MouseEvent;
 use crossterm::event::MouseEventKind;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::channel;
+
+#[allow(clippy::unwrap_used)]
+const MAX_FILE_SEARCH_RESULTS: NonZeroUsize = NonZeroUsize::new(8).unwrap();
+
+#[allow(clippy::unwrap_used)]
+const NUM_FILE_SEARCH_THREADS: NonZeroUsize = NonZeroUsize::new(2).unwrap();
 
 /// Top-level application state: which full-screen view is currently active.
 #[allow(clippy::large_enum_variant)]
@@ -42,6 +53,12 @@ pub(crate) struct App<'a> {
 
     /// Config is stored here so we can recreate ChatWidgets as needed.
     config: Config,
+
+    /// Optional `Arc<AtomicBool>` that functions as a cancellation token for a
+    /// background file-search thread (if any). Set it to `true` and the
+    /// associated worker threads should stop searching for files and return
+    /// early.
+    file_search_cancellation_token: Option<Arc<AtomicBool>>,
 
     /// Stored parameters needed to instantiate the ChatWidget later, e.g.,
     /// after dismissing the Git-repo warning.
@@ -162,6 +179,7 @@ impl<'a> App<'a> {
             app_state,
             config,
             chat_args,
+            file_search_cancellation_token: None,
         }
     }
 
@@ -273,6 +291,23 @@ impl<'a> App<'a> {
                         }
                     }
                 },
+                AppEvent::StartFileSearch(query) => {
+                    // Optionally detach previous thread.
+                    if let Some(cancel_flag) = self.file_search_cancellation_token.take() {
+                        cancel_flag.store(true, Ordering::Relaxed);
+                    }
+
+                    // Spawn the file search on a background thread.
+                    let search_dir = self.config.cwd.clone();
+                    let tx = self.app_event_tx.clone();
+                    let cancel_flag = spawn_file_search(query, search_dir, tx.clone());
+                    self.file_search_cancellation_token = Some(cancel_flag);
+                }
+                AppEvent::FileSearchResult { query, matches } => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.apply_file_search_result(query, matches);
+                    }
+                }
             }
         }
         terminal.clear()?;
@@ -343,4 +378,32 @@ impl<'a> App<'a> {
             AppState::Login { .. } | AppState::GitWarning { .. } => {}
         }
     }
+}
+
+fn spawn_file_search(query: String, search_dir: PathBuf, tx: AppEventSender) -> Arc<AtomicBool> {
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let worker_cancel_flag = cancel_flag.clone();
+    std::thread::spawn(move || {
+        let matches = file_search::run(
+            &query,
+            MAX_FILE_SEARCH_RESULTS,
+            &search_dir,
+            Vec::new(),
+            NUM_FILE_SEARCH_THREADS,
+            worker_cancel_flag.clone(),
+        )
+        .map(|res| {
+            res.matches
+                .into_iter()
+                .map(|(_, p)| p)
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default();
+
+        let is_cancelled = worker_cancel_flag.load(Ordering::Relaxed);
+        if !is_cancelled {
+            tx.send(AppEvent::FileSearchResult { query, matches });
+        }
+    });
+    cancel_flag
 }
