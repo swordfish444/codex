@@ -17,6 +17,9 @@ use crossterm::event::KeyEvent;
 use crossterm::event::MouseEvent;
 use crossterm::event::MouseEventKind;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::channel;
 
@@ -42,6 +45,11 @@ pub(crate) struct App<'a> {
 
     /// Config is stored here so we can recreate ChatWidgets as needed.
     config: Config,
+
+    /// Handle to a background file-search thread (if any). Older threads are
+    /// not actively cancelled but we keep the JoinHandle so they remain
+    /// detachable.
+    file_search_inflight: Option<Arc<AtomicBool>>,
 
     /// Stored parameters needed to instantiate the ChatWidget later, e.g.,
     /// after dismissing the Git-repo warning.
@@ -162,6 +170,7 @@ impl<'a> App<'a> {
             app_state,
             config,
             chat_args,
+            file_search_inflight: None,
         }
     }
 
@@ -273,6 +282,55 @@ impl<'a> App<'a> {
                         }
                     }
                 },
+                AppEvent::StartFileSearch(query) => {
+                    use codex_file_search as file_search;
+                    use std::num::NonZeroUsize;
+
+                    // spawn background search
+                    let tx = self.app_event_tx.clone();
+                    let search_dir = self.config.cwd.clone();
+
+                    // Optionally detach previous thread.
+                    if let Some(cancel_flag) = self.file_search_inflight.take() {
+                        cancel_flag.store(true, Ordering::Relaxed);
+                    }
+
+                    let cancel_flag = Arc::new(AtomicBool::new(false));
+                    let worker_cancel_flag = cancel_flag.clone();
+                    std::thread::spawn(move || {
+                        #[allow(clippy::unwrap_used)]
+                        let limit = NonZeroUsize::new(8).unwrap();
+                        #[allow(clippy::unwrap_used)]
+                        let threads = NonZeroUsize::new(2).unwrap();
+                        let matches = file_search::run(
+                            &query,
+                            limit,
+                            &search_dir,
+                            Vec::new(),
+                            threads,
+                            worker_cancel_flag.clone(),
+                        )
+                        .map(|res| {
+                            res.matches
+                                .into_iter()
+                                .map(|(_, p)| p)
+                                .collect::<Vec<String>>()
+                        })
+                        .unwrap_or_default();
+
+                        let is_cancelled = worker_cancel_flag.load(Ordering::Relaxed);
+                        if !is_cancelled {
+                            tx.send(AppEvent::FileSearchResult { query, matches });
+                        }
+                    });
+
+                    self.file_search_inflight = Some(cancel_flag);
+                }
+                AppEvent::FileSearchResult { query, matches } => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.apply_file_search_result(query, matches);
+                    }
+                }
             }
         }
         terminal.clear()?;
