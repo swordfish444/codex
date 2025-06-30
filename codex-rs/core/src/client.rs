@@ -123,9 +123,19 @@ impl ModelClient {
             stream: true,
         };
 
-        let base_url = self.provider.base_url.clone();
-        let base_url = base_url.trim_end_matches('/');
-        let url = format!("{}/responses", base_url);
+        let query_string = self
+            .provider
+            .query_params
+            .as_ref()
+            .map_or_else(String::new, |params| {
+                let full_params = params
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join("&");
+                format!("?{full_params}")
+            });
+        let url = format!("{}/responses{query_string}", self.provider.base_url);
         trace!("POST to {url}: {}", serde_json::to_string(&payload)?);
 
         let mut attempt = 0;
