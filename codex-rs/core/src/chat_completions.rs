@@ -114,8 +114,18 @@ pub(crate) async fn stream_chat_completions(
         "tools": tools_json,
     });
 
-    let base_url = provider.base_url.trim_end_matches('/');
-    let url = format!("{}/chat/completions", base_url);
+    let query_string = provider
+        .query_params
+        .as_ref()
+        .map_or_else(String::new, |params| {
+            let full_params = params
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join("&");
+            format!("?{full_params}")
+        });
+    let url = format!("{}/chat/completions{query_string}", provider.base_url);
 
     debug!(
         "POST to {url}: {}",
