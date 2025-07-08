@@ -59,6 +59,23 @@ You can experiment with different values of `-s` to see what permissions the `CO
 
 Note that the exact API for the `-s` flag is currently in flux. See https://github.com/openai/codex/issues/1248 for details.
 
+### Selecting a sandbox policy via `--sandbox`
+
+The Rust CLI exposes a dedicated `--sandbox` (`-s`) flag that lets you pick the sandbox policy **without** having to reach for the generic `-c/--config` option:
+
+```shell
+# Run Codex with the default, read-only sandbox
+codex --sandbox read-only
+
+# Allow the agent to write within the current workspace while still blocking network access
+codex --sandbox workspace-write
+
+# Danger! Disable sandboxing entirely (only do this if you are already running in a container or other isolated env)
+codex --sandbox danger-full-access
+```
+
+The same setting can be persisted in `~/.codex/config.toml` via the top-level `sandbox = "MODE"` key, e.g. `sandbox = "workspace-write"`.
+
 ## Code Organization
 
 This folder is the root of a Cargo workspace. It contains quite a bit of experimental code, but here are the key crates:
