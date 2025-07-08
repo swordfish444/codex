@@ -115,7 +115,7 @@ impl CodexToolCallParam {
             approval_policy: approval_policy.map(Into::into),
             // Note we may want to expose a field on CodexToolCallParam to
             // facilitate configuring the sandbox policy.
-            sandbox_policy: None,
+            sandbox_mode: None,
             model_provider: None,
             codex_linux_sandbox_exe,
         };
