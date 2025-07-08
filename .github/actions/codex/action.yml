@@ -22,7 +22,7 @@ inputs:
   codex_release_tag:
     description: "The release tag of the Codex model to run."
     required: false
-    default: "codex-rs-ca8e97fcbcb991e542b8689f2d4eab9d30c399d6-1-rust-v0.0.2505302325"
+    default: "rust-v0.3.0"
 
 runs:
   using: "composite"
