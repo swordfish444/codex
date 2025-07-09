@@ -277,6 +277,11 @@ impl<'a> App<'a> {
                             widget.add_diff_output(text);
                         }
                     }
+                    SlashCommand::Compact => {
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.compact().await;
+                        }
+                    }
                 },
                 AppEvent::StartFileSearch(query) => {
                     self.file_search.on_user_query(query);

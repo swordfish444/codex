@@ -26,6 +26,7 @@ mod bottom_pane;
 mod cell_widget;
 mod chatwidget;
 mod citation_regex;
+mod compact;
 mod cli;
 mod conversation_history_widget;
 mod exec_command;

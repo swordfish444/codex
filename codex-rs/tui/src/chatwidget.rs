@@ -39,6 +39,7 @@ use crate::conversation_history_widget::ConversationHistoryWidget;
 use crate::history_cell::PatchEventType;
 use crate::user_approval_widget::ApprovalRequest;
 use codex_file_search::FileMatch;
+use crate::compact::{generate_compact_summary, Role, TranscriptEntry};
 
 pub(crate) struct ChatWidget<'a> {
     app_event_tx: AppEventSender,
@@ -49,6 +50,7 @@ pub(crate) struct ChatWidget<'a> {
     config: Config,
     initial_user_message: Option<UserMessage>,
     token_usage: TokenUsage,
+    transcript: Vec<TranscriptEntry>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -135,6 +137,7 @@ impl ChatWidget<'_> {
                 initial_images,
             ),
             token_usage: TokenUsage::default(),
+            transcript: Vec::new(),
         }
     }
 
@@ -208,6 +211,7 @@ impl ChatWidget<'_> {
         // Only show text portion in conversation history for now.
         if !text.is_empty() {
             self.conversation_history.add_user_message(text);
+            self.transcript.push(TranscriptEntry { role: Role::User, text });
         }
         self.conversation_history.scroll_to_bottom();
     }
@@ -236,6 +240,7 @@ impl ChatWidget<'_> {
             EventMsg::AgentMessage(AgentMessageEvent { message }) => {
                 self.conversation_history
                     .add_agent_message(&self.config, message);
+                self.transcript.push(TranscriptEntry { role: Role::Assistant, text: message });
                 self.request_redraw();
             }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
@@ -408,6 +413,19 @@ impl ChatWidget<'_> {
     /// Forward file-search results to the bottom pane.
     pub(crate) fn apply_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
         self.bottom_pane.on_file_search_result(query, matches);
+    }
+
+    pub(crate) async fn compact(&mut self) {
+        let Ok(summary) = generate_compact_summary(&self.transcript, &self.config.model, &self.config).await else {
+            self.conversation_history.add_error("Failed to compact context".to_string());
+            self.request_redraw();
+            return;
+        };
+
+        self.conversation_history = ConversationHistoryWidget::new();
+        self.conversation_history.add_agent_message(&self.config, summary.clone());
+        self.transcript = vec![TranscriptEntry { role: Role::Assistant, text: summary }];
+        self.request_redraw();
     }
 
     /// Handle Ctrl-C key press.
