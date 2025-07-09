@@ -277,6 +277,11 @@ impl<'a> App<'a> {
                             widget.add_diff_output(text);
                         }
                     }
+                    SlashCommand::Compact => {
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.start_compact();
+                        }
+                    }
                 },
                 AppEvent::StartFileSearch(query) => {
                     self.file_search.on_user_query(query);
@@ -284,6 +289,11 @@ impl<'a> App<'a> {
                 AppEvent::FileSearchResult { query, matches } => {
                     if let AppState::Chat { widget } = &mut self.app_state {
                         widget.apply_file_search_result(query, matches);
+                    }
+                }
+                AppEvent::CompactComplete(result) => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.apply_compact_summary(result);
                     }
                 }
             }

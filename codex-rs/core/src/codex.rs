@@ -200,6 +200,23 @@ impl Session {
             .map(PathBuf::from)
             .map_or_else(|| self.cwd.clone(), |p| self.cwd.join(p))
     }
+    /// Erases all previous messages from the conversation history (zdr_transcript), if present.
+    pub fn erase_conversation_history(&self) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(transcript) = state.zdr_transcript.as_mut() {
+            transcript.clear();
+        }
+
+        // When using the experimental OpenAI Responses API with server-side
+        // storage enabled, `previous_response_id` is used to let the model
+        // access the earlier part of the conversation **without** having to
+        // resend the full transcript. To truly wipe all historical context
+        // we must drop this identifier as well, otherwise the backend will
+        // still be able to retrieve the prior messages via the ID even
+        // though our local transcript has been cleared. See
+        // https://platform.openai.com/docs/guides/responses for details.
+        state.previous_response_id = None;
+    }
 }
 
 /// Mutable state of the agent
@@ -549,6 +566,11 @@ async fn submission_loop(
 
         debug!(?sub, "Submission");
         match sub.op {
+            Op::EraseConversationHistory => {
+                if let Some(sess) = sess.as_ref() {
+                    sess.erase_conversation_history();
+                }
+            }
             Op::Interrupt => {
                 let sess = match sess.as_ref() {
                     Some(sess) => sess,

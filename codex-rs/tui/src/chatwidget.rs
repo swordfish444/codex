@@ -35,6 +35,9 @@ use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::BottomPane;
 use crate::bottom_pane::BottomPaneParams;
 use crate::bottom_pane::InputResult;
+use crate::compact::Role;
+use crate::compact::TranscriptEntry;
+use crate::compact::generate_compact_summary;
 use crate::conversation_history_widget::ConversationHistoryWidget;
 use crate::history_cell::PatchEventType;
 use crate::user_approval_widget::ApprovalRequest;
@@ -49,6 +52,7 @@ pub(crate) struct ChatWidget<'a> {
     config: Config,
     initial_user_message: Option<UserMessage>,
     token_usage: TokenUsage,
+    transcript: Vec<TranscriptEntry>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -135,6 +139,7 @@ impl ChatWidget<'_> {
                 initial_images,
             ),
             token_usage: TokenUsage::default(),
+            transcript: Vec::new(),
         }
     }
 
@@ -207,7 +212,13 @@ impl ChatWidget<'_> {
 
         // Only show text portion in conversation history for now.
         if !text.is_empty() {
-            self.conversation_history.add_user_message(text);
+            // Forward a *copy* of the text to the history widget so we can
+            // still use the original value afterwards.
+            self.conversation_history.add_user_message(text.clone());
+            self.transcript.push(TranscriptEntry {
+                role: Role::User,
+                text,
+            });
         }
         self.conversation_history.scroll_to_bottom();
     }
@@ -234,8 +245,14 @@ impl ChatWidget<'_> {
                 self.request_redraw();
             }
             EventMsg::AgentMessage(AgentMessageEvent { message }) => {
+                // Preserve `message` for the transcript after adding it to the
+                // conversation history.
                 self.conversation_history
-                    .add_agent_message(&self.config, message);
+                    .add_agent_message(&self.config, message.clone());
+                self.transcript.push(TranscriptEntry {
+                    role: Role::Assistant,
+                    text: message,
+                });
                 self.request_redraw();
             }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
@@ -408,6 +425,88 @@ impl ChatWidget<'_> {
     /// Forward file-search results to the bottom pane.
     pub(crate) fn apply_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
         self.bottom_pane.on_file_search_result(query, matches);
+    }
+
+    // (removed deprecated synchronous `compact` implementation)
+
+    /// Kick off an asynchronous summarization of the current transcript.
+    /// Returns immediately so the UI stays responsive.
+    pub(crate) fn start_compact(&mut self) {
+        // Show status indicator immediately.
+        self.bottom_pane.set_task_running(true);
+        self.bottom_pane
+            .update_status_text("Summarizing context…".to_string());
+        self.request_redraw();
+
+        // Clone data required for the background task.
+        let transcript = self.transcript.clone();
+        let model = self.config.model.clone();
+        let config_clone = self.config.clone();
+        let app_event_tx = self.app_event_tx.clone();
+
+        // Spawn the summarization on a blocking thread to avoid CPU-bound work
+        // stalling the async runtime (and thus the UI).
+        tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(async move {
+                let result =
+                    generate_compact_summary(&transcript, &model, &config_clone).await;
+                let evt = match result {
+                    Ok(summary) => AppEvent::CompactComplete(Ok(summary)),
+                    Err(e) => AppEvent::CompactComplete(Err(format!("{e}"))),
+                };
+                app_event_tx.send(evt);
+            });
+        });
+    }
+
+    /// Apply the completed summary returned by the background task.
+    pub(crate) fn apply_compact_summary(&mut self, result: Result<String, String>) {
+        match result {
+            Ok(summary) => {
+                self.conversation_history.clear_agent_history();
+                self.transcript.clear();
+                // clear session history in backend
+                self.submit_op(Op::EraseConversationHistory);
+                self.conversation_history
+                    .add_agent_message(&self.config, summary.clone());
+                self.transcript = vec![TranscriptEntry {
+                    role: Role::Assistant,
+                    text: summary,
+                }];
+
+                // Re-configure the Codex session so that the backend agent starts with
+                // a clean conversation context.
+                let instructions = self.config.instructions.clone();
+                let op = Op::ConfigureSession {
+                    provider: self.config.model_provider.clone(),
+                    model: self.config.model.clone(),
+                    model_reasoning_effort: self.config.model_reasoning_effort,
+                    model_reasoning_summary: self.config.model_reasoning_summary,
+                    instructions,
+                    approval_policy: self.config.approval_policy,
+                    sandbox_policy: self.config.sandbox_policy.clone(),
+                    disable_response_storage: self.config.disable_response_storage,
+                    notify: self.config.notify.clone(),
+                    cwd: self.config.cwd.clone(),
+                };
+                self.submit_op(op);
+
+                // Reset the recorded token usage because we start a fresh
+                // conversation context. This ensures the *context remaining*
+                // indicator in the composer is updated immediately.
+                self.token_usage = TokenUsage::default();
+                self.bottom_pane
+                    .set_token_usage(self.token_usage.clone(), self.config.model_context_window);
+            }
+            Err(msg) => {
+                self.conversation_history.add_error(msg);
+            }
+        }
+
+        // Hide status indicator and refresh UI.
+        self.bottom_pane.set_task_running(false);
+        self.request_redraw();
     }
 
     /// Handle Ctrl-C key press.

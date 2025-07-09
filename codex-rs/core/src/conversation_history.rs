@@ -35,6 +35,37 @@ impl ConversationHistory {
             }
         }
     }
+
+    /// Clears the conversation history.
+    pub(crate) fn clear(&mut self) {
+        self.items.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::ResponseItem;
+
+    #[test]
+    fn clear_removes_all_items() {
+        let mut hist = ConversationHistory::new();
+
+        use crate::models::ContentItem;
+
+        let items = vec![ResponseItem::Message {
+            role: "user".into(),
+            content: vec![ContentItem::InputText { text: "hello".into() }],
+        }];
+
+        hist.record_items(items.iter());
+
+        assert_eq!(hist.contents().len(), 1, "sanity – item should be present");
+
+        hist.clear();
+
+        assert!(hist.contents().is_empty(), "all items should be removed");
+    }
 }
 
 /// Anything that is not a system message or "reasoning" message is considered

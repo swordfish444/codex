@@ -198,6 +198,10 @@ impl ConversationHistoryWidget {
         self.add_to_history(HistoryCell::new_agent_message(config, message));
     }
 
+    pub fn clear_agent_history(&mut self) {
+        self.clear_all();
+    }
+
     pub fn add_agent_reasoning(&mut self, config: &Config, text: String) {
         self.add_to_history(HistoryCell::new_agent_reasoning(config, text));
     }
@@ -247,6 +251,10 @@ impl ConversationHistoryWidget {
             cell,
             line_count: Cell::new(count),
         });
+    }
+
+    fn clear_all(&mut self) {
+        self.entries.clear();
     }
 
     pub fn record_completed_exec_command(

@@ -33,6 +33,8 @@ pub struct Submission {
 #[allow(clippy::large_enum_variant)]
 #[non_exhaustive]
 pub enum Op {
+    /// Erase all conversation history for the current session.
+    EraseConversationHistory,
     /// Configure the model session.
     ConfigureSession {
         /// Provider identifier ("openai", "openrouter", ...).

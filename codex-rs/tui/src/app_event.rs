@@ -42,4 +42,7 @@ pub(crate) enum AppEvent {
         query: String,
         matches: Vec<FileMatch>,
     },
+
+    /// Result of the asynchronous `/compact` summarization.
+    CompactComplete(Result<String, String>),
 }
