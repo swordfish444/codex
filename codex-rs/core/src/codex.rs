@@ -783,7 +783,7 @@ async fn submission_loop(
                 });
             }
 
-            Op::ClearHistory {} => {
+            Op::ClearHistory => {
                 if let Some(sess) = sess.as_ref() {
                     let mut state = sess.state.lock().unwrap();
                     if let Some(transcript) = state.zdr_transcript.as_mut() {
