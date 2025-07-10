@@ -449,8 +449,7 @@ impl ChatWidget<'_> {
         tokio::task::spawn_blocking(move || {
             let rt = tokio::runtime::Handle::current();
             rt.block_on(async move {
-                let result =
-                    generate_compact_summary(&transcript, &model, &config_clone).await;
+                let result = generate_compact_summary(&transcript, &model, &config_clone).await;
                 let evt = match result {
                     Ok(summary) => AppEvent::CompactComplete(Ok(summary)),
                     Err(e) => AppEvent::CompactComplete(Err(format!("{e}"))),
