@@ -93,9 +93,7 @@ impl ChatComposer<'_> {
                 if percent_remaining > 25 {
                     format!("{BASE_PLACEHOLDER_TEXT} — {percent_remaining}% context left")
                 } else {
-                    format!(
-                        "{BASE_PLACEHOLDER_TEXT} — {percent_remaining}% context left (consider /compact)"
-                    )
+                    format!("{BASE_PLACEHOLDER_TEXT} — {percent_remaining}% context left")
                 }
             }
             (total_tokens, None) => {
