@@ -55,7 +55,9 @@ mod tests {
 
         let items = vec![ResponseItem::Message {
             role: "user".into(),
-            content: vec![ContentItem::InputText { text: "hello".into() }],
+            content: vec![ContentItem::InputText {
+                text: "hello".into(),
+            }],
         }];
 
         hist.record_items(items.iter());
