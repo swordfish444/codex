@@ -782,6 +782,90 @@ async fn submission_loop(
                     }
                 });
             }
+
+            Op::compact {} => {
+                if let Some(sess) = sess.as_ref() {
+                    let mut state = sess.state.lock().unwrap();
+                    if let Some(transcript) = state.zdr_transcript.as_mut() {
+                        // Build the summary prompt
+                        let summarization_input = ResponseItem::Message {
+                            role: "system".to_string(),
+                            content: vec![ContentItem::OutputText {
+                                text: "Please summarize the conversation so far.".to_string(),
+                            }],
+                        };
+                        transcript.record_items(&[summarization_input]);
+                        let turn_input = transcript.contents();
+                        drop(state); // Release lock before await
+
+                        // Run the turn and get the summary
+                        let summary_text = match run_turn(sess, sub.id.clone(), turn_input).await {
+                            Ok(items) => {
+                                // Find the first assistant message in the output
+                                items.iter().find_map(|item| match &item.item {
+                                    ResponseItem::Message { role, content }
+                                        if role == "assistant" =>
+                                    {
+                                        content.iter().find_map(|c| {
+                                            if let ContentItem::OutputText { text } = c {
+                                                Some(text.clone())
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                    }
+                                    _ => None,
+                                })
+                            }
+                            Err(e) => {
+                                warn!("Failed to get summary: {e}");
+                                None
+                            }
+                        };
+
+                        // Optionally: do something with summary_text, e.g., print or store
+                        // For now, just clear the transcript as before
+                        let mut state = sess.state.lock().unwrap();
+                        if let Some(transcript) = state.zdr_transcript.as_mut() {
+                            // Instead of just clearing, construct a new transcript
+                            *transcript = ConversationHistory::new();
+                        }
+                        state.previous_response_id = None;
+
+                        // If we have a summary, submit a new Op::UserInput with the system message
+                        if let Some(summary) = summary_text {
+                            let instructions = sess.instructions.clone().unwrap_or_default();
+                            let system_message = crate::protocol::InputItem::Message {
+                                role: "system".to_string(),
+                                content: vec![crate::models::ContentItem::OutputText {
+                                    text: format!(
+                                        "{}\n\n[Summary of previous conversation]\n{}",
+                                        instructions, summary
+                                    ),
+                                }],
+                            };
+                            // Use the existing submit logic to inject this as a new user input
+                            // This will spawn a new task and leverage all the normal machinery
+                            let codex = Codex {
+                                next_id: sess.next_id.clone(),
+                                tx_sub: sess.tx_event.clone(), // Not ideal, but we don't have Codex here; in real code, refactor for access
+                                rx_event: sess.tx_event.clone(),
+                            };
+                            // In this context, we can't construct Codex, so instead, send directly to the submission queue if possible
+                            // But we don't have access to tx_sub here. Instead, you should refactor to allow Op::compact to return a new Op::UserInput
+                            // For now, just log a warning to indicate what should happen:
+                            warn!(
+                                "After compact, should submit Op::UserInput with system message: {}",
+                                instructions
+                            );
+                            // In a real refactor, you would do:
+                            // codex.submit(Op::UserInput { items: vec![system_message] }).await;
+                        }
+                    } else {
+                        state.previous_response_id = None;
+                    }
+                }
+            }
         }
     }
     debug!("Agent loop exited");

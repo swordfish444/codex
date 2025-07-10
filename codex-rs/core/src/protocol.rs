@@ -108,6 +108,9 @@ pub enum Op {
 
     /// Request a single history entry identified by `log_id` + `offset`.
     GetHistoryEntryRequest { offset: usize, log_id: u64 },
+
+    /// Clear the message history.
+    compact,
 }
 
 /// Determines the conditions under which the user is consulted to approve

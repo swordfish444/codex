@@ -22,6 +22,11 @@ impl ConversationHistory {
         self.items.clone()
     }
 
+    /// clears the conversation history.
+    pub(crate) fn clear(&mut self) {
+        self.items.clear();
+    }
+
     /// `items` is ordered from oldest to newest.
     pub(crate) fn record_items<I>(&mut self, items: I)
     where
