@@ -42,6 +42,18 @@ impl ConversationHistory {
     }
 }
 
+/// Anything that is not a system message or "reasoning" message is considered
+/// an API message.
+fn is_api_message(message: &ResponseItem) -> bool {
+    match message {
+        ResponseItem::Message { role, .. } => role.as_str() != "system",
+        ResponseItem::FunctionCallOutput { .. }
+        | ResponseItem::FunctionCall { .. }
+        | ResponseItem::LocalShellCall { .. } => true,
+        ResponseItem::Reasoning { .. } | ResponseItem::Other => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -53,7 +65,7 @@ mod tests {
 
         use crate::models::ContentItem;
 
-        let items = vec![ResponseItem::Message {
+        let items = [ResponseItem::Message {
             role: "user".into(),
             content: vec![ContentItem::InputText {
                 text: "hello".into(),
@@ -67,17 +79,5 @@ mod tests {
         hist.clear();
 
         assert!(hist.contents().is_empty(), "all items should be removed");
-    }
-}
-
-/// Anything that is not a system message or "reasoning" message is considered
-/// an API message.
-fn is_api_message(message: &ResponseItem) -> bool {
-    match message {
-        ResponseItem::Message { role, .. } => role.as_str() != "system",
-        ResponseItem::FunctionCallOutput { .. }
-        | ResponseItem::FunctionCall { .. }
-        | ResponseItem::LocalShellCall { .. } => true,
-        ResponseItem::Reasoning { .. } | ResponseItem::Other => false,
     }
 }
