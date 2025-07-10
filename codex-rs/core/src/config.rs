@@ -892,6 +892,7 @@ disable_response_storage = true
             hide_agent_reasoning: false,
             model_reasoning_effort: ReasoningEffort::default(),
             model_reasoning_summary: ReasoningSummary::default(),
+            model_supports_reasoning_summaries: false,
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);
