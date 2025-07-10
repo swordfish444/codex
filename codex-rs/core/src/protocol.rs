@@ -110,7 +110,7 @@ pub enum Op {
     GetHistoryEntryRequest { offset: usize, log_id: u64 },
 
     /// Clear the message history.
-    compact,
+    ClearHistory,
 }
 
 /// Determines the conditions under which the user is consulted to approve
