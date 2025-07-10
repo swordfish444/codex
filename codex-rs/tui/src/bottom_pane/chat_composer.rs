@@ -94,7 +94,7 @@ impl ChatComposer<'_> {
                     format!("{BASE_PLACEHOLDER_TEXT} — {percent_remaining}% context left")
                 } else {
                     format!(
-                        "{BASE_PLACEHOLDER_TEXT} — {percent_remaining}% context left (consider /compact)"
+                        "{BASE_PLACEHOLDER_TEXT} — {percent_remaining}% context left"
                     )
                 }
             }
