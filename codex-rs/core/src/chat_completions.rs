@@ -486,18 +486,21 @@ mod tests {
 
         let mut events = Vec::new();
         while let Some(ev) = rx.recv().await {
-            events.push(ev.expect("stream error"));
+            match ev {
+                Ok(event) => events.push(event),
+                Err(e) => panic!("stream error: {e}"),
+            }
         }
 
         assert_eq!(events.len(), 4);
 
         let mut text = String::new();
-        for i in 0..2 {
-            match &events[i] {
+        for (i, event) in events.iter().take(2).enumerate() {
+            match event {
                 ResponseEvent::OutputItemDone(ResponseItem::Message { role, content })
                     if role == "assistant" =>
                 {
-                    if let Some(ContentItem::OutputText { text: t }) = content.get(0) {
+                    if let Some(ContentItem::OutputText { text: t }) = content.first() {
                         text.push_str(t);
                     }
                 }
