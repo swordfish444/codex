@@ -468,10 +468,12 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::models::{
-        FunctionCallOutputPayload, LocalShellAction, LocalShellExecAction, LocalShellStatus,
-    };
-    use futures::{StreamExt, stream};
+    use crate::models::FunctionCallOutputPayload;
+    use crate::models::LocalShellAction;
+    use crate::models::LocalShellExecAction;
+    use crate::models::LocalShellStatus;
+    use futures::StreamExt;
+    use futures::stream;
 
     /// Helper constructing a minimal assistant text chunk.
     fn text_chunk(txt: &str) -> ResponseEvent {
@@ -565,10 +567,15 @@ mod tests {
     #[tokio::test]
     async fn formats_tool_calls_in_chat_payload() {
         use serde_json::Value;
-        use std::sync::{Arc, Mutex};
-        use wiremock::{
-            Mock, MockServer, Request, Respond, ResponseTemplate, matchers::method, matchers::path,
-        };
+        use std::sync::Arc;
+        use std::sync::Mutex;
+        use wiremock::Mock;
+        use wiremock::MockServer;
+        use wiremock::Request;
+        use wiremock::Respond;
+        use wiremock::ResponseTemplate;
+        use wiremock::matchers::method;
+        use wiremock::matchers::path;
 
         struct CaptureResponder(Arc<Mutex<Option<Value>>>);
         impl Respond for CaptureResponder {

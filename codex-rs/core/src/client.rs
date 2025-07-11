@@ -397,7 +397,8 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::models::{LocalShellAction, LocalShellStatus};
+    use crate::models::LocalShellAction;
+    use crate::models::LocalShellStatus;
     use tokio_util::io::ReaderStream;
 
     /// Build a tiny SSE string with the provided events.
