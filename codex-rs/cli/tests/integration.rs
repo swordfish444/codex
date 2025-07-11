@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used)]
 
+use codex_core::exec::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use predicates::prelude::*;
 use std::fs;
 use std::path::Path;
@@ -74,7 +75,7 @@ event: response.completed\ndata: {}\n\n\n",
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn full_conversation_turn_integration() {
-    if std::env::var("CODEX_SANDBOX_NETWORK_DISABLED").is_ok() {
+    if std::env::var(CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
         println!("Skipping test because network is disabled");
         return;
     }
@@ -96,10 +97,12 @@ async fn full_conversation_turn_integration() {
     }
 
     let home = TempDir::new().unwrap();
+    let sandbox = TempDir::new().unwrap();
     write_config(home.path(), &server);
 
     let mut cmd = assert_cmd::Command::cargo_bin("codex").unwrap();
     cmd.env("CODEX_HOME", home.path());
+    cmd.current_dir(sandbox.path());
     cmd.arg("exec").arg("--skip-git-repo-check").arg("Hello");
 
     cmd.assert()
@@ -109,7 +112,7 @@ async fn full_conversation_turn_integration() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tool_invocation_flow() {
-    if std::env::var("CODEX_SANDBOX_NETWORK_DISABLED").is_ok() {
+    if std::env::var(CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
         println!("Skipping test because network is disabled");
         return;
     }
@@ -151,10 +154,12 @@ async fn tool_invocation_flow() {
     }
 
     let home = TempDir::new().unwrap();
+    let sandbox = TempDir::new().unwrap();
     write_config(home.path(), &server);
 
     let mut cmd = assert_cmd::Command::cargo_bin("codex").unwrap();
     cmd.env("CODEX_HOME", home.path());
+    cmd.current_dir(sandbox.path());
     cmd.arg("exec")
         .arg("--skip-git-repo-check")
         .arg("Run shell");
