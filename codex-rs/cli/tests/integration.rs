@@ -32,10 +32,9 @@ wire_api = "responses"
 fn sse_message(text: &str) -> String {
     format!(
         "event: response.output_item.done\n\
-data: {{\"type\":\"response.output_item.done\",\"item\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"{}\"}}]}}}}\n\n\
+data: {{\"type\":\"response.output_item.done\",\"item\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"{text}\"}}]}}}}\n\n\
 event: response.completed\n\
-data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp1\",\"output\":[]}}}}\n\n\n",
-        text
+data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp1\",\"output\":[]}}}}\n\n\n"
     )
 }
 
@@ -54,9 +53,8 @@ fn sse_function_call() -> String {
         "response": {"id": "resp1", "output": []}
     });
     format!(
-        "event: response.output_item.done\ndata: {}\n\n\
-event: response.completed\ndata: {}\n\n\n",
-        call, completed
+        "event: response.output_item.done\ndata: {call}\n\n\
+event: response.completed\ndata: {completed}\n\n\n"
     )
 }
 
@@ -70,9 +68,8 @@ fn sse_final_after_call() -> String {
         "response": {"id": "resp2", "output": []}
     });
     format!(
-        "event: response.output_item.done\ndata: {}\n\n\
-event: response.completed\ndata: {}\n\n\n",
-        msg, completed
+        "event: response.output_item.done\ndata: {msg}\n\n\
+event: response.completed\ndata: {completed}\n\n\n"
     )
 }
 
