@@ -793,13 +793,13 @@ async fn submission_loop(
                 };
 
                 // Create a summarization request as user input
-                const SUMMARIZATION_PROMPT: &str = concat!(
-                    "Please provide a summary of our conversation so far, highlighting key points, ",
-                    "decisions made, and any important context that would be useful for future reference. ",
-                    "This summary will be used to replace our conversation history with a more concise ",
-                    "version so choose what details you will need to continue your work. ",
-                    "Provide the summary directly without main title."
-                );
+                const SUMMARIZATION_PROMPT: &str = r#"
+                    Please provide a summary of our conversation so far, highlighting key points,
+                    decisions made, and any important context that would be useful for future reference.
+                    This summary will be used to replace our conversation history with a more concise
+                    version so choose what details you will need to continue your work.
+                    Provide the summary directly without main title.
+                "#;
 
                 let summarization_prompt = vec![InputItem::Text {
                     text: SUMMARIZATION_PROMPT.to_string(),
