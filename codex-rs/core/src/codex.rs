@@ -782,6 +782,28 @@ async fn submission_loop(
                     }
                 });
             }
+
+            Op::SummarizeContext => {
+                let sess = match sess.as_ref() {
+                    Some(sess) => sess,
+                    None => {
+                        send_no_session_event(sub.id).await;
+                        continue;
+                    }
+                };
+
+                // Create a summarization request as user input
+                let summarization_prompt = vec![InputItem::Text {
+                    text: "Please provide a summary of our conversation so far, highlighting key points, decisions made, and any important context that would be useful for future reference. This summary will be used to replace our conversation history with a more concise version so choose what details you will need to continue your work.".to_string(),
+                }];
+
+                // attempt to inject input into current task
+                if let Err(items) = sess.inject_input(summarization_prompt) {
+                    // no current task, spawn a new one
+                    let task = AgentTask::spawn(Arc::clone(sess), sub.id, items);
+                    sess.set_task(task);
+                }
+            }
         }
     }
     debug!("Agent loop exited");
