@@ -455,10 +455,6 @@ data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"{id}\",\"output\
             .create_async()
             .await;
 
-        unsafe {
-            std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "1");
-        }
-
         let config = sample_config(&server);
         let provider = config.model_provider.clone();
         let client = ModelClient::new(
@@ -503,10 +499,6 @@ data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"{id}\",\"output\
             .create_async()
             .await;
 
-        unsafe {
-            std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "1");
-        }
-
         let config = sample_config(&server);
         let provider = config.model_provider.clone();
         let client = ModelClient::new(
@@ -531,10 +523,6 @@ data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"{id}\",\"output\
             .with_body("bad request")
             .create_async()
             .await;
-
-        unsafe {
-            std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "0");
-        }
 
         let config = sample_config(&server);
         let provider = config.model_provider.clone();

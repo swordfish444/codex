@@ -517,6 +517,13 @@ mod tests {
             .create_async()
             .await;
 
+        // Ensure we control the retry behaviour for the remainder of this test
+        // suite.  This test is executed first alphabetically so it sets the
+        // value before any use of the flag.
+        unsafe {
+            std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "1");
+        }
+
         let config = sample_config(&server, WireApi::Chat);
         let provider = config.model_provider.clone();
 
