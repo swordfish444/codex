@@ -1,0 +1,14 @@
+{
+  "first": [
+    {
+      "type": "response.output_item.done",
+      "item": { "type": "message", "role": "assistant", "content": [] }
+    }
+  ],
+  "second": [
+    {
+      "type": "response.completed",
+      "response": { "id": "resp_ok", "output": [] }
+    }
+  ]
+}

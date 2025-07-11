@@ -21,16 +21,48 @@ use wiremock::ResponseTemplate;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
 
-fn sse_incomplete() -> String {
-    // Only a single line; missing the completed event.
-    "event: response.output_item.done\n\n".to_string()
-}
+/// Load the SSE event sequences for the test from a JSON fixture.
+///
+/// The fixture lives in `tests/fixtures/stream_retry.json` and defines two
+/// arrays of events: `first` and `second`. Each entry represents the JSON body
+/// of a single SSE event. When the Responses API evolves with new fields or
+/// event kinds simply update that JSON file or add a new one and reference it
+/// here.
+fn load_fixture() -> (String, String) {
+    use serde_json::Value;
+    use std::fs;
+    use std::path::PathBuf;
 
-fn sse_completed(id: &str) -> String {
-    format!(
-        "event: response.completed\n\
-data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"{id}\",\"output\":[]}}}}\n\n\n"
-    )
+    fn events_to_sse(events: &[Value]) -> String {
+        let mut out = String::new();
+        for ev in events {
+            let kind = ev
+                .get("type")
+                .and_then(Value::as_str)
+                .expect("event missing type");
+            out.push_str("event: ");
+            out.push_str(kind);
+            out.push('\n');
+            out.push_str("data: ");
+            out.push_str(&ev.to_string());
+            out.push_str("\n\n");
+        }
+        out
+    }
+
+    let path: PathBuf = [
+        env!("CARGO_MANIFEST_DIR"),
+        "tests",
+        "fixtures",
+        "stream_retry.json",
+    ]
+    .iter()
+    .collect();
+    let raw = fs::read_to_string(path).expect("fixture missing");
+    let v: Value = serde_json::from_str(&raw).expect("invalid fixture JSON");
+    let first = events_to_sse(v.get("first").and_then(Value::as_array).unwrap());
+    let second = events_to_sse(v.get("second").and_then(Value::as_array).unwrap());
+    (first, second)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -45,8 +77,13 @@ async fn retries_on_early_close() {
     }
 
     let server = MockServer::start().await;
+    // Convert the JSON fixture into SSE event strings for the two mock calls.
+    let (sse_first, sse_second) = load_fixture();
 
-    struct SeqResponder;
+    struct SeqResponder {
+        first: String,
+        second: String,
+    }
     impl Respond for SeqResponder {
         fn respond(&self, _: &Request) -> ResponseTemplate {
             use std::sync::atomic::AtomicUsize;
@@ -56,18 +93,21 @@ async fn retries_on_early_close() {
             if n == 0 {
                 ResponseTemplate::new(200)
                     .insert_header("content-type", "text/event-stream")
-                    .set_body_raw(sse_incomplete(), "text/event-stream")
+                    .set_body_raw(self.first.clone(), "text/event-stream")
             } else {
                 ResponseTemplate::new(200)
                     .insert_header("content-type", "text/event-stream")
-                    .set_body_raw(sse_completed("resp_ok"), "text/event-stream")
+                    .set_body_raw(self.second.clone(), "text/event-stream")
             }
         }
     }
 
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
-        .respond_with(SeqResponder {})
+        .respond_with(SeqResponder {
+            first: sse_first,
+            second: sse_second,
+        })
         .expect(2)
         .mount(&server)
         .await;

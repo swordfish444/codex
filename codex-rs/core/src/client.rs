@@ -391,3 +391,85 @@ async fn stream_from_fixture(path: impl AsRef<Path>) -> Result<ResponseStream> {
     tokio::spawn(process_sse(stream, tx_event));
     Ok(ResponseStream { rx_event })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn make_stream(events: Vec<serde_json::Value>) -> impl Stream<Item = Result<Bytes>> {
+        use futures::TryStreamExt as _;
+        let mut buf = String::new();
+        for ev in &events {
+            let kind = ev["type"].as_str().unwrap();
+            buf.push_str("event: ");
+            buf.push_str(kind);
+            buf.push('\n');
+            buf.push_str("data: ");
+            buf.push_str(&ev.to_string());
+            buf.push_str("\n\n");
+        }
+        ReaderStream::new(std::io::Cursor::new(buf))
+            .map_ok(Bytes::from)
+            .map_err(CodexErr::Io)
+    }
+
+    #[tokio::test]
+    async fn table_driven_event_kinds() {
+        struct Case {
+            event: serde_json::Value,
+            expect: Option<&'static str>,
+        }
+
+        let cases = vec![
+            Case {
+                event: json!({ "type": "response.created", "response": {} }),
+                expect: Some("Created"),
+            },
+            Case {
+                event: json!({
+                    "type": "response.output_item.done",
+                    "item": { "type": "message", "role": "assistant", "content": [] }
+                }),
+                expect: Some("OutputItemDone"),
+            },
+            Case {
+                event: json!({ "type": "response.in_progress" }),
+                expect: None,
+            },
+            Case {
+                event: json!({ "type": "unknown.event" }),
+                expect: None,
+            },
+        ];
+
+        for case in cases {
+            let completed =
+                json!({ "type": "response.completed", "response": { "id": "test", "output": [] } });
+            let stream = make_stream(vec![case.event.clone(), completed]);
+            let (tx, mut rx) = mpsc::channel::<Result<ResponseEvent>>(8);
+            tokio::spawn(process_sse(stream, tx));
+
+            let mut got = Vec::new();
+            while let Some(ev) = rx.recv().await {
+                got.push(ev.unwrap());
+            }
+
+            assert!(
+                matches!(got.last(), Some(ResponseEvent::Completed { response_id, .. }) if response_id == "test")
+            );
+            let non_completed = &got[..got.len() - 1];
+            match case.expect {
+                Some("Created") => {
+                    assert!(matches!(non_completed.get(0), Some(ResponseEvent::Created)))
+                }
+                Some("OutputItemDone") => assert!(matches!(
+                    non_completed.get(0),
+                    Some(ResponseEvent::OutputItemDone(_))
+                )),
+                None => assert!(non_completed.is_empty()),
+                _ => unreachable!(),
+            }
+        }
+    }
+}
