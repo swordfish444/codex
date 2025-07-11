@@ -494,7 +494,9 @@ mod tests {
         let mut text = String::new();
         for i in 0..2 {
             match &events[i] {
-                ResponseEvent::OutputItemDone(ResponseItem::Message { role, content }) if role == "assistant" => {
+                ResponseEvent::OutputItemDone(ResponseItem::Message { role, content })
+                    if role == "assistant" =>
+                {
                     if let Some(ContentItem::OutputText { text: t }) = content.get(0) {
                         text.push_str(t);
                     }
@@ -505,7 +507,11 @@ mod tests {
         assert_eq!(text, "Hello world");
 
         match &events[2] {
-            ResponseEvent::OutputItemDone(ResponseItem::FunctionCall { name, arguments, call_id }) => {
+            ResponseEvent::OutputItemDone(ResponseItem::FunctionCall {
+                name,
+                arguments,
+                call_id,
+            }) => {
                 assert_eq!(name, "foo");
                 assert_eq!(call_id, "call1");
                 assert_eq!(arguments, "{\"a\": 1}");
