@@ -180,6 +180,7 @@ pub struct ShellToolCallParams {
 #[derive(Deserialize, Debug, Clone)]
 pub struct FunctionCallOutputPayload {
     pub content: String,
+    #[allow(dead_code)]
     pub success: Option<bool>,
 }
 
