@@ -475,8 +475,7 @@ mod tests {
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<ResponseEvent>>(16);
 
         // ReaderStream turns the in-memory string into an async byte stream.
-        let stream = ReaderStream::new(std::io::Cursor::new(sse.to_string()))
-            .map_err(CodexErr::Io);
+        let stream = ReaderStream::new(std::io::Cursor::new(sse.to_string())).map_err(CodexErr::Io);
 
         tokio::spawn(process_chat_sse(stream, tx));
 
@@ -489,7 +488,7 @@ mod tests {
 
         let mut events = Vec::new();
         while let Some(ev) = stream.next().await {
-            events.push(ev.expect("stream error"));
+            events.push(ev.unwrap());
         }
         events
     }
@@ -540,7 +539,11 @@ mod tests {
         assert_eq!(events.len(), 2, "function call and Completed expected");
 
         match &events[0] {
-            ResponseEvent::OutputItemDone(ResponseItem::FunctionCall { name, arguments, call_id }) => {
+            ResponseEvent::OutputItemDone(ResponseItem::FunctionCall {
+                name,
+                arguments,
+                call_id,
+            }) => {
                 assert_eq!(name, "get_weather");
                 assert_eq!(call_id, "call_123");
                 assert_eq!(arguments, "{\"location\":\"San Francisco\"}");
