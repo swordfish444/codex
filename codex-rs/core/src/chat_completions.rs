@@ -452,6 +452,9 @@ pub(crate) trait AggregateStreamExt: Stream<Item = Result<ResponseEvent>> + Size
     ///     // event now contains cumulative text
     /// }
     /// ```
+    ///
+    /// See [`tests::aggregates_consecutive_message_chunks`] for an example.
+    /// ```
     fn aggregate(self) -> AggregatedChatStream<Self> {
         AggregatedChatStream {
             inner: self,
