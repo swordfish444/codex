@@ -467,16 +467,11 @@ impl<T> AggregateStreamExt for T where T: Stream<Item = Result<ResponseEvent>> +
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::super::client::ModelClient;
     use super::*;
     use crate::config::{Config, ConfigOverrides, ConfigToml};
-    use crate::config_types::{
-        ReasoningEffort as ReasoningEffortConfig, ReasoningSummary as ReasoningSummaryConfig,
-    };
     use crate::{ModelProviderInfo, WireApi};
     use mockito::Server;
     use once_cell::sync::Lazy;
-    use reqwest;
     use serde_json::Value;
     use std::sync::Mutex;
 

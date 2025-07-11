@@ -179,9 +179,11 @@ mod tests {
 
     #[test]
     fn responses_api_includes_default_and_extra_tools() {
-        let mut prompt = Prompt::default();
-        prompt.extra_tools = hashmap! {
-            "srv/echo".into() => sample_tool(),
+        let prompt = Prompt {
+            extra_tools: hashmap! {
+                "srv/echo".into() => sample_tool(),
+            },
+            ..Default::default()
         };
 
         let tools = create_tools_json_for_responses_api(&prompt, "gpt-4").unwrap();
@@ -208,9 +210,11 @@ mod tests {
 
     #[test]
     fn chat_api_tools_are_wrapped_correctly() {
-        let mut prompt = Prompt::default();
-        prompt.extra_tools = hashmap! {
-            "srv/echo".into() => sample_tool(),
+        let prompt = Prompt {
+            extra_tools: hashmap! {
+                "srv/echo".into() => sample_tool(),
+            },
+            ..Default::default()
         };
 
         let tools = create_tools_json_for_chat_completions_api(&prompt, "gpt-4").unwrap();
