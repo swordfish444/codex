@@ -391,3 +391,171 @@ async fn stream_from_fixture(path: impl AsRef<Path>) -> Result<ResponseStream> {
     tokio::spawn(process_sse(stream, tx_event));
     Ok(ResponseStream { rx_event })
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use crate::client_common::{Prompt, ResponseEvent};
+    use crate::config::{Config, ConfigOverrides, ConfigToml};
+    use crate::config_types::{
+        ReasoningEffort as ReasoningEffortConfig, ReasoningSummary as ReasoningSummaryConfig,
+    };
+    use crate::{ModelProviderInfo, WireApi};
+    use mockito::Server;
+    use once_cell::sync::Lazy;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tempfile::TempDir;
+
+    fn sample_config(server: &Server) -> Config {
+        let codex_home = TempDir::new().unwrap();
+        let mut cfg = Config::load_from_base_config_with_overrides(
+            ConfigToml::default(),
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )
+        .unwrap();
+        cfg.model_provider = ModelProviderInfo {
+            name: "openai".into(),
+            base_url: format!("{}/v1", server.url()),
+            env_key: Some("PATH".into()),
+            env_key_instructions: None,
+            wire_api: WireApi::Responses,
+            query_params: None,
+            http_headers: None,
+            env_http_headers: None,
+        };
+        cfg.model_provider_id = "openai".into();
+        cfg
+    }
+
+    fn sse_completed(id: &str) -> String {
+        format!(
+            "event: response.completed\n\
+data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"{id}\",\"output\":[]}}}}\n\n\n"
+        )
+    }
+
+    #[tokio::test]
+    async fn retries_then_succeeds() {
+        let mut server = Server::new_async().await;
+        let fail = server
+            .mock("POST", "/v1/responses")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        let success = server
+            .mock("POST", "/v1/responses")
+            .with_status(200)
+            .with_header("content-type", "text/event-stream")
+            .with_body(sse_completed("ok"))
+            .create_async()
+            .await;
+
+        unsafe {
+            std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "1");
+        }
+
+        let config = sample_config(&server);
+        let provider = config.model_provider.clone();
+        let client = ModelClient::new(
+            Arc::new(config),
+            provider,
+            ReasoningEffortConfig::None,
+            ReasoningSummaryConfig::None,
+        );
+
+        let prompt = Prompt::default();
+        let mut stream = client.stream(&prompt).await.unwrap();
+        while let Some(event) = stream.rx_event.recv().await {
+            if matches!(event.unwrap(), ResponseEvent::Completed { .. }) {
+                break;
+            }
+        }
+
+        fail.assert_async().await;
+        success.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn retry_after_header_respected() {
+        let mut server = Server::new_async().await;
+        static CALLS: Lazy<AtomicUsize> = Lazy::new(|| AtomicUsize::new(0));
+        let _m1 = server
+            .mock("POST", "/v1/responses")
+            .match_request(|_| {
+                CALLS.fetch_add(1, Ordering::SeqCst);
+                true
+            })
+            .with_status(429)
+            .with_header("Retry-After", "1")
+            .create_async()
+            .await;
+
+        let _m2 = server
+            .mock("POST", "/v1/responses")
+            .with_status(200)
+            .with_header("content-type", "text/event-stream")
+            .with_body(sse_completed("ok"))
+            .create_async()
+            .await;
+
+        unsafe {
+            std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "1");
+        }
+
+        let config = sample_config(&server);
+        let provider = config.model_provider.clone();
+        let client = ModelClient::new(
+            Arc::new(config),
+            provider,
+            ReasoningEffortConfig::None,
+            ReasoningSummaryConfig::None,
+        );
+
+        let prompt = Prompt::default();
+        let _ = client.stream(&prompt).await.unwrap();
+
+        assert_eq!(CALLS.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn returns_error_body_for_client_error() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("POST", "/v1/responses")
+            .with_status(400)
+            .with_body("bad request")
+            .create_async()
+            .await;
+
+        unsafe {
+            std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "0");
+        }
+
+        let config = sample_config(&server);
+        let provider = config.model_provider.clone();
+        let client = ModelClient::new(
+            Arc::new(config),
+            provider,
+            ReasoningEffortConfig::None,
+            ReasoningSummaryConfig::None,
+        );
+
+        let prompt = Prompt::default();
+        let err = match client.stream(&prompt).await {
+            Ok(_) => panic!("expected error"),
+            Err(e) => e,
+        };
+        match err {
+            CodexErr::UnexpectedStatus(code, body) => {
+                assert_eq!(code, StatusCode::BAD_REQUEST);
+                assert_eq!(body, "bad request");
+            }
+            e => panic!("unexpected error: {e:?}"),
+        }
+    }
+}

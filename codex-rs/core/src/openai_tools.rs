@@ -155,3 +155,72 @@ fn mcp_tool_to_openai_tool(
         "type": "function",
     })
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use maplit::hashmap;
+    use serde_json::Value;
+
+    fn sample_tool() -> mcp_types::Tool {
+        mcp_types::Tool {
+            annotations: None,
+            description: Some("echo".into()),
+            input_schema: mcp_types::ToolInputSchema {
+                properties: Some(json!({"msg": {"type": "string"}})),
+                required: None,
+                r#type: "object".into(),
+            },
+            name: "echo".into(),
+        }
+    }
+
+    #[test]
+    fn responses_api_includes_default_and_extra_tools() {
+        let mut prompt = Prompt::default();
+        prompt.extra_tools = hashmap! {
+            "srv/echo".into() => sample_tool(),
+        };
+
+        let tools = create_tools_json_for_responses_api(&prompt, "gpt-4").unwrap();
+        assert_eq!(tools.len(), 2);
+        assert!(
+            tools
+                .iter()
+                .any(|t| t.get("name") == Some(&Value::String("shell".into())))
+        );
+        assert!(
+            tools
+                .iter()
+                .any(|t| t.get("name") == Some(&Value::String("srv/echo".into())))
+        );
+    }
+
+    #[test]
+    fn codex_models_use_local_shell() {
+        let prompt = Prompt::default();
+        let tools = create_tools_json_for_responses_api(&prompt, "codex-test").unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].get("type").unwrap(), "local_shell");
+    }
+
+    #[test]
+    fn chat_api_tools_are_wrapped_correctly() {
+        let mut prompt = Prompt::default();
+        prompt.extra_tools = hashmap! {
+            "srv/echo".into() => sample_tool(),
+        };
+
+        let tools = create_tools_json_for_chat_completions_api(&prompt, "gpt-4").unwrap();
+        assert_eq!(tools.len(), 2);
+        for tool in tools {
+            assert_eq!(tool.get("type").unwrap(), "function");
+            let func = tool.get("function").unwrap().as_object().unwrap();
+            assert!(func.get("name").is_some());
+            assert!(func.get("parameters").is_some());
+            assert!(!func.contains_key("type"));
+        }
+    }
+}

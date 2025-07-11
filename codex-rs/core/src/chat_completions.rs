@@ -462,3 +462,99 @@ pub(crate) trait AggregateStreamExt: Stream<Item = Result<ResponseEvent>> + Size
 }
 
 impl<T> AggregateStreamExt for T where T: Stream<Item = Result<ResponseEvent>> + Sized {}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::super::client::ModelClient;
+    use super::*;
+    use crate::config::{Config, ConfigOverrides, ConfigToml};
+    use crate::config_types::{
+        ReasoningEffort as ReasoningEffortConfig, ReasoningSummary as ReasoningSummaryConfig,
+    };
+    use crate::{ModelProviderInfo, WireApi};
+    use mockito::Server;
+    use once_cell::sync::Lazy;
+    use reqwest;
+    use serde_json::Value;
+    use std::sync::Mutex;
+
+    static LAST_PAYLOAD: Lazy<Mutex<Option<Value>>> = Lazy::new(|| Mutex::new(None));
+
+    fn sample_config(server: &Server, wire_api: WireApi) -> Config {
+        use tempfile::TempDir;
+        let codex_home = TempDir::new().unwrap();
+        let mut cfg = Config::load_from_base_config_with_overrides(
+            ConfigToml::default(),
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )
+        .unwrap();
+        cfg.model_provider = ModelProviderInfo {
+            name: "openai".into(),
+            base_url: format!("{}/v1", server.url()),
+            env_key: Some("PATH".into()),
+            env_key_instructions: None,
+            wire_api,
+            query_params: None,
+            http_headers: None,
+            env_http_headers: None,
+        };
+        cfg.model_provider_id = "openai".into();
+        cfg
+    }
+
+    #[tokio::test]
+    async fn assembles_chat_payload_correctly() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("POST", "/v1/chat/completions")
+            .match_request(|req| {
+                let body = req.body().unwrap();
+                let v: Value = serde_json::from_slice(body).unwrap();
+                *LAST_PAYLOAD.lock().unwrap() = Some(v);
+                true
+            })
+            .with_status(200)
+            .with_header("content-type", "text/event-stream")
+            .with_body("data: [DONE]\n\n")
+            .create_async()
+            .await;
+
+        let config = sample_config(&server, WireApi::Chat);
+        let provider = config.model_provider.clone();
+
+        let mut prompt = Prompt::default();
+        prompt.input.push(ResponseItem::Message {
+            role: "user".into(),
+            content: vec![ContentItem::InputText { text: "hi".into() }],
+        });
+        prompt.input.push(ResponseItem::FunctionCall {
+            name: "do".into(),
+            arguments: "{}".into(),
+            call_id: "call1".into(),
+        });
+        prompt.input.push(ResponseItem::FunctionCallOutput {
+            call_id: "call1".into(),
+            output: crate::models::FunctionCallOutputPayload {
+                content: "ok".into(),
+                success: None,
+            },
+        });
+
+        // Fire the request; ignore the stream result
+        let http_client = reqwest::Client::new();
+        let _ = stream_chat_completions(&prompt, "gpt-4", &http_client, &provider).await;
+
+        let payload = LAST_PAYLOAD.lock().unwrap().take().unwrap();
+        let msgs = payload.get("messages").unwrap().as_array().unwrap();
+        assert_eq!(msgs[0]["role"], "system");
+        assert_eq!(msgs[1]["role"], "user");
+        assert_eq!(msgs[1]["content"], "hi");
+        assert_eq!(msgs[2]["role"], "assistant");
+        assert!(msgs[2]["tool_calls"].is_array());
+        assert_eq!(msgs[3]["role"], "tool");
+        assert_eq!(msgs[3]["tool_call_id"], "call1");
+    }
+}
