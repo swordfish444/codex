@@ -488,7 +488,10 @@ mod tests {
 
         let mut events = Vec::new();
         while let Some(ev) = stream.next().await {
-            events.push(ev.unwrap());
+            match ev {
+                Ok(ev) => events.push(ev),
+                Err(err) => panic!("stream error: {err}"),
+            }
         }
         events
     }
