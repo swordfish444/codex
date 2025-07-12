@@ -59,7 +59,6 @@ async fn test_summarize_context_spawns_new_agent_task() {
     // At this point, there should be no current task running
     let _sub_id = codex.submit(Op::SummarizeContext).await.unwrap();
 
-    // Should receive a TaskStarted event indicating a new AgentTask was spawned
     let event = timeout(Duration::from_secs(5), codex.next_event())
         .await
         .expect("timeout waiting for task started event")
