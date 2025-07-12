@@ -315,7 +315,7 @@ where
             // duplicated `output` array embedded in the `response.completed`
             // payload.  That produced two concrete issues:
             //   1. No real‑time streaming – the user only saw output after the
-            //      entire turn had finished, which broke the “typing” UX and
+            //      entire turn had finished, which broke the "typing" UX and
             //      made long‑running turns look stalled.
             //   2. Duplicate `function_call_output` items – both the
             //      individual *and* the completed array were forwarded, which
@@ -391,18 +391,28 @@ async fn stream_from_fixture(path: impl AsRef<Path>) -> Result<ResponseStream> {
     tokio::spawn(process_sse(stream, tx_event));
     Ok(ResponseStream { rx_event })
 }
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::print_stdout)]
     use super::*;
     use crate::client_common::Prompt;
-    use crate::config::{Config, ConfigOverrides, ConfigToml};
+    use crate::config::Config;
+    use crate::config::ConfigOverrides;
+    use crate::config::ConfigToml;
     use futures::StreamExt;
-    use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::time::Duration;
+    use std::time::Instant;
     use tempfile::TempDir;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::Request;
+    use wiremock::Respond;
+    use wiremock::ResponseTemplate;
+    use wiremock::matchers::method;
+    use wiremock::matchers::path;
 
     fn default_config(provider: ModelProviderInfo) -> Arc<Config> {
         let codex_home = TempDir::new().unwrap();
@@ -417,6 +427,26 @@ mod tests {
         Arc::new(cfg)
     }
 
+    fn create_test_client(server: &MockServer) -> ModelClient {
+        let provider = ModelProviderInfo {
+            name: "openai".into(),
+            base_url: format!("{}/v1", server.uri()),
+            env_key: Some("PATH".into()),
+            env_key_instructions: None,
+            wire_api: WireApi::Responses,
+            query_params: None,
+            http_headers: None,
+            env_http_headers: None,
+        };
+        let config = default_config(provider.clone());
+        ModelClient::new(
+            config,
+            provider,
+            ReasoningEffortConfig::None,
+            ReasoningSummaryConfig::None,
+        )
+    }
+
     fn sse_completed(id: &str) -> String {
         format!(
             "event: response.completed\n\
@@ -424,17 +454,20 @@ mod tests {
         )
     }
 
+    /// When the first request returns a 500 the client should perform exactly one retry
+    /// (as governed by the `OPENAI_REQUEST_MAX_RETRIES=1` env-var we set below) and then
+    /// succeed. This exercises the generic 5xx retry path.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn retries_once_on_server_error() {
         if std::env::var(crate::exec::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
-            println!("Skipping test due to sandbox network restriction");
             return;
         }
         let server = MockServer::start().await;
         struct SeqResponder;
         impl Respond for SeqResponder {
             fn respond(&self, _req: &Request) -> ResponseTemplate {
-                use std::sync::atomic::{AtomicUsize, Ordering};
+                use std::sync::atomic::AtomicUsize;
+                use std::sync::atomic::Ordering;
                 static CALLS: AtomicUsize = AtomicUsize::new(0);
                 let n = CALLS.fetch_add(1, Ordering::SeqCst);
                 if n == 0 {
@@ -455,24 +488,7 @@ mod tests {
 
         unsafe { std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "1") };
 
-        let provider = ModelProviderInfo {
-            name: "openai".into(),
-            base_url: format!("{}/v1", server.uri()),
-            env_key: Some("PATH".into()),
-            env_key_instructions: None,
-            wire_api: WireApi::Responses,
-            query_params: None,
-            http_headers: None,
-            env_http_headers: None,
-        };
-
-        let config = default_config(provider.clone());
-        let client = ModelClient::new(
-            config,
-            provider,
-            ReasoningEffortConfig::None,
-            ReasoningSummaryConfig::None,
-        );
+        let client = create_test_client(&server);
         let prompt = Prompt::default();
         let mut stream = client.stream(&prompt).await.unwrap();
         while let Some(ev) = stream.next().await {
@@ -482,10 +498,12 @@ mod tests {
         }
     }
 
+    /// A 429 response that carries a `retry-after` header should cause the client to pause
+    /// for the specified delay before retrying. We record wall-clock times and assert that the
+    /// delta is ≥ the header value (1 s).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn retry_after_header_delay() {
         if std::env::var(crate::exec::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
-            println!("Skipping test due to sandbox network restriction");
             return;
         }
         let server = MockServer::start().await;
@@ -517,23 +535,7 @@ mod tests {
 
         unsafe { std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "1") };
 
-        let provider = ModelProviderInfo {
-            name: "openai".into(),
-            base_url: format!("{}/v1", server.uri()),
-            env_key: Some("PATH".into()),
-            env_key_instructions: None,
-            wire_api: WireApi::Responses,
-            query_params: None,
-            http_headers: None,
-            env_http_headers: None,
-        };
-        let config = default_config(provider.clone());
-        let client = ModelClient::new(
-            config,
-            provider,
-            ReasoningEffortConfig::None,
-            ReasoningSummaryConfig::None,
-        );
+        let client = create_test_client(&server);
         let prompt = Prompt::default();
         let mut stream = client.stream(&prompt).await.unwrap();
         while let Some(ev) = stream.next().await {
@@ -546,10 +548,11 @@ mod tests {
         assert!(times[1] - times[0] >= Duration::from_secs(1));
     }
 
+    /// A 429 without `retry-after` triggers the exponential back-off path. We assert that the
+    /// second attempt occurs at least 100 ms after the first (the current back-off floor).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn retry_backoff_no_header() {
         if std::env::var(crate::exec::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
-            println!("Skipping test due to sandbox network restriction");
             return;
         }
         let server = MockServer::start().await;
@@ -581,23 +584,7 @@ mod tests {
 
         unsafe { std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "1") };
 
-        let provider = ModelProviderInfo {
-            name: "openai".into(),
-            base_url: format!("{}/v1", server.uri()),
-            env_key: Some("PATH".into()),
-            env_key_instructions: None,
-            wire_api: WireApi::Responses,
-            query_params: None,
-            http_headers: None,
-            env_http_headers: None,
-        };
-        let config = default_config(provider.clone());
-        let client = ModelClient::new(
-            config,
-            provider,
-            ReasoningEffortConfig::None,
-            ReasoningSummaryConfig::None,
-        );
+        let client = create_test_client(&server);
         let prompt = Prompt::default();
         let mut stream = client.stream(&prompt).await.unwrap();
         while let Some(ev) = stream.next().await {
@@ -610,10 +597,11 @@ mod tests {
         assert!(times[1] - times[0] >= Duration::from_millis(100));
     }
 
+    /// Non-retryable 4xx errors should surface to the caller with their status code and body
+    /// intact; verify that behaviour with a `400 Bad Request` fixture.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn permanent_error_bubbles_body() {
         if std::env::var(crate::exec::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
-            println!("Skipping test due to sandbox network restriction");
             return;
         }
         let server = MockServer::start().await;
@@ -626,23 +614,7 @@ mod tests {
 
         unsafe { std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "0") };
 
-        let provider = ModelProviderInfo {
-            name: "openai".into(),
-            base_url: format!("{}/v1", server.uri()),
-            env_key: Some("PATH".into()),
-            env_key_instructions: None,
-            wire_api: WireApi::Responses,
-            query_params: None,
-            http_headers: None,
-            env_http_headers: None,
-        };
-        let config = default_config(provider.clone());
-        let client = ModelClient::new(
-            config,
-            provider,
-            ReasoningEffortConfig::None,
-            ReasoningSummaryConfig::None,
-        );
+        let client = create_test_client(&server);
         let prompt = Prompt::default();
         let res = client.stream(&prompt).await;
         match res {

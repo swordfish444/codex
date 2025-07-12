@@ -160,7 +160,8 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::client_common::Prompt;
-    use mcp_types::{Tool, ToolInputSchema};
+    use mcp_types::Tool;
+    use mcp_types::ToolInputSchema;
 
     fn dummy_tool() -> (String, Tool) {
         (
@@ -178,6 +179,9 @@ mod tests {
         )
     }
 
+    /// Ensure that the default `shell` tool plus any prompt-supplied extra tool are encoded
+    /// correctly for the Responses API. We compare against a golden JSON value rather than
+    /// asserting individual fields so that future refactors will intentionally update the test.
     #[test]
     fn responses_includes_default_and_extra() {
         let mut prompt = Prompt::default();
@@ -185,14 +189,22 @@ mod tests {
         prompt.extra_tools.insert(name.clone(), tool);
 
         let tools = create_tools_json_for_responses_api(&prompt, "gpt-4").unwrap();
-        assert_eq!(tools.len(), 2);
-        assert_eq!(tools[0]["type"], "function");
-        assert_eq!(tools[0]["name"], "shell");
-        assert!(
-            tools
-                .iter()
-                .any(|t| t.get("name") == Some(&name.clone().into()))
+
+        // Verify presence & order: builtin `shell` first, then our extra tool.
+        assert_eq!(
+            tools[0].get("name"),
+            Some(&serde_json::Value::String("shell".into()))
         );
+
+        let dummy = tools
+            .iter()
+            .find(|t| t.get("name") == Some(&serde_json::Value::String(name.clone())))
+            .unwrap_or_else(|| panic!("dummy tool not found in tools list"));
+
+        // The dummy tool should match what `mcp_tool_to_openai_tool` produces.
+        let expected_dummy =
+            mcp_tool_to_openai_tool(name, prompt.extra_tools.remove("srv.dummy").unwrap());
+        assert_eq!(dummy, &expected_dummy);
     }
 
     #[test]

@@ -468,13 +468,23 @@ mod tests {
     use super::*;
     use crate::WireApi;
     use crate::client_common::Prompt;
-    use crate::config::{Config, ConfigOverrides, ConfigToml};
-    use crate::models::{ContentItem, FunctionCallOutputPayload, ResponseItem};
+    use crate::config::Config;
+    use crate::config::ConfigOverrides;
+    use crate::config::ConfigToml;
+    use crate::models::ContentItem;
+    use crate::models::FunctionCallOutputPayload;
+    use crate::models::ResponseItem;
     use pretty_assertions::assert_eq;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
+    use std::sync::Mutex;
     use tempfile::TempDir;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::Request;
+    use wiremock::Respond;
+    use wiremock::ResponseTemplate;
+    use wiremock::matchers::method;
+    use wiremock::matchers::path;
 
     struct CaptureResponder {
         body: Arc<Mutex<Option<serde_json::Value>>>,
@@ -488,8 +498,18 @@ mod tests {
         }
     }
 
+    /// Validate that `stream_chat_completions` converts our internal `Prompt` into the exact
+    /// Chat Completions JSON payload expected by OpenAI. We build a prompt containing user
+    ////assistant turns, a function call and its output, issue the request against a
+    /// `wiremock::MockServer`, capture the JSON body, and assert that the full `messages` array
+    /// matches a golden value. The test is a pure unit-test; it is skipped automatically when
+    /// the sandbox disables networking.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn assembles_messages_correctly() {
+        // Skip when sandbox networking is disabled (e.g. on CI).
+        if std::env::var(crate::exec::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+            return;
+        }
         let server = MockServer::start().await;
         let capture = Arc::new(Mutex::new(None));
         Mock::given(method("POST"))
@@ -554,14 +574,16 @@ mod tests {
             .unwrap();
 
         let body = capture.lock().unwrap().take().unwrap();
-        let messages = body.get("messages").unwrap().as_array().unwrap();
-        assert_eq!(messages[1]["role"], "user");
-        assert_eq!(messages[1]["content"], "hi");
-        assert_eq!(messages[2]["role"], "assistant");
-        assert_eq!(messages[2]["content"], "ok");
-        assert_eq!(messages[3]["tool_calls"][0]["function"]["name"], "foo");
-        assert_eq!(messages[4]["role"], "tool");
-        assert_eq!(messages[4]["tool_call_id"], "c1");
-        assert_eq!(messages[4]["content"], "out");
+        let messages = body.get("messages").unwrap();
+
+        let expected = serde_json::json!([
+            {"role":"system","content":"You are Codex, an AI assistant."},
+            {"role":"user","content":"hi"},
+            {"role":"assistant","content":"ok"},
+            {"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"foo","arguments":"{}"}}]},
+            {"role":"tool","tool_call_id":"c1","content":"out"}
+        ]);
+
+        assert_eq!(messages, &expected);
     }
 }
