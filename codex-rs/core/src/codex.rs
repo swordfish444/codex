@@ -808,7 +808,7 @@ async fn submission_loop(
                 // Attempt to inject input into current task
                 if let Err(items) = sess.inject_input(summarization_prompt) {
                     // No current task, spawn a new one
-                    let task = AgentTask::spawn(Arc::clone(sess), sub.id, items);
+                    let task = AgentTask::spawn(sess.clone(), sub.id, items);
                     sess.set_task(task);
                 }
             }

@@ -6,23 +6,12 @@
 use std::time::Duration;
 
 use codex_core::Codex;
-use codex_core::ModelProviderInfo;
-use codex_core::exec::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
-use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::EventMsg;
-use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
 mod test_support;
 use tempfile::TempDir;
 use test_support::load_default_config_for_test;
 use tokio::time::timeout;
-use wiremock::Mock;
-use wiremock::MockServer;
-use wiremock::Request;
-use wiremock::Respond;
-use wiremock::ResponseTemplate;
-use wiremock::matchers::method;
-use wiremock::matchers::path;
 
 /// Helper function to set up a codex session and wait for it to be configured
 async fn setup_configured_codex_session() -> Codex {
@@ -30,24 +19,6 @@ async fn setup_configured_codex_session() -> Codex {
     let config = load_default_config_for_test(&codex_home);
     let (codex, _, _) = codex_core::codex_wrapper::init_codex(config).await.unwrap();
     codex
-}
-
-/// Build SSE response with a message but WITHOUT completed marker (keeps task running)
-fn sse_message_no_complete(message: &str) -> String {
-    format!(
-        "event: response.output_item.done\n\
-data: {{\"type\":\"response.output_item.done\",\"item\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"{message}\"}}]}}}}\n\n"
-    )
-}
-
-/// Build SSE response with a message AND completed marker
-fn sse_message_with_complete(id: &str, message: &str) -> String {
-    format!(
-        "event: response.output_item.done\n\
-data: {{\"type\":\"response.output_item.done\",\"item\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"{message}\"}}]}}}}\n\n\
-event: response.completed\n\
-data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"{id}\",\"output\":[]}}}}\n\n"
-    )
 }
 
 #[tokio::test]
