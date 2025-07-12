@@ -30,7 +30,6 @@ pub fn load_default_config_for_test(codex_home: &TempDir) -> Config {
 /// with only a `type` field results in an event with no `data:` section. This
 /// makes it trivial to extend the fixtures as OpenAI adds new event kinds or
 /// fields.
-#[allow(dead_code)]
 pub fn load_sse_fixture(path: impl AsRef<std::path::Path>) -> String {
     let events: Vec<serde_json::Value> =
         serde_json::from_reader(std::fs::File::open(path).expect("read fixture"))
@@ -51,10 +50,10 @@ pub fn load_sse_fixture(path: impl AsRef<std::path::Path>) -> String {
         .collect()
 }
 
-/// Like [`load_sse_fixture`] but substitutes the placeholder `__ID__` with the
-/// provided identifier before parsing. Useful when the test needs unique
-/// `response_id` values.
-#[allow(dead_code)]
+/// Same as [`load_sse_fixture`], but replaces the placeholder `__ID__` in the
+/// fixture template with the supplied identifier before parsing. This lets a
+/// single JSON template be reused by multiple tests that each need a unique
+/// `response_id`.
 pub fn load_sse_fixture_with_id(path: impl AsRef<std::path::Path>, id: &str) -> String {
     let raw = std::fs::read_to_string(path).expect("read fixture template");
     let replaced = raw.replace("__ID__", id);

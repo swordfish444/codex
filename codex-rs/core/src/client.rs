@@ -421,9 +421,17 @@ mod tests {
         out
     }
 
+    /// Verifies that the SSE adapter emits the expected [`ResponseEvent`] for
+    /// a variety of `type` values from the Responses API. The test is written
+    /// table-driven style to keep additions for new event kinds trivial.
+    ///
+    /// Each `Case` supplies an input event, a predicate that must match the
+    /// *first* `ResponseEvent` produced by the adapter, and the total number
+    /// of events expected after appending a synthetic `response.completed`
+    /// marker that terminates the stream.
     #[tokio::test]
     async fn table_driven_event_kinds() {
-        struct Case {
+        struct TestCase {
             name: &'static str,
             event: serde_json::Value,
             expect_first: fn(&ResponseEvent) -> bool,
@@ -458,13 +466,13 @@ mod tests {
         });
 
         let cases = vec![
-            Case {
+            TestCase {
                 name: "created",
                 event: json!({"type": "response.created", "response": {}}),
                 expect_first: is_created,
                 expected_len: 2,
             },
-            Case {
+            TestCase {
                 name: "output_item.done",
                 event: json!({
                     "type": "response.output_item.done",
@@ -479,7 +487,7 @@ mod tests {
                 expect_first: is_output,
                 expected_len: 2,
             },
-            Case {
+            TestCase {
                 name: "unknown",
                 event: json!({"type": "response.new_tool_event"}),
                 expect_first: is_completed,
