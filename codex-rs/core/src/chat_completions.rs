@@ -500,7 +500,7 @@ mod tests {
 
     /// Validate that `stream_chat_completions` converts our internal `Prompt` into the exact
     /// Chat Completions JSON payload expected by OpenAI. We build a prompt containing user
-    ////assistant turns, a function call and its output, issue the request against a
+    /// assistant turns, a function call and its output, issue the request against a
     /// `wiremock::MockServer`, capture the JSON body, and assert that the full `messages` array
     /// matches a golden value. The test is a pure unit-test; it is skipped automatically when
     /// the sandbox disables networking.

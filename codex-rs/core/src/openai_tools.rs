@@ -207,6 +207,9 @@ mod tests {
         assert_eq!(dummy, &expected_dummy);
     }
 
+    /// When the model name starts with `codex-`, the built-in shell tool should be encoded
+    /// as `local_shell` rather than `shell`. Verify that the first tool in the JSON list has
+    /// the adjusted type in that scenario.
     #[test]
     fn responses_codex_model_uses_local_shell() {
         let mut prompt = Prompt::default();
@@ -217,6 +220,9 @@ mod tests {
         assert_eq!(tools[0]["type"], "local_shell");
     }
 
+    /// Chat-Completions API expects the V2 tool schema (`{"type":"function","function":{..}}`).
+    /// Confirm that every entry is shaped accordingly and the wrapper does not leak the internal
+    /// `type` field inside the nested `function` object.
     #[test]
     fn chat_completions_tool_format() {
         let mut prompt = Prompt::default();
