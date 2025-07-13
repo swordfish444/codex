@@ -255,7 +255,18 @@ export default function TerminalChat({
       onItem: (item) => {
         log(`onItem: ${JSON.stringify(item)}`);
         setItems((prev) => {
-          const updated = uniqueById([...prev, item as ResponseItem]);
+          let updated = prev;
+          if (item.id) {
+            const idx = prev.findIndex((i) => i.id === item.id);
+            if (idx !== -1) {
+              updated = [...prev];
+              updated[idx] = item as ResponseItem;
+            } else {
+              updated = uniqueById([...prev, item as ResponseItem]);
+            }
+          } else {
+            updated = uniqueById([...prev, item as ResponseItem]);
+          }
           saveRollout(sessionId, updated);
           return updated;
         });

@@ -669,10 +669,16 @@ export class AgentLoop {
         }
 
         // Skip items we've already processed to avoid staging duplicates
-        if (item.id && alreadyStagedItemIds.has(item.id)) {
+        if (
+          item.id &&
+          alreadyStagedItemIds.has(item.id) &&
+          item.status !== "in_progress"
+        ) {
           return;
         }
-        alreadyStagedItemIds.add(item.id);
+        if (item.id && item.status !== "in_progress") {
+          alreadyStagedItemIds.add(item.id);
+        }
 
         // Store the item so the final flush can still operate on a complete list.
         // We'll nil out entries once they're delivered.
@@ -1035,11 +1041,42 @@ export class AgentLoop {
           try {
             let newTurnInput: Array<ResponseInputItem> = [];
 
+            const partials = new Map<string, string>();
+
             // eslint-disable-next-line no-await-in-loop
             for await (const event of stream as AsyncIterable<ResponseEvent>) {
               log(`AgentLoop.run(): response event ${event.type}`);
 
-              // process and surface each item (no-op until we can depend on streaming events)
+              if (event.type === "response.output_text.delta") {
+                const id = event.item_id;
+                const soFar = partials.get(id) ?? "";
+                const text = soFar + event.delta;
+                partials.set(id, text);
+                stageItem({
+                  id,
+                  type: "message",
+                  role: "assistant",
+                  status: "in_progress",
+                  content: [{ type: "output_text", text }],
+                } as ResponseItem);
+                continue;
+              }
+
+              if (event.type === "response.output_text.done") {
+                const id = event.item_id;
+                const text = event.text;
+                partials.set(id, text);
+                stageItem({
+                  id,
+                  type: "message",
+                  role: "assistant",
+                  status: "completed",
+                  content: [{ type: "output_text", text }],
+                } as ResponseItem);
+                continue;
+              }
+
+              // process and surface each item when completed
               if (event.type === "response.output_item.done") {
                 const item = event.item;
                 // 1) if it's a reasoning item, annotate it
@@ -1062,6 +1099,12 @@ export class AgentLoop {
                   if (callId) {
                     this.pendingAborts.add(callId);
                   }
+                } else if (
+                  item.type === "message" &&
+                  (item as { role?: string }).role === "assistant"
+                ) {
+                  // Final message already emitted via output_text.done
+                  continue;
                 } else {
                   stageItem(item as ResponseItem);
                 }
