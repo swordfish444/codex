@@ -393,33 +393,33 @@ async fn stream_from_fixture(path: impl AsRef<Path>) -> Result<ResponseStream> {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
-    #![allow(
-        clippy::unwrap_used,
-        clippy::print_stdout,
-        clippy::expect_used
-    )]
+    #![allow(clippy::unwrap_used, clippy::print_stdout, clippy::expect_used)]
 
     use super::*;
     use crate::client_common::Prompt;
-    use crate::config::{Config, ConfigOverrides, ConfigToml};
-    use crate::config_types::{
-        ReasoningEffort as ReasoningEffortConfig,
-        ReasoningSummary as ReasoningSummaryConfig,
-    };
+    use crate::config::Config;
+    use crate::config::ConfigOverrides;
+    use crate::config::ConfigToml;
+    use crate::config_types::ReasoningEffort as ReasoningEffortConfig;
+    use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
     use futures::StreamExt;
     use reqwest::StatusCode;
     use serde_json::json;
-    use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::time::Duration;
+    use std::time::Instant;
     use tempfile::TempDir;
     use tokio::sync::mpsc;
     use tokio_util::io::ReaderStream;
-    use wiremock::{
-        matchers::{method, path},
-        Mock, MockServer, Request, Respond, ResponseTemplate,
-    };
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::Request;
+    use wiremock::Respond;
+    use wiremock::ResponseTemplate;
+    use wiremock::matchers::method;
+    use wiremock::matchers::path;
 
     // ─────────────────────────── Helpers ───────────────────────────
 
@@ -498,7 +498,8 @@ mod tests {
         struct SeqResponder;
         impl Respond for SeqResponder {
             fn respond(&self, _req: &Request) -> ResponseTemplate {
-                use std::sync::atomic::{AtomicUsize, Ordering};
+                use std::sync::atomic::AtomicUsize;
+                use std::sync::atomic::Ordering;
                 static CALLS: AtomicUsize = AtomicUsize::new(0);
                 let n = CALLS.fetch_add(1, Ordering::SeqCst);
                 if n == 0 {
