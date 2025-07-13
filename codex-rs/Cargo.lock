@@ -606,6 +606,7 @@ dependencies = [
  "codex-login",
  "codex-mcp-server",
  "codex-tui",
+ "indoc",
  "predicates",
  "serde_json",
  "tempfile",
