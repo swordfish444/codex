@@ -74,12 +74,11 @@ async fn retries_on_early_close() {
     //
     // As of Rust 2024 `std::env::set_var` has been made `unsafe` because
     // mutating the process environment is inherently racy when other threads
-    // are running.  We therefore have to wrap every call in an explicit
-    // `unsafe` block.  These are limited to the test-setup section so the
-    // scope is very small and clearly delineated.
+    // are running.  We used to tweak the per-request retry counts via the
+    // `OPENAI_REQUEST_MAX_RETRIES` env var but that caused data races in
+    // multi-threaded tests. Configure the value directly on the Config instead.
 
     unsafe {
-        std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "0");
         std::env::set_var("OPENAI_STREAM_MAX_RETRIES", "1");
         std::env::set_var("OPENAI_STREAM_IDLE_TIMEOUT_MS", "2000");
     }
@@ -102,6 +101,8 @@ async fn retries_on_early_close() {
     let codex_home = TempDir::new().unwrap();
     let mut config = load_default_config_for_test(&codex_home);
     config.model_provider = model_provider;
+    // Disable per-request retries (we want to exercise stream-level retries).
+    config.openai_request_max_retries = 0;
     let (codex, _init_id) = Codex::spawn(config, ctrl_c).await.unwrap();
 
     codex

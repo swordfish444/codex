@@ -10,6 +10,7 @@ use crate::config_types::ShellEnvironmentPolicyToml;
 use crate::config_types::Tui;
 use crate::config_types::UriBasedFileOpener;
 use crate::flags::OPENAI_DEFAULT_MODEL;
+use crate::flags::OPENAI_REQUEST_MAX_RETRIES;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::built_in_model_providers;
 use crate::openai_model_info::get_model_info;
@@ -137,6 +138,9 @@ pub struct Config {
 
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: String,
+
+    /// Max number of retries for a request to the model.
+    pub openai_request_max_retries: u64,
 }
 
 impl Config {
@@ -321,6 +325,9 @@ pub struct ConfigToml {
 
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: Option<String>,
+
+    /// Max number of retries for a request to the model.
+    pub openai_request_max_retries: Option<u64>,
 }
 
 impl ConfigToml {
@@ -353,6 +360,7 @@ pub struct ConfigOverrides {
     pub model_provider: Option<String>,
     pub config_profile: Option<String>,
     pub codex_linux_sandbox_exe: Option<PathBuf>,
+    pub openai_request_max_retries: Option<u64>,
 }
 
 impl Config {
@@ -374,6 +382,7 @@ impl Config {
             model_provider,
             config_profile: config_profile_key,
             codex_linux_sandbox_exe,
+            openai_request_max_retries,
         } = overrides;
 
         let config_profile = match config_profile_key.as_ref().or(cfg.profile.as_ref()) {
@@ -448,6 +457,12 @@ impl Config {
                 .as_ref()
                 .map(|info| info.max_output_tokens)
         });
+
+        // Resolve the max-retry setting (CLI override > config.toml > env flag default).
+        let resolved_openai_request_max_retries = openai_request_max_retries
+            .or(cfg.openai_request_max_retries)
+            .unwrap_or_else(|| *OPENAI_REQUEST_MAX_RETRIES);
+
         let config = Self {
             model,
             model_context_window,
@@ -494,6 +509,8 @@ impl Config {
                 .chatgpt_base_url
                 .or(cfg.chatgpt_base_url)
                 .unwrap_or("https://chatgpt.com/backend-api/".to_string()),
+
+            openai_request_max_retries: resolved_openai_request_max_retries,
         };
         Ok(config)
     }
@@ -559,6 +576,7 @@ pub fn log_dir(cfg: &Config) -> std::io::Result<PathBuf> {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::config_types::HistoryPersistence;
+    use crate::flags::OPENAI_REQUEST_MAX_RETRIES;
 
     use super::*;
     use pretty_assertions::assert_eq;
@@ -800,6 +818,7 @@ disable_response_storage = true
                 model_reasoning_summary: ReasoningSummary::Detailed,
                 model_supports_reasoning_summaries: false,
                 chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
+                openai_request_max_retries: *OPENAI_REQUEST_MAX_RETRIES,
             },
             o3_profile_config
         );
@@ -846,6 +865,7 @@ disable_response_storage = true
             model_reasoning_summary: ReasoningSummary::default(),
             model_supports_reasoning_summaries: false,
             chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
+            openai_request_max_retries: *OPENAI_REQUEST_MAX_RETRIES,
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -907,6 +927,7 @@ disable_response_storage = true
             model_reasoning_summary: ReasoningSummary::default(),
             model_supports_reasoning_summaries: false,
             chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
+            openai_request_max_retries: *OPENAI_REQUEST_MAX_RETRIES,
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);

@@ -29,7 +29,6 @@ use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::flags::CODEX_RS_SSE_FIXTURE;
-use crate::flags::OPENAI_REQUEST_MAX_RETRIES;
 use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::WireApi;
@@ -77,6 +76,7 @@ impl ModelClient {
                     &self.config.model,
                     &self.client,
                     &self.provider,
+                    self.config.openai_request_max_retries,
                 )
                 .await?;
 
@@ -135,6 +135,7 @@ impl ModelClient {
         );
 
         let mut attempt = 0;
+        let max_retries = self.config.openai_request_max_retries;
         loop {
             attempt += 1;
 
@@ -171,7 +172,7 @@ impl ModelClient {
                         return Err(CodexErr::UnexpectedStatus(status, body));
                     }
 
-                    if attempt > *OPENAI_REQUEST_MAX_RETRIES {
+                    if attempt > max_retries {
                         return Err(CodexErr::RetryLimit(status));
                     }
 
@@ -188,7 +189,7 @@ impl ModelClient {
                     tokio::time::sleep(delay).await;
                 }
                 Err(e) => {
-                    if attempt > *OPENAI_REQUEST_MAX_RETRIES {
+                    if attempt > max_retries {
                         return Err(e.into());
                     }
                     let delay = backoff(attempt);
@@ -423,7 +424,7 @@ mod tests {
 
     // ─────────────────────────── Helpers ───────────────────────────
 
-    fn default_config(provider: ModelProviderInfo) -> Arc<Config> {
+    fn default_config(provider: ModelProviderInfo, max_retries: u64) -> Arc<Config> {
         let codex_home = TempDir::new().unwrap();
         let mut cfg = Config::load_from_base_config_with_overrides(
             ConfigToml::default(),
@@ -433,10 +434,11 @@ mod tests {
         .unwrap();
         cfg.model_provider = provider.clone();
         cfg.model = "gpt-test".into();
+        cfg.openai_request_max_retries = max_retries;
         Arc::new(cfg)
     }
 
-    fn create_test_client(server: &MockServer) -> ModelClient {
+    fn create_test_client(server: &MockServer, max_retries: u64) -> ModelClient {
         let provider = ModelProviderInfo {
             name: "openai".into(),
             base_url: format!("{}/v1", server.uri()),
@@ -447,7 +449,7 @@ mod tests {
             http_headers: None,
             env_http_headers: None,
         };
-        let config = default_config(provider.clone());
+        let config = default_config(provider.clone(), max_retries);
         ModelClient::new(
             config,
             provider,
@@ -519,9 +521,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        unsafe { std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "1") };
-
-        let client = create_test_client(&server);
+        let client = create_test_client(&server, 1);
         let prompt = Prompt::default();
         let mut stream = client.stream(&prompt).await.unwrap();
         while let Some(ev) = stream.next().await {
@@ -565,9 +565,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        unsafe { std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "1") };
-
-        let client = create_test_client(&server);
+        let client = create_test_client(&server, 1);
         let prompt = Prompt::default();
         let mut stream = client.stream(&prompt).await.unwrap();
         while let Some(ev) = stream.next().await {
@@ -614,9 +612,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        unsafe { std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "1") };
-
-        let client = create_test_client(&server);
+        let client = create_test_client(&server, 1);
         let prompt = Prompt::default();
         let mut stream = client.stream(&prompt).await.unwrap();
         while let Some(ev) = stream.next().await {
@@ -643,9 +639,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        unsafe { std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "0") };
-
-        let client = create_test_client(&server);
+        let client = create_test_client(&server, 0);
         let prompt = Prompt::default();
         match client.stream(&prompt).await {
             Ok(_) => panic!("expected error"),

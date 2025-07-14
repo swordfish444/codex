@@ -142,6 +142,7 @@ impl CodexToolCallParam {
             sandbox_mode: sandbox.map(Into::into),
             model_provider: None,
             codex_linux_sandbox_exe,
+            openai_request_max_retries: None,
         };
 
         let cli_overrides = cli_overrides

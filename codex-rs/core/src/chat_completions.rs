@@ -21,7 +21,6 @@ use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
 use crate::error::CodexErr;
 use crate::error::Result;
-use crate::flags::OPENAI_REQUEST_MAX_RETRIES;
 use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS;
 use crate::models::ContentItem;
 use crate::models::ResponseItem;
@@ -34,6 +33,7 @@ pub(crate) async fn stream_chat_completions(
     model: &str,
     client: &reqwest::Client,
     provider: &ModelProviderInfo,
+    max_retries: u64,
 ) -> Result<ResponseStream> {
     // Build messages array
     let mut messages = Vec::<serde_json::Value>::new();
@@ -146,7 +146,7 @@ pub(crate) async fn stream_chat_completions(
                     return Err(CodexErr::UnexpectedStatus(status, body));
                 }
 
-                if attempt > *OPENAI_REQUEST_MAX_RETRIES {
+                if attempt > max_retries {
                     return Err(CodexErr::RetryLimit(status));
                 }
 
@@ -162,7 +162,7 @@ pub(crate) async fn stream_chat_completions(
                 tokio::time::sleep(delay).await;
             }
             Err(e) => {
-                if attempt > *OPENAI_REQUEST_MAX_RETRIES {
+                if attempt > max_retries {
                     return Err(e.into());
                 }
                 let delay = backoff(attempt);
@@ -569,9 +569,15 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = stream_chat_completions(&prompt, &config.model, &client, &provider)
-            .await
-            .unwrap();
+        let _ = stream_chat_completions(
+            &prompt,
+            &config.model,
+            &client,
+            &provider,
+            config.openai_request_max_retries,
+        )
+        .await
+        .unwrap();
 
         let body = capture.lock().unwrap().take().unwrap();
         let messages = body.get("messages").unwrap();

@@ -91,8 +91,8 @@ async fn keeps_previous_response_id_between_tasks() {
     // Environment
     // Update environment – `set_var` is `unsafe` starting with the 2024
     // edition so we group the calls into a single `unsafe { … }` block.
+    // NOTE: per-request retry count is now configured directly on the Config.
     unsafe {
-        std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "0");
         std::env::set_var("OPENAI_STREAM_MAX_RETRIES", "0");
     }
     let model_provider = ModelProviderInfo {
@@ -113,6 +113,8 @@ async fn keeps_previous_response_id_between_tasks() {
     let codex_home = TempDir::new().unwrap();
     let mut config = load_default_config_for_test(&codex_home);
     config.model_provider = model_provider;
+    // No per-request retries so each new user input triggers exactly one HTTP request.
+    config.openai_request_max_retries = 0;
     let ctrl_c = std::sync::Arc::new(tokio::sync::Notify::new());
     let (codex, _init_id) = Codex::spawn(config, ctrl_c.clone()).await.unwrap();
 
