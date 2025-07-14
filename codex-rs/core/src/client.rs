@@ -414,8 +414,8 @@ mod tests {
     use tokio_test::io::Builder as IoBuilder;
     use tokio_util::io::ReaderStream;
     use wiremock::{
-        matchers::{method, path},
         Mock, MockServer, Request, Respond, ResponseTemplate,
+        matchers::{method, path},
     };
 
     // ─────────────────────────── Helpers ───────────────────────────
