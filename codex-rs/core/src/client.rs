@@ -394,7 +394,6 @@ async fn stream_from_fixture(path: impl AsRef<Path>) -> Result<ResponseStream> {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::print_stdout, clippy::expect_used)]
 
