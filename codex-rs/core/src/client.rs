@@ -394,33 +394,29 @@ async fn stream_from_fixture(path: impl AsRef<Path>) -> Result<ResponseStream> {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::print_stdout, clippy::expect_used)]
 
     use super::*;
     use crate::client_common::Prompt;
-    use crate::config::Config;
-    use crate::config::ConfigOverrides;
-    use crate::config::ConfigToml;
-    use crate::config_types::ReasoningEffort as ReasoningEffortConfig;
-    use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
+    use crate::config::{Config, ConfigOverrides, ConfigToml};
+    use crate::config_types::{
+        ReasoningEffort as ReasoningEffortConfig, ReasoningSummary as ReasoningSummaryConfig,
+    };
     use futures::StreamExt;
     use reqwest::StatusCode;
     use serde_json::json;
-    use std::sync::Arc;
-    use std::sync::Mutex;
-    use std::time::Duration;
-    use std::time::Instant;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
     use tempfile::TempDir;
     use tokio::sync::mpsc;
+    use tokio_test::io::Builder as IoBuilder;
     use tokio_util::io::ReaderStream;
-    use wiremock::Mock;
-    use wiremock::MockServer;
-    use wiremock::Request;
-    use wiremock::Respond;
-    use wiremock::ResponseTemplate;
-    use wiremock::matchers::method;
-    use wiremock::matchers::path;
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, Request, Respond, ResponseTemplate,
+    };
 
     // ─────────────────────────── Helpers ───────────────────────────
 
@@ -465,6 +461,28 @@ mod tests {
         )
     }
 
+    /// Runs the SSE parser on pre-chunked byte slices and returns every event
+    /// (including any final `Err` from a stream-closure check).
+    async fn collect_events(chunks: &[&[u8]]) -> Vec<Result<ResponseEvent>> {
+        let mut builder = IoBuilder::new();
+        for chunk in chunks {
+            builder.read(chunk);
+        }
+
+        let reader = builder.build();
+        let stream = ReaderStream::new(reader).map_err(CodexErr::Io);
+        let (tx, mut rx) = mpsc::channel::<Result<ResponseEvent>>(16);
+        tokio::spawn(process_sse(stream, tx));
+
+        let mut events = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            events.push(ev);
+        }
+        events
+    }
+
+    /// Builds an in-memory SSE stream from JSON fixtures and returns only the
+    /// successfully parsed events (panics on internal channel errors).
     async fn run_sse(events: Vec<serde_json::Value>) -> Vec<ResponseEvent> {
         let mut body = String::new();
         for e in events {
@@ -478,9 +496,11 @@ mod tests {
                 body.push_str(&format!("event: {kind}\ndata: {e}\n\n"));
             }
         }
+
         let (tx, mut rx) = mpsc::channel::<Result<ResponseEvent>>(8);
         let stream = ReaderStream::new(std::io::Cursor::new(body)).map_err(CodexErr::Io);
         tokio::spawn(process_sse(stream, tx));
+
         let mut out = Vec::new();
         while let Some(ev) = rx.recv().await {
             out.push(ev.expect("channel closed"));
@@ -488,7 +508,7 @@ mod tests {
         out
     }
 
-    // ─────────────── Retry / back-off behaviour tests ───────────────
+    // ───────────── Retry / back-off behaviour tests ─────────────
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn retries_once_on_server_error() {
@@ -500,8 +520,7 @@ mod tests {
         struct SeqResponder;
         impl Respond for SeqResponder {
             fn respond(&self, _req: &Request) -> ResponseTemplate {
-                use std::sync::atomic::AtomicUsize;
-                use std::sync::atomic::Ordering;
+                use std::sync::atomic::{AtomicUsize, Ordering};
                 static CALLS: AtomicUsize = AtomicUsize::new(0);
                 let n = CALLS.fetch_add(1, Ordering::SeqCst);
                 if n == 0 {
@@ -651,7 +670,101 @@ mod tests {
         }
     }
 
-    // ─────────── Table-driven SSE event-kind tests ───────────
+    // ───────────────────────────
+    // SSE-parser tests
+    // ───────────────────────────
+
+    #[tokio::test]
+    async fn parses_items_and_completed() {
+        let item1 = json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Hello"}]
+            }
+        })
+        .to_string();
+
+        let item2 = json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "World"}]
+            }
+        })
+        .to_string();
+
+        let completed = json!({
+            "type": "response.completed",
+            "response": { "id": "resp1" }
+        })
+        .to_string();
+
+        let sse1 = format!("event: response.output_item.done\ndata: {item1}\n\n");
+        let sse2 = format!("event: response.output_item.done\ndata: {item2}\n\n");
+        let sse3 = format!("event: response.completed\ndata: {completed}\n\n");
+
+        let events = collect_events(&[sse1.as_bytes(), sse2.as_bytes(), sse3.as_bytes()]).await;
+
+        assert_eq!(events.len(), 3);
+
+        assert!(matches!(
+            &events[0],
+            Ok(ResponseEvent::OutputItemDone(ResponseItem::Message { role, .. }))
+                if role == "assistant"
+        ));
+
+        assert!(matches!(
+            &events[1],
+            Ok(ResponseEvent::OutputItemDone(ResponseItem::Message { role, .. }))
+                if role == "assistant"
+        ));
+
+        match &events[2] {
+            Ok(ResponseEvent::Completed {
+                response_id,
+                token_usage,
+            }) => {
+                assert_eq!(response_id, "resp1");
+                assert!(token_usage.is_none());
+            }
+            other => panic!("unexpected third event: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn error_when_missing_completed() {
+        let item1 = json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Hello"}]
+            }
+        })
+        .to_string();
+
+        let sse1 = format!("event: response.output_item.done\ndata: {item1}\n\n");
+
+        let events = collect_events(&[sse1.as_bytes()]).await;
+
+        assert_eq!(events.len(), 2);
+
+        assert!(matches!(events[0], Ok(ResponseEvent::OutputItemDone(_))));
+
+        match &events[1] {
+            Err(CodexErr::Stream(msg)) => {
+                assert_eq!(msg, "stream closed before response.completed")
+            }
+            other => panic!("unexpected second event: {other:?}"),
+        }
+    }
+
+    // ───────────────────────────
+    // Table-driven event-kind test
+    // ───────────────────────────
 
     #[tokio::test]
     async fn table_driven_event_kinds() {
@@ -720,9 +833,14 @@ mod tests {
         for case in cases {
             let mut evs = vec![case.event];
             evs.push(completed.clone());
+
             let out = run_sse(evs).await;
             assert_eq!(out.len(), case.expected_len, "case {}", case.name);
-            assert!((case.expect_first)(&out[0]), "case {}", case.name);
+            assert!(
+                (case.expect_first)(&out[0]),
+                "first event mismatch in case {}",
+                case.name
+            );
         }
     }
 }
