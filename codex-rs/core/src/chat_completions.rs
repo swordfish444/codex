@@ -577,7 +577,7 @@ mod tests {
         let messages = body.get("messages").unwrap();
 
         let expected = serde_json::json!([
-            {"role":"system","content":"You are Codex, an AI assistant."},
+            {"role":"system","content":prompt.get_full_instructions(&config.model)},
             {"role":"user","content":"hi"},
             {"role":"assistant","content":"ok"},
             {"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"foo","arguments":"{}"}}]},
