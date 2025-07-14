@@ -475,8 +475,10 @@ mod tests {
     use crate::models::LocalShellAction;
     use crate::models::LocalShellExecAction;
     use crate::models::LocalShellStatus;
+    use crate::openai_tools::create_tools_json_for_chat_completions_api;
     use futures::StreamExt;
     use futures::stream;
+    use serde_json::json;
 
     /// Helper constructing a minimal assistant text chunk.
     fn text_chunk(txt: &str) -> ResponseEvent {
@@ -500,23 +502,23 @@ mod tests {
         let stream = stream::iter(events).aggregate();
         let collected: Vec<_> = stream.map(Result::unwrap).collect().await;
 
-        assert_eq!(collected.len(), 2, "only final message and Completed");
+        let expected = vec![
+            ResponseEvent::OutputItemDone(ResponseItem::Message {
+                role: "assistant".into(),
+                content: vec![ContentItem::OutputText {
+                    text: "Hello, world".into(),
+                }],
+            }),
+            ResponseEvent::Completed {
+                response_id: "r1".into(),
+                token_usage: None,
+            },
+        ];
 
-        match &collected[0] {
-            ResponseEvent::OutputItemDone(ResponseItem::Message { content, .. }) => {
-                let text = match &content[0] {
-                    ContentItem::OutputText { text } => text,
-                    _ => panic!("unexpected content item"),
-                };
-                assert_eq!(text, "Hello, world");
-            }
-            other => panic!("unexpected first event: {other:?}"),
-        }
-
-        assert!(matches!(
-            collected[1],
-            ResponseEvent::Completed { response_id: ref id, token_usage: None } if id == "r1"
-        ));
+        assert_eq!(
+            collected, expected,
+            "aggregated assistant message + Completed"
+        );
     }
 
     #[tokio::test]
@@ -540,36 +542,28 @@ mod tests {
         let stream = stream::iter(events).aggregate();
         let collected: Vec<_> = stream.map(Result::unwrap).collect().await;
 
-        assert_eq!(collected.len(), 3);
+        let expected = vec![
+            ResponseEvent::OutputItemDone(func_call.clone()),
+            ResponseEvent::OutputItemDone(ResponseItem::Message {
+                role: "assistant".into(),
+                content: vec![ContentItem::OutputText {
+                    text: "foobar".into(),
+                }],
+            }),
+            ResponseEvent::Completed {
+                response_id: "r2".into(),
+                token_usage: None,
+            },
+        ];
 
-        // First event should be the function call forwarded directly.
-        assert!(matches!(
-            collected[0],
-            ResponseEvent::OutputItemDone(ResponseItem::FunctionCall { .. })
-        ));
-
-        // Second is the combined assistant message.
-        match &collected[1] {
-            ResponseEvent::OutputItemDone(ResponseItem::Message { content, .. }) => {
-                let text = match &content[0] {
-                    ContentItem::OutputText { text } => text,
-                    _ => panic!("unexpected content item"),
-                };
-                assert_eq!(text, "foobar");
-            }
-            other => panic!("unexpected second event: {other:?}"),
-        }
-
-        // Final Completed event.
-        assert!(matches!(
-            collected[2],
-            ResponseEvent::Completed { response_id: ref id, token_usage: None } if id == "r2"
-        ));
+        assert_eq!(
+            collected, expected,
+            "non-text items forwarded intact; text merged"
+        );
     }
 
     #[tokio::test]
     async fn formats_tool_calls_in_chat_payload() {
-        use serde_json::Value;
         use std::sync::Arc;
         use std::sync::Mutex;
         use wiremock::Mock;
@@ -580,10 +574,10 @@ mod tests {
         use wiremock::matchers::method;
         use wiremock::matchers::path;
 
-        struct CaptureResponder(Arc<Mutex<Option<Value>>>);
+        struct CaptureResponder(Arc<Mutex<Option<serde_json::Value>>>);
         impl Respond for CaptureResponder {
             fn respond(&self, req: &Request) -> ResponseTemplate {
-                let v: Value = serde_json::from_slice(&req.body).unwrap();
+                let v: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
                 *self.0.lock().unwrap() = Some(v);
                 ResponseTemplate::new(200)
                     .insert_header("content-type", "text/event-stream")
@@ -605,10 +599,7 @@ data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp\",\"output\":
             .mount(&server)
             .await;
 
-        unsafe {
-            std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "0");
-        }
-
+        // Build provider pointing at mock server; no need to mutate global env vars.
         let provider = ModelProviderInfo {
             name: "openai".into(),
             base_url: format!("{}/v1", server.uri()),
@@ -656,37 +647,55 @@ data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp\",\"output\":
             .unwrap();
 
         let body = captured.lock().unwrap().take().unwrap();
-        let messages = body.get("messages").unwrap().as_array().unwrap();
 
-        // function_call
-        let call = messages[2].get("tool_calls").unwrap().as_array().unwrap()[0].clone();
-        assert_eq!(call.get("id").unwrap().as_str().unwrap(), "call123");
-        assert_eq!(call.get("type").unwrap().as_str().unwrap(), "function");
-        let func = call.get("function").unwrap();
-        assert_eq!(func.get("name").unwrap().as_str().unwrap(), "shell");
-        assert_eq!(func.get("arguments").unwrap().as_str().unwrap(), "[]");
+        // Build the expected payload exactly as stream_chat_completions() should.
+        let full_instructions = prompt.get_full_instructions("model");
+        let expected_messages = vec![
+            json!({"role":"system","content":full_instructions}),
+            json!({"role":"user","content":"hi"}),
+            json!({
+                "role":"assistant",
+                "content":null,
+                "tool_calls":[{
+                    "id":"call123",
+                    "type":"function",
+                    "function":{
+                        "name":"shell",
+                        "arguments":"[]"
+                    }
+                }]
+            }),
+            json!({
+                "role":"tool",
+                "tool_call_id":"call123",
+                "content":"ok"
+            }),
+            json!({
+                "role":"assistant",
+                "content":null,
+                "tool_calls":[{
+                    "id":"ls1",
+                    "type":"local_shell_call",
+                    "status":"completed",
+                    "action":{
+                        "type":"exec",
+                        "command":["echo","hi"],
+                        "timeout_ms":1,
+                        "working_directory":null,
+                        "env":null,
+                        "user":null
+                    }
+                }]
+            }),
+        ];
+        let tools_json = create_tools_json_for_chat_completions_api(&prompt, "model").unwrap();
+        let expected_body = json!({
+            "model":"model",
+            "messages": expected_messages,
+            "stream": true,
+            "tools": tools_json,
+        });
 
-        // function_call_output
-        assert_eq!(messages[3].get("role").unwrap().as_str().unwrap(), "tool");
-        assert_eq!(
-            messages[3].get("tool_call_id").unwrap().as_str().unwrap(),
-            "call123"
-        );
-        assert_eq!(messages[3].get("content").unwrap().as_str().unwrap(), "ok");
-
-        // local_shell_call
-        let shell_call = messages[4].get("tool_calls").unwrap().as_array().unwrap()[0].clone();
-        assert_eq!(
-            shell_call.get("type").unwrap().as_str().unwrap(),
-            "local_shell_call"
-        );
-        assert_eq!(shell_call.get("id").unwrap().as_str().unwrap(), "ls1");
-        let action = shell_call.get("action").unwrap();
-        assert_eq!(
-            action.get("command").unwrap().as_array().unwrap()[0]
-                .as_str()
-                .unwrap(),
-            "echo"
-        );
+        assert_eq!(body, expected_body, "chat payload encoded incorrectly");
     }
 }

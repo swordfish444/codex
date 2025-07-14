@@ -315,7 +315,7 @@ where
             // duplicated `output` array embedded in the `response.completed`
             // payload.  That produced two concrete issues:
             //   1. No real‑time streaming – the user only saw output after the
-            //      entire turn had finished, which broke the “typing” UX and
+            //      entire turn had finished, which broke the "typing" UX and
             //      made long‑running turns look stalled.
             //   2. Duplicate `function_call_output` items – both the
             //      individual *and* the completed array were forwarded, which
@@ -394,12 +394,12 @@ async fn stream_from_fixture(path: impl AsRef<Path>) -> Result<ResponseStream> {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
-    use crate::models::{LocalShellAction, LocalShellStatus};
+    use crate::models::LocalShellAction;
+    use crate::models::LocalShellStatus;
     use serde_json::json;
     use tokio::sync::mpsc;
     use tokio_test::io::Builder as IoBuilder;
