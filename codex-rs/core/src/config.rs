@@ -57,6 +57,10 @@ pub struct Config {
     /// users are only interested in the final agent responses.
     pub hide_agent_reasoning: bool,
 
+    /// When `true`, the raw chain-of-thought text from reasoning events will be
+    /// displayed in the UI in addition to the reasoning summaries.
+    pub show_reasoning_content: bool,
+
     /// Disable server-side response storage (sends the full conversation
     /// context with every request). Currently necessary for OpenAI customers
     /// who have opted into Zero Data Retention (ZDR).
@@ -313,6 +317,10 @@ pub struct ConfigToml {
     /// UI/output. Defaults to `false`.
     pub hide_agent_reasoning: Option<bool>,
 
+    /// When set to `true`, raw chain-of-thought text from reasoning events will
+    /// be shown in the UI.
+    pub show_reasoning_content: Option<bool>,
+
     pub model_reasoning_effort: Option<ReasoningEffort>,
     pub model_reasoning_summary: Option<ReasoningSummary>,
 
@@ -477,6 +485,7 @@ impl Config {
             codex_linux_sandbox_exe,
 
             hide_agent_reasoning: cfg.hide_agent_reasoning.unwrap_or(false),
+            show_reasoning_content: cfg.show_reasoning_content.unwrap_or(false),
             model_reasoning_effort: config_profile
                 .model_reasoning_effort
                 .or(cfg.model_reasoning_effort)
@@ -796,6 +805,7 @@ disable_response_storage = true
                 tui: Tui::default(),
                 codex_linux_sandbox_exe: None,
                 hide_agent_reasoning: false,
+                show_reasoning_content: false,
                 model_reasoning_effort: ReasoningEffort::High,
                 model_reasoning_summary: ReasoningSummary::Detailed,
                 model_supports_reasoning_summaries: false,
@@ -842,6 +852,7 @@ disable_response_storage = true
             tui: Tui::default(),
             codex_linux_sandbox_exe: None,
             hide_agent_reasoning: false,
+            show_reasoning_content: false,
             model_reasoning_effort: ReasoningEffort::default(),
             model_reasoning_summary: ReasoningSummary::default(),
             model_supports_reasoning_summaries: false,
@@ -903,6 +914,7 @@ disable_response_storage = true
             tui: Tui::default(),
             codex_linux_sandbox_exe: None,
             hide_agent_reasoning: false,
+            show_reasoning_content: false,
             model_reasoning_effort: ReasoningEffort::default(),
             model_reasoning_summary: ReasoningSummary::default(),
             model_supports_reasoning_summaries: false,

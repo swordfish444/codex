@@ -4,6 +4,7 @@ use std::sync::Arc;
 use codex_core::codex_wrapper::init_codex;
 use codex_core::config::Config;
 use codex_core::protocol::AgentMessageEvent;
+use codex_core::protocol::AgentReasoningContentEvent;
 use codex_core::protocol::AgentReasoningEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::ErrorEvent;
@@ -246,6 +247,13 @@ impl ChatWidget<'_> {
             }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
                 if !self.config.hide_agent_reasoning {
+                    self.conversation_history
+                        .add_agent_reasoning(&self.config, text);
+                    self.request_redraw();
+                }
+            }
+            EventMsg::AgentReasoningContent(AgentReasoningContentEvent { text }) => {
+                if !self.config.hide_agent_reasoning && self.config.show_reasoning_content {
                     self.conversation_history
                         .add_agent_reasoning(&self.config, text);
                     self.request_redraw();

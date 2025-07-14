@@ -56,12 +56,14 @@ use crate::mcp_tool_call::handle_mcp_tool_call;
 use crate::models::ContentItem;
 use crate::models::FunctionCallOutputPayload;
 use crate::models::LocalShellAction;
+use crate::models::ReasoningItemContent;
 use crate::models::ReasoningItemReasoningSummary;
 use crate::models::ResponseInputItem;
 use crate::models::ResponseItem;
 use crate::models::ShellToolCallParams;
 use crate::project_doc::get_user_instructions;
 use crate::protocol::AgentMessageEvent;
+use crate::protocol::AgentReasoningContentEvent;
 use crate::protocol::AgentReasoningEvent;
 use crate::protocol::ApplyPatchApprovalRequestEvent;
 use crate::protocol::AskForApproval;
@@ -1196,7 +1198,7 @@ async fn handle_response_item(
             }
             None
         }
-        ResponseItem::Reasoning { id: _, summary } => {
+        ResponseItem::Reasoning { id: _, summary, content } => {
             for item in summary {
                 let text = match item {
                     ReasoningItemReasoningSummary::SummaryText { text } => text,
@@ -1204,6 +1206,16 @@ async fn handle_response_item(
                 let event = Event {
                     id: sub_id.to_string(),
                     msg: EventMsg::AgentReasoning(AgentReasoningEvent { text }),
+                };
+                sess.tx_event.send(event).await.ok();
+            }
+            for item in content {
+                let text = match item {
+                    ReasoningItemContent::ReasoningText { text } => text,
+                };
+                let event = Event {
+                    id: sub_id.to_string(),
+                    msg: EventMsg::AgentReasoningContent(AgentReasoningContentEvent { text }),
                 };
                 sess.tx_event.send(event).await.ok();
             }

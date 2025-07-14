@@ -15,6 +15,7 @@ use codex_core::protocol::McpToolCallBeginEvent;
 use codex_core::protocol::McpToolCallEndEvent;
 use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::PatchApplyEndEvent;
+use codex_core::protocol::AgentReasoningContentEvent;
 use codex_core::protocol::SessionConfiguredEvent;
 use codex_core::protocol::TokenUsage;
 use owo_colors::OwoColorize;
@@ -50,10 +51,15 @@ pub(crate) struct EventProcessor {
 
     /// Whether to include `AgentReasoning` events in the output.
     show_agent_reasoning: bool,
+    show_agent_reasoning_content: bool,
 }
 
 impl EventProcessor {
-    pub(crate) fn create_with_ansi(with_ansi: bool, show_agent_reasoning: bool) -> Self {
+    pub(crate) fn create_with_ansi(
+        with_ansi: bool,
+        show_agent_reasoning: bool,
+        show_agent_reasoning_content: bool,
+    ) -> Self {
         let call_id_to_command = HashMap::new();
         let call_id_to_patch = HashMap::new();
         let call_id_to_tool_call = HashMap::new();
@@ -71,6 +77,7 @@ impl EventProcessor {
                 cyan: Style::new().cyan(),
                 call_id_to_tool_call,
                 show_agent_reasoning,
+                show_agent_reasoning_content,
             }
         } else {
             Self {
@@ -85,6 +92,7 @@ impl EventProcessor {
                 cyan: Style::new(),
                 call_id_to_tool_call,
                 show_agent_reasoning,
+                show_agent_reasoning_content,
             }
         }
     }
@@ -441,6 +449,16 @@ impl EventProcessor {
             }
             EventMsg::AgentReasoning(agent_reasoning_event) => {
                 if self.show_agent_reasoning {
+                    ts_println!(
+                        self,
+                        "{}\n{}",
+                        "thinking".style(self.italic).style(self.magenta),
+                        agent_reasoning_event.text
+                    );
+                }
+            }
+            EventMsg::AgentReasoningContent(agent_reasoning_event) => {
+                if self.show_agent_reasoning && self.show_agent_reasoning_content {
                     ts_println!(
                         self,
                         "{}\n{}",

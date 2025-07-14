@@ -43,6 +43,8 @@ pub enum ResponseItem {
     Reasoning {
         id: String,
         summary: Vec<ReasoningItemReasoningSummary>,
+        #[serde(default)]
+        content: Vec<ReasoningItemContent>,
     },
     LocalShellCall {
         /// Set when using the chat completions API.
@@ -126,6 +128,12 @@ pub struct LocalShellExecAction {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ReasoningItemReasoningSummary {
     SummaryText { text: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ReasoningItemContent {
+    ReasoningText { text: String },
 }
 
 impl From<Vec<InputItem>> for ResponseInputItem {
