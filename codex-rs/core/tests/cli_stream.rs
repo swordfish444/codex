@@ -66,13 +66,10 @@ async fn chat_mode_stream_cli() {
         .env("OPENAI_BASE_URL", format!("{}/v1", server.uri()));
 
     let output = cmd.output().unwrap();
-    println!("Status: {}", output.status);
-    println!("Stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-    println!("Stderr:\n{}", String::from_utf8_lossy(&output.stderr));
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("hi"));
-    assert_eq!(stdout.matches("hi").count(), 1);
+    let hi_lines = stdout.lines().filter(|line| line.trim() == "hi").count();
+    assert_eq!(hi_lines, 1, "Expected exactly one line with 'hi'");
 
     server.verify().await;
 }

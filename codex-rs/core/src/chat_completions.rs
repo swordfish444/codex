@@ -580,7 +580,7 @@ mod tests {
             {"role":"system","content":prompt.get_full_instructions(&config.model)},
             {"role":"user","content":"hi"},
             {"role":"assistant","content":"ok"},
-            {"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"foo","arguments":"{}"}}]},
+            {"role":"assistant", "content": null, "tool_calls":[{"id":"c1","type":"function","function":{"name":"foo","arguments":"{}"}}]},
             {"role":"tool","tool_call_id":"c1","content":"out"}
         ]);
 
