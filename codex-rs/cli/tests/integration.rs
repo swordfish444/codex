@@ -200,4 +200,3 @@ fn sse_final_after_call() -> String {
 event: response.completed\ndata: {completed}\n\n\n"
     )
 }
-
