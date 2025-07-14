@@ -1127,11 +1127,14 @@ async fn try_run_turn(
     // If we execute a function call in the middle of handling the stream, it can time out.
     let mut input = Vec::new();
     while let Some(event) = stream.next().await {
-        input.push(event?);
+        let event = event?;
+        info!("Received stream event: {event:?}");
+        input.push(event);
     }
 
     let mut output = Vec::new();
     for event in input {
+        info!("Processing event: {event:?}");
         match event {
             ResponseEvent::Created => {
                 let mut state = sess.state.lock().unwrap();
@@ -1198,11 +1201,16 @@ async fn handle_response_item(
             }
             None
         }
-        ResponseItem::Reasoning { id: _, summary, content } => {
+        ResponseItem::Reasoning {
+            id: _,
+            summary,
+            content,
+        } => {
             for item in summary {
                 let text = match item {
                     ReasoningItemReasoningSummary::SummaryText { text } => text,
                 };
+                info!("Agent reasoning: {text}");
                 let event = Event {
                     id: sub_id.to_string(),
                     msg: EventMsg::AgentReasoning(AgentReasoningEvent { text }),
@@ -1213,6 +1221,7 @@ async fn handle_response_item(
                 let text = match item {
                     ReasoningItemContent::ReasoningText { text } => text,
                 };
+                info!("Agent reasoning content: {text}");
                 let event = Event {
                     id: sub_id.to_string(),
                     msg: EventMsg::AgentReasoningContent(AgentReasoningContentEvent { text }),
