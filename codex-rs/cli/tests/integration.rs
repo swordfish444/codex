@@ -55,16 +55,26 @@ async fn full_conversation_turn_integration() {
     let sandbox = TempDir::new().unwrap();
     write_config(codex_home.path(), &server);
 
+    // Capture the agent's final message in a file so we can assert on it precisely.
+    let last_message_file = sandbox.path().join("last_message.txt");
+
     let mut cmd = assert_cmd::Command::cargo_bin("codex").unwrap();
     cmd.env("CODEX_HOME", codex_home.path())
         .current_dir(sandbox.path())
         .arg("exec")
         .arg("--skip-git-repo-check")
+        .arg("--output-last-message")
+        .arg(&last_message_file)
         .arg("Hello");
 
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("Hello, world."));
+
+    // Assert on the captured last message file (more robust than stdout formatting).
+    let last = fs::read_to_string(&last_message_file).unwrap();
+    let expected = "Hello, world.";
+    assert_eq!(last.trim(), expected);
 }
 
 /// Simulates a tool invocation (`shell`) followed by a second assistant message
@@ -115,20 +125,28 @@ async fn tool_invocation_flow() {
     let sandbox = TempDir::new().unwrap();
     write_config(codex_home.path(), &server);
 
+    // Capture final assistant message after tool invocation.
+    let last_message_file = sandbox.path().join("last_message.txt");
+
     let mut cmd = assert_cmd::Command::cargo_bin("codex").unwrap();
     cmd.env("CODEX_HOME", codex_home.path())
         .current_dir(sandbox.path())
         .arg("exec")
         .arg("--skip-git-repo-check")
+        .arg("--output-last-message")
+        .arg(&last_message_file)
         .arg("Run shell");
 
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("exec echo hi"))
         .stdout(predicate::str::contains("hi"));
-}
 
-// ----- helpers (keep below the tests) -----
+    // Assert that the final assistant message (second response) was 'done'.
+    let last = fs::read_to_string(&last_message_file).unwrap();
+    let expected = "done";
+    assert_eq!(last.trim(), expected);
+}
 
 /// Write a minimal `config.toml` pointing the CLI at the mock server.
 fn write_config(codex_home: &Path, server: &MockServer) {
