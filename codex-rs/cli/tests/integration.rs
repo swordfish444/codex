@@ -14,8 +14,11 @@ use predicates::prelude::*;
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::Mock;
+use wiremock::MockServer;
+use wiremock::ResponseTemplate;
+use wiremock::matchers::method;
+use wiremock::matchers::path;
 
 // ----- tests -----
 
