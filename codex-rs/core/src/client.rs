@@ -29,8 +29,8 @@ use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::flags::CODEX_RS_SSE_FIXTURE;
-use crate::flags::OPENAI_REQUEST_MAX_RETRIES;
 use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS;
+use crate::flags::openai_request_max_retries;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::WireApi;
 use crate::models::ResponseItem;
@@ -171,7 +171,7 @@ impl ModelClient {
                         return Err(CodexErr::UnexpectedStatus(status, body));
                     }
 
-                    if attempt > *OPENAI_REQUEST_MAX_RETRIES {
+                    if attempt > openai_request_max_retries() {
                         return Err(CodexErr::RetryLimit(status));
                     }
 
@@ -188,7 +188,7 @@ impl ModelClient {
                     tokio::time::sleep(delay).await;
                 }
                 Err(e) => {
-                    if attempt > *OPENAI_REQUEST_MAX_RETRIES {
+                    if attempt > openai_request_max_retries() {
                         return Err(e.into());
                     }
                     let delay = backoff(attempt);

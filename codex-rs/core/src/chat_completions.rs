@@ -21,8 +21,8 @@ use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
 use crate::error::CodexErr;
 use crate::error::Result;
-use crate::flags::OPENAI_REQUEST_MAX_RETRIES;
 use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS;
+use crate::flags::openai_request_max_retries;
 use crate::models::ContentItem;
 use crate::models::ResponseItem;
 use crate::openai_tools::create_tools_json_for_chat_completions_api;
@@ -146,7 +146,7 @@ pub(crate) async fn stream_chat_completions(
                     return Err(CodexErr::UnexpectedStatus(status, body));
                 }
 
-                if attempt > *OPENAI_REQUEST_MAX_RETRIES {
+                if attempt > openai_request_max_retries() {
                     return Err(CodexErr::RetryLimit(status));
                 }
 
@@ -162,7 +162,7 @@ pub(crate) async fn stream_chat_completions(
                 tokio::time::sleep(delay).await;
             }
             Err(e) => {
-                if attempt > *OPENAI_REQUEST_MAX_RETRIES {
+                if attempt > openai_request_max_retries() {
                     return Err(e.into());
                 }
                 let delay = backoff(attempt);
