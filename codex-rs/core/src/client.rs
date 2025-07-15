@@ -197,6 +197,10 @@ impl ModelClient {
             }
         }
     }
+
+    pub fn streaming_enabled(&self) -> bool {
+        self.config.streaming_enabled
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -316,7 +320,7 @@ where
             // duplicated `output` array embedded in the `response.completed`
             // payload.  That produced two concrete issues:
             //   1. No real‑time streaming – the user only saw output after the
-            //      entire turn had finished, which broke the “typing” UX and
+            //      entire turn had finished, which broke the "typing" UX and
             //      made long‑running turns look stalled.
             //   2. Duplicate `function_call_output` items – both the
             //      individual *and* the completed array were forwarded, which

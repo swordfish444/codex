@@ -115,6 +115,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     };
 
     let config = Config::load_with_cli_overrides(cli_kv_overrides, overrides)?;
+    println!("[DEBUG] streaming_enabled: {}", config.streaming_enabled);
     let mut event_processor = EventProcessor::create_with_ansi(
         stdout_with_ansi,
         !config.hide_agent_reasoning,

@@ -1122,12 +1122,14 @@ async fn try_run_turn(
     let mut stream = sess.client.clone().stream(&prompt).await?;
 
     let mut output = Vec::new();
+    // Patch: buffer for non-streaming mode
+    let mut assistant_message_buf = String::new();
+    let streaming_enabled = sess.client.streaming_enabled();
     while let Some(event) = stream.next().await {
         let event = event?;
         match event {
             ResponseEvent::Created => {
                 let mut state = sess.state.lock().unwrap();
-                // We successfully created a new response and ensured that all pending calls were included so we can clear the pending call ids.
                 state.pending_call_ids.clear();
             }
             ResponseEvent::OutputItemDone(item) => {
@@ -1140,23 +1142,37 @@ async fn try_run_turn(
                     _ => None,
                 };
                 if let Some(call_id) = call_id {
-                    // We just got a new call id so we need to make sure to respond to it in the next turn.
                     let mut state = sess.state.lock().unwrap();
                     state.pending_call_ids.insert(call_id.clone());
+                }
+                // Patch: buffer assistant message text if streaming is disabled
+                if !streaming_enabled {
+                    if let ResponseItem::Message { role, content } = &item {
+                        if role == "assistant" {
+                            for c in content {
+                                if let ContentItem::OutputText { text } = c {
+                                    assistant_message_buf.push_str(text);
+                                }
+                            }
+                        }
+                    }
                 }
                 let response = match &item {
                     ResponseItem::Message { .. } | ResponseItem::Reasoning { .. } => None,
                     _ => handle_response_item(sess, sub_id, item.clone()).await?,
                 };
-
                 output.push(ProcessedResponseItem { item, response });
             }
             ResponseEvent::OutputTextDelta(text) => {
-                let event = Event {
-                    id: sub_id.to_string(),
-                    msg: EventMsg::AgentMessageDelta(AgentMessageEvent { message: text }),
-                };
-                sess.tx_event.send(event).await.ok();
+                if streaming_enabled {
+                    let event = Event {
+                        id: sub_id.to_string(),
+                        msg: EventMsg::AgentMessageDelta(AgentMessageEvent { message: text }),
+                    };
+                    sess.tx_event.send(event).await.ok();
+                } else {
+                    assistant_message_buf.push_str(&text);
+                }
             }
             ResponseEvent::ReasoningSummaryDelta(text) => {
                 let event = Event {
@@ -1169,6 +1185,16 @@ async fn try_run_turn(
                 response_id,
                 token_usage,
             } => {
+                // Patch: emit full message if we buffered deltas
+                if !streaming_enabled && !assistant_message_buf.is_empty() {
+                    let event = Event {
+                        id: sub_id.to_string(),
+                        msg: EventMsg::AgentMessage(AgentMessageEvent {
+                            message: assistant_message_buf.clone(),
+                        }),
+                    };
+                    sess.tx_event.send(event).await.ok();
+                }
                 if let Some(token_usage) = token_usage {
                     sess.tx_event
                         .send(Event {
