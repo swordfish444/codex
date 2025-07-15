@@ -180,55 +180,36 @@ impl ConversationHistoryWidget {
 
     /// Append incremental assistant text.
     ///
-    /// Fast path: while no newline has been observed we do a lightweight append so tokens stream quickly.
-    /// Slow path: the *moment* a newline arrives we re-render the entire accumulated buffer as Markdown so
-    /// formatting (paragraphs, code blocks, headings, lists, etc.) becomes visible incrementally.
-    /// We collapse single bare newlines into spaces to avoid distracting layout "jumps" mid‑paragraph; explicit
-    /// blank lines (>= 2 in a row) are preserved so paragraph breaks show up naturally.
+    /// Previous heuristic: fast‑append chunks until we saw a newline, then re‑render.
+    /// This caused visible "one‑word" lines (e.g., "The" -> "The user") when models
+    /// streamed small token fragments and also delayed Markdown styling (headings, code fences)
+    /// until the first newline arrived.  To improve perceived quality we now *always* re‑render
+    /// the accumulated markdown buffer on every incoming delta chunk.  We still apply the
+    /// soft‑break collapsing heuristic (outside fenced code blocks) so interim layout more closely
+    /// matches the final message and reduces layout thrash.
     pub fn append_agent_message_delta(&mut self, _config: &Config, text: String) {
         if text.is_empty() {
             return;
         }
-        // Accumulate for incremental re-render decisions.
+        // Accumulate full buffer.
         self.streaming_agent_message_buf.push_str(&text);
 
-        if text.contains('\n') {
-            // Re-render full accumulated markdown (with soft-break collapsing) so formatting becomes visible.
-            let collapsed =
-                collapse_single_newlines_for_streaming(&self.streaming_agent_message_buf);
-            if let Some(idx) = last_agent_message_idx(&self.entries) {
-                let width = self.cached_width.get();
-                let entry = &mut self.entries[idx];
-                entry.cell = HistoryCell::new_agent_message(_config, collapsed);
-                // Drop trailing blank so we can continue streaming additional tokens cleanly.
-                if let HistoryCell::AgentMessage { view } = &mut entry.cell {
-                    drop_trailing_blank_line(&mut view.lines);
-                }
-                if width > 0 {
-                    update_entry_height(entry, width);
-                }
-                return;
-            }
-            // No existing cell? Start a new one.
-            self.add_agent_message(_config, self.streaming_agent_message_buf.clone());
-            return;
-        }
-
-        // No newline in this chunk – lightweight append to visible cell.
+        let collapsed = collapse_single_newlines_for_streaming(&self.streaming_agent_message_buf);
         if let Some(idx) = last_agent_message_idx(&self.entries) {
             let width = self.cached_width.get();
             let entry = &mut self.entries[idx];
+            entry.cell = HistoryCell::new_agent_message(_config, collapsed);
+            // Drop trailing blank so we can continue streaming additional tokens cleanly.
             if let HistoryCell::AgentMessage { view } = &mut entry.cell {
-                append_streaming_text_chunks(&mut view.lines, &text);
-                if width > 0 {
-                    update_entry_height(entry, width);
-                }
-                return;
+                drop_trailing_blank_line(&mut view.lines);
             }
+            if width > 0 {
+                update_entry_height(entry, width);
+            }
+        } else {
+            // No existing cell? Start a new one.
+            self.add_agent_message(_config, self.streaming_agent_message_buf.clone());
         }
-        // No existing cell – begin a new (header‑only) streaming cell and retry.
-        self.add_agent_message(_config, String::new());
-        self.append_agent_message_delta(_config, text);
     }
 
     /// Append incremental reasoning text (mirrors `append_agent_message_delta`).
@@ -238,38 +219,20 @@ impl ConversationHistoryWidget {
         }
         self.streaming_agent_reasoning_buf.push_str(&text);
 
-        if text.contains('\n') {
-            let collapsed =
-                collapse_single_newlines_for_streaming(&self.streaming_agent_reasoning_buf);
-            if let Some(idx) = last_agent_reasoning_idx(&self.entries) {
-                let width = self.cached_width.get();
-                let entry = &mut self.entries[idx];
-                entry.cell = HistoryCell::new_agent_reasoning(_config, collapsed);
-                if let HistoryCell::AgentReasoning { view } = &mut entry.cell {
-                    drop_trailing_blank_line(&mut view.lines);
-                }
-                if width > 0 {
-                    update_entry_height(entry, width);
-                }
-                return;
-            }
-            self.add_agent_reasoning(_config, self.streaming_agent_reasoning_buf.clone());
-            return;
-        }
-
+        let collapsed = collapse_single_newlines_for_streaming(&self.streaming_agent_reasoning_buf);
         if let Some(idx) = last_agent_reasoning_idx(&self.entries) {
             let width = self.cached_width.get();
             let entry = &mut self.entries[idx];
+            entry.cell = HistoryCell::new_agent_reasoning(_config, collapsed);
             if let HistoryCell::AgentReasoning { view } = &mut entry.cell {
-                append_streaming_text_chunks(&mut view.lines, &text);
-                if width > 0 {
-                    update_entry_height(entry, width);
-                }
-                return;
+                drop_trailing_blank_line(&mut view.lines);
             }
+            if width > 0 {
+                update_entry_height(entry, width);
+            }
+        } else {
+            self.add_agent_reasoning(_config, self.streaming_agent_reasoning_buf.clone());
         }
-        self.add_agent_reasoning(_config, String::new());
-        self.append_agent_reasoning_delta(_config, text);
     }
 
     /// Replace the most recent AgentMessage cell with the fully accumulated `text`.
@@ -637,6 +600,7 @@ fn is_blank_line(line: &Line<'_>) -> bool {
 /// Ensure that the vector has *at least* one body line after the header.
 /// A freshly-created AgentMessage/Reasoning cell always has a header + blank line,
 /// but streaming cells may be created empty; this makes sure we have a target line.
+#[allow(dead_code)]
 fn ensure_body_line(lines: &mut Vec<Line<'static>>) {
     if lines.len() < 2 {
         lines.push(Line::from(""));
@@ -653,29 +617,16 @@ fn drop_trailing_blank_line(lines: &mut Vec<Line<'static>>) {
 }
 
 /// Append streaming text, honouring embedded newlines.
+#[allow(dead_code)]
 fn append_streaming_text_chunks(lines: &mut Vec<Line<'static>>, text: &str) {
-    ensure_body_line(lines);
+    // NOTE: This helper is now a fallback path only (we eagerly re-render accumulated markdown).
+    // Still, keep behaviour sane: drop trailing spacer, ensure a writable body line, then append.
     drop_trailing_blank_line(lines);
-
-    // We use `split_inclusive` so we can detect (and preserve) explicit newlines.
-    let mut first = true;
-    for chunk in text.split_inclusive('\n') {
-        let had_nl = chunk.ends_with('\n');
-        let content = chunk.trim_end_matches('\n');
-        if first {
-            if let Some(last_line) = lines.last_mut() {
-                last_line.spans.push(Span::raw(content.to_string()));
-            } else {
-                lines.push(Line::from(content.to_string()));
-            }
-            first = false;
-        } else {
-            lines.push(Line::from(content.to_string()));
-        }
-        if had_nl {
-            // Start a fresh (potentially target) line for subsequent appends.
-            lines.push(Line::from(""));
-        }
+    ensure_body_line(lines);
+    if let Some(last_line) = lines.last_mut() {
+        last_line.spans.push(Span::raw(text.to_string()));
+    } else {
+        lines.push(Line::from(text.to_string()));
     }
 }
 
@@ -684,10 +635,17 @@ fn update_entry_height(entry: &Entry, width: u16) {
     entry.line_count.set(entry.cell.height(width));
 }
 
-/// Collapse *single* newlines in a streaming buffer into spaces so that
-/// interim streaming renders more closely match final Markdown layout.
-/// See module-level docs in chatwidget.rs for additional context.
+/// Collapse *single* newlines in a streaming buffer into spaces so that interim streaming
+/// renders more closely match final Markdown layout — *except* when we detect fenced code blocks.
+/// If the accumulated text contains a Markdown code fence (``` or ~~~), we preserve **all**
+/// newlines verbatim so multi-line code renders correctly while streaming.
 fn collapse_single_newlines_for_streaming(src: &str) -> String {
+    // Quick fence detection. If we see a code fence marker anywhere in the accumulated text,
+    // skip collapsing entirely so we do not mangle code formatting.
+    if src.contains("```") || src.contains("~~~") {
+        return src.to_string();
+    }
+
     let mut out = String::with_capacity(src.len());
     let mut pending_newlines = 0usize;
     for ch in src.chars() {
