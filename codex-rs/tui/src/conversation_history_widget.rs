@@ -3,13 +3,13 @@ use crate::history_cell::CommandOutput;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PatchEventType;
 use codex_core::config::Config;
-use crate::markdown::append_markdown;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::SessionConfiguredEvent;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use ratatui::prelude::*;
 use ratatui::style::Style;
+use ratatui::text::Span;
 use ratatui::widgets::*;
 use serde_json::Value as JsonValue;
 use std::cell::Cell as StdCell;
@@ -34,6 +34,11 @@ pub struct ConversationHistoryWidget {
     /// The height of the viewport last time render_ref() was called
     last_viewport_height: StdCell<usize>,
     has_input_focus: bool,
+    /// Scratch buffer used while incrementally streaming an agent message.
+    /// We accumulate the full text so we can re-render markdown cleanly when the turn finishes.
+    streaming_agent_message_buf: String,
+    /// Scratch buffer used while incrementally streaming agent reasoning.
+    streaming_agent_reasoning_buf: String,
 }
 
 impl ConversationHistoryWidget {
@@ -45,6 +50,8 @@ impl ConversationHistoryWidget {
             num_rendered_lines: StdCell::new(0),
             last_viewport_height: StdCell::new(0),
             has_input_focus: false,
+            streaming_agent_message_buf: String::new(),
+            streaming_agent_reasoning_buf: String::new(),
         }
     }
 
@@ -196,23 +203,124 @@ impl ConversationHistoryWidget {
     }
 
     pub fn add_agent_message(&mut self, config: &Config, message: String) {
+        // Reset streaming buffer – we are starting a new message.
+        self.streaming_agent_message_buf.clear();
+        self.streaming_agent_message_buf.push_str(&message);
         self.add_to_history(HistoryCell::new_agent_message(config, message));
     }
 
     pub fn add_agent_reasoning(&mut self, config: &Config, text: String) {
+        self.streaming_agent_reasoning_buf.clear();
+        self.streaming_agent_reasoning_buf.push_str(&text);
         self.add_to_history(HistoryCell::new_agent_reasoning(config, text));
     }
 
-    pub fn append_agent_message_delta(&mut self, config: &Config, text: String) {
+    /// Append incremental assistant text without *forcing* a newline between chunks.
+    ///
+    /// The earlier implementation re-ran the markdown renderer on each delta.
+    /// Because `tui_markdown` always produces whole `Line` values, every chunk
+    /// showed up on its own row ("stair‑stepping" output).  Instead we take a
+    /// lightweight approach during streaming: extend the last visible line with
+    /// plain text and only honour explicit `\n` boundaries from the model.  When
+    /// the turn completes the caller should invoke `replace_last_agent_message()`
+    /// to re-render the full accumulated markdown so styling (code blocks, bold,
+    /// links, etc.) is correct.
+    pub fn append_agent_message_delta(&mut self, _config: &Config, text: String) {
+        if text.is_empty() {
+            return;
+        }
+
+        // Accumulate in scratch buffer so we can re-render later.
+        self.streaming_agent_message_buf.push_str(&text);
+
+        // If the newly received chunk contains a newline we re-render the entire
+        // accumulated buffer using the markdown renderer so formatting (bold,
+        // code blocks, links) becomes visible incrementally.  This is cheaper and
+        // less visually noisy than re-rendering on every token while still
+        // giving the user feedback at natural boundaries.
+        if text.contains('\n') {
+            // Rebuild the most recent AgentMessage entry from scratch.
+            let mut found_idx: Option<usize> = None;
+            for i in (0..self.entries.len()).rev() {
+                if matches!(self.entries[i].cell, HistoryCell::AgentMessage { .. }) {
+                    found_idx = Some(i);
+                    break;
+                }
+            }
+            if let Some(idx) = found_idx {
+                let width = self.cached_width.get();
+                // Rebuild cell then borrow entry once.
+                let rebuilt = HistoryCell::new_agent_message(
+                    _config,
+                    self.streaming_agent_message_buf.clone(),
+                );
+                let entry = &mut self.entries[idx];
+                entry.cell = rebuilt;
+                // Drop the trailing blank added by new_agent_message so we can continue streaming.
+                if let HistoryCell::AgentMessage { view } = &mut entry.cell {
+                    if let Some(last) = view.lines.last() {
+                        if last.spans.len() == 1 && last.spans[0].content.is_empty() {
+                            view.lines.pop();
+                        }
+                    }
+                    if width > 0 {
+                        entry.line_count.set(view.height(width));
+                    }
+                }
+                return;
+            }
+        }
+
         if let Some(entry) = self.entries.last_mut() {
             if let HistoryCell::AgentMessage { view } = &mut entry.cell {
-                if let Some(last) = view.lines.last() {
-                    if last.spans.len() == 1 && last.spans[0].content.is_empty() {
-                        view.lines.pop();
+                // Ensure there is *at least* one line available for content after the header.
+                // new_agent_message() with an empty string produces a header line and one blank line.
+                // We keep that blank as our first append target.
+                if view.lines.len() < 2 {
+                    view.lines.push(Line::from(""));
+                }
+
+                // Trim *at most one* trailing separator line that we added for spacing.
+                // Preserve user-intended blank lines (paragraph breaks) so we do not collapse newlines.
+                if view.lines.len() > 1 {
+                    if let Some(last) = view.lines.last() {
+                        if last.spans.len() == 1 && last.spans[0].content.is_empty() {
+                            view.lines.pop();
+                        }
                     }
                 }
-                append_markdown(&text, &mut view.lines, config);
-                view.lines.push(Line::from(""));
+
+                // Append respecting embedded newlines from the chunk.
+                let mut first_part = true;
+                for part in text.split_inclusive('\n') {
+                    let has_newline = part.ends_with('\n');
+                    let content = part.trim_end_matches('\n');
+                    if first_part {
+                        if let Some(last_line) = view.lines.last_mut() {
+                            last_line.spans.push(Span::raw(content.to_string()));
+                        } else {
+                            view.lines.push(Line::from(content.to_string()));
+                        }
+                        first_part = false;
+                    } else {
+                        // Option 1: If this is a new line, and content starts with a space, trim it.
+                        let trimmed_content = if content.starts_with(' ')
+                            && matches!(view.lines.last(), Some(l) if l.spans.is_empty())
+                        {
+                            content.trim_start()
+                        } else {
+                            content
+                        };
+                        view.lines.push(Line::from(trimmed_content.to_string()));
+                    }
+                    if has_newline {
+                        // honour explicit newline: start a fresh empty line (content target)
+                        view.lines.push(Line::from(""));
+                    }
+                }
+
+                // DO NOT push the cell separator yet; we'll add it on finalisation.
+
                 let width = self.cached_width.get();
                 if width > 0 {
                     entry.line_count.set(view.height(width));
@@ -220,20 +328,89 @@ impl ConversationHistoryWidget {
                 return;
             }
         }
-        // Fallback: create new entry
-        self.add_agent_message(config, text);
+        // Fallback: no existing AgentMessage – start a new one.
+        // Start a streaming cell with an *empty* body so we don't parse partial markdown.
+        self.add_agent_message(_config, String::new());
+        self.append_agent_message_delta(_config, text);
     }
 
-    pub fn append_agent_reasoning_delta(&mut self, config: &Config, text: String) {
-        if let Some(entry) = self.entries.last_mut() {
-            if let HistoryCell::AgentReasoning { view } = &mut entry.cell {
-                if let Some(last) = view.lines.last() {
-                    if last.spans.len() == 1 && last.spans[0].content.is_empty() {
-                        view.lines.pop();
+    /// Append incremental reasoning text (same semantics as `append_agent_message_delta`).
+    pub fn append_agent_reasoning_delta(&mut self, _config: &Config, text: String) {
+        if text.is_empty() {
+            return;
+        }
+        self.streaming_agent_reasoning_buf.push_str(&text);
+
+        // Re-render incrementally at newline boundaries.
+        if text.contains('\n') {
+            let mut found_idx: Option<usize> = None;
+            for i in (0..self.entries.len()).rev() {
+                if matches!(self.entries[i].cell, HistoryCell::AgentReasoning { .. }) {
+                    found_idx = Some(i);
+                    break;
+                }
+            }
+            if let Some(idx) = found_idx {
+                let width = self.cached_width.get();
+                let rebuilt = HistoryCell::new_agent_reasoning(
+                    _config,
+                    self.streaming_agent_reasoning_buf.clone(),
+                );
+                let entry = &mut self.entries[idx];
+                entry.cell = rebuilt;
+                if let HistoryCell::AgentReasoning { view } = &mut entry.cell {
+                    if let Some(last) = view.lines.last() {
+                        if last.spans.len() == 1 && last.spans[0].content.is_empty() {
+                            view.lines.pop();
+                        }
+                    }
+                    if width > 0 {
+                        entry.line_count.set(view.height(width));
                     }
                 }
-                append_markdown(&text, &mut view.lines, config);
-                view.lines.push(Line::from(""));
+                return;
+            }
+        }
+
+        if let Some(entry) = self.entries.last_mut() {
+            if let HistoryCell::AgentReasoning { view } = &mut entry.cell {
+                if view.lines.len() < 2 {
+                    view.lines.push(Line::from(""));
+                }
+                if view.lines.len() > 1 {
+                    if let Some(last) = view.lines.last() {
+                        if last.spans.len() == 1 && last.spans[0].content.is_empty() {
+                            view.lines.pop();
+                        }
+                    }
+                }
+                let mut first_part = true;
+                for part in text.split_inclusive('\n') {
+                    let has_newline = part.ends_with('\n');
+                    let content = part.trim_end_matches('\n');
+                    if first_part {
+                        if let Some(last_line) = view.lines.last_mut() {
+                            last_line.spans.push(Span::raw(content.to_string()));
+                        } else {
+                            view.lines.push(Line::from(content.to_string()));
+                        }
+                        first_part = false;
+                    } else {
+                        let trimmed_content = if content.starts_with(' ')
+                            && matches!(view.lines.last(), Some(l) if l.spans.is_empty())
+                        {
+                            content.trim_start()
+                        } else {
+                            content
+                        };
+                        view.lines.push(Line::from(trimmed_content.to_string()));
+                    }
+                    if has_newline {
+                        view.lines.push(Line::from(""));
+                    }
+                }
+                // no separator until finalisation
+
                 let width = self.cached_width.get();
                 if width > 0 {
                     entry.line_count.set(view.height(width));
@@ -241,7 +418,49 @@ impl ConversationHistoryWidget {
                 return;
             }
         }
-        self.add_agent_reasoning(config, text);
+        self.add_agent_reasoning(_config, String::new());
+        self.append_agent_reasoning_delta(_config, text);
+    }
+
+    /// Replace the most recent AgentMessage cell with the fully accumulated `text`.
+    /// This should be called once the turn is complete so we can render proper markdown.
+    pub fn replace_last_agent_message(&mut self, config: &Config, text: String) {
+        self.streaming_agent_message_buf.clear();
+        // Find the most recent AgentMessage entry (search from end).
+        if let Some(idx) = self
+            .entries
+            .iter()
+            .rposition(|e| matches!(e.cell, HistoryCell::AgentMessage { .. }))
+        {
+            let width = self.cached_width.get();
+            let entry = &mut self.entries[idx];
+            entry.cell = HistoryCell::new_agent_message(config, text);
+            if width > 0 {
+                entry.line_count.set(entry.cell.height(width));
+            }
+        } else {
+            // No existing AgentMessage (shouldn't happen) – append new.
+            self.add_agent_message(config, text);
+        }
+    }
+
+    /// Replace the most recent AgentReasoning cell with the fully accumulated `text`.
+    pub fn replace_last_agent_reasoning(&mut self, config: &Config, text: String) {
+        self.streaming_agent_reasoning_buf.clear();
+        if let Some(idx) = self
+            .entries
+            .iter()
+            .rposition(|e| matches!(e.cell, HistoryCell::AgentReasoning { .. }))
+        {
+            let width = self.cached_width.get();
+            let entry = &mut self.entries[idx];
+            entry.cell = HistoryCell::new_agent_reasoning(config, text);
+            if width > 0 {
+                entry.line_count.set(entry.cell.height(width));
+            }
+        } else {
+            self.add_agent_reasoning(config, text);
+        }
     }
 
     pub fn add_background_event(&mut self, message: String) {
@@ -496,7 +715,7 @@ impl WidgetRef for ConversationHistoryWidget {
 
         {
             // Choose a thumb color that stands out only when this pane has focus so that the
-            // user’s attention is naturally drawn to the active viewport. When unfocused we show
+            // user's attention is naturally drawn to the active viewport. When unfocused we show
             // a low-contrast thumb so the scrollbar fades into the background without becoming
             // invisible.
             let thumb_style = if self.has_input_focus {

@@ -228,3 +228,62 @@ pub enum ReasoningSummary {
     /// Option to disable reasoning summaries.
     None,
 }
+
+/// Base config deserialized from ~/.codex/config.toml.
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct ConfigToml {
+    /// Optional override of model selection.
+    pub model: Option<String>,
+    /// Provider to use from the model_providers map.
+    pub model_provider: Option<String>,
+    /// Size of the context window for the model, in tokens.
+    pub model_context_window: Option<u64>,
+    /// Maximum number of output tokens.
+    pub model_max_output_tokens: Option<u64>,
+    /// Default approval policy for executing commands.
+    pub approval_policy: Option<crate::protocol::AskForApproval>,
+    #[serde(default)]
+    pub shell_environment_policy: crate::config_types::ShellEnvironmentPolicyToml,
+    /// Sandbox mode to use.
+    pub sandbox_mode: Option<crate::config_types::SandboxMode>,
+    /// Sandbox configuration to apply if `sandbox` is `WorkspaceWrite`.
+    pub sandbox_workspace_write: Option<crate::config_types::SandboxWorkplaceWrite>,
+    /// Disable server-side response storage.
+    pub disable_response_storage: Option<bool>,
+    /// Optional external command to spawn for end-user notifications.
+    #[serde(default)]
+    pub notify: Option<Vec<String>>,
+    /// System instructions.
+    pub instructions: Option<String>,
+    /// Definition for MCP servers that Codex can reach out to for tool calls.
+    #[serde(default)]
+    pub mcp_servers: HashMap<String, crate::config_types::McpServerConfig>,
+    /// User-defined provider entries that extend/override the built-in list.
+    #[serde(default)]
+    pub model_providers: HashMap<String, crate::model_provider_info::ModelProviderInfo>,
+    /// Maximum number of bytes to include from an AGENTS.md project doc file.
+    pub project_doc_max_bytes: Option<usize>,
+    /// Profile to use from the `profiles` map.
+    pub profile: Option<String>,
+    /// Named profiles to facilitate switching between different configurations.
+    #[serde(default)]
+    pub profiles: HashMap<String, crate::config_profile::ConfigProfile>,
+    /// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
+    #[serde(default)]
+    pub history: Option<crate::config_types::History>,
+    /// Optional URI-based file opener.
+    pub file_opener: Option<crate::config_types::UriBasedFileOpener>,
+    /// Collection of settings that are specific to the TUI.
+    pub tui: Option<crate::config_types::Tui>,
+    /// When set to `true`, `AgentReasoning` events will be hidden from the UI/output.
+    pub hide_agent_reasoning: Option<bool>,
+    pub model_reasoning_effort: Option<crate::config_types::ReasoningEffort>,
+    pub model_reasoning_summary: Option<crate::config_types::ReasoningSummary>,
+    /// Override to force-enable reasoning summaries for the configured model.
+    pub model_supports_reasoning_summaries: Option<bool>,
+    /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
+    pub chatgpt_base_url: Option<String>,
+    /// Global toggle to enable/disable streaming (delta) output.
+    #[serde(default)]
+    pub streaming: Option<bool>,
+}

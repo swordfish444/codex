@@ -18,10 +18,11 @@ use codex_core::protocol::PatchApplyEndEvent;
 use codex_core::protocol::SessionConfiguredEvent;
 use codex_core::protocol::TokenUsage;
 use owo_colors::OwoColorize;
-use std::io::{self, Write};
 use owo_colors::Style;
 use shlex::try_join;
 use std::collections::HashMap;
+use std::io::Write;
+use std::io::{self};
 use std::time::Instant;
 
 /// This should be configurable. When used in CI, users may not want to impose
@@ -51,10 +52,20 @@ pub(crate) struct EventProcessor {
 
     /// Whether to include `AgentReasoning` events in the output.
     show_agent_reasoning: bool,
+    /// Whether to surface streaming deltas (true = print deltas + suppress final message).
+    streaming_enabled: bool,
+    /// Internal: have we already printed the `codex` header for the current streaming turn?
+    printed_agent_header: bool,
+    /// Internal: have we already printed the `thinking` header for current streaming turn?
+    printed_reasoning_header: bool,
 }
 
 impl EventProcessor {
-    pub(crate) fn create_with_ansi(with_ansi: bool, show_agent_reasoning: bool) -> Self {
+    pub(crate) fn create_with_ansi(
+        with_ansi: bool,
+        show_agent_reasoning: bool,
+        streaming_enabled: bool,
+    ) -> Self {
         let call_id_to_command = HashMap::new();
         let call_id_to_patch = HashMap::new();
         let call_id_to_tool_call = HashMap::new();
@@ -72,6 +83,9 @@ impl EventProcessor {
                 cyan: Style::new().cyan(),
                 call_id_to_tool_call,
                 show_agent_reasoning,
+                streaming_enabled,
+                printed_agent_header: false,
+                printed_reasoning_header: false,
             }
         } else {
             Self {
@@ -86,6 +100,9 @@ impl EventProcessor {
                 cyan: Style::new(),
                 call_id_to_tool_call,
                 show_agent_reasoning,
+                streaming_enabled,
+                printed_agent_header: false,
+                printed_reasoning_header: false,
             }
         }
     }
@@ -180,21 +197,46 @@ impl EventProcessor {
                 ts_println!(self, "{}", message.style(self.dimmed));
             }
             EventMsg::TaskStarted | EventMsg::TaskComplete(_) => {
+                // Reset streaming headers at start/end boundaries.
+                if matches!(msg, EventMsg::TaskStarted) {
+                    self.printed_agent_header = false;
+                    self.printed_reasoning_header = false;
+                }
                 // Ignore.
             }
             EventMsg::TokenCount(TokenUsage { total_tokens, .. }) => {
                 ts_println!(self, "tokens used: {total_tokens}");
             }
             EventMsg::AgentMessage(AgentMessageEvent { message }) => {
-                ts_println!(
-                    self,
-                    "{}\n{message}",
-                    "codex".style(self.bold).style(self.magenta)
-                );
+                if self.streaming_enabled {
+                    // Suppress full message when streaming; final markdown not printed in CLI.
+                    // If no deltas were seen, fall back to printing now.
+                    if !self.printed_agent_header {
+                        ts_println!(
+                            self,
+                            "{}\n{message}",
+                            "codex".style(self.bold).style(self.magenta)
+                        );
+                    }
+                } else {
+                    ts_println!(
+                        self,
+                        "{}\n{message}",
+                        "codex".style(self.bold).style(self.magenta)
+                    );
+                }
             }
             EventMsg::AgentMessageDelta(AgentMessageEvent { message }) => {
-                print!("{message}");
-                let _ = io::stdout().flush();
+                if !self.streaming_enabled {
+                    // streaming disabled, ignore
+                } else {
+                    if !self.printed_agent_header {
+                        ts_println!(self, "{}", "codex".style(self.bold).style(self.magenta));
+                        self.printed_agent_header = true;
+                    }
+                    print!("{message}");
+                    let _ = io::stdout().flush();
+                }
             }
             EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
                 call_id,
@@ -348,7 +390,7 @@ impl EventProcessor {
                 );
 
                 // Pretty-print the patch summary with colored diff markers so
-                // it’s easy to scan in the terminal output.
+                // it's easy to scan in the terminal output.
                 for (path, change) in changes.iter() {
                     match change {
                         FileChange::Add { content } => {
@@ -446,16 +488,35 @@ impl EventProcessor {
             }
             EventMsg::AgentReasoning(agent_reasoning_event) => {
                 if self.show_agent_reasoning {
-                    ts_println!(
-                        self,
-                        "{}\n{}",
-                        "thinking".style(self.italic).style(self.magenta),
-                        agent_reasoning_event.text
-                    );
+                    if self.streaming_enabled {
+                        if !self.printed_reasoning_header {
+                            ts_println!(
+                                self,
+                                "{}\n{}",
+                                "thinking".style(self.italic).style(self.magenta),
+                                agent_reasoning_event.text
+                            );
+                        }
+                    } else {
+                        ts_println!(
+                            self,
+                            "{}\n{}",
+                            "thinking".style(self.italic).style(self.magenta),
+                            agent_reasoning_event.text
+                        );
+                    }
                 }
             }
             EventMsg::AgentReasoningDelta(agent_reasoning_event) => {
-                if self.show_agent_reasoning {
+                if self.show_agent_reasoning && self.streaming_enabled {
+                    if !self.printed_reasoning_header {
+                        ts_println!(
+                            self,
+                            "{}",
+                            "thinking".style(self.italic).style(self.magenta)
+                        );
+                        self.printed_reasoning_header = true;
+                    }
                     print!("{}", agent_reasoning_event.text);
                     let _ = io::stdout().flush();
                 }

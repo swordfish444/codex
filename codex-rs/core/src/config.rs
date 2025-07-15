@@ -131,6 +131,13 @@ pub struct Config {
     /// request using the Responses API.
     pub model_reasoning_summary: ReasoningSummary,
 
+    /// Whether to surface live streaming delta events in front-ends. When `true`
+    /// (default) Codex will forward `AgentMessageDelta` / `AgentReasoningDelta`
+    /// events and UIs may show a typing indicator. When `false` Codex UIs should
+    /// ignore delta events and rely solely on the final aggregated
+    /// `AgentMessage`/`AgentReasoning` items (legacy behaviour).
+    pub streaming_enabled: bool,
+
     /// When set to `true`, overrides the default heuristic and forces
     /// `model_supports_reasoning_summaries()` to return `true`.
     pub model_supports_reasoning_summaries: bool,
@@ -321,6 +328,13 @@ pub struct ConfigToml {
 
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: Option<String>,
+
+    /// Whether to surface live streaming delta events in front-ends. When `true`
+    /// (default) Codex will forward `AgentMessageDelta` / `AgentReasoningDelta`
+    /// events and UIs may show a typing indicator. When `false` Codex UIs should
+    /// ignore delta events and rely solely on the final aggregated
+    /// `AgentMessage`/`AgentReasoning` items (legacy behaviour).
+    pub streaming: Option<bool>,
 }
 
 impl ConfigToml {
@@ -486,6 +500,7 @@ impl Config {
                 .or(cfg.model_reasoning_summary)
                 .unwrap_or_default(),
 
+            streaming_enabled: cfg.streaming.unwrap_or(true),
             model_supports_reasoning_summaries: cfg
                 .model_supports_reasoning_summaries
                 .unwrap_or(false),
@@ -798,6 +813,7 @@ disable_response_storage = true
                 hide_agent_reasoning: false,
                 model_reasoning_effort: ReasoningEffort::High,
                 model_reasoning_summary: ReasoningSummary::Detailed,
+                streaming_enabled: true,
                 model_supports_reasoning_summaries: false,
                 chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
             },
@@ -844,6 +860,7 @@ disable_response_storage = true
             hide_agent_reasoning: false,
             model_reasoning_effort: ReasoningEffort::default(),
             model_reasoning_summary: ReasoningSummary::default(),
+            streaming_enabled: true,
             model_supports_reasoning_summaries: false,
             chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
         };
@@ -905,6 +922,7 @@ disable_response_storage = true
             hide_agent_reasoning: false,
             model_reasoning_effort: ReasoningEffort::default(),
             model_reasoning_summary: ReasoningSummary::default(),
+            streaming_enabled: true,
             model_supports_reasoning_summaries: false,
             chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
         };

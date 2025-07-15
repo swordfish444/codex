@@ -40,6 +40,15 @@ use crate::history_cell::PatchEventType;
 use crate::user_approval_widget::ApprovalRequest;
 use codex_file_search::FileMatch;
 
+/// Bookkeeping for a live streaming cell. We track the `sub_id` to know when
+/// a new turn has started (and thus when to start a new cell) and accumulate
+/// the full text so we can re-render markdown cleanly when the turn ends.
+#[derive(Default)]
+struct StreamingBuf {
+    sub_id: Option<String>,
+    text: String,
+}
+
 pub(crate) struct ChatWidget<'a> {
     app_event_tx: AppEventSender,
     codex_op_tx: UnboundedSender<Op>,
@@ -49,6 +58,10 @@ pub(crate) struct ChatWidget<'a> {
     config: Config,
     initial_user_message: Option<UserMessage>,
     token_usage: TokenUsage,
+    /// Accumulates assistant streaming text for the *current* turn.
+    streaming_agent: StreamingBuf,
+    /// Accumulates reasoning streaming text for the *current* turn.
+    streaming_reasoning: StreamingBuf,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -135,6 +148,8 @@ impl ChatWidget<'_> {
                 initial_images,
             ),
             token_usage: TokenUsage::default(),
+            streaming_agent: StreamingBuf::default(),
+            streaming_reasoning: StreamingBuf::default(),
         }
     }
 
@@ -220,6 +235,8 @@ impl ChatWidget<'_> {
 
     pub(crate) fn handle_codex_event(&mut self, event: Event) {
         let Event { id, msg } = event;
+        // We need a copy of `id` for streaming bookkeeping because it is moved into some match arms.
+        let event_id = id.clone();
         match msg {
             EventMsg::SessionConfigured(event) => {
                 // Record session information at the top of the conversation.
@@ -240,27 +257,118 @@ impl ChatWidget<'_> {
                 self.request_redraw();
             }
             EventMsg::AgentMessage(AgentMessageEvent { message }) => {
-                self.conversation_history
-                    .add_agent_message(&self.config, message);
+                if self.config.streaming_enabled {
+                    // Final full assistant message. If we have an in-flight streaming cell for this id, replace it.
+                    let same_turn = self
+                        .streaming_agent
+                        .sub_id
+                        .as_ref()
+                        .map(|s| s == &event_id)
+                        .unwrap_or(false);
+                    if same_turn {
+                        self.conversation_history
+                            .replace_last_agent_message(&self.config, message.clone());
+                        self.streaming_agent.sub_id = None;
+                        self.streaming_agent.text.clear();
+                    } else {
+                        // Streaming enabled but we never saw deltas – just render normally.
+                        self.finalize_streams_if_new_turn(&event_id);
+                        self.conversation_history
+                            .add_agent_message(&self.config, message.clone());
+                    }
+                } else {
+                    // Streaming disabled -> always render final message, ignore any deltas.
+                    self.conversation_history
+                        .add_agent_message(&self.config, message.clone());
+                }
                 self.request_redraw();
             }
             EventMsg::AgentMessageDelta(AgentMessageEvent { message }) => {
-                self
-                    .conversation_history
-                    .append_agent_message_delta(&self.config, message);
+                // Streaming Assistant text.
+                if !self.config.streaming_enabled {
+                    // Ignore when streaming disabled.
+                    return;
+                }
+                // Start a new cell if this delta belongs to a new turn.
+                let is_new_stream = self
+                    .streaming_agent
+                    .sub_id
+                    .as_ref()
+                    .map(|s| s != &event_id)
+                    .unwrap_or(true);
+                if is_new_stream {
+                    // Finalise any in-flight stream from the prior turn.
+                    self.finalize_streams_if_new_turn(&event_id);
+                    // Start a header-only streaming cell so we don't parse partial markdown.
+                    self.conversation_history
+                        .add_agent_message(&self.config, String::new());
+                    self.streaming_agent.sub_id = Some(event_id.clone());
+                    self.streaming_agent.text.clear();
+                    self.streaming_agent.text.push_str(&message);
+                    // Append the first chunk into the new streaming cell.
+                    self.conversation_history
+                        .append_agent_message_delta(&self.config, message);
+                } else {
+                    self.streaming_agent.text.push_str(&message);
+                    self.conversation_history
+                        .append_agent_message_delta(&self.config, message);
+                }
                 self.request_redraw();
             }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
                 if !self.config.hide_agent_reasoning {
-                    self.conversation_history
-                        .add_agent_reasoning(&self.config, text);
+                    if self.config.streaming_enabled {
+                        // Final full reasoning summary. Replace streaming cell if same turn.
+                        let same_turn = self
+                            .streaming_reasoning
+                            .sub_id
+                            .as_ref()
+                            .map(|s| s == &event_id)
+                            .unwrap_or(false);
+                        if same_turn {
+                            self.conversation_history
+                                .replace_last_agent_reasoning(&self.config, text.clone());
+                            self.streaming_reasoning.sub_id = None;
+                            self.streaming_reasoning.text.clear();
+                        } else {
+                            self.finalize_streams_if_new_turn(&event_id);
+                            self.conversation_history
+                                .add_agent_reasoning(&self.config, text.clone());
+                        }
+                    } else {
+                        self.conversation_history
+                            .add_agent_reasoning(&self.config, text.clone());
+                    }
                     self.request_redraw();
                 }
             }
             EventMsg::AgentReasoningDelta(AgentReasoningEvent { text }) => {
                 if !self.config.hide_agent_reasoning {
-                    self.conversation_history
-                        .append_agent_reasoning_delta(&self.config, text);
+                    if !self.config.streaming_enabled {
+                        // Ignore when streaming disabled.
+                        return;
+                    }
+                    let is_new_stream = self
+                        .streaming_reasoning
+                        .sub_id
+                        .as_ref()
+                        .map(|s| s != &event_id)
+                        .unwrap_or(true);
+                    if is_new_stream {
+                        self.finalize_streams_if_new_turn(&event_id);
+                        // Start header-only streaming cell.
+                        self.conversation_history
+                            .add_agent_reasoning(&self.config, String::new());
+                        self.streaming_reasoning.sub_id = Some(event_id.clone());
+                        self.streaming_reasoning.text.clear();
+                        self.streaming_reasoning.text.push_str(&text);
+                        self.conversation_history
+                            .append_agent_reasoning_delta(&self.config, text);
+                    } else {
+                        self.streaming_reasoning.text.push_str(&text);
+                        self.conversation_history
+                            .append_agent_reasoning_delta(&self.config, text);
+                    }
                     self.request_redraw();
                 }
             }
@@ -272,6 +380,8 @@ impl ChatWidget<'_> {
             EventMsg::TaskComplete(TaskCompleteEvent {
                 last_agent_message: _,
             }) => {
+                // Turn has ended – ensure no lingering streaming cells remain un-finalised.
+                self.finalize_streams();
                 self.bottom_pane.set_task_running(false);
                 self.request_redraw();
             }
@@ -449,6 +559,42 @@ impl ChatWidget<'_> {
     pub(crate) fn submit_op(&self, op: Op) {
         if let Err(e) = self.codex_op_tx.send(op) {
             tracing::error!("failed to submit op: {e}");
+        }
+    }
+
+    /// Finalise (render) streaming buffers when we detect a new turn id.
+    fn finalize_streams_if_new_turn(&mut self, new_id: &str) {
+        // If the incoming id differs from the current stream id(s) we must flush.
+        let agent_changed = self
+            .streaming_agent
+            .sub_id
+            .as_ref()
+            .map(|s| s != new_id)
+            .unwrap_or(false);
+        let reasoning_changed = self
+            .streaming_reasoning
+            .sub_id
+            .as_ref()
+            .map(|s| s != new_id)
+            .unwrap_or(false);
+        if agent_changed || reasoning_changed {
+            self.finalize_streams();
+        }
+    }
+
+    /// Re-render any in-flight streaming cells with full markdown and clear buffers.
+    fn finalize_streams(&mut self) {
+        let had_agent = self.streaming_agent.sub_id.take().is_some();
+        if had_agent {
+            let text = std::mem::take(&mut self.streaming_agent.text);
+            self.conversation_history
+                .replace_last_agent_message(&self.config, text);
+        }
+        let had_reasoning = self.streaming_reasoning.sub_id.take().is_some();
+        if had_reasoning {
+            let text = std::mem::take(&mut self.streaming_reasoning.text);
+            self.conversation_history
+                .replace_last_agent_reasoning(&self.config, text);
         }
     }
 }
