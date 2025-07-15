@@ -304,15 +304,11 @@ impl ChatWidget<'_> {
                         .add_agent_message(&self.config, String::new());
                     self.streaming_agent.sub_id = Some(event_id.clone());
                     self.streaming_agent.text.clear();
-                    self.streaming_agent.text.push_str(&message);
-                    // Append the first chunk into the new streaming cell.
-                    self.conversation_history
-                        .append_agent_message_delta(&self.config, message);
-                } else {
-                    self.streaming_agent.text.push_str(&message);
-                    self.conversation_history
-                        .append_agent_message_delta(&self.config, message);
                 }
+                // Accumulate full text; incremental markdown re-render happens in ConversationHistoryWidget.
+                self.streaming_agent.text.push_str(&message);
+                self.conversation_history
+                    .append_agent_message_delta(&self.config, message);
                 self.request_redraw();
             }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
@@ -361,14 +357,11 @@ impl ChatWidget<'_> {
                             .add_agent_reasoning(&self.config, String::new());
                         self.streaming_reasoning.sub_id = Some(event_id.clone());
                         self.streaming_reasoning.text.clear();
-                        self.streaming_reasoning.text.push_str(&text);
-                        self.conversation_history
-                            .append_agent_reasoning_delta(&self.config, text);
-                    } else {
-                        self.streaming_reasoning.text.push_str(&text);
-                        self.conversation_history
-                            .append_agent_reasoning_delta(&self.config, text);
                     }
+                    // Accumulate full text; incremental markdown re-render happens in ConversationHistoryWidget.
+                    self.streaming_reasoning.text.push_str(&text);
+                    self.conversation_history
+                        .append_agent_reasoning_delta(&self.config, text);
                     self.request_redraw();
                 }
             }
