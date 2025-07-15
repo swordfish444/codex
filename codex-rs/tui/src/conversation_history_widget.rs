@@ -84,38 +84,26 @@ impl ConversationHistoryWidget {
     }
 
     fn scroll_up(&mut self, num_lines: u32) {
-        // If a user is scrolling up from the "stick to bottom" mode, we need to
-        // map this to a specific scroll position so we can calculate the delta.
-        // This requires us to care about how tall the screen is.
+        // Convert sticky-to-bottom sentinel into a concrete offset anchored at the bottom.
         if self.scroll_position == usize::MAX {
-            self.scroll_position = self
-                .num_rendered_lines
-                .get()
-                .saturating_sub(self.last_viewport_height.get());
+            self.scroll_position = sticky_offset(
+                self.num_rendered_lines.get(),
+                self.last_viewport_height.get(),
+            );
         }
-
         self.scroll_position = self.scroll_position.saturating_sub(num_lines as usize);
     }
 
     fn scroll_down(&mut self, num_lines: u32) {
-        // If we're already pinned to the bottom there's nothing to do.
+        // Nothing to do if we're already pinned to the bottom.
         if self.scroll_position == usize::MAX {
             return;
         }
-
         let viewport_height = self.last_viewport_height.get().max(1);
-        let num_rendered_lines = self.num_rendered_lines.get();
-
-        // Compute the maximum explicit scroll offset that still shows a full
-        // viewport. This mirrors the calculation in `scroll_page_down()` and
-        // in the render path.
-        let max_scroll = num_rendered_lines.saturating_sub(viewport_height);
-
+        let max_scroll = sticky_offset(self.num_rendered_lines.get(), viewport_height);
         let new_pos = self.scroll_position.saturating_add(num_lines as usize);
-
         if new_pos >= max_scroll {
-            // Reached (or passed) the bottom – switch to stick‑to‑bottom mode
-            // so that additional output keeps the view pinned automatically.
+            // Switch to sticky-bottom mode so subsequent output pins view.
             self.scroll_position = usize::MAX;
         } else {
             self.scroll_position = new_pos;
@@ -125,44 +113,21 @@ impl ConversationHistoryWidget {
     /// Scroll up by one full viewport height (Page Up).
     fn scroll_page_up(&mut self) {
         let viewport_height = self.last_viewport_height.get().max(1);
-
-        // If we are currently in the "stick to bottom" mode, first convert the
-        // implicit scroll position (`usize::MAX`) into an explicit offset that
-        // represents the very bottom of the scroll region.  This mirrors the
-        // logic from `scroll_up()`.
         if self.scroll_position == usize::MAX {
-            self.scroll_position = self
-                .num_rendered_lines
-                .get()
-                .saturating_sub(viewport_height);
+            self.scroll_position = sticky_offset(self.num_rendered_lines.get(), viewport_height);
         }
-
-        // Move up by a full page.
         self.scroll_position = self.scroll_position.saturating_sub(viewport_height);
     }
 
     /// Scroll down by one full viewport height (Page Down).
     fn scroll_page_down(&mut self) {
-        // Nothing to do if we're already stuck to the bottom.
         if self.scroll_position == usize::MAX {
             return;
         }
-
         let viewport_height = self.last_viewport_height.get().max(1);
-        let num_lines = self.num_rendered_lines.get();
-
-        // Calculate the maximum explicit scroll offset that is still within
-        // range. This matches the logic in `scroll_down()` and the render
-        // method.
-        let max_scroll = num_lines.saturating_sub(viewport_height);
-
-        // Attempt to move down by a full page.
+        let max_scroll = sticky_offset(self.num_rendered_lines.get(), viewport_height);
         let new_pos = self.scroll_position.saturating_add(viewport_height);
-
         if new_pos >= max_scroll {
-            // We have reached (or passed) the bottom – switch back to
-            // automatic stick‑to‑bottom mode so that subsequent output keeps
-            // the viewport pinned.
             self.scroll_position = usize::MAX;
         } else {
             self.scroll_position = new_pos;
@@ -446,14 +411,12 @@ impl WidgetRef for ConversationHistoryWidget {
             self.entries.iter().map(|e| e.line_count.get()).sum()
         };
 
-        // Determine the scroll position. Note the existing value of
-        // `self.scroll_position` could exceed the maximum scroll offset if the
-        // user made the window wider since the last render.
-        let max_scroll = num_lines.saturating_sub(viewport_height);
+        // Determine the scroll position (respect sticky-to-bottom sentinel and clamp).
+        let max_scroll = sticky_offset(num_lines, viewport_height);
         let scroll_pos = if self.scroll_position == usize::MAX {
             max_scroll
         } else {
-            self.scroll_position.min(max_scroll)
+            clamp_scroll_pos(self.scroll_position, max_scroll)
         };
 
         // ------------------------------------------------------------------
@@ -572,6 +535,19 @@ impl WidgetRef for ConversationHistoryWidget {
 #[inline]
 pub(crate) const fn wrap_cfg() -> ratatui::widgets::Wrap {
     ratatui::widgets::Wrap { trim: false }
+}
+
+// ---------------------------------------------------------------------------
+// Scrolling helpers (private)
+// ---------------------------------------------------------------------------
+#[inline]
+fn sticky_offset(num_lines: usize, viewport_height: usize) -> usize {
+    num_lines.saturating_sub(viewport_height.max(1))
+}
+
+#[inline]
+fn clamp_scroll_pos(pos: usize, max_scroll: usize) -> usize {
+    pos.min(max_scroll)
 }
 
 // ---------------------------------------------------------------------------
