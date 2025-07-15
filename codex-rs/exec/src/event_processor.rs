@@ -18,6 +18,7 @@ use codex_core::protocol::PatchApplyEndEvent;
 use codex_core::protocol::SessionConfiguredEvent;
 use codex_core::protocol::TokenUsage;
 use owo_colors::OwoColorize;
+use std::io::{self, Write};
 use owo_colors::Style;
 use shlex::try_join;
 use std::collections::HashMap;
@@ -190,6 +191,10 @@ impl EventProcessor {
                     "{}\n{message}",
                     "codex".style(self.bold).style(self.magenta)
                 );
+            }
+            EventMsg::AgentMessageDelta(AgentMessageEvent { message }) => {
+                print!("{message}");
+                let _ = io::stdout().flush();
             }
             EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
                 call_id,
@@ -447,6 +452,12 @@ impl EventProcessor {
                         "thinking".style(self.italic).style(self.magenta),
                         agent_reasoning_event.text
                     );
+                }
+            }
+            EventMsg::AgentReasoningDelta(agent_reasoning_event) => {
+                if self.show_agent_reasoning {
+                    print!("{}", agent_reasoning_event.text);
+                    let _ = io::stdout().flush();
                 }
             }
             EventMsg::SessionConfigured(session_configured_event) => {

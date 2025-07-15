@@ -175,6 +175,8 @@ pub async fn run_codex_tool_session(
                     | EventMsg::TaskStarted
                     | EventMsg::TokenCount(_)
                     | EventMsg::AgentReasoning(_)
+                    | EventMsg::AgentMessageDelta(_)
+                    | EventMsg::AgentReasoningDelta(_)
                     | EventMsg::McpToolCallBegin(_)
                     | EventMsg::McpToolCallEnd(_)
                     | EventMsg::ExecCommandBegin(_)

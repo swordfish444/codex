@@ -282,8 +282,14 @@ pub enum EventMsg {
     /// Agent text output message
     AgentMessage(AgentMessageEvent),
 
+    /// Incremental assistant text delta
+    AgentMessageDelta(AgentMessageEvent),
+
     /// Reasoning event from agent.
     AgentReasoning(AgentReasoningEvent),
+
+    /// Incremental reasoning text delta.
+    AgentReasoningDelta(AgentReasoningEvent),
 
     /// Ack the client's configure message.
     SessionConfigured(SessionConfiguredEvent),

@@ -1121,15 +1121,9 @@ async fn try_run_turn(
 
     let mut stream = sess.client.clone().stream(&prompt).await?;
 
-    // Buffer all the incoming messages from the stream first, then execute them.
-    // If we execute a function call in the middle of handling the stream, it can time out.
-    let mut input = Vec::new();
-    while let Some(event) = stream.next().await {
-        input.push(event?);
-    }
-
     let mut output = Vec::new();
-    for event in input {
+    while let Some(event) = stream.next().await {
+        let event = event?;
         match event {
             ResponseEvent::Created => {
                 let mut state = sess.state.lock().unwrap();
@@ -1150,9 +1144,26 @@ async fn try_run_turn(
                     let mut state = sess.state.lock().unwrap();
                     state.pending_call_ids.insert(call_id.clone());
                 }
-                let response = handle_response_item(sess, sub_id, item.clone()).await?;
+                let response = match &item {
+                    ResponseItem::Message { .. } | ResponseItem::Reasoning { .. } => None,
+                    _ => handle_response_item(sess, sub_id, item.clone()).await?,
+                };
 
                 output.push(ProcessedResponseItem { item, response });
+            }
+            ResponseEvent::OutputTextDelta(text) => {
+                let event = Event {
+                    id: sub_id.to_string(),
+                    msg: EventMsg::AgentMessageDelta(AgentMessageEvent { message: text }),
+                };
+                sess.tx_event.send(event).await.ok();
+            }
+            ResponseEvent::ReasoningSummaryDelta(text) => {
+                let event = Event {
+                    id: sub_id.to_string(),
+                    msg: EventMsg::AgentReasoningDelta(AgentReasoningEvent { text }),
+                };
+                sess.tx_event.send(event).await.ok();
             }
             ResponseEvent::Completed {
                 response_id,

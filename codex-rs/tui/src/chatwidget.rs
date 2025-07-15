@@ -244,10 +244,23 @@ impl ChatWidget<'_> {
                     .add_agent_message(&self.config, message);
                 self.request_redraw();
             }
+            EventMsg::AgentMessageDelta(AgentMessageEvent { message }) => {
+                self
+                    .conversation_history
+                    .append_agent_message_delta(&self.config, message);
+                self.request_redraw();
+            }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
                 if !self.config.hide_agent_reasoning {
                     self.conversation_history
                         .add_agent_reasoning(&self.config, text);
+                    self.request_redraw();
+                }
+            }
+            EventMsg::AgentReasoningDelta(AgentReasoningEvent { text }) => {
+                if !self.config.hide_agent_reasoning {
+                    self.conversation_history
+                        .append_agent_reasoning_delta(&self.config, text);
                     self.request_redraw();
                 }
             }

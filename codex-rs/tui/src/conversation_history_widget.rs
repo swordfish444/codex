@@ -3,6 +3,7 @@ use crate::history_cell::CommandOutput;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PatchEventType;
 use codex_core::config::Config;
+use crate::markdown::append_markdown;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::SessionConfiguredEvent;
 use crossterm::event::KeyCode;
@@ -200,6 +201,47 @@ impl ConversationHistoryWidget {
 
     pub fn add_agent_reasoning(&mut self, config: &Config, text: String) {
         self.add_to_history(HistoryCell::new_agent_reasoning(config, text));
+    }
+
+    pub fn append_agent_message_delta(&mut self, config: &Config, text: String) {
+        if let Some(entry) = self.entries.last_mut() {
+            if let HistoryCell::AgentMessage { view } = &mut entry.cell {
+                if let Some(last) = view.lines.last() {
+                    if last.spans.len() == 1 && last.spans[0].content.is_empty() {
+                        view.lines.pop();
+                    }
+                }
+                append_markdown(&text, &mut view.lines, config);
+                view.lines.push(Line::from(""));
+                let width = self.cached_width.get();
+                if width > 0 {
+                    entry.line_count.set(view.height(width));
+                }
+                return;
+            }
+        }
+        // Fallback: create new entry
+        self.add_agent_message(config, text);
+    }
+
+    pub fn append_agent_reasoning_delta(&mut self, config: &Config, text: String) {
+        if let Some(entry) = self.entries.last_mut() {
+            if let HistoryCell::AgentReasoning { view } = &mut entry.cell {
+                if let Some(last) = view.lines.last() {
+                    if last.spans.len() == 1 && last.spans[0].content.is_empty() {
+                        view.lines.pop();
+                    }
+                }
+                append_markdown(&text, &mut view.lines, config);
+                view.lines.push(Line::from(""));
+                let width = self.cached_width.get();
+                if width > 0 {
+                    entry.line_count.set(view.height(width));
+                }
+                return;
+            }
+        }
+        self.add_agent_reasoning(config, text);
     }
 
     pub fn add_background_event(&mut self, message: String) {

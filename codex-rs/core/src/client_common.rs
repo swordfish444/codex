@@ -53,6 +53,10 @@ impl Prompt {
 pub enum ResponseEvent {
     Created,
     OutputItemDone(ResponseItem),
+    /// Streaming text from an assistant message.
+    OutputTextDelta(String),
+    /// Streaming text from a reasoning summary.
+    ReasoningSummaryDelta(String),
     Completed {
         response_id: String,
         token_usage: Option<TokenUsage>,
