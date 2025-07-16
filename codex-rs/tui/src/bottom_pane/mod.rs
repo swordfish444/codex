@@ -162,6 +162,10 @@ impl BottomPane<'_> {
         }
     }
 
+    pub(crate) fn is_composer_empty(&self) -> bool {
+        self.composer.is_empty()
+    }
+
     pub(crate) fn is_task_running(&self) -> bool {
         self.is_task_running
     }
