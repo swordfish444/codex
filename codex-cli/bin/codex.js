@@ -15,7 +15,7 @@
  *      current platform / architecture, an error is thrown.
  */
 
-import { spawnSync } from "child_process";
+// Only imported dynamically when needed – see below.
 import fs from "fs";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -74,22 +74,74 @@ if (wantsNative) {
   }
 
   const binaryPath = path.join(__dirname, "..", "bin", `codex-${targetTriple}`);
-  const result = spawnSync(binaryPath, process.argv.slice(2), {
+
+  /*
+   * Use an asynchronous spawn instead of spawnSync so that Node is able to
+   * respond to signals (e.g. Ctrl-C / SIGINT) while the native binary is
+   * executing.  This allows us to forward those signals to the child process
+   * and guarantees that when either the child terminates or the parent
+   * receives a fatal signal, both processes exit in a predictable manner.
+   */
+
+  const { spawn } = await import("child_process");
+
+  const child = spawn(binaryPath, process.argv.slice(2), {
     stdio: "inherit",
   });
 
-  const exitCode = typeof result.status === "number" ? result.status : 1;
-  process.exit(exitCode);
-}
+  child.on("error", (err) => {
+    // Typically triggered when the binary is missing or not executable.
+    // Re-throwing here will terminate the parent with a non-zero exit code
+    // while still printing a helpful stack trace.
+    console.error(err);
+    process.exit(1);
+  });
 
-// Fallback: execute the original JavaScript CLI.
+  // Forward common termination signals to the child so that it shuts down
+  // gracefully. In the handler we temporarily disable the default behaviour of
+  // exiting immediately; once the child has been signalled we simply wait for
+  // its exit event which will in turn terminate the parent (see below).
+  const forwardSignal = (signal) => {
+    if (child.killed) {
+      return;
+    }
+    try {
+      child.kill(signal);
+    } catch {
+      /* ignore */
+    }
+  };
 
-// Resolve the path to the compiled CLI bundle
-const cliPath = path.resolve(__dirname, "../dist/cli.js");
-const cliUrl = pathToFileURL(cliPath).href;
+  ["SIGINT", "SIGTERM", "SIGHUP"].forEach((sig) => {
+    process.on(sig, () => forwardSignal(sig));
+  });
 
-// Load and execute the CLI
-(async () => {
+  // When the child exits, mirror its termination reason in the parent so that
+  // shell scripts and other tooling observe the correct exit status.
+  child.on("exit", (code, signal) => {
+    if (signal) {
+      // Re-emit the same signal so that the parent terminates with the
+      // expected semantics (this also sets the correct exit code of 128 + n).
+      process.kill(process.pid, signal);
+    } else {
+      process.exit(code ?? 1);
+    }
+  });
+
+  // There is nothing more for the parent to do here – wait until the child
+  // terminates or a signal is received.  We deliberately do *not* continue on
+  // to the JavaScript CLI fallback below, so we simply return from the current
+  // module evaluation by awaiting the child's "exit" event.
+
+  await new Promise(() => {});
+} else {
+  // Fallback: execute the original JavaScript CLI.
+
+  // Resolve the path to the compiled CLI bundle
+  const cliPath = path.resolve(__dirname, "../dist/cli.js");
+  const cliUrl = pathToFileURL(cliPath).href;
+
+  // Load and execute the CLI
   try {
     await import(cliUrl);
   } catch (err) {
@@ -97,4 +149,4 @@ const cliUrl = pathToFileURL(cliPath).href;
     console.error(err);
     process.exit(1);
   }
-})();
+}
