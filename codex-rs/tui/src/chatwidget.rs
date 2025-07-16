@@ -432,6 +432,10 @@ impl ChatWidget<'_> {
         }
     }
 
+    pub(crate) fn is_composer_empty(&self) -> bool {
+        self.bottom_pane.is_composer_empty()
+    }
+
     /// Forward an `Op` directly to codex.
     pub(crate) fn submit_op(&self, op: Op) {
         if let Err(e) = self.codex_op_tx.send(op) {
