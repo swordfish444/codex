@@ -30,7 +30,15 @@ use std::time::Instant;
 /// a limit so they can see the full transcript.
 const MAX_OUTPUT_LINES_FOR_EXEC_TOOL_CALL: usize = 20;
 
-pub(crate) struct EventProcessor {
+pub(crate) trait EventProcessor {
+    /// Print summary of effective configuration and user prompt.
+    fn print_config_summary(&mut self, config: &Config, prompt: &str);
+
+    /// Handle a single event emitted by the agent.
+    fn process_event(&mut self, event: Event);
+}
+
+pub(crate) struct EventProcessorWithHumanOutput {
     call_id_to_command: HashMap<String, ExecCommandBegin>,
     call_id_to_patch: HashMap<String, PatchApplyBegin>,
 
@@ -57,7 +65,7 @@ pub(crate) struct EventProcessor {
     reasoning_started: bool,
 }
 
-impl EventProcessor {
+impl EventProcessorWithHumanOutput {
     pub(crate) fn create_with_ansi(with_ansi: bool, config: &Config) -> Self {
         let call_id_to_command = HashMap::new();
         let call_id_to_patch = HashMap::new();
@@ -128,11 +136,11 @@ macro_rules! ts_println {
     }};
 }
 
-impl EventProcessor {
+impl EventProcessor for EventProcessorWithHumanOutput {
     /// Print a concise summary of the effective configuration that will be used
     /// for the session. This mirrors the information shown in the TUI welcome
     /// screen.
-    pub(crate) fn print_config_summary(&mut self, config: &Config, prompt: &str) {
+    fn print_config_summary(&mut self, config: &Config, prompt: &str) {
         const VERSION: &str = env!("CARGO_PKG_VERSION");
         ts_println!(
             self,
@@ -177,7 +185,7 @@ impl EventProcessor {
         );
     }
 
-    pub(crate) fn process_event(&mut self, event: Event) {
+    fn process_event(&mut self, event: Event) {
         let Event { id: _, msg } = event;
         match msg {
             EventMsg::Error(ErrorEvent { message }) => {
