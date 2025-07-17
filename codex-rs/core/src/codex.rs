@@ -1026,7 +1026,7 @@ async fn run_turn(
             Err(CodexErr::EnvVar(var)) => return Err(CodexErr::EnvVar(var)),
             Err(e) => {
                 // Use the configured provider-specific stream retry budget.
-                let max_retries = sess.client.config().model_provider.stream_max_retries();
+                let max_retries = sess.client.get_provider().stream_max_retries();
                 if retries < max_retries {
                     retries += 1;
                     let delay = backoff(retries);

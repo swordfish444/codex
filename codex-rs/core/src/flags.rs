@@ -11,7 +11,7 @@ env_flags! {
     pub OPENAI_TIMEOUT_MS: Duration = Duration::from_millis(300_000), |value| {
         value.parse().map(Duration::from_millis)
     };
-    pub OPENAI_REQUEST_MAX_RETRIES: u64 = 4;
+    pub REQUEST_MAX_RETRIES: u64 = 4;
     pub OPENAI_STREAM_MAX_RETRIES: u64 = 10;
 
     // We generally don't want to disconnect; this updates the timeout to be five minutes

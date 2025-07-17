@@ -72,7 +72,7 @@ async fn retries_on_early_close() {
         .mount(&server)
         .await;
 
-    // Configure retry behaviour explicitly to avoid mutating process-wide
+    // Configure retry behavior explicitly to avoid mutating process-wide
     // environment variables.
 
     let model_provider = ModelProviderInfo {
@@ -88,7 +88,7 @@ async fn retries_on_early_close() {
         http_headers: None,
         env_http_headers: None,
         // exercise retry path: first attempt yields incomplete stream, so allow 1 retry
-        openai_request_max_retries: Some(0),
+        request_max_retries: Some(0),
         openai_stream_max_retries: Some(1),
         openai_stream_idle_timeout_ms: Some(2000),
     };

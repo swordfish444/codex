@@ -88,7 +88,7 @@ async fn keeps_previous_response_id_between_tasks() {
         .mount(&server)
         .await;
 
-    // Configure retry behaviour explicitly to avoid mutating process-wide
+    // Configure retry behavior explicitly to avoid mutating process-wide
     // environment variables.
     let model_provider = ModelProviderInfo {
         name: "openai".into(),
@@ -103,7 +103,7 @@ async fn keeps_previous_response_id_between_tasks() {
         http_headers: None,
         env_http_headers: None,
         // disable retries so we don't get duplicate calls in this test
-        openai_request_max_retries: Some(0),
+        request_max_retries: Some(0),
         openai_stream_max_retries: Some(0),
         openai_stream_idle_timeout_ms: None,
     };

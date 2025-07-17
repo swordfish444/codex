@@ -92,6 +92,32 @@ http_headers = { "X-Example-Header" = "example-value" }
 env_http_headers = { "X-Example-Features": "EXAMPLE_FEATURES" }
 ```
 
+### Per-provider network tuning
+
+The following optional settings control retry behaviour and streaming idle timeouts **per model provider**. They must be specified inside the corresponding `[model_providers.<id>]` block in `config.toml`. (Older releases accepted top‑level keys; those are now ignored.)
+
+Example:
+
+```toml
+[model_providers.openai]
+name = "OpenAI"
+base_url = "https://api.openai.com/v1"
+env_key = "OPENAI_API_KEY"
+# network tuning overrides (all optional; falls back to built‑in defaults)
+request_max_retries = 4            # retry failed HTTP requests
+openai_stream_max_retries = 10            # retry dropped SSE streams
+openai_stream_idle_timeout_ms = 300000    # 5m idle timeout
+```
+
+#### request_max_retries
+How many times Codex will retry a failed HTTP request to the model provider. Defaults to `4`.
+
+#### openai_stream_max_retries
+Number of times Codex will attempt to reconnect when a streaming response is interrupted. Defaults to `10`.
+
+#### openai_stream_idle_timeout_ms
+How long Codex will wait for activity on a streaming response before treating the connection as lost. Defaults to `300000` (5 minutes).
+
 ## model_provider
 
 Identifies which provider to use from the `model_providers` map. Defaults to `"openai"`. You can override the `base_url` for the built-in `openai` provider via the `OPENAI_BASE_URL` environment variable.
@@ -466,33 +492,7 @@ This is analogous to `model_context_window`, but for the maximum number of outpu
 
 Maximum number of bytes to read from an `AGENTS.md` file to include in the instructions sent with the first turn of a session. Defaults to 32 KiB.
 
-## Per-provider network tuning
-
-The following optional settings control retry behaviour and streaming idle timeouts **per model provider**. They must be specified inside the corresponding `[model_providers.<id>]` block in `config.toml`. (Older releases accepted top‑level keys; those are now ignored.)
-
-Example:
-
-```toml
-[model_providers.openai]
-name = "OpenAI"
-base_url = "https://api.openai.com/v1"
-env_key = "OPENAI_API_KEY"
-# network tuning overrides (all optional; falls back to built‑in defaults)
-openai_request_max_retries = 4            # retry failed HTTP requests
-openai_stream_max_retries = 10            # retry dropped SSE streams
-openai_stream_idle_timeout_ms = 300000    # 5m idle timeout
-```
-
-### openai_request_max_retries
-How many times Codex will retry a failed HTTP request to the model provider. Defaults to `4`.
-
-### openai_stream_max_retries
-Number of times Codex will attempt to reconnect when a streaming response is interrupted. Defaults to `10`.
-
-### openai_stream_idle_timeout_ms
-How long Codex will wait for activity on a streaming response before treating the connection as lost. Defaults to `300000` (5 minutes).
-
-### tui
+## tui
 
 Options that are specific to the TUI.
 

@@ -47,7 +47,6 @@ async fn spawn_codex() -> Result<Codex, CodexErr> {
 
     let codex_home = TempDir::new().unwrap();
     let config = load_default_config_for_test(&codex_home);
-    // network retry/timeout tuning moved into ModelProviderInfo; using defaults
     let (agent, _init_id) = Codex::spawn(config, std::sync::Arc::new(Notify::new())).await?;
 
     Ok(agent)
