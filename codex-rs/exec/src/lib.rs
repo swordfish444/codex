@@ -36,6 +36,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         skip_git_repo_check,
         color,
         last_message_file,
+        json: json_mode,
         sandbox_mode: sandbox_mode_cli_arg,
         prompt,
         config_overrides,
@@ -115,10 +116,15 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     };
 
     let config = Config::load_with_cli_overrides(cli_kv_overrides, overrides)?;
-    let mut event_processor = EventProcessor::create_with_ansi(stdout_with_ansi, &config);
-    // Print the effective configuration and prompt so users can see what Codex
-    // is using.
-    event_processor.print_config_summary(&config, &prompt);
+    let mut event_processor = if !json_mode {
+        let mut event_processor = EventProcessor::create_with_ansi(stdout_with_ansi, &config);
+        // Print the effective configuration and prompt so users can see what Codex
+        // is using.
+        event_processor.print_config_summary(&config, &prompt);
+        Some(event_processor)
+    } else {
+        None
+    };
 
     if !skip_git_repo_check && !is_inside_git_repo(&config) {
         eprintln!("Not inside a Git repo and --skip-git-repo-check was not specified.");
@@ -215,7 +221,21 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
             }
             _ => (false, None),
         };
-        event_processor.process_event(event);
+        if let Some(ref mut event_processor) = event_processor {
+            event_processor.process_event(event);
+        } else if json_mode {
+            // Skip streaming delta events; wait for full message.
+            match &event.msg {
+                EventMsg::AgentMessageDelta(_) | EventMsg::AgentReasoningDelta(_) => {
+                    // Ignore streaming deltas in JSON mode.
+                }
+                _ => {
+                    if let Ok(json_line) = serde_json::to_string(&event) {
+                        println!("{json_line}");
+                    }
+                }
+            }
+        }
         if is_last_event {
             handle_last_message(last_assistant_message, last_message_file.as_deref())?;
             break;
