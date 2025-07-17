@@ -29,7 +29,7 @@ use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::flags::CODEX_RS_SSE_FIXTURE;
-use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS; // retained for default config
+use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::WireApi;
 use crate::models::ResponseItem;
@@ -140,6 +140,7 @@ impl ModelClient {
         );
 
         let mut attempt = 0;
+        let max_retries = self.provider.request_max_retries();
         loop {
             attempt += 1;
 
@@ -160,7 +161,7 @@ impl ModelClient {
                     tokio::spawn(process_sse(
                         stream,
                         tx_event,
-                        self.config.openai_stream_idle_timeout_ms,
+                        self.provider.stream_idle_timeout(),
                     ));
 
                     return Ok(ResponseStream { rx_event });
@@ -180,7 +181,7 @@ impl ModelClient {
                         return Err(CodexErr::UnexpectedStatus(status, body));
                     }
 
-                    if attempt > self.config.openai_request_max_retries {
+                    if attempt > max_retries {
                         return Err(CodexErr::RetryLimit(status));
                     }
 
@@ -197,7 +198,7 @@ impl ModelClient {
                     tokio::time::sleep(delay).await;
                 }
                 Err(e) => {
-                    if attempt > self.config.openai_request_max_retries {
+                    if attempt > max_retries {
                         return Err(e.into());
                     }
                     let delay = backoff(attempt);
@@ -327,7 +328,7 @@ async fn process_sse<S>(
             // duplicated `output` array embedded in the `response.completed`
             // payload.  That produced two concrete issues:
             //   1. No real‑time streaming – the user only saw output after the
-            //      entire turn had finished, which broke the “typing” UX and
+            //      entire turn had finished, which broke the "typing" UX and
             //      made long‑running turns look stalled.
             //   2. Duplicate `function_call_output` items – both the
             //      individual *and* the completed array were forwarded, which

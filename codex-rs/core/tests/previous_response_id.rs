@@ -102,13 +102,15 @@ async fn keeps_previous_response_id_between_tasks() {
         query_params: None,
         http_headers: None,
         env_http_headers: None,
+        // disable retries so we don't get duplicate calls in this test
+        openai_request_max_retries: Some(0),
+        openai_stream_max_retries: Some(0),
+        openai_stream_idle_timeout_ms: None,
     };
 
     // Init session
     let codex_home = TempDir::new().unwrap();
     let mut config = load_default_config_for_test(&codex_home);
-    config.openai_request_max_retries = 0;
-    config.openai_stream_max_retries = 0;
     config.model_provider = model_provider;
     let ctrl_c = std::sync::Arc::new(tokio::sync::Notify::new());
     let (codex, _init_id) = Codex::spawn(config, ctrl_c.clone()).await.unwrap();

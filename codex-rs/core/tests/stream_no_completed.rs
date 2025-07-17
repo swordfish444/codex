@@ -87,14 +87,15 @@ async fn retries_on_early_close() {
         query_params: None,
         http_headers: None,
         env_http_headers: None,
+        // exercise retry path: first attempt yields incomplete stream, so allow 1 retry
+        openai_request_max_retries: Some(0),
+        openai_stream_max_retries: Some(1),
+        openai_stream_idle_timeout_ms: Some(2000),
     };
 
     let ctrl_c = std::sync::Arc::new(tokio::sync::Notify::new());
     let codex_home = TempDir::new().unwrap();
     let mut config = load_default_config_for_test(&codex_home);
-    config.openai_request_max_retries = 0;
-    config.openai_stream_max_retries = 1;
-    config.openai_stream_idle_timeout_ms = Duration::from_millis(2000);
     config.model_provider = model_provider;
     let (codex, _init_id) = Codex::spawn(config, ctrl_c).await.unwrap();
 

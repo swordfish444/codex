@@ -1025,12 +1025,14 @@ async fn run_turn(
             Err(CodexErr::Interrupted) => return Err(CodexErr::Interrupted),
             Err(CodexErr::EnvVar(var)) => return Err(CodexErr::EnvVar(var)),
             Err(e) => {
-                if retries < sess.client.config().openai_stream_max_retries {
+                // Use the configured provider-specific stream retry budget.
+                let max_retries = sess.client.config().model_provider.stream_max_retries();
+                if retries < max_retries {
                     retries += 1;
                     let delay = backoff(retries);
                     warn!(
                         "stream disconnected - retrying turn ({retries}/{} in {delay:?})...",
-                        sess.client.config().openai_stream_max_retries
+                        max_retries
                     );
 
                     // Surface retry information to any UI/front‑end so the
@@ -1040,8 +1042,7 @@ async fn run_turn(
                         &sub_id,
                         format!(
                             "stream error: {e}; retrying {retries}/{} in {:?}…",
-                            sess.client.config().openai_stream_max_retries,
-                            delay
+                            max_retries, delay
                         ),
                     )
                     .await;

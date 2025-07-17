@@ -33,7 +33,7 @@ pub(crate) async fn stream_chat_completions(
     model: &str,
     client: &reqwest::Client,
     provider: &ModelProviderInfo,
-    config: &Config,
+    _config: &Config,
 ) -> Result<ResponseStream> {
     // Build messages array
     let mut messages = Vec::<serde_json::Value>::new();
@@ -121,6 +121,7 @@ pub(crate) async fn stream_chat_completions(
     );
 
     let mut attempt = 0;
+    let max_retries = provider.request_max_retries();
     loop {
         attempt += 1;
 
@@ -139,7 +140,7 @@ pub(crate) async fn stream_chat_completions(
                 tokio::spawn(process_chat_sse(
                     stream,
                     tx_event,
-                    config.openai_stream_idle_timeout_ms,
+                    provider.stream_idle_timeout(),
                 ));
                 return Ok(ResponseStream { rx_event });
             }
@@ -150,7 +151,7 @@ pub(crate) async fn stream_chat_completions(
                     return Err(CodexErr::UnexpectedStatus(status, body));
                 }
 
-                if attempt > config.openai_request_max_retries {
+                if attempt > max_retries {
                     return Err(CodexErr::RetryLimit(status));
                 }
 
@@ -166,7 +167,7 @@ pub(crate) async fn stream_chat_completions(
                 tokio::time::sleep(delay).await;
             }
             Err(e) => {
-                if attempt > config.openai_request_max_retries {
+                if attempt > max_retries {
                     return Err(e.into());
                 }
                 let delay = backoff(attempt);

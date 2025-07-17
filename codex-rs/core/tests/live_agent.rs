@@ -46,9 +46,8 @@ async fn spawn_codex() -> Result<Codex, CodexErr> {
     );
 
     let codex_home = TempDir::new().unwrap();
-    let mut config = load_default_config_for_test(&codex_home);
-    config.openai_request_max_retries = 2;
-    config.openai_stream_max_retries = 2;
+    let config = load_default_config_for_test(&codex_home);
+    // network retry/timeout tuning moved into ModelProviderInfo; using defaults
     let (agent, _init_id) = Codex::spawn(config, std::sync::Arc::new(Notify::new())).await?;
 
     Ok(agent)
@@ -67,7 +66,7 @@ async fn live_streaming_and_prev_id_reset() {
 
     let codex = spawn_codex().await.unwrap();
 
-    // ---------- Task 1 ----------
+    // ---------- Task 1 ----------
     codex
         .submit(Op::UserInput {
             items: vec![InputItem::Text {
@@ -101,7 +100,7 @@ async fn live_streaming_and_prev_id_reset() {
         "Agent did not stream any AgentMessage before TaskComplete"
     );
 
-    // ---------- Task 2 (same session) ----------
+    // ---------- Task 2 (same session) ----------
     codex
         .submit(Op::UserInput {
             items: vec![InputItem::Text {

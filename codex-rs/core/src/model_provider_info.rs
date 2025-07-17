@@ -9,8 +9,12 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::env::VarError;
+use std::time::Duration;
 
 use crate::error::EnvVarError;
+use crate::flags::OPENAI_REQUEST_MAX_RETRIES;
+use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS;
+use crate::flags::OPENAI_STREAM_MAX_RETRIES;
 use crate::openai_api_key::get_openai_api_key;
 
 /// Value for the `OpenAI-Originator` header that is sent with requests to
@@ -26,7 +30,7 @@ const OPENAI_ORIGINATOR_HEADER: &str = "codex_cli_rs";
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WireApi {
-    /// The experimental “Responses” API exposed by OpenAI at `/v1/responses`.
+    /// The experimental "Responses" API exposed by OpenAI at `/v1/responses`.
     Responses,
 
     /// Regular Chat Completions compatible with `/v1/chat/completions`.
@@ -64,6 +68,21 @@ pub struct ModelProviderInfo {
     /// value should be used. If the environment variable is not set, or the
     /// value is empty, the header will not be included in the request.
     pub env_http_headers: Option<HashMap<String, String>>,
+
+    /// Maximum number of times to retry a failed HTTP request to this provider.
+    /// When `None`, falls back to the global default from `OPENAI_REQUEST_MAX_RETRIES` (currently 4).
+    #[serde(default)]
+    pub openai_request_max_retries: Option<u64>,
+
+    /// Number of times to retry reconnecting a dropped streaming response before failing.
+    /// When `None`, falls back to `OPENAI_STREAM_MAX_RETRIES` (currently 10).
+    #[serde(default)]
+    pub openai_stream_max_retries: Option<u64>,
+
+    /// Idle timeout (in milliseconds) to wait for activity on a streaming response before treating
+    /// the connection as lost. When `None`, falls back to `OPENAI_STREAM_IDLE_TIMEOUT_MS` (currently 5m).
+    #[serde(default)]
+    pub openai_stream_idle_timeout_ms: Option<u64>,
 }
 
 impl ModelProviderInfo {
@@ -161,6 +180,25 @@ impl ModelProviderInfo {
             None => Ok(None),
         }
     }
+
+    /// Effective maximum number of request retries for this provider.
+    pub fn request_max_retries(&self) -> u64 {
+        self.openai_request_max_retries
+            .unwrap_or(*OPENAI_REQUEST_MAX_RETRIES)
+    }
+
+    /// Effective maximum number of stream reconnection attempts for this provider.
+    pub fn stream_max_retries(&self) -> u64 {
+        self.openai_stream_max_retries
+            .unwrap_or(*OPENAI_STREAM_MAX_RETRIES)
+    }
+
+    /// Effective idle timeout for streaming responses.
+    pub fn stream_idle_timeout(&self) -> Duration {
+        self.openai_stream_idle_timeout_ms
+            .map(Duration::from_millis)
+            .unwrap_or(*OPENAI_STREAM_IDLE_TIMEOUT_MS)
+    }
 }
 
 /// Built-in default provider list.
@@ -205,6 +243,10 @@ pub fn built_in_model_providers() -> HashMap<String, ModelProviderInfo> {
                         .into_iter()
                         .collect(),
                 ),
+                // Use global defaults for retry/timeout unless overridden in config.toml.
+                openai_request_max_retries: None,
+                openai_stream_max_retries: None,
+                openai_stream_idle_timeout_ms: None,
             },
         ),
     ]
@@ -234,6 +276,9 @@ base_url = "http://localhost:11434/v1"
             query_params: None,
             http_headers: None,
             env_http_headers: None,
+            openai_request_max_retries: None,
+            openai_stream_max_retries: None,
+            openai_stream_idle_timeout_ms: None,
         };
 
         let provider: ModelProviderInfo = toml::from_str(azure_provider_toml).unwrap();
@@ -259,6 +304,9 @@ query_params = { api-version = "2025-04-01-preview" }
             }),
             http_headers: None,
             env_http_headers: None,
+            openai_request_max_retries: None,
+            openai_stream_max_retries: None,
+            openai_stream_idle_timeout_ms: None,
         };
 
         let provider: ModelProviderInfo = toml::from_str(azure_provider_toml).unwrap();
@@ -287,6 +335,9 @@ env_http_headers = { "X-Example-Env-Header" = "EXAMPLE_ENV_VAR" }
             env_http_headers: Some(maplit::hashmap! {
                 "X-Example-Env-Header".to_string() => "EXAMPLE_ENV_VAR".to_string(),
             }),
+            openai_request_max_retries: None,
+            openai_stream_max_retries: None,
+            openai_stream_idle_timeout_ms: None,
         };
 
         let provider: ModelProviderInfo = toml::from_str(azure_provider_toml).unwrap();
