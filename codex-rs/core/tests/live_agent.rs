@@ -54,13 +54,13 @@ async fn spawn_codex() -> Result<Codex, CodexErr> {
     // Restrict the unsafety to this tiny block that happens at the very
     // beginning of the test, before we spawn any background tasks that could
     // observe the environment.
-    unsafe {
-        std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "2");
-        std::env::set_var("OPENAI_STREAM_MAX_RETRIES", "2");
-    }
+    // Configure retry behaviour explicitly to avoid mutating process-wide
+    // environment variables.
 
     let codex_home = TempDir::new().unwrap();
-    let config = load_default_config_for_test(&codex_home);
+    let mut config = load_default_config_for_test(&codex_home);
+    config.openai_request_max_retries = 2;
+    config.openai_stream_max_retries = 2;
     let (agent, _init_id) = Codex::spawn(config, std::sync::Arc::new(Notify::new())).await?;
 
     Ok(agent)

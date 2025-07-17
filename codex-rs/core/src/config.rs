@@ -10,6 +10,9 @@ use crate::config_types::ShellEnvironmentPolicyToml;
 use crate::config_types::Tui;
 use crate::config_types::UriBasedFileOpener;
 use crate::flags::OPENAI_DEFAULT_MODEL;
+use crate::flags::OPENAI_REQUEST_MAX_RETRIES;
+use crate::flags::OPENAI_STREAM_MAX_RETRIES;
+use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::built_in_model_providers;
 use crate::openai_model_info::get_model_info;
@@ -20,6 +23,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Duration;
 use toml::Value as TomlValue;
 
 /// Maximum number of bytes of the documentation that will be embedded. Larger
@@ -137,6 +141,15 @@ pub struct Config {
 
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: String,
+
+    /// Maximum number of retries for failed HTTP requests to the model provider.
+    pub openai_request_max_retries: u64,
+
+    /// Maximum number of retries for a dropped SSE stream.
+    pub openai_stream_max_retries: u64,
+
+    /// Idle timeout for streaming responses.
+    pub openai_stream_idle_timeout_ms: Duration,
 }
 
 impl Config {
@@ -321,6 +334,10 @@ pub struct ConfigToml {
 
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: Option<String>,
+
+    pub openai_request_max_retries: Option<u64>,
+    pub openai_stream_max_retries: Option<u64>,
+    pub openai_stream_idle_timeout_ms: Option<u64>,
 }
 
 impl ConfigToml {
@@ -494,6 +511,17 @@ impl Config {
                 .chatgpt_base_url
                 .or(cfg.chatgpt_base_url)
                 .unwrap_or("https://chatgpt.com/backend-api/".to_string()),
+
+            openai_request_max_retries: cfg
+                .openai_request_max_retries
+                .unwrap_or(*OPENAI_REQUEST_MAX_RETRIES),
+            openai_stream_max_retries: cfg
+                .openai_stream_max_retries
+                .unwrap_or(*OPENAI_STREAM_MAX_RETRIES),
+            openai_stream_idle_timeout_ms: cfg
+                .openai_stream_idle_timeout_ms
+                .map(Duration::from_millis)
+                .unwrap_or(*OPENAI_STREAM_IDLE_TIMEOUT_MS),
         };
         Ok(config)
     }
@@ -799,8 +827,11 @@ disable_response_storage = true
                 model_reasoning_effort: ReasoningEffort::High,
                 model_reasoning_summary: ReasoningSummary::Detailed,
                 model_supports_reasoning_summaries: false,
-                chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
-            },
+            chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
+            openai_request_max_retries: *OPENAI_REQUEST_MAX_RETRIES,
+            openai_stream_max_retries: *OPENAI_STREAM_MAX_RETRIES,
+            openai_stream_idle_timeout_ms: *OPENAI_STREAM_IDLE_TIMEOUT_MS,
+        },
             o3_profile_config
         );
         Ok(())
@@ -846,6 +877,9 @@ disable_response_storage = true
             model_reasoning_summary: ReasoningSummary::default(),
             model_supports_reasoning_summaries: false,
             chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
+            openai_request_max_retries: *OPENAI_REQUEST_MAX_RETRIES,
+            openai_stream_max_retries: *OPENAI_STREAM_MAX_RETRIES,
+            openai_stream_idle_timeout_ms: *OPENAI_STREAM_IDLE_TIMEOUT_MS,
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -907,6 +941,9 @@ disable_response_storage = true
             model_reasoning_summary: ReasoningSummary::default(),
             model_supports_reasoning_summaries: false,
             chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
+            openai_request_max_retries: *OPENAI_REQUEST_MAX_RETRIES,
+            openai_stream_max_retries: *OPENAI_STREAM_MAX_RETRIES,
+            openai_stream_idle_timeout_ms: *OPENAI_STREAM_IDLE_TIMEOUT_MS,
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);

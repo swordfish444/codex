@@ -29,8 +29,7 @@ use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::flags::CODEX_RS_SSE_FIXTURE;
-use crate::flags::OPENAI_REQUEST_MAX_RETRIES;
-use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS;
+use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS; // retained for default config
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::WireApi;
 use crate::models::ResponseItem;
@@ -64,6 +63,10 @@ impl ModelClient {
         }
     }
 
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
     /// Dispatches to either the Responses or Chat implementation depending on
     /// the provider config.  Public callers always invoke `stream()` – the
     /// specialised helpers are private to avoid accidental misuse.
@@ -77,6 +80,7 @@ impl ModelClient {
                     &self.config.model,
                     &self.client,
                     &self.provider,
+                    &self.config,
                 )
                 .await?;
 
@@ -153,7 +157,11 @@ impl ModelClient {
 
                     // spawn task to process SSE
                     let stream = resp.bytes_stream().map_err(CodexErr::Reqwest);
-                    tokio::spawn(process_sse(stream, tx_event));
+                    tokio::spawn(process_sse(
+                        stream,
+                        tx_event,
+                        self.config.openai_stream_idle_timeout_ms,
+                    ));
 
                     return Ok(ResponseStream { rx_event });
                 }
@@ -172,7 +180,7 @@ impl ModelClient {
                         return Err(CodexErr::UnexpectedStatus(status, body));
                     }
 
-                    if attempt > *OPENAI_REQUEST_MAX_RETRIES {
+                    if attempt > self.config.openai_request_max_retries {
                         return Err(CodexErr::RetryLimit(status));
                     }
 
@@ -189,7 +197,7 @@ impl ModelClient {
                     tokio::time::sleep(delay).await;
                 }
                 Err(e) => {
-                    if attempt > *OPENAI_REQUEST_MAX_RETRIES {
+                    if attempt > self.config.openai_request_max_retries {
                         return Err(e.into());
                     }
                     let delay = backoff(attempt);
@@ -249,14 +257,17 @@ struct ResponseCompletedOutputTokensDetails {
     reasoning_tokens: u64,
 }
 
-async fn process_sse<S>(stream: S, tx_event: mpsc::Sender<Result<ResponseEvent>>)
+async fn process_sse<S>(
+    stream: S,
+    tx_event: mpsc::Sender<Result<ResponseEvent>>,
+    idle_timeout: Duration,
+)
 where
     S: Stream<Item = Result<Bytes>> + Unpin,
 {
     let mut stream = stream.eventsource();
 
     // If the stream stays completely silent for an extended period treat it as disconnected.
-    let idle_timeout = *OPENAI_STREAM_IDLE_TIMEOUT_MS;
     // The response id returned from the "complete" message.
     let mut response_completed: Option<ResponseCompleted> = None;
 
@@ -404,7 +415,11 @@ async fn stream_from_fixture(path: impl AsRef<Path>) -> Result<ResponseStream> {
 
     let rdr = std::io::Cursor::new(content);
     let stream = ReaderStream::new(rdr).map_err(CodexErr::Io);
-    tokio::spawn(process_sse(stream, tx_event));
+    tokio::spawn(process_sse(
+        stream,
+        tx_event,
+        *OPENAI_STREAM_IDLE_TIMEOUT_MS,
+    ));
     Ok(ResponseStream { rx_event })
 }
 
@@ -433,7 +448,7 @@ mod tests {
         let reader = builder.build();
         let stream = ReaderStream::new(reader).map_err(CodexErr::Io);
         let (tx, mut rx) = mpsc::channel::<Result<ResponseEvent>>(16);
-        tokio::spawn(process_sse(stream, tx));
+        tokio::spawn(process_sse(stream, tx, *OPENAI_STREAM_IDLE_TIMEOUT_MS));
 
         let mut events = Vec::new();
         while let Some(ev) = rx.recv().await {
@@ -460,7 +475,7 @@ mod tests {
 
         let (tx, mut rx) = mpsc::channel::<Result<ResponseEvent>>(8);
         let stream = ReaderStream::new(std::io::Cursor::new(body)).map_err(CodexErr::Io);
-        tokio::spawn(process_sse(stream, tx));
+        tokio::spawn(process_sse(stream, tx, *OPENAI_STREAM_IDLE_TIMEOUT_MS));
 
         let mut out = Vec::new();
         while let Some(ev) = rx.recv().await {

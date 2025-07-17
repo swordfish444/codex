@@ -49,7 +49,6 @@ use crate::exec::ExecToolCallOutput;
 use crate::exec::SandboxType;
 use crate::exec::process_exec_tool_call;
 use crate::exec_env::create_env;
-use crate::flags::OPENAI_STREAM_MAX_RETRIES;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::mcp_connection_manager::try_parse_fully_qualified_tool_name;
 use crate::mcp_tool_call::handle_mcp_tool_call;
@@ -1027,12 +1026,12 @@ async fn run_turn(
             Err(CodexErr::Interrupted) => return Err(CodexErr::Interrupted),
             Err(CodexErr::EnvVar(var)) => return Err(CodexErr::EnvVar(var)),
             Err(e) => {
-                if retries < *OPENAI_STREAM_MAX_RETRIES {
+                if retries < sess.client.config().openai_stream_max_retries {
                     retries += 1;
                     let delay = backoff(retries);
                     warn!(
                         "stream disconnected - retrying turn ({retries}/{} in {delay:?})...",
-                        *OPENAI_STREAM_MAX_RETRIES
+                        sess.client.config().openai_stream_max_retries
                     );
 
                     // Surface retry information to any UI/front‑end so the
@@ -1042,7 +1041,8 @@ async fn run_turn(
                         &sub_id,
                         format!(
                             "stream error: {e}; retrying {retries}/{} in {:?}…",
-                            *OPENAI_STREAM_MAX_RETRIES, delay
+                            sess.client.config().openai_stream_max_retries,
+                            delay
                         ),
                     )
                     .await;
