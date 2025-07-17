@@ -19,9 +19,9 @@ use crate::ModelProviderInfo;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
+use crate::config::Config;
 use crate::error::CodexErr;
 use crate::error::Result;
-use crate::config::Config;
 use crate::models::ContentItem;
 use crate::models::ResponseItem;
 use crate::openai_tools::create_tools_json_for_chat_completions_api;
@@ -183,8 +183,7 @@ async fn process_chat_sse<S>(
     stream: S,
     tx_event: mpsc::Sender<Result<ResponseEvent>>,
     idle_timeout: Duration,
-)
-where
+) where
     S: Stream<Item = Result<Bytes>> + Unpin,
 {
     let mut stream = stream.eventsource();

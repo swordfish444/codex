@@ -11,8 +11,8 @@ use crate::config_types::Tui;
 use crate::config_types::UriBasedFileOpener;
 use crate::flags::OPENAI_DEFAULT_MODEL;
 use crate::flags::OPENAI_REQUEST_MAX_RETRIES;
-use crate::flags::OPENAI_STREAM_MAX_RETRIES;
 use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS;
+use crate::flags::OPENAI_STREAM_MAX_RETRIES;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::built_in_model_providers;
 use crate::openai_model_info::get_model_info;
@@ -827,11 +827,11 @@ disable_response_storage = true
                 model_reasoning_effort: ReasoningEffort::High,
                 model_reasoning_summary: ReasoningSummary::Detailed,
                 model_supports_reasoning_summaries: false,
-            chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
-            openai_request_max_retries: *OPENAI_REQUEST_MAX_RETRIES,
-            openai_stream_max_retries: *OPENAI_STREAM_MAX_RETRIES,
-            openai_stream_idle_timeout_ms: *OPENAI_STREAM_IDLE_TIMEOUT_MS,
-        },
+                chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
+                openai_request_max_retries: *OPENAI_REQUEST_MAX_RETRIES,
+                openai_stream_max_retries: *OPENAI_STREAM_MAX_RETRIES,
+                openai_stream_idle_timeout_ms: *OPENAI_STREAM_IDLE_TIMEOUT_MS,
+            },
             o3_profile_config
         );
         Ok(())
