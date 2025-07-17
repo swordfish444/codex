@@ -725,9 +725,9 @@ disable_response_storage = true
             query_params: None,
             http_headers: None,
             env_http_headers: None,
-            request_max_retries: None,
-            openai_stream_max_retries: None,
-            openai_stream_idle_timeout_ms: None,
+            request_max_retries: Some(4),
+            openai_stream_max_retries: Some(10),
+            openai_stream_idle_timeout_ms: Some(300_000),
         };
         let model_provider_map = {
             let mut model_provider_map = built_in_model_providers();
