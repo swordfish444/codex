@@ -60,7 +60,7 @@ struct ChatWidgetArgs {
     initial_images: Vec<PathBuf>,
 }
 
-impl<'a> App<'a> {
+impl App<'_> {
     pub(crate) fn new(
         config: Config,
         initial_prompt: Option<String>,
@@ -297,6 +297,8 @@ impl<'a> App<'a> {
     }
 
     fn draw_next_frame(&mut self, terminal: &mut tui::Tui) -> Result<()> {
+        // TODO: add a throttle to avoid redrawing too often
+
         match &mut self.app_state {
             AppState::Chat { widget } => {
                 terminal.draw(|frame| frame.render_widget_ref(&**widget, frame.area()))?;
