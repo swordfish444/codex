@@ -202,6 +202,20 @@ impl Session {
             .map(PathBuf::from)
             .map_or_else(|| self.cwd.clone(), |p| self.cwd.join(p))
     }
+
+    pub async fn load_rollout(&self, path: std::path::PathBuf) -> std::io::Result<()> {
+        let (rec, saved) = crate::rollout::RolloutRecorder::resume(&path).await?;
+        {
+            let mut state = self.state.lock().unwrap();
+            state.previous_response_id = saved.state.previous_response_id;
+            if let Some(transcript) = state.zdr_transcript.as_mut() {
+                transcript.record_items(saved.items.iter());
+            }
+        }
+        let mut guard = self.rollout.lock().unwrap();
+        *guard = Some(rec);
+        Ok(())
+    }
 }
 
 /// Mutable state of the agent
@@ -309,6 +323,7 @@ impl Session {
     async fn record_conversation_items(&self, items: &[ResponseItem]) {
         debug!("Recording items for conversation: {items:?}");
         self.record_rollout_items(items).await;
+        self.record_state_snapshot().await;
 
         if let Some(transcript) = self.state.lock().unwrap().zdr_transcript.as_mut() {
             transcript.record_items(items);
@@ -328,6 +343,26 @@ impl Session {
         if let Some(rec) = recorder {
             if let Err(e) = rec.record_items(items).await {
                 error!("failed to record rollout items: {e:#}");
+            }
+        }
+    }
+
+    async fn record_state_snapshot(&self) {
+        let snapshot = {
+            let state = self.state.lock().unwrap();
+            crate::rollout::SessionStateSnapshot {
+                previous_response_id: state.previous_response_id.clone(),
+            }
+        };
+
+        let recorder = {
+            let guard = self.rollout.lock().unwrap();
+            guard.as_ref().cloned()
+        };
+
+        if let Some(rec) = recorder {
+            if let Err(e) = rec.record_state(snapshot).await {
+                error!("failed to record rollout state: {e:#}");
             }
         }
     }
@@ -742,6 +777,22 @@ async fn submission_loop(
                         sess.abort();
                     }
                     other => sess.notify_approval(&id, other),
+                }
+            }
+            Op::LoadSession { path } => {
+                let sess = match sess.as_ref() {
+                    Some(sess) => sess,
+                    None => {
+                        send_no_session_event(sub.id).await;
+                        continue;
+                    }
+                };
+                if let Err(e) = sess.load_rollout(path).await {
+                    let event = Event {
+                        id: sub.id,
+                        msg: EventMsg::Error(ErrorEvent { message: e.to_string() }),
+                    };
+                    tx_event.send(event).await.ok();
                 }
             }
             Op::AddToHistory { text } => {
