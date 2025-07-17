@@ -1041,8 +1041,7 @@ async fn run_turn(
                     sess.notify_background_event(
                         &sub_id,
                         format!(
-                            "stream error: {e}; retrying {retries}/{} in {:?}…",
-                            max_retries, delay
+                            "stream error: {e}; retrying {retries}/{max_retries} in {delay:?}…"
                         ),
                     )
                     .await;
