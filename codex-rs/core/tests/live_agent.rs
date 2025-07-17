@@ -45,18 +45,6 @@ async fn spawn_codex() -> Result<Codex, CodexErr> {
         "OPENAI_API_KEY must be set for live tests"
     );
 
-    // Environment tweaks to keep the tests snappy and inexpensive while still
-    // exercising retry/robustness logic.
-    //
-    // NOTE: Starting with the 2024 edition `std::env::set_var` is `unsafe`
-    // because changing the process environment races with any other threads
-    // that might be performing environment look-ups at the same time.
-    // Restrict the unsafety to this tiny block that happens at the very
-    // beginning of the test, before we spawn any background tasks that could
-    // observe the environment.
-    // Configure retry behaviour explicitly to avoid mutating process-wide
-    // environment variables.
-
     let codex_home = TempDir::new().unwrap();
     let mut config = load_default_config_for_test(&codex_home);
     config.openai_request_max_retries = 2;
