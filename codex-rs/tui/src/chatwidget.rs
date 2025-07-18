@@ -53,6 +53,7 @@ pub(crate) struct ChatWidget<'a> {
     token_usage: TokenUsage,
     reasoning_buffer: String,
     answer_buffer: String,
+    active_task_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -141,6 +142,7 @@ impl ChatWidget<'_> {
             token_usage: TokenUsage::default(),
             reasoning_buffer: String::new(),
             answer_buffer: String::new(),
+            active_task_id: None,
         }
     }
 
@@ -222,10 +224,30 @@ impl ChatWidget<'_> {
             self.conversation_history.add_user_message(text);
         }
         self.conversation_history.scroll_to_bottom();
+
+        // IMPORTANT: Starting a *new* user turn. Clear any partially streamed
+        // answer from a previous turn (e.g., one that was interrupted) so that
+        // the next AgentMessageDelta spawns a fresh agent message cell instead
+        // of overwriting the last one.
+        self.answer_buffer.clear();
+        self.reasoning_buffer.clear();
     }
 
     pub(crate) fn handle_codex_event(&mut self, event: Event) {
-        let Event { id, msg } = event;
+        // Retain the event ID so we can refer to it after destructuring.
+        let event_id = event.id.clone();
+        let Event { id: _, msg } = event;
+
+        // When we are in the middle of a task (active_task_id is Some) we drop
+        // streaming text/reasoning events for *other* task IDs. This prevents
+        // late tokens from an interrupted run from bleeding into the current
+        // answer.
+        let should_drop_streaming = self
+            .active_task_id
+            .as_ref()
+            .map(|active| active != &event_id)
+            .unwrap_or(false);
+
         match msg {
             EventMsg::SessionConfigured(event) => {
                 // Record session information at the top of the conversation.
@@ -246,6 +268,9 @@ impl ChatWidget<'_> {
                 self.request_redraw();
             }
             EventMsg::AgentMessage(AgentMessageEvent { message }) => {
+                if should_drop_streaming {
+                    return;
+                }
                 // if the answer buffer is empty, this means we haven't received any
                 // delta. Thus, we need to print the message as a new answer.
                 if self.answer_buffer.is_empty() {
@@ -259,6 +284,9 @@ impl ChatWidget<'_> {
                 self.request_redraw();
             }
             EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }) => {
+                if should_drop_streaming {
+                    return;
+                }
                 if self.answer_buffer.is_empty() {
                     self.conversation_history
                         .add_agent_message(&self.config, "".to_string());
@@ -269,6 +297,9 @@ impl ChatWidget<'_> {
                 self.request_redraw();
             }
             EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }) => {
+                if should_drop_streaming {
+                    return;
+                }
                 if self.reasoning_buffer.is_empty() {
                     self.conversation_history
                         .add_agent_reasoning(&self.config, "".to_string());
@@ -279,6 +310,9 @@ impl ChatWidget<'_> {
                 self.request_redraw();
             }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
+                if should_drop_streaming {
+                    return;
+                }
                 // if the reasoning buffer is empty, this means we haven't received any
                 // delta. Thus, we need to print the message as a new reasoning.
                 if self.reasoning_buffer.is_empty() {
@@ -293,6 +327,10 @@ impl ChatWidget<'_> {
                 self.request_redraw();
             }
             EventMsg::TaskStarted => {
+                // New task has begun – update state and clear any stale buffers.
+                self.active_task_id = Some(event_id);
+                self.answer_buffer.clear();
+                self.reasoning_buffer.clear();
                 self.bottom_pane.clear_ctrl_c_quit_hint();
                 self.bottom_pane.set_task_running(true);
                 self.request_redraw();
@@ -300,6 +338,10 @@ impl ChatWidget<'_> {
             EventMsg::TaskComplete(TaskCompleteEvent {
                 last_agent_message: _,
             }) => {
+                // Task finished; clear active_task_id so that subsequent events are processed.
+                if self.active_task_id.as_ref() == Some(&event_id) {
+                    self.active_task_id = None;
+                }
                 self.bottom_pane.set_task_running(false);
                 self.request_redraw();
             }
@@ -309,16 +351,25 @@ impl ChatWidget<'_> {
                     .set_token_usage(self.token_usage.clone(), self.config.model_context_window);
             }
             EventMsg::Error(ErrorEvent { message }) => {
+                // Error events always get surfaced (even for stale task IDs) so that the user sees
+                // why a run stopped. However, only clear the running indicator if this is the
+                // active task.
+                if self.active_task_id.as_ref() == Some(&event_id) {
+                    self.bottom_pane.set_task_running(false);
+                    self.active_task_id = None;
+                }
                 self.conversation_history.add_error(message);
-                self.bottom_pane.set_task_running(false);
             }
             EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
                 command,
                 cwd,
                 reason,
             }) => {
+                if should_drop_streaming {
+                    return;
+                }
                 let request = ApprovalRequest::Exec {
-                    id,
+                    id: event_id,
                     command,
                     cwd,
                     reason,
@@ -330,6 +381,9 @@ impl ChatWidget<'_> {
                 reason,
                 grant_root,
             }) => {
+                if should_drop_streaming {
+                    return;
+                }
                 // ------------------------------------------------------------------
                 // Before we even prompt the user for approval we surface the patch
                 // summary in the main conversation so that the dialog appears in a
@@ -348,7 +402,7 @@ impl ChatWidget<'_> {
 
                 // Now surface the approval request in the BottomPane as before.
                 let request = ApprovalRequest::ApplyPatch {
-                    id,
+                    id: event_id,
                     reason,
                     grant_root,
                 };
@@ -360,6 +414,9 @@ impl ChatWidget<'_> {
                 command,
                 cwd: _,
             }) => {
+                if should_drop_streaming {
+                    return;
+                }
                 self.conversation_history
                     .add_active_exec_command(call_id, command);
                 self.request_redraw();
@@ -369,6 +426,9 @@ impl ChatWidget<'_> {
                 auto_approved,
                 changes,
             }) => {
+                if should_drop_streaming {
+                    return;
+                }
                 // Even when a patch is auto‑approved we still display the
                 // summary so the user can follow along.
                 self.conversation_history
@@ -384,6 +444,9 @@ impl ChatWidget<'_> {
                 stdout,
                 stderr,
             }) => {
+                if should_drop_streaming {
+                    return;
+                }
                 self.conversation_history
                     .record_completed_exec_command(call_id, stdout, stderr, exit_code);
                 self.request_redraw();
@@ -394,11 +457,17 @@ impl ChatWidget<'_> {
                 tool,
                 arguments,
             }) => {
+                if should_drop_streaming {
+                    return;
+                }
                 self.conversation_history
                     .add_active_mcp_tool_call(call_id, server, tool, arguments);
                 self.request_redraw();
             }
             EventMsg::McpToolCallEnd(mcp_tool_call_end_event) => {
+                if should_drop_streaming {
+                    return;
+                }
                 let success = mcp_tool_call_end_event.is_success();
                 let McpToolCallEndEvent { call_id, result } = mcp_tool_call_end_event;
                 self.conversation_history
