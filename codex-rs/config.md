@@ -116,7 +116,7 @@ How many times Codex will retry a failed HTTP request to the model provider. Def
 Number of times Codex will attempt to reconnect when a streaming response is interrupted. Defaults to `10`.
 
 #### stream_idle_timeout_ms
-How long Codex will wait for activity on a streaming response before treating the connection as lost. Defaults to `300000` (5 minutes).
+How long Codex will wait for activity on a streaming response before treating the connection as lost. Defaults to `300_000` (5 minutes).
 
 ## model_provider
 
