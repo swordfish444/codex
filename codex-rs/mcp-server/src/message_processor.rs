@@ -1,7 +1,11 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use crate::codex_tool_config::CodexToolCallParam;
 use crate::codex_tool_config::create_tool_for_codex_tool_call_param;
+use crate::codex_tool_runner::run_codex_tool_session;
 
 use codex_core::config::Config as CodexConfig;
 use codex_core::protocol::ReviewDecision;
@@ -38,6 +42,9 @@ pub(crate) struct MessageProcessor {
     outgoing: mpsc::Sender<JSONRPCMessage>,
     initialized: bool,
     codex_linux_sandbox_exe: Option<PathBuf>,
+    /// Map from Codex submission id (stringified MCP request id) -> channel used
+    /// to forward approval decisions to the corresponding running Codex tool session.
+    pending_approval_senders: Arc<Mutex<HashMap<String, mpsc::Sender<ReviewDecision>>>>,
 }
 
 impl MessageProcessor {
@@ -51,6 +58,7 @@ impl MessageProcessor {
             outgoing,
             initialized: false,
             codex_linux_sandbox_exe,
+            pending_approval_senders: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -413,15 +421,31 @@ impl MessageProcessor {
             }
         };
 
+        // Create a channel to receive approval decisions for this Codex session.
+        // We stringify the MCP request id to use as the Codex submission id.
+        let sub_id_str = match &id {
+            RequestId::String(s) => s.clone(),
+            RequestId::Integer(n) => n.to_string(),
+        };
+        let (approval_tx, approval_rx) = mpsc::channel::<ReviewDecision>(8);
+        {
+            let mut map = self.pending_approval_senders.lock().unwrap();
+            map.insert(sub_id_str.clone(), approval_tx);
+        }
+
         // Clone outgoing sender to move into async task.
         let outgoing = self.outgoing.clone();
+        let approval_map = self.pending_approval_senders.clone();
 
         // Spawn an async task to handle the Codex session so that we do not
         // block the synchronous message-processing loop.
         task::spawn(async move {
             // Run the Codex session and stream events back to the client.
-            crate::codex_tool_runner::run_codex_tool_session(id, initial_prompt, config, outgoing)
-                .await;
+            run_codex_tool_session(id, initial_prompt, config, outgoing, approval_rx).await;
+
+            // Session finished; drop the sender entry so future approvals are ignored.
+            let mut map = approval_map.lock().unwrap();
+            map.remove(&sub_id_str);
         });
     }
 
@@ -441,10 +465,34 @@ impl MessageProcessor {
 
     fn handle_codex_approval(&self, id: RequestId, params: ApprovalParams) {
         tracing::info!("codex/approval -> params: {:?}", params);
+
+        // Forward the decision to the running Codex session (if any).
+        let mut delivered = false;
+        {
+            let mut map = self.pending_approval_senders.lock().unwrap();
+            if let Some(tx) = map.get_mut(&params.id) {
+                match tx.try_send(params.decision) {
+                    Ok(()) => {
+                        delivered = true;
+                    }
+                    Err(e) => {
+                        tracing::warn!("failed to forward approval to session {}: {e}", params.id);
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    "no pending Codex session found for approval id {}",
+                    params.id
+                );
+            }
+        }
+
+        // Ack the JSON-RPC request regardless of whether we were able to deliver the decision.
+        // Include a boolean in the result so clients can detect delivery failures if desired.
         let response = JSONRPCMessage::Response(JSONRPCResponse {
             jsonrpc: JSONRPC_VERSION.into(),
             id,
-            result: serde_json::json!({}),
+            result: serde_json::json!({ "delivered": delivered }),
         });
 
         if let Err(e) = self.outgoing.try_send(response) {
