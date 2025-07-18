@@ -201,6 +201,7 @@ impl ModelClient {
             }
         }
     }
+
     pub fn get_provider(&self) -> ModelProviderInfo {
         self.provider.clone()
     }

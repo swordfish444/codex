@@ -1203,7 +1203,6 @@ async fn try_run_turn(
             }
         }
     }
-    // unreachable: loop only exits via return statements above
 }
 
 async fn handle_response_item(

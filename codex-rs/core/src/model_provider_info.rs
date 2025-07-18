@@ -17,6 +17,9 @@ use crate::openai_api_key::get_openai_api_key;
 /// Value for the `OpenAI-Originator` header that is sent with requests to
 /// OpenAI.
 const OPENAI_ORIGINATOR_HEADER: &str = "codex_cli_rs";
+const OPENAI_STREAM_IDLE_TIMEOUT_MS: u64 = 300_000;
+const OPENAI_STREAM_MAX_RETRIES: u64 = 10;
+const OPENAI_REQUEST_MAX_RETRIES: u64 = 4;
 
 /// Wire protocol that the provider speaks. Most third-party services only
 /// implement the classic OpenAI Chat Completions JSON schema, whereas OpenAI
@@ -175,19 +178,20 @@ impl ModelProviderInfo {
 
     /// Effective maximum number of request retries for this provider.
     pub fn request_max_retries(&self) -> u64 {
-        self.request_max_retries.unwrap_or(4)
+        self.request_max_retries
+            .unwrap_or(OPENAI_REQUEST_MAX_RETRIES)
     }
 
     /// Effective maximum number of stream reconnection attempts for this provider.
     pub fn stream_max_retries(&self) -> u64 {
-        self.stream_max_retries.unwrap_or(10)
+        self.stream_max_retries.unwrap_or(OPENAI_STREAM_MAX_RETRIES)
     }
 
     /// Effective idle timeout for streaming responses.
     pub fn stream_idle_timeout(&self) -> Duration {
         self.stream_idle_timeout_ms
             .map(Duration::from_millis)
-            .unwrap_or(Duration::from_millis(300_000))
+            .unwrap_or(Duration::from_millis(OPENAI_STREAM_IDLE_TIMEOUT_MS))
     }
 }
 
