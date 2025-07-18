@@ -329,21 +329,26 @@ impl MessageProcessor {
         tracing::info!("tools/call -> params: {:?}", params);
         let CallToolRequestParams { name, arguments } = params;
 
-        // We only support the "codex" tool for now.
-        if name != "codex" {
-            // Tool not found – return error result so the LLM can react.
-            let result = CallToolResult {
-                content: vec![CallToolResultContent::TextContent(TextContent {
-                    r#type: "text".to_string(),
-                    text: format!("Unknown tool '{name}'"),
-                    annotations: None,
-                })],
-                is_error: Some(true),
-            };
-            self.send_response::<mcp_types::CallToolRequest>(id, result);
-            return;
+        match name.as_str() {
+            "codex" => self.handle_codex_tool_call(id, arguments),
+            "codex/experimental/approve_patch" => self.handle_approve_patch(id, arguments),
+            _ => {
+                // Tool not found – return error result so the LLM can react.
+                let result = CallToolResult {
+                    content: vec![CallToolResultContent::TextContent(TextContent {
+                        r#type: "text".to_string(),
+                        text: format!("Unknown tool '{name}'"),
+                        annotations: None,
+                    })],
+                    is_error: Some(true),
+                };
+                self.send_response::<mcp_types::CallToolRequest>(id, result);
+            }
         }
+    }
 
+    fn handle_codex_tool_call(&self, id: RequestId, arguments: Option<serde_json::Value>) {
+        // If no arguments are provided, we cannot proceed.
         let (initial_prompt, config): (String, CodexConfig) = match arguments {
             Some(json_val) => match serde_json::from_value::<CodexToolCallParam>(json_val) {
                 Ok(tool_cfg) => match tool_cfg.into_config(self.codex_linux_sandbox_exe.clone()) {
@@ -402,6 +407,10 @@ impl MessageProcessor {
             crate::codex_tool_runner::run_codex_tool_session(id, initial_prompt, config, outgoing)
                 .await;
         });
+    }
+
+    /// TODO: Migrate this to MCP elicitations.
+    fn handle_approve_patch(&self, id: RequestId, arguments: Option<serde_json::Value>) {
     }
 
     fn handle_set_level(
