@@ -1031,7 +1031,6 @@ async fn run_turn(
                     retries += 1;
                     let delay = backoff(retries);
                     warn!(
-                        "stream disconnected - retrying turn ({retries}/{} in {delay:?})...",
                         "stream disconnected - retrying turn ({retries}/{max_retries} in {delay:?})...",
                     );
 
