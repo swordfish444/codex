@@ -12,9 +12,6 @@ use std::env::VarError;
 use std::time::Duration;
 
 use crate::error::EnvVarError;
-use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS;
-use crate::flags::OPENAI_STREAM_MAX_RETRIES;
-use crate::flags::REQUEST_MAX_RETRIES;
 use crate::openai_api_key::get_openai_api_key;
 
 /// Value for the `OpenAI-Originator` header that is sent with requests to
@@ -178,20 +175,19 @@ impl ModelProviderInfo {
 
     /// Effective maximum number of request retries for this provider.
     pub fn request_max_retries(&self) -> u64 {
-        self.request_max_retries.unwrap_or(*REQUEST_MAX_RETRIES)
+        self.request_max_retries.unwrap_or(4)
     }
 
     /// Effective maximum number of stream reconnection attempts for this provider.
     pub fn stream_max_retries(&self) -> u64 {
-        self.openai_stream_max_retries
-            .unwrap_or(*OPENAI_STREAM_MAX_RETRIES)
+        self.openai_stream_max_retries.unwrap_or(10)
     }
 
     /// Effective idle timeout for streaming responses.
     pub fn stream_idle_timeout(&self) -> Duration {
         self.openai_stream_idle_timeout_ms
             .map(Duration::from_millis)
-            .unwrap_or(*OPENAI_STREAM_IDLE_TIMEOUT_MS)
+            .unwrap_or(Duration::from_millis(300_000))
     }
 }
 
