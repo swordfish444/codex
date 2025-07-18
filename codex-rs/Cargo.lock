@@ -677,6 +677,7 @@ dependencies = [
  "pretty_assertions",
  "rand 0.9.1",
  "reqwest",
+ "schemars 0.8.22",
  "seccompiler",
  "serde",
  "serde_json",

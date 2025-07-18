@@ -2,6 +2,7 @@
 
 use codex_core::config_types::SandboxMode;
 use codex_core::protocol::AskForApproval;
+use codex_core::protocol::ReviewDecision;
 use mcp_types::Tool;
 use mcp_types::ToolInputSchema;
 use schemars::JsonSchema;
@@ -154,6 +155,14 @@ impl CodexToolCallParam {
 
         Ok((prompt, cfg))
     }
+}
+
+/// Client-supplied configuration for a `codex/experimental/approve_patch` tool-call.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) struct CodexApprovePatchToolCallParam {
+    /// The user's decision in response to the patch approval request.
+    pub review_decision: ReviewDecision,
 }
 
 #[cfg(test)]
