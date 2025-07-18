@@ -1123,7 +1123,28 @@ async fn try_run_turn(
     let mut stream = sess.client.clone().stream(&prompt).await?;
 
     let mut output = Vec::new();
-    while let Some(Ok(event)) = stream.next().await {
+    loop {
+        // Poll the next item from the model stream. We must inspect *both* Ok and Err
+        // cases so that transient stream failures (e.g., dropped SSE connection before
+        // `response.completed`) bubble up and trigger the caller's retry logic.
+        let next = stream.next().await;
+        let Some(next) = next else {
+            // Channel closed without yielding a final Completed event or explicit error.
+            // Treat as a disconnected stream so the caller can retry.
+            return Err(CodexErr::Stream(
+                "stream closed before response.completed".into(),
+            ));
+        };
+
+        let event = match next {
+            Ok(ev) => ev,
+            Err(e) => {
+                // Propagate the underlying stream error to the caller (run_turn), which
+                // will apply the configured `stream_max_retries` policy.
+                return Err(e);
+            }
+        };
+
         match event {
             ResponseEvent::Created => {
                 let mut state = sess.state.lock().unwrap();
@@ -1164,7 +1185,7 @@ async fn try_run_turn(
 
                 let mut state = sess.state.lock().unwrap();
                 state.previous_response_id = Some(response_id);
-                break;
+                return Ok(output);
             }
             ResponseEvent::OutputTextDelta(delta) => {
                 let event = Event {
@@ -1182,7 +1203,7 @@ async fn try_run_turn(
             }
         }
     }
-    Ok(output)
+    // unreachable: loop only exits via return statements above
 }
 
 async fn handle_response_item(
