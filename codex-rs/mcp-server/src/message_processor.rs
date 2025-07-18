@@ -4,6 +4,7 @@ use crate::codex_tool_config::CodexToolCallParam;
 use crate::codex_tool_config::create_tool_for_codex_tool_call_param;
 
 use codex_core::config::Config as CodexConfig;
+use codex_core::protocol::ReviewDecision;
 use mcp_types::CallToolRequestParams;
 use mcp_types::CallToolResult;
 use mcp_types::CallToolResultContent;
@@ -26,6 +27,12 @@ use mcp_types::TextContent;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::task;
+
+#[derive(Debug, serde::Deserialize)]
+struct ApprovalParams {
+    id: String,
+    decision: ReviewDecision,
+}
 
 pub(crate) struct MessageProcessor {
     outgoing: mpsc::Sender<JSONRPCMessage>,
@@ -50,6 +57,20 @@ impl MessageProcessor {
     pub(crate) fn process_request(&mut self, request: JSONRPCRequest) {
         // Hold on to the ID so we can respond.
         let request_id = request.id.clone();
+
+        if request.method == "codex/approval" {
+            let params_json = request.params.unwrap_or(serde_json::Value::Null);
+            let params: ApprovalParams = match serde_json::from_value(params_json) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!("Failed to parse approval params: {e}");
+                    return;
+                }
+            };
+
+            self.handle_codex_approval(request_id, params);
+            return;
+        }
 
         let client_request = match ClientRequest::try_from(request) {
             Ok(client_request) => client_request,
@@ -416,6 +437,19 @@ impl MessageProcessor {
         params: <mcp_types::CompleteRequest as mcp_types::ModelContextProtocolRequest>::Params,
     ) {
         tracing::info!("completion/complete -> params: {:?}", params);
+    }
+
+    fn handle_codex_approval(&self, id: RequestId, params: ApprovalParams) {
+        tracing::info!("codex/approval -> params: {:?}", params);
+        let response = JSONRPCMessage::Response(JSONRPCResponse {
+            jsonrpc: JSONRPC_VERSION.into(),
+            id,
+            result: serde_json::json!({}),
+        });
+
+        if let Err(e) = self.outgoing.try_send(response) {
+            tracing::error!("Failed to send approval response: {e}");
+        }
     }
 
     // ---------------------------------------------------------------------
