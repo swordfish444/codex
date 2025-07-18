@@ -179,19 +179,20 @@ impl ModelProviderInfo {
     /// Effective maximum number of request retries for this provider.
     pub fn request_max_retries(&self) -> u64 {
         self.request_max_retries
-            .unwrap_or(OPENAI_REQUEST_MAX_RETRIES)
+            .unwrap_or(DEFAULT_REQUEST_MAX_RETRIES)
     }
 
     /// Effective maximum number of stream reconnection attempts for this provider.
     pub fn stream_max_retries(&self) -> u64 {
-        self.stream_max_retries.unwrap_or(OPENAI_STREAM_MAX_RETRIES)
+        self.stream_max_retries
+            .unwrap_or(DEFAULT_STREAM_MAX_RETRIES)
     }
 
     /// Effective idle timeout for streaming responses.
     pub fn stream_idle_timeout(&self) -> Duration {
         self.stream_idle_timeout_ms
             .map(Duration::from_millis)
-            .unwrap_or(Duration::from_millis(OPENAI_STREAM_IDLE_TIMEOUT_MS))
+            .unwrap_or(Duration::from_millis(DEFAULT_STREAM_IDLE_TIMEOUT_MS))
     }
 }
 

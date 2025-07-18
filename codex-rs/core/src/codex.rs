@@ -1126,8 +1126,8 @@ async fn try_run_turn(
         // Poll the next item from the model stream. We must inspect *both* Ok and Err
         // cases so that transient stream failures (e.g., dropped SSE connection before
         // `response.completed`) bubble up and trigger the caller's retry logic.
-        let next = stream.next().await;
-        let Some(next) = next else {
+        let event = stream.next().await;
+        let Some(event) = event else {
             // Channel closed without yielding a final Completed event or explicit error.
             // Treat as a disconnected stream so the caller can retry.
             return Err(CodexErr::Stream(
@@ -1135,7 +1135,7 @@ async fn try_run_turn(
             ));
         };
 
-        let event = match next {
+        let event = match event {
             Ok(ev) => ev,
             Err(e) => {
                 // Propagate the underlying stream error to the caller (run_turn), which
