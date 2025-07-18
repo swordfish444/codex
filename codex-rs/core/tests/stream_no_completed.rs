@@ -89,8 +89,8 @@ async fn retries_on_early_close() {
         env_http_headers: None,
         // exercise retry path: first attempt yields incomplete stream, so allow 1 retry
         request_max_retries: Some(0),
-        openai_stream_max_retries: Some(1),
-        openai_stream_idle_timeout_ms: Some(2000),
+        stream_max_retries: Some(1),
+        stream_idle_timeout_ms: Some(2000),
     };
 
     let ctrl_c = std::sync::Arc::new(tokio::sync::Notify::new());

@@ -70,11 +70,11 @@ pub struct ModelProviderInfo {
     pub request_max_retries: Option<u64>,
 
     /// Number of times to retry reconnecting a dropped streaming response before failing.
-    pub openai_stream_max_retries: Option<u64>,
+    pub stream_max_retries: Option<u64>,
 
     /// Idle timeout (in milliseconds) to wait for activity on a streaming response before treating
     /// the connection as lost.
-    pub openai_stream_idle_timeout_ms: Option<u64>,
+    pub stream_idle_timeout_ms: Option<u64>,
 }
 
 impl ModelProviderInfo {
@@ -180,12 +180,12 @@ impl ModelProviderInfo {
 
     /// Effective maximum number of stream reconnection attempts for this provider.
     pub fn stream_max_retries(&self) -> u64 {
-        self.openai_stream_max_retries.unwrap_or(10)
+        self.stream_max_retries.unwrap_or(10)
     }
 
     /// Effective idle timeout for streaming responses.
     pub fn stream_idle_timeout(&self) -> Duration {
-        self.openai_stream_idle_timeout_ms
+        self.stream_idle_timeout_ms
             .map(Duration::from_millis)
             .unwrap_or(Duration::from_millis(300_000))
     }
@@ -235,8 +235,8 @@ pub fn built_in_model_providers() -> HashMap<String, ModelProviderInfo> {
                 ),
                 // Use global defaults for retry/timeout unless overridden in config.toml.
                 request_max_retries: None,
-                openai_stream_max_retries: None,
-                openai_stream_idle_timeout_ms: None,
+                stream_max_retries: None,
+                stream_idle_timeout_ms: None,
             },
         ),
     ]
@@ -267,8 +267,8 @@ base_url = "http://localhost:11434/v1"
             http_headers: None,
             env_http_headers: None,
             request_max_retries: None,
-            openai_stream_max_retries: None,
-            openai_stream_idle_timeout_ms: None,
+            stream_max_retries: None,
+            stream_idle_timeout_ms: None,
         };
 
         let provider: ModelProviderInfo = toml::from_str(azure_provider_toml).unwrap();
@@ -295,8 +295,8 @@ query_params = { api-version = "2025-04-01-preview" }
             http_headers: None,
             env_http_headers: None,
             request_max_retries: None,
-            openai_stream_max_retries: None,
-            openai_stream_idle_timeout_ms: None,
+            stream_max_retries: None,
+            stream_idle_timeout_ms: None,
         };
 
         let provider: ModelProviderInfo = toml::from_str(azure_provider_toml).unwrap();
@@ -326,8 +326,8 @@ env_http_headers = { "X-Example-Env-Header" = "EXAMPLE_ENV_VAR" }
                 "X-Example-Env-Header".to_string() => "EXAMPLE_ENV_VAR".to_string(),
             }),
             request_max_retries: None,
-            openai_stream_max_retries: None,
-            openai_stream_idle_timeout_ms: None,
+            stream_max_retries: None,
+            stream_idle_timeout_ms: None,
         };
 
         let provider: ModelProviderInfo = toml::from_str(azure_provider_toml).unwrap();

@@ -105,17 +105,17 @@ base_url = "https://api.openai.com/v1"
 env_key = "OPENAI_API_KEY"
 # network tuning overrides (all optional; falls back to built‑in defaults)
 request_max_retries = 4            # retry failed HTTP requests
-openai_stream_max_retries = 10            # retry dropped SSE streams
-openai_stream_idle_timeout_ms = 300000    # 5m idle timeout
+stream_max_retries = 10            # retry dropped SSE streams
+stream_idle_timeout_ms = 300000    # 5m idle timeout
 ```
 
 #### request_max_retries
 How many times Codex will retry a failed HTTP request to the model provider. Defaults to `4`.
 
-#### openai_stream_max_retries
+#### stream_max_retries
 Number of times Codex will attempt to reconnect when a streaming response is interrupted. Defaults to `10`.
 
-#### openai_stream_idle_timeout_ms
+#### stream_idle_timeout_ms
 How long Codex will wait for activity on a streaming response before treating the connection as lost. Defaults to `300000` (5 minutes).
 
 ## model_provider

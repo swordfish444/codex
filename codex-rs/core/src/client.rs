@@ -536,8 +536,8 @@ mod tests {
             http_headers: None,
             env_http_headers: None,
             request_max_retries: Some(0),
-            openai_stream_max_retries: Some(0),
-            openai_stream_idle_timeout_ms: Some(1000),
+            stream_max_retries: Some(0),
+            stream_idle_timeout_ms: Some(1000),
         };
 
         let events = collect_events(
@@ -595,8 +595,8 @@ mod tests {
             http_headers: None,
             env_http_headers: None,
             request_max_retries: Some(0),
-            openai_stream_max_retries: Some(0),
-            openai_stream_idle_timeout_ms: Some(1000),
+            stream_max_retries: Some(0),
+            stream_idle_timeout_ms: Some(1000),
         };
 
         let events = collect_events(&[sse1.as_bytes()], provider).await;
@@ -697,8 +697,8 @@ mod tests {
                 http_headers: None,
                 env_http_headers: None,
                 request_max_retries: Some(0),
-                openai_stream_max_retries: Some(0),
-                openai_stream_idle_timeout_ms: Some(1000),
+                stream_max_retries: Some(0),
+                stream_idle_timeout_ms: Some(1000),
             };
 
             let out = run_sse(evs, provider).await;

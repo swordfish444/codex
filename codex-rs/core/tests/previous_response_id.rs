@@ -104,8 +104,8 @@ async fn keeps_previous_response_id_between_tasks() {
         env_http_headers: None,
         // disable retries so we don't get duplicate calls in this test
         request_max_retries: Some(0),
-        openai_stream_max_retries: Some(0),
-        openai_stream_idle_timeout_ms: None,
+        stream_max_retries: Some(0),
+        stream_idle_timeout_ms: None,
     };
 
     // Init session
