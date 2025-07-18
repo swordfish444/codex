@@ -25,8 +25,15 @@ use std::sync::mpsc::channel;
 use std::thread;
 use std::time::Duration;
 
+/// Debouncing is often a helpful performance optimization, though as shown in
+/// https://github.com/openai/codex/pull/1610, it requires care to ensure that
+/// it works well with interrupts via ctrl-C. For now, we favor correctness at
+/// the cost of performance, but it would be worth revisiting this in the
+/// future.
+const DEBOUNCE_REDRAW_REQUESTS: bool = false;
+
 /// Time window for debouncing redraw requests.
-const REDRAW_DEBOUNCE: Duration = Duration::from_millis(100);
+const REDRAW_DEBOUNCE: Duration = Duration::from_millis(10);
 
 /// Top-level application state: which full-screen view is currently active.
 #[allow(clippy::large_enum_variant)]
@@ -209,10 +216,14 @@ impl App<'_> {
         while let Ok(event) = self.app_event_rx.recv() {
             match event {
                 AppEvent::RequestRedraw => {
-                    self.schedule_redraw();
+                    if DEBOUNCE_REDRAW_REQUESTS {
+                        self.schedule_redraw();
+                    } else {
+                        self.redraw_immediately(terminal)?;
+                    }
                 }
                 AppEvent::Redraw => {
-                    self.draw_next_frame(terminal)?;
+                    self.redraw_immediately(terminal)?;
                 }
                 AppEvent::KeyEvent(key_event) => {
                     match key_event {
@@ -384,6 +395,10 @@ impl App<'_> {
                 }
             },
         }
+    }
+
+    fn redraw_immediately(&mut self, terminal: &mut tui::Tui) -> Result<()> {
+        self.draw_next_frame(terminal)
     }
 
     fn dispatch_paste_event(&mut self, pasted: String) {
