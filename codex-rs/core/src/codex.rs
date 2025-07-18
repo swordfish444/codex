@@ -990,6 +990,52 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
     sess.tx_event.send(event).await.ok();
 }
 
+// ---
+// Helpers --------------------------------------------------------------------
+//
+// When a turn is interrupted before Codex can deliver tool output(s) back to
+// the model, the next request can fail with a 400 from the OpenAI API:
+//   {"error": {"message": "No tool output found for function call call_XXXXX", ...}}
+// Historically this manifested as a confusing retry loop ("stream error: 400 …")
+// because we never learned about the missing `call_id` (the stream was aborted
+// before we observed the `ResponseEvent::OutputItemDone` that would have let us
+// record it in `pending_call_ids`).
+//
+// To make interruption robust we parse the error body for the offending call id
+// and add it to `pending_call_ids` so the very next retry can inject a synthetic
+// `FunctionCallOutput { content: "aborted" }` and satisfy the API contract.
+// -----------------------------------------------------------------------------
+fn extract_missing_tool_call_id(body: &str) -> Option<String> {
+    // Try to parse the canonical JSON error shape first.
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(msg) = v
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+        {
+            if let Some(id) = extract_missing_tool_call_id_from_msg(msg) {
+                return Some(id);
+            }
+        }
+    }
+    // Fallback: scan the raw body.
+    extract_missing_tool_call_id_from_msg(body)
+}
+
+fn extract_missing_tool_call_id_from_msg(msg: &str) -> Option<String> {
+    const NEEDLE: &str = "No tool output found for function call";
+    let idx = msg.find(NEEDLE)?;
+    let rest = &msg[idx + NEEDLE.len()..];
+    // Find the beginning of the call id (typically starts with "call_").
+    let start = rest.find("call_")?;
+    let rest = &rest[start..];
+    // Capture valid id chars [A-Za-z0-9_-/]. Hyphen shows up in some IDs; be permissive.
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '/'))
+        .unwrap_or(rest.len());
+    Some(rest[..end].to_string())
+}
+
 async fn run_turn(
     sess: &Session,
     sub_id: String,
@@ -1024,6 +1070,50 @@ async fn run_turn(
             Ok(output) => return Ok(output),
             Err(CodexErr::Interrupted) => return Err(CodexErr::Interrupted),
             Err(CodexErr::EnvVar(var)) => return Err(CodexErr::EnvVar(var)),
+            Err(CodexErr::UnexpectedStatus(status, body)) => {
+                // Detect the specific 400 "No tool output found for function call ..." error that
+                // occurs when a user interrupted before Codex could answer a tool call.
+                if status == reqwest::StatusCode::BAD_REQUEST {
+                    if let Some(call_id) = extract_missing_tool_call_id(&body) {
+                        {
+                            let mut state = sess.state.lock().unwrap();
+                            state.pending_call_ids.insert(call_id.clone());
+                        }
+                        // Surface a friendlier background event so users understand the recovery.
+                        sess
+                            .notify_background_event(
+                                &sub_id,
+                                format!(
+                                    "previous turn interrupted before responding to tool {call_id}; sending aborted output and retrying…",
+                                ),
+                            )
+                            .await;
+                        // Immediately retry the turn without consuming a provider stream retry budget.
+                        continue;
+                    }
+                }
+                // Fall through to generic retry path if we could not auto‑recover.
+                let e = CodexErr::UnexpectedStatus(status, body);
+                // Use the configured provider-specific stream retry budget.
+                let max_retries = sess.client.get_provider().stream_max_retries();
+                if retries < max_retries {
+                    retries += 1;
+                    let delay = backoff(retries);
+                    warn!(
+                        "stream disconnected - retrying turn ({retries}/{max_retries} in {delay:?})...",
+                    );
+                    sess.notify_background_event(
+                        &sub_id,
+                        format!(
+                            "stream error: {e}; retrying {retries}/{max_retries} in {delay:?}…",
+                        ),
+                    )
+                    .await;
+                    tokio::time::sleep(delay).await;
+                } else {
+                    return Err(e);
+                }
+            }
             Err(e) => {
                 // Use the configured provider-specific stream retry budget.
                 let max_retries = sess.client.get_provider().stream_max_retries();
@@ -1040,7 +1130,7 @@ async fn run_turn(
                     sess.notify_background_event(
                         &sub_id,
                         format!(
-                            "stream error: {e}; retrying {retries}/{max_retries} in {delay:?}…"
+                            "stream error: {e}; retrying {retries}/{max_retries} in {delay:?}…",
                         ),
                     )
                     .await;
