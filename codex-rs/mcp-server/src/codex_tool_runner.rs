@@ -4,18 +4,25 @@
 
 use std::sync::Arc;
 
+use codex_core::Codex;
 use codex_core::codex_wrapper::init_codex;
 use codex_core::config::Config as CodexConfig;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::EventMsg;
+use codex_core::protocol::ExecApprovalRequestEvent;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
 use codex_core::protocol::Submission;
 use codex_core::protocol::TaskCompleteEvent;
 use mcp_types::CallToolResult;
 use mcp_types::ContentBlock;
+use mcp_types::ElicitRequest;
+use mcp_types::ElicitRequestParamsRequestedSchema;
+use mcp_types::ModelContextProtocolRequest;
 use mcp_types::RequestId;
 use mcp_types::TextContent;
+use serde_json::json;
+use tracing::error;
 
 use crate::outgoing_message::OutgoingMessageSender;
 
@@ -45,6 +52,7 @@ pub async fn run_codex_tool_session(
             return;
         }
     };
+    let codex = Arc::new(codex);
 
     // Send initial SessionConfigured event.
     outgoing.send_event_as_notification(&first_event).await;
@@ -58,7 +66,7 @@ pub async fn run_codex_tool_session(
     };
 
     let submission = Submission {
-        id: sub_id,
+        id: sub_id.clone(),
         op: Op::UserInput {
             items: vec![InputItem::Text {
                 text: initial_prompt.clone(),
@@ -77,18 +85,46 @@ pub async fn run_codex_tool_session(
             Ok(event) => {
                 outgoing.send_event_as_notification(&event).await;
 
-                match &event.msg {
-                    EventMsg::ExecApprovalRequest(_) => {
-                        let result = CallToolResult {
-                            content: vec![ContentBlock::TextContent(TextContent {
-                                r#type: "text".to_string(),
-                                text: "EXEC_APPROVAL_REQUIRED".to_string(),
-                                annotations: None,
-                            })],
-                            is_error: None,
-                            structured_content: None,
-                        };
-                        outgoing.send_response(id.clone(), result.into()).await;
+                match event.msg {
+                    EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
+                        command,
+                        cwd,
+                        reason: _,
+                    }) => {
+                        let escaped_command = shlex::try_join(command.iter().map(|s| s.as_str()))
+                            .unwrap_or_else(|_| command.join(" "));
+                        let message = format!("Allow Codex to run `{escaped_command}` in {cwd:?}?");
+
+                        // This `params` conforms to ElicitRequestParams, but
+                        // contains additional metadata fields.
+                        let params = json!({
+                            "message": message,
+                            "requestedSchema": ElicitRequestParamsRequestedSchema {
+                                properties: json!({}),
+                                required: None,
+                                r#type: "object".to_string(),
+                            },
+
+                            "codex-tool-call-id": sub_id,
+                            "codex-event-id": event.id,
+                            "codex-elicitation": "exec-approval",
+                            "codex-command": command,
+                            "codex-cwd": cwd.to_string_lossy().to_string()
+                        });
+                        let on_response = outgoing
+                            .send_request(ElicitRequest::METHOD, Some(params))
+                            .await;
+
+                        // Listen for the response on a separate task so we do
+                        // not block the main loop of this function.
+                        {
+                            let outgoing = outgoing.clone();
+                            let codex = codex.clone();
+                            tokio::spawn(async move {
+                                on_exec_approval_response(on_response, outgoing, codex)
+                            });
+                        }
+
                         break;
                     }
                     EventMsg::ApplyPatchApprovalRequest(_) => {
@@ -171,4 +207,21 @@ pub async fn run_codex_tool_session(
             }
         }
     }
+}
+
+async fn on_exec_approval_response(
+    receiver: tokio::sync::oneshot::Receiver<mcp_types::Result>,
+    outgoing: Arc<OutgoingMessageSender>,
+    codex: Arc<Codex>,
+) {
+    let response = receiver.await;
+    let value = match response {
+        Ok(value) => value,
+        Err(err) => {
+            error!("request failed: {err:?}");
+            return;
+        }
+    };
+
+    // Try to deserialize `value` and then make the appropriate call to `codex`.
 }
