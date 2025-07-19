@@ -18,7 +18,7 @@ fn deserialize_initialize_request() {
         "params": {
             "capabilities": {},
             "clientInfo": { "name": "acme-client", "version": "1.2.3" },
-            "protocolVersion": "2025-03-26"
+            "protocolVersion": "2025-06-18"
         }
     }"#;
 
@@ -38,7 +38,7 @@ fn deserialize_initialize_request() {
         params: Some(json!({
             "capabilities": {},
             "clientInfo": { "name": "acme-client", "version": "1.2.3" },
-            "protocolVersion": "2025-03-26"
+            "protocolVersion": "2025-06-18"
         })),
     };
 
@@ -57,12 +57,14 @@ fn deserialize_initialize_request() {
                 experimental: None,
                 roots: None,
                 sampling: None,
+                elicitation: None,
             },
             client_info: Implementation {
                 name: "acme-client".into(),
+                title: Some("Acme".to_string()),
                 version: "1.2.3".into(),
             },
-            protocol_version: "2025-03-26".into(),
+            protocol_version: "2025-06-18".into(),
         }
     );
 }
