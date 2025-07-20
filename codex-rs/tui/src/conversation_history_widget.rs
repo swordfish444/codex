@@ -380,7 +380,7 @@ impl WidgetRef for ConversationHistoryWidget {
 
         let block = Block::default()
             .title(title)
-            .borders(Borders::ALL)
+            .borders(Borders::NONE)
             .border_type(BorderType::Rounded)
             .border_style(border_style);
 
@@ -391,9 +391,9 @@ impl WidgetRef for ConversationHistoryWidget {
 
         // Cache (and if necessary recalculate) the wrapped line counts for every
         // [`HistoryCell`] so that our scrolling math accounts for text
-        // wrapping.  We always reserve one column on the right-hand side for the
-        // scrollbar so that the content never renders "under" the scrollbar.
-        let effective_width = inner.width.saturating_sub(1);
+        // wrapping. The full inner width is now used because the scrollbar has
+        // been disabled.
+        let effective_width = inner.width;
 
         if effective_width == 0 {
             return; // Nothing to draw – avoid division by zero.
@@ -486,48 +486,7 @@ impl WidgetRef for ConversationHistoryWidget {
             }
         }
 
-        // Always render a scrollbar *track* so the reserved column is filled.
-        let overflow = num_lines.saturating_sub(viewport_height);
-
-        let mut scroll_state = ScrollbarState::default()
-            // The Scrollbar widget expects the *content* height minus the
-            // viewport height.  When there is no overflow we still provide 0
-            // so that the widget renders only the track without a thumb.
-            .content_length(overflow)
-            .position(scroll_pos);
-
-        {
-            // Choose a thumb color that stands out only when this pane has focus so that the
-            // user's attention is naturally drawn to the active viewport. When unfocused we show
-            // a low-contrast thumb so the scrollbar fades into the background without becoming
-            // invisible.
-            let thumb_style = if self.has_input_focus {
-                Style::reset().fg(Color::LightYellow)
-            } else {
-                Style::reset().fg(Color::Gray)
-            };
-
-            // By default the Scrollbar widget inherits any style that was
-            // present in the underlying buffer cells. That means if a colored
-            // line happens to be underneath the scrollbar, the track (and
-            // potentially the thumb) adopt that color. Explicitly setting the
-            // track/thumb styles ensures we always draw the scrollbar with a
-            // consistent palette regardless of what content is behind it.
-            StatefulWidget::render(
-                Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                    .begin_symbol(Some("↑"))
-                    .end_symbol(Some("↓"))
-                    .begin_style(Style::reset().fg(Color::DarkGray))
-                    .end_style(Style::reset().fg(Color::DarkGray))
-                    .thumb_symbol("█")
-                    .thumb_style(thumb_style)
-                    .track_symbol(Some("│"))
-                    .track_style(Style::reset().fg(Color::DarkGray)),
-                inner,
-                buf,
-                &mut scroll_state,
-            );
-        }
+        // Scrollbar intentionally disabled: scrolling still functions via key / mouse events.
 
         // Update auxiliary stats that the scroll handlers rely on.
         self.num_rendered_lines.set(num_lines);
