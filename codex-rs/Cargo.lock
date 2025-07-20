@@ -637,6 +637,7 @@ dependencies = [
  "codex-login",
  "codex-mcp-server",
  "codex-tui",
+ "predicates",
  "serde_json",
  "tempfile",
  "tokio",
