@@ -15,6 +15,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::{self};
 use tracing::info;
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -296,4 +297,47 @@ async fn rollout_writer(
             }
         }
     }
+}
+
+pub async fn prepare_rollout_recorder(
+    config: &Config,
+    mut session_id: Uuid,
+    instructions: Option<String>,
+    resume_path: Option<&Path>,
+) -> (
+    Option<RolloutRecorder>,
+    Option<Vec<ResponseItem>>, // restored_items
+    Option<String>,            // restored_prev_id
+    Uuid,                      // possibly updated session_id
+) {
+    // Try to resume
+    let (mut restored_items, mut restored_prev_id, mut recorder_opt) = (None, None, None);
+
+    if let Some(path) = resume_path {
+        match RolloutRecorder::resume(path).await {
+            Ok((rec, saved)) => {
+                session_id = saved.session_id;
+                restored_prev_id = saved.state.previous_response_id;
+                if !saved.items.is_empty() {
+                    restored_items = Some(saved.items);
+                }
+                recorder_opt = Some(rec);
+            }
+            Err(e) => {
+                warn!("failed to resume rollout from {path:?}: {e}");
+            }
+        }
+    }
+
+    // If not resumed, create a new recorder
+    if recorder_opt.is_none() {
+        match RolloutRecorder::new(config, session_id, instructions.clone()).await {
+            Ok(r) => recorder_opt = Some(r),
+            Err(e) => {
+                warn!("failed to initialise rollout recorder: {e}");
+            }
+        }
+    }
+
+    (recorder_opt, restored_items, restored_prev_id, session_id)
 }

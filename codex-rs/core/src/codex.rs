@@ -527,7 +527,7 @@ async fn submission_loop(
     ctrl_c: Arc<Notify>,
 ) {
     // Generate a unique ID for the lifetime of this Codex session.
-    let mut session_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
 
     let mut sess: Option<Arc<Session>> = None;
     // shorthand - send an event when there is no active session
@@ -597,41 +597,15 @@ async fn submission_loop(
                     }
                     return;
                 }
-                // Optionally resume an existing rollout.
-                let mut restored_items: Option<Vec<ResponseItem>> = None;
-                let mut restored_prev_id: Option<String> = None;
-                let rollout_recorder: Option<RolloutRecorder> =
-                    if let Some(path) = resume_path.as_ref() {
-                        match RolloutRecorder::resume(path).await {
-                            Ok((rec, saved)) => {
-                                session_id = saved.session_id;
-                                restored_prev_id = saved.state.previous_response_id;
-                                if !saved.items.is_empty() {
-                                    restored_items = Some(saved.items);
-                                }
-                                Some(rec)
-                            }
-                            Err(e) => {
-                                warn!("failed to resume rollout from {path:?}: {e}");
-                                None
-                            }
-                        }
-                    } else {
-                        None
-                    };
 
-                let rollout_recorder = match rollout_recorder {
-                    Some(rec) => Some(rec),
-                    None => match RolloutRecorder::new(&config, session_id, instructions.clone())
-                        .await
-                    {
-                        Ok(r) => Some(r),
-                        Err(e) => {
-                            warn!("failed to initialise rollout recorder: {e}");
-                            None
-                        }
-                    },
-                };
+                let (rollout_recorder, restored_items, restored_prev_id, session_id) =
+                    crate::rollout::prepare_rollout_recorder(
+                        &config,
+                        session_id,
+                        instructions.clone(),
+                        resume_path.as_deref(),
+                    )
+                    .await;
 
                 let client = ModelClient::new(
                     config.clone(),

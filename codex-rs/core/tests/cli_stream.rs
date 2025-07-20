@@ -1,7 +1,8 @@
 #![expect(clippy::unwrap_used)]
 
-use assert_cmd::Command as AssertCommand;
+use assert_cmd::prelude::*;
 use codex_core::exec::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
+use std::process::Command;
 use std::time::Duration;
 use std::time::Instant;
 use tempfile::TempDir;
@@ -50,13 +51,8 @@ async fn chat_mode_stream_cli() {
         "model_providers.mock={{ name = \"mock\", base_url = \"{}/v1\", env_key = \"PATH\", wire_api = \"chat\" }}",
         server.uri()
     );
-    let mut cmd = AssertCommand::new("cargo");
-    cmd.arg("run")
-        .arg("-p")
-        .arg("codex-cli")
-        .arg("--quiet")
-        .arg("--")
-        .arg("exec")
+    let mut cmd = Command::cargo_bin("codex").unwrap();
+    cmd.arg("exec")
         .arg("--skip-git-repo-check")
         .arg("-c")
         .arg(&provider_override)
@@ -100,13 +96,8 @@ async fn responses_api_stream_cli() {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli_responses_fixture.sse");
 
     let home = TempDir::new().unwrap();
-    let mut cmd = AssertCommand::new("cargo");
-    cmd.arg("run")
-        .arg("-p")
-        .arg("codex-cli")
-        .arg("--quiet")
-        .arg("--")
-        .arg("exec")
+    let mut cmd = Command::cargo_bin("codex").unwrap();
+    cmd.arg("exec")
         .arg("--skip-git-repo-check")
         .arg("-C")
         .arg(env!("CARGO_MANIFEST_DIR"))
@@ -146,13 +137,8 @@ async fn integration_creates_and_checks_session_file() {
 
     // 4. Run the codex CLI through cargo (ensures the right bin is built) and invoke `exec`,
     //    which is what records a session.
-    let mut cmd = AssertCommand::new("cargo");
-    cmd.arg("run")
-        .arg("-p")
-        .arg("codex-cli")
-        .arg("--quiet")
-        .arg("--")
-        .arg("exec")
+    let mut cmd = Command::cargo_bin("codex").unwrap();
+    cmd.arg("exec")
         .arg("--skip-git-repo-check")
         .arg("-C")
         .arg(env!("CARGO_MANIFEST_DIR"))
@@ -176,6 +162,7 @@ async fn integration_creates_and_checks_session_file() {
     while !sessions_dir.exists() && Instant::now() < dir_deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
+    eprintln!("sessions_dir: {sessions_dir:?}");
     assert!(sessions_dir.exists(), "sessions directory never appeared");
 
     // Find the session file that contains `marker`.
@@ -185,34 +172,47 @@ async fn integration_creates_and_checks_session_file() {
         for entry in WalkDir::new(&sessions_dir) {
             let entry = match entry {
                 Ok(e) => e,
-                Err(_) => continue,
+                Err(_) => {
+                    eprintln!("error walking dir: {entry:?}");
+                    continue;
+                }
             };
             if !entry.file_type().is_file() {
+                eprintln!("not a file: {entry:?}");
                 continue;
             }
             if !entry.file_name().to_string_lossy().ends_with(".jsonl") {
+                eprintln!("not a jsonl file: {entry:?}");
                 continue;
             }
             let path = entry.path();
             let Ok(content) = std::fs::read_to_string(path) else {
+                eprintln!("error reading file: {path:?}");
                 continue;
             };
             let mut lines = content.lines();
             if lines.next().is_none() {
+                eprintln!("no lines in file: {path:?}");
                 continue;
             }
             for line in lines {
+                eprintln!("line: {line:?}");
                 if line.trim().is_empty() {
+                    eprintln!("empty line in file: {path:?}");
                     continue;
                 }
                 let item: serde_json::Value = match serde_json::from_str(line) {
                     Ok(v) => v,
-                    Err(_) => continue,
+                    Err(_) => {
+                        eprintln!("error parsing line as json: {line:?}");
+                        continue;
+                    }
                 };
                 if item.get("type").and_then(|t| t.as_str()) == Some("message") {
                     if let Some(c) = item.get("content") {
                         if c.to_string().contains(&marker) {
                             matching_path = Some(path.to_path_buf());
+                            eprintln!("found matching path: {path:?}");
                             break;
                         }
                     }
@@ -223,12 +223,12 @@ async fn integration_creates_and_checks_session_file() {
             std::thread::sleep(Duration::from_millis(50));
         }
     }
+    eprintln!("matching_path: {matching_path:?}");
 
     let path = match matching_path {
         Some(p) => p,
         None => panic!("No session file containing the marker was found"),
     };
-
     // Basic sanity checks on location and metadata.
     let rel = match path.strip_prefix(&sessions_dir) {
         Ok(r) => r,
@@ -312,13 +312,8 @@ async fn integration_creates_and_checks_session_file() {
     // to sidestep the issue.
     let resume_path_str = path.to_string_lossy().replace('\\', "/");
     let resume_override = format!("experimental_resume=\"{resume_path_str}\"");
-    let mut cmd2 = AssertCommand::new("cargo");
-    cmd2.arg("run")
-        .arg("-p")
-        .arg("codex-cli")
-        .arg("--quiet")
-        .arg("--")
-        .arg("exec")
+    let mut cmd2 = Command::cargo_bin("codex").unwrap();
+    cmd2.arg("exec")
         .arg("--skip-git-repo-check")
         .arg("-c")
         .arg(&resume_override)
