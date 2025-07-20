@@ -51,7 +51,7 @@ async fn chat_mode_stream_cli() {
         "model_providers.mock={{ name = \"mock\", base_url = \"{}/v1\", env_key = \"PATH\", wire_api = \"chat\" }}",
         server.uri()
     );
-    let mut cmd = Command::cargo_bin("codex-cli").unwrap();
+    let mut cmd = Command::cargo_bin("codex").unwrap();
     cmd.arg("exec")
         .arg("--skip-git-repo-check")
         .arg("-c")
@@ -96,7 +96,7 @@ async fn responses_api_stream_cli() {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli_responses_fixture.sse");
 
     let home = TempDir::new().unwrap();
-    let mut cmd = Command::cargo_bin("codex-cli").unwrap();
+    let mut cmd = Command::cargo_bin("codex").unwrap();
     cmd.arg("exec")
         .arg("--skip-git-repo-check")
         .arg("-C")
@@ -137,7 +137,7 @@ async fn integration_creates_and_checks_session_file() {
 
     // 4. Run the codex CLI through cargo (ensures the right bin is built) and invoke `exec`,
     //    which is what records a session.
-    let mut cmd = Command::cargo_bin("codex-cli").unwrap();
+    let mut cmd = Command::cargo_bin("codex").unwrap();
     cmd.arg("exec")
         .arg("--skip-git-repo-check")
         .arg("-C")
@@ -312,7 +312,7 @@ async fn integration_creates_and_checks_session_file() {
     // to sidestep the issue.
     let resume_path_str = path.to_string_lossy().replace('\\', "/");
     let resume_override = format!("experimental_resume=\"{resume_path_str}\"");
-    let mut cmd2 = Command::cargo_bin("codex-cli").unwrap();
+    let mut cmd2 = Command::cargo_bin("codex").unwrap();
     cmd2.arg("exec")
         .arg("--skip-git-repo-check")
         .arg("-c")
