@@ -195,6 +195,7 @@ async fn integration_creates_and_checks_session_file() {
                 eprintln!("no lines in file: {path:?}");
                 continue;
             }
+            eprintln!("lines: {lines:?}");
             for line in lines {
                 eprintln!("line: {line:?}");
                 if line.trim().is_empty() {
