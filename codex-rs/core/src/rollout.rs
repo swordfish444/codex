@@ -253,13 +253,28 @@ async fn rollout_writer(
     mut rx: mpsc::Receiver<RolloutCmd>,
     meta: Option<SessionMeta>,
 ) {
+    // Helper to serialize and write a single line (JSON + newline)
+    async fn write_json_line<T: serde::Serialize>(
+        file: &mut tokio::fs::File,
+        value: &T,
+    ) -> std::io::Result<()> {
+        let mut buf = serde_json::to_vec(value)?;
+        buf.push(b'\n');
+        file.write_all(&buf).await?;
+        Ok(())
+    }
+
+    // Write meta line if present
     if let Some(meta) = meta {
-        if let Ok(json) = serde_json::to_string(&meta) {
-            let _ = file.write_all(json.as_bytes()).await;
-            let _ = file.write_all(b"\n").await;
-            let _ = file.flush().await;
+        if let Err(e) = write_json_line(&mut file, &meta).await {
+            warn!("Failed to write session meta: {e}");
+        }
+        if let Err(e) = file.flush().await {
+            warn!("Failed to flush meta: {e}");
         }
     }
+
+    // Main loop
     while let Some(cmd) = rx.recv().await {
         match cmd {
             RolloutCmd::AddItems(items) => {
@@ -269,15 +284,16 @@ async fn rollout_writer(
                         | ResponseItem::LocalShellCall { .. }
                         | ResponseItem::FunctionCall { .. }
                         | ResponseItem::FunctionCallOutput { .. } => {
-                            if let Ok(json) = serde_json::to_string(&item) {
-                                let _ = file.write_all(json.as_bytes()).await;
-                                let _ = file.write_all(b"\n").await;
+                            if let Err(e) = write_json_line(&mut file, &item).await {
+                                warn!("Failed to write item: {e}");
                             }
                         }
                         ResponseItem::Reasoning { .. } | ResponseItem::Other => {}
                     }
                 }
-                let _ = file.flush().await;
+                if let Err(e) = file.flush().await {
+                    warn!("Failed to flush items: {e}");
+                }
             }
             RolloutCmd::UpdateState(state) => {
                 #[derive(Serialize)]
@@ -286,13 +302,15 @@ async fn rollout_writer(
                     #[serde(flatten)]
                     state: &'a SessionStateSnapshot,
                 }
-                if let Ok(json) = serde_json::to_string(&StateLine {
+                let line = StateLine {
                     record_type: "state",
                     state: &state,
-                }) {
-                    let _ = file.write_all(json.as_bytes()).await;
-                    let _ = file.write_all(b"\n").await;
-                    let _ = file.flush().await;
+                };
+                if let Err(e) = write_json_line(&mut file, &line).await {
+                    warn!("Failed to write state: {e}");
+                }
+                if let Err(e) = file.flush().await {
+                    warn!("Failed to flush state: {e}");
                 }
             }
         }
