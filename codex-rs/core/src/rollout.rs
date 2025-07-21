@@ -300,6 +300,7 @@ async fn rollout_writer(
         let mut buf = serde_json::to_vec(value)?;
         buf.push(b'\n');
         file.write_all(&buf).await?;
+        // TODO: decide if we want to flush here or TaskComplete is enough.
         file.flush().await?;
         Ok(())
     }
