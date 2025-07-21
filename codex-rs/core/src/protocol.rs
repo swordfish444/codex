@@ -112,9 +112,6 @@ pub enum Op {
 
     /// Request a single history entry identified by `log_id` + `offset`.
     GetHistoryEntryRequest { offset: usize, log_id: u64 },
-
-    /// Flush and persist any pending rollout items (testing / graceful shutdown aid).
-    FlushRollout,
 }
 
 /// Determines the conditions under which the user is consulted to approve

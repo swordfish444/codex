@@ -63,7 +63,10 @@ pub(crate) struct RolloutRecorder {
 enum RolloutCmd {
     AddItems(Vec<ResponseItem>),
     UpdateState(SessionStateSnapshot),
-    Shutdown(oneshot::Sender<()>),
+    Sync {
+        exit: bool,
+        ack: oneshot::Sender<()>,
+    },
 }
 
 impl RolloutRecorder {
@@ -203,11 +206,34 @@ impl RolloutRecorder {
         Ok((Self { tx }, saved))
     }
 
-    pub async fn shutdown(&self) -> std::io::Result<()> {
-        // Send a shutdown command and wait for the writer task to flush.
+    pub async fn sync(&self) -> std::io::Result<()> {
         let (tx_done, rx_done) = oneshot::channel();
-        if let Err(e) = self.tx.send(RolloutCmd::Shutdown(tx_done)).await {
-            // If the channel is closed, the writer is already gone – treat as success.
+        if let Err(e) = self
+            .tx
+            .send(RolloutCmd::Sync {
+                exit: false,
+                ack: tx_done,
+            })
+            .await
+        {
+            warn!("failed to send rollout sync command: {e}");
+            return Ok(());
+        }
+        rx_done
+            .await
+            .map_err(|e| IoError::other(format!("failed waiting for rollout sync: {e}")))
+    }
+
+    pub async fn shutdown(&self) -> std::io::Result<()> {
+        let (tx_done, rx_done) = oneshot::channel();
+        if let Err(e) = self
+            .tx
+            .send(RolloutCmd::Sync {
+                exit: true,
+                ack: tx_done,
+            })
+            .await
+        {
             warn!("failed to send rollout shutdown command: {e}");
             return Ok(());
         }
@@ -274,6 +300,7 @@ async fn rollout_writer(
         let mut buf = serde_json::to_vec(value)?;
         buf.push(b'\n');
         file.write_all(&buf).await?;
+        file.flush().await?;
         Ok(())
     }
 
@@ -304,9 +331,6 @@ async fn rollout_writer(
                         ResponseItem::Reasoning { .. } | ResponseItem::Other => {}
                     }
                 }
-                if let Err(e) = file.flush().await {
-                    warn!("Failed to flush items: {e}");
-                }
             }
             RolloutCmd::UpdateState(state) => {
                 #[derive(Serialize)]
@@ -322,16 +346,15 @@ async fn rollout_writer(
                 if let Err(e) = write_json_line(&mut file, &line).await {
                     warn!("Failed to write state: {e}");
                 }
-                if let Err(e) = file.flush().await {
-                    warn!("Failed to flush state: {e}");
-                }
             }
-            RolloutCmd::Shutdown(done_tx) => {
+            RolloutCmd::Sync { exit, ack } => {
                 if let Err(e) = file.flush().await {
-                    warn!("Failed to flush on shutdown: {e}");
+                    warn!("Failed to flush on sync: {e}");
                 }
-                let _ = done_tx.send(());
-                break;
+                let _ = ack.send(());
+                if exit {
+                    break;
+                }
             }
         }
     }

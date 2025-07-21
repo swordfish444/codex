@@ -232,13 +232,6 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         event_processor.process_event(event);
         if is_last_event {
             handle_last_message(last_assistant_message, last_message_file.as_deref())?;
-            // After task completes, flush rollout so external tests can observe all entries.
-            let flush_id = codex.submit(Op::FlushRollout).await?;
-            while let Some(event) = rx.recv().await {
-                if event.id == flush_id {
-                    break;
-                }
-            }
             break;
         }
     }
