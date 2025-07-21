@@ -276,7 +276,7 @@ async fn on_exec_approval_response(
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ExecApprovalResponse {
     pub decision: ReviewDecision,
 }
@@ -284,19 +284,19 @@ pub struct ExecApprovalResponse {
 /// Conforms to [`mcp_types::ElicitRequestParams`] so that it can be used as the
 /// `params` field of an [`mcp_types::ElicitRequest`].
 #[derive(Debug, Serialize)]
-struct ExecApprovalElicitRequestParams {
+pub struct ExecApprovalElicitRequestParams {
     // These fields are required so that `params`
     // conforms to ElicitRequestParams.
-    message: String,
+    pub message: String,
 
     #[serde(rename = "requestedSchema")]
-    requested_schema: ElicitRequestParamsRequestedSchema,
+    pub requested_schema: ElicitRequestParamsRequestedSchema,
 
     // These are additional fields the client can use to
     // correlate the request with the codex tool call.
-    codex_elicitation: String,
-    codex_mcp_tool_call_id: String,
-    codex_event_id: String,
-    codex_command: Vec<String>,
-    codex_cwd: PathBuf,
+    pub codex_elicitation: String,
+    pub codex_mcp_tool_call_id: String,
+    pub codex_event_id: String,
+    pub codex_command: Vec<String>,
+    pub codex_cwd: PathBuf,
 }
