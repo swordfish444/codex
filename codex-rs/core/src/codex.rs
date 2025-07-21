@@ -805,6 +805,24 @@ async fn submission_loop(
                     }
                 });
             }
+            Op::FlushRollout => {
+                // Best-effort flush: shutdown recorder and ack so caller can wait.
+                if let Some(sess_arc) = sess.as_ref() {
+                    let rec_opt = { sess_arc.rollout.lock().unwrap().as_ref().cloned() };
+                    if let Some(rec) = rec_opt {
+                        if let Err(e) = rec.shutdown().await {
+                            warn!("failed to flush rollout recorder: {e}");
+                        }
+                    }
+                }
+                let event = Event {
+                    id: sub.id,
+                    msg: EventMsg::BackgroundEvent(BackgroundEventEvent {
+                        message: "rollout_flushed".to_string(),
+                    }),
+                };
+                tx_event.send(event).await.ok();
+            }
         }
     }
 
