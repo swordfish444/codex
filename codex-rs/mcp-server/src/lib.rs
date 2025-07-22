@@ -4,6 +4,7 @@
 use std::io::Result as IoResult;
 use std::path::PathBuf;
 
+use codex_common::load_dotenv;
 use mcp_types::JSONRPCMessage;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
@@ -38,6 +39,8 @@ pub use crate::patch_approval::PatchApprovalResponse;
 const CHANNEL_CAPACITY: usize = 128;
 
 pub async fn run_main(codex_linux_sandbox_exe: Option<PathBuf>) -> IoResult<()> {
+    load_dotenv();
+
     // Install a simple subscriber so `tracing` output is visible.  Users can
     // control the log level with `RUST_LOG`.
     tracing_subscriber::fmt()
