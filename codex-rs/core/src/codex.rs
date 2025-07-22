@@ -807,20 +807,6 @@ async fn submission_loop(
             }
         }
     }
-
-    // Gracefully flush and shutdown rollout recorder on session end so tests
-    // that inspect the rollout file do not race with the background writer.
-    if let Some(sess_arc) = sess {
-        let recorder_opt = {
-            let mut guard = sess_arc.rollout.lock().unwrap();
-            guard.take()
-        };
-        if let Some(rec) = recorder_opt {
-            if let Err(e) = rec.shutdown().await {
-                warn!("failed to shutdown rollout recorder: {e}");
-            }
-        }
-    }
     debug!("Agent loop exited");
 }
 
@@ -1019,15 +1005,6 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
                 sess.tx_event.send(event).await.ok();
                 return;
             }
-        }
-    }
-    // Flush rollout so that all recorded items for this task are durable before TaskComplete.
-    if let Some(rec) = {
-        let guard = sess.rollout.lock().unwrap();
-        guard.as_ref().cloned()
-    } {
-        if let Err(e) = rec.sync().await {
-            warn!("failed to flush rollout at task end: {e}");
         }
     }
     sess.remove_task(&sub_id);

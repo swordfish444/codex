@@ -14,7 +14,6 @@ use time::macros::format_description;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::{self};
-use tokio::sync::oneshot;
 use tracing::info;
 use tracing::warn;
 use uuid::Uuid;
@@ -63,10 +62,6 @@ pub(crate) struct RolloutRecorder {
 enum RolloutCmd {
     AddItems(Vec<ResponseItem>),
     UpdateState(SessionStateSnapshot),
-    Sync {
-        exit: bool,
-        ack: oneshot::Sender<()>,
-    },
 }
 
 impl RolloutRecorder {
@@ -205,44 +200,7 @@ impl RolloutRecorder {
         info!("Resumed rollout successfully from {path:?}");
         Ok((Self { tx }, saved))
     }
-
-    pub async fn sync(&self) -> std::io::Result<()> {
-        let (tx_done, rx_done) = oneshot::channel();
-        if let Err(e) = self
-            .tx
-            .send(RolloutCmd::Sync {
-                exit: false,
-                ack: tx_done,
-            })
-            .await
-        {
-            warn!("failed to send rollout sync command: {e}");
-            return Ok(());
-        }
-        rx_done
-            .await
-            .map_err(|e| IoError::other(format!("failed waiting for rollout sync: {e}")))
-    }
-
-    pub async fn shutdown(&self) -> std::io::Result<()> {
-        let (tx_done, rx_done) = oneshot::channel();
-        if let Err(e) = self
-            .tx
-            .send(RolloutCmd::Sync {
-                exit: true,
-                ack: tx_done,
-            })
-            .await
-        {
-            warn!("failed to send rollout shutdown command: {e}");
-            return Ok(());
-        }
-        rx_done
-            .await
-            .map_err(|e| IoError::other(format!("failed waiting for rollout shutdown: {e}")))
-    }
 }
-
 struct LogFileInfo {
     /// Opened file handle to the rollout file.
     file: File,
@@ -346,15 +304,6 @@ async fn rollout_writer(
                 };
                 if let Err(e) = write_json_line(&mut file, &line).await {
                     warn!("Failed to write state: {e}");
-                }
-            }
-            RolloutCmd::Sync { exit, ack } => {
-                if let Err(e) = file.flush().await {
-                    warn!("Failed to flush on sync: {e}");
-                }
-                let _ = ack.send(());
-                if exit {
-                    break;
                 }
             }
         }
