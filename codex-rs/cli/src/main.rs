@@ -9,6 +9,7 @@ use codex_cli::SeatbeltCommand;
 use codex_cli::login::run_login_with_chatgpt;
 use codex_cli::proto;
 use codex_common::CliConfigOverrides;
+use codex_common::load_dotenv;
 use codex_exec::Cli as ExecCli;
 use codex_tui::Cli as TuiCli;
 use std::path::PathBuf;
@@ -99,6 +100,8 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
+    load_dotenv();
+
     let cli = MultitoolCli::parse();
 
     match cli.subcommand {
