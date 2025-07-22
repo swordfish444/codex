@@ -8,6 +8,10 @@ use crate::slash_command::SlashCommand;
 pub enum AppEvent {
     CodexEvent(Event),
 
+    /// Request a redraw which will be debounced by the [`App`].
+    RequestRedraw,
+
+    /// Actually draw the next frame.
     Redraw,
 
     KeyEvent(KeyEvent),
