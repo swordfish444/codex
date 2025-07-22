@@ -1,6 +1,12 @@
 #[cfg(feature = "cli")]
 mod approval_mode_cli_arg;
 
+#[cfg(feature = "cli")]
+mod dotenv;
+
+#[cfg(feature = "cli")]
+pub use dotenv::load_dotenv;
+
 #[cfg(feature = "elapsed")]
 pub mod elapsed;
 
