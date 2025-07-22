@@ -99,6 +99,12 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
+    // Load env vars from ~/.codex/.env and `$(pwd)/.env`.
+    if let Ok(codex_home) = codex_core::config::find_codex_home() {
+        dotenvy::from_path(codex_home.join(".env")).ok();
+    }
+    dotenvy::dotenv().ok();
+
     let cli = MultitoolCli::parse();
 
     match cli.subcommand {
