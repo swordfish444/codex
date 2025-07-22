@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::io::Write; // added for write_all / flush
 
 use anyhow::Context;
 use codex_common::ApprovalModeCliArg;
@@ -98,29 +99,41 @@ pub fn maybe_spawn_concurrent(
     };
 
     // Unique job id for this concurrent run (used for log file naming instead of slug).
-    let job_id = uuid::Uuid::new_v4().to_string();
+    let task_id = uuid::Uuid::new_v4().to_string();
+
+    // Prepare log file path early so we can write pre-spawn logs (e.g. worktree creation output) into it.
+    let log_dir = match codex_base_dir() {
+        Ok(base) => {
+            let d = base.join("log");
+            let _ = std::fs::create_dir_all(&d);
+            d
+        }
+        Err(_) => PathBuf::from("/tmp"),
+    };
+    let log_path = log_dir.join(format!("codex-logs-{}.log", task_id));
 
     // If user did NOT specify an explicit cwd, create an isolated git worktree.
     let mut created_worktree: Option<(PathBuf, String)> = None; // (path, branch)
     let mut original_branch: Option<String> = None;
     let mut original_commit: Option<String> = None;
+    let mut pre_spawn_logs = String::new();
     if tui_cli.cwd.is_none() {
-        // Capture original branch & commit (best-effort).
         original_branch = git_capture(["rev-parse", "--abbrev-ref", "HEAD"]).ok();
         original_commit = git_capture(["rev-parse", "HEAD"]).ok();
-        // Use branch_name_effective for branch/worktree name.
         match create_concurrent_worktree(&branch_name_effective) {
-            Ok(Some((worktree_path, branch_name))) => {
-                println!(
-                    "Created git worktree at {} (branch {}) for concurrent run",
-                    worktree_path.display(), branch_name
-                );
+            Ok(Some(info)) => {
                 exec_args.push("--cd".into());
-                exec_args.push(worktree_path.display().to_string());
-                created_worktree = Some((worktree_path, branch_name));
+                exec_args.push(info.worktree_path.display().to_string());
+                created_worktree = Some((info.worktree_path, info.branch_name.clone()));
+                // Keep the original git output plus a concise created line (for log file only).
+                pre_spawn_logs.push_str(&info.logs);
+                pre_spawn_logs.push_str(&format!(
+                    "Created git worktree at {} (branch {}) for concurrent run\n",
+                    created_worktree.as_ref().unwrap().0.display(), info.branch_name
+                ));
             }
             Ok(None) => {
-                eprintln!("Warning: Not a git repository (skipping worktree creation); running in current directory.");
+                // Silence console noise: do not warn here to keep stdout clean; we still proceed.
             }
             Err(e) => {
                 eprintln!("Error: failed to create git worktree for --concurrent: {e}");
@@ -136,16 +149,20 @@ pub fn maybe_spawn_concurrent(
     // Prompt (safe to unwrap due to earlier validation).
     if let Some(prompt) = tui_cli.prompt.clone() { exec_args.push(prompt); }
 
-    // Prepare log file path using stable job id (UUID) rather than prompt slug.
-    let log_dir = match codex_base_dir() {
-        Ok(base) => {
-            let d = base.join("log");
-            let _ = std::fs::create_dir_all(&d);
-            d
+    // Create (or truncate) the log file and write any pre-spawn logs we captured.
+    let file = match File::create(&log_path) {
+        Ok(mut f) => {
+            if !pre_spawn_logs.is_empty() {
+                let _ = f.write_all(pre_spawn_logs.as_bytes());
+                let _ = f.flush();
+            }
+            f
         }
-        Err(_) => PathBuf::from("/tmp"),
+        Err(e) => {
+            eprintln!("Failed to create log file {}: {e}. Falling back to interactive mode.", log_path.display());
+            return Ok(false);
+        }
     };
-    let log_path = log_dir.join(format!("codex-logs-{}.log", job_id));
 
     match File::create(&log_path) {
         Ok(file) => {
@@ -164,26 +181,18 @@ pub fn maybe_spawn_concurrent(
                 if let Some(oc) = &original_commit { cmd.env("CODEX_ORIGINAL_COMMIT", oc); }
                 if let Ok(orig_root) = std::env::current_dir() { cmd.env("CODEX_ORIGINAL_ROOT", orig_root); }
             }
-            // Provide job id so child process can emit token_count updates to tasks.jsonl.
-            cmd.env("CODEX_JOB_ID", &job_id);
+            // Provide task id so child process can emit token_count updates to tasks.jsonl.
+            cmd.env("CODEX_TASK_ID", &task_id);
             cmd.stdout(Stdio::from(file));
             if let Some(f2) = file_err { cmd.stderr(Stdio::from(f2)); }
             match cmd.spawn() {
                 Ok(child) => {
-                    if let Some((wt_path, wt_branch)) = &created_worktree {
-                        println!(
-                            "Background Codex exec started in worktree. PID={} job_id={} log={} worktree={} branch={} original_branch={} automerge={}",
-                            child.id(), job_id, log_path.display(), wt_path.display(), wt_branch,
-                            original_branch.as_deref().unwrap_or("?"), effective_automerge
-                        );
-                    } else {
-                        println!(
-                            "Background Codex exec started. PID={} job_id={} log={} automerge={}",
-                            child.id(), job_id, log_path.display(), effective_automerge
-                        );
-                    }
+                    // Previous verbose status lines replaced with a single short id output for scripting.
+                    let _ = child;
+                    let short_task_id = &task_id[..8];
+                    println!("{}", short_task_id);
 
-                    // Record job metadata to CODEX_HOME/jobs.jsonl (JSON Lines file).
+                    // Record task metadata to CODEX_HOME/tasks.jsonl (JSON Lines file).
                     let record_time = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_secs())
@@ -191,7 +200,7 @@ pub fn maybe_spawn_concurrent(
                     if let Ok(base) = codex_base_dir() {
                         let tasks_path = base.join("tasks.jsonl");
                         let record = serde_json::json!({
-                            "job_id": job_id,
+                            "task_id": task_id,
                             "pid": child.id(),
                             "worktree": created_worktree.as_ref().map(|(p, _)| p.display().to_string()),
                             "branch": created_worktree.as_ref().map(|(_, b)| b.clone()),
@@ -246,9 +255,9 @@ fn codex_base_dir() -> anyhow::Result<PathBuf> {
     Ok(base)
 }
 
-/// Attempt to create a git worktree for an isolated concurrent run.
-/// Returns Ok(Some((worktree_path, branch_name))) on success, Ok(None) if not a git repo, and Err on failure.
-fn create_concurrent_worktree(branch_name: &str) -> anyhow::Result<Option<(PathBuf, String)>> {
+/// Attempt to create a git worktree for an isolated concurrent run capturing git output.
+struct WorktreeInfo { worktree_path: PathBuf, branch_name: String, logs: String }
+fn create_concurrent_worktree(branch_name: &str) -> anyhow::Result<Option<WorktreeInfo>> {
     // Determine repository root.
     let output = Command::new("git").arg("rev-parse").arg("--show-toplevel").output();
     let repo_root = match output {
@@ -285,16 +294,15 @@ fn create_concurrent_worktree(branch_name: &str) -> anyhow::Result<Option<(PathB
     std::fs::create_dir_all(&base_dir)?;
     let mut worktree_path = base_dir.join(branch_name.replace('/', "-"));
 
-    // Ensure uniqueness if path already exists.
     if worktree_path.exists() {
-        for i in 1..1000 { // arbitrary cap
+        for i in 1..1000 {
             let candidate = base_dir.join(format!("{}-{}", branch_name.replace('/', "-"), i));
             if !candidate.exists() { worktree_path = candidate; break; }
         }
     }
 
-    // Run: git worktree add -b <branch_name> <path> HEAD
-    let status = Command::new("git")
+    // Run git worktree add capturing output (stdout+stderr).
+    let add_out = Command::new("git")
         .current_dir(&repo_root)
         .arg("worktree")
         .arg("add")
@@ -302,13 +310,15 @@ fn create_concurrent_worktree(branch_name: &str) -> anyhow::Result<Option<(PathB
         .arg(&branch_name)
         .arg(&worktree_path)
         .arg("HEAD")
-        .status()?;
-
-    if !status.success() {
-        anyhow::bail!("git worktree add failed with status {status}");
+        .output()?;
+    if !add_out.status.success() {
+        anyhow::bail!("git worktree add failed with status {}", add_out.status);
     }
+    let mut logs = String::new();
+    if !add_out.stdout.is_empty() { logs.push_str(&String::from_utf8_lossy(&add_out.stdout)); }
+    if !add_out.stderr.is_empty() { logs.push_str(&String::from_utf8_lossy(&add_out.stderr)); }
 
-    Ok(Some((worktree_path, branch_name.to_string())))
+    Ok(Some(WorktreeInfo { worktree_path, branch_name: branch_name.to_string(), logs }))
 }
 
 /// Helper: capture trimmed stdout of a git command.

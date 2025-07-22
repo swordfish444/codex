@@ -9,7 +9,7 @@ use std::time::Duration;
 
 #[derive(Debug, Parser)]
 pub struct LogsCli {
-    /// Job identifier: full/short job UUID or branch name
+    /// Task identifier: full/short task UUID or branch name
     pub id: String,
     /// Follow log output (stream new lines)
     #[arg(short = 'f', long = "follow")]
@@ -21,15 +21,15 @@ pub struct LogsCli {
 
 #[derive(Debug, Deserialize)]
 struct RawRecord {
-    job_id: Option<String>,
+    task_id: Option<String>,
     branch: Option<String>,
     log_path: Option<String>,
     start_time: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
-struct JobMeta {
-    job_id: String,
+struct TaskMeta {
+    task_id: String,
     branch: Option<String>,
     log_path: String,
     start_time: Option<u64>,
@@ -37,27 +37,27 @@ struct JobMeta {
 
 pub fn run_logs(cli: LogsCli) -> anyhow::Result<()> {
     let id = cli.id.to_lowercase();
-    let jobs = load_jobs_index()?;
-    if jobs.is_empty() {
-        eprintln!("No jobs found in tasks.jsonl");
+    let tasks = load_tasks_index()?;
+    if tasks.is_empty() {
+        eprintln!("No tasks found in tasks.jsonl");
         return Ok(());
     }
-    let matches: Vec<&JobMeta> = jobs
+    let matches: Vec<&TaskMeta> = tasks
         .values()
         .filter(|meta| {
-            meta.job_id.starts_with(&id) || meta.branch.as_deref().map(|b| b == id).unwrap_or(false)
+            meta.task_id.starts_with(&id) || meta.branch.as_deref().map(|b| b == id).unwrap_or(false)
         })
         .collect();
     if matches.is_empty() {
-        eprintln!("No job matches identifier '{}'.", id);
+        eprintln!("No task matches identifier '{}'.", id);
         return Ok(());
     }
     if matches.len() > 1 {
-        eprintln!("Identifier '{}' is ambiguous; matches: {}", id, matches.iter().map(|m| &m.job_id[..8]).collect::<Vec<_>>().join(", "));
+        eprintln!("Identifier '{}' is ambiguous; matches: {}", id, matches.iter().map(|m| &m.task_id[..8]).collect::<Vec<_>>().join(", "));
         return Ok(());
     }
-    let job = matches[0];
-    let path = PathBuf::from(&job.log_path);
+    let task = matches[0];
+    let path = PathBuf::from(&task.log_path);
     if !path.exists() {
         eprintln!("Log file not found at {}", path.display());
         return Ok(());
@@ -77,8 +77,8 @@ fn base_dir() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".codex"))
 }
 
-fn load_jobs_index() -> anyhow::Result<HashMap<String, JobMeta>> {
-    let mut map: HashMap<String, JobMeta> = HashMap::new();
+fn load_tasks_index() -> anyhow::Result<HashMap<String, TaskMeta>> {
+    let mut map: HashMap<String, TaskMeta> = HashMap::new();
     let Some(base) = base_dir() else { return Ok(map); };
     let tasks = base.join("tasks.jsonl");
     if !tasks.exists() { return Ok(map); }
@@ -89,10 +89,10 @@ fn load_jobs_index() -> anyhow::Result<HashMap<String, JobMeta>> {
         if line.trim().is_empty() { continue; }
         let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
         let Ok(rec) = serde_json::from_value::<RawRecord>(val) else { continue };
-        let (Some(job_id), Some(log_path)) = (rec.job_id.clone(), rec.log_path.clone()) else { continue };
+        let (Some(task_id), Some(log_path)) = (rec.task_id.clone(), rec.log_path.clone()) else { continue };
         // Insert or update only if not already present (we just need initial metadata)
-        map.entry(job_id.clone()).or_insert(JobMeta {
-            job_id,
+        map.entry(task_id.clone()).or_insert(TaskMeta {
+            task_id,
             branch: rec.branch,
             log_path,
             start_time: rec.start_time,

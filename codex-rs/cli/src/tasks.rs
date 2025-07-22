@@ -6,26 +6,26 @@ use std::io::{BufRead, BufReader};
 use std::fs;
 
 #[derive(Debug, Parser)]
-pub struct JobsCli {
+pub struct TasksCli {
     #[command(subcommand)]
-    pub cmd: JobsCommand,
+    pub cmd: TasksCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum JobsCommand {
-    /// List background concurrent jobs (from ~/.codex/tasks.jsonl)
-    Ls(JobsListArgs),
+pub enum TasksCommand {
+    /// List background concurrent tasks (from ~/.codex/tasks.jsonl)
+    Ls(TasksListArgs),
 }
 
 #[derive(Debug, Parser)]
-pub struct JobsListArgs {
+pub struct TasksListArgs {
     /// Output raw JSON instead of table
     #[arg(long)]
     pub json: bool,
-    /// Limit number of jobs displayed (most recent first)
+    /// Limit number of tasks displayed (most recent first)
     #[arg(long)]
     pub limit: Option<usize>,
-    /// Show completed jobs as well (by default only running jobs)
+    /// Show completed tasks as well (by default only running tasks)
     #[arg(short = 'a', long = "all")]
     pub all: bool,
     /// Show all columns including prompt text
@@ -35,7 +35,7 @@ pub struct JobsListArgs {
 
 #[derive(Debug, Deserialize)]
 struct RawRecord {
-    job_id: Option<String>,
+    task_id: Option<String>,
     pid: Option<u64>,
     worktree: Option<String>,
     branch: Option<String>,
@@ -53,8 +53,8 @@ struct RawRecord {
 }
 
 #[derive(Debug, Serialize, Default, Clone)]
-struct JobAggregate {
-    job_id: String,
+struct TaskAggregate {
+    task_id: String,
     pid: Option<u64>,
     branch: Option<String>,
     worktree: Option<String>,
@@ -67,9 +67,9 @@ struct JobAggregate {
     end_time: Option<u64>,
 }
 
-pub fn run_jobs(cmd: JobsCli) -> anyhow::Result<()> {
+pub fn run_tasks(cmd: TasksCli) -> anyhow::Result<()> {
     match cmd.cmd {
-        JobsCommand::Ls(args) => list_jobs(args),
+        TasksCommand::Ls(args) => list_tasks(args),
     }
 }
 
@@ -80,28 +80,28 @@ fn base_dir() -> Option<std::path::PathBuf> {
     Some(base)
 }
 
-fn list_jobs(args: JobsListArgs) -> anyhow::Result<()> {
+fn list_tasks(args: TasksListArgs) -> anyhow::Result<()> {
     let Some(base) = base_dir() else {
         println!("No home directory found; cannot locate tasks.jsonl");
         return Ok(());
     };
     let path = base.join("tasks.jsonl");
     if !path.exists() {
-        println!("No tasks.jsonl found (no concurrent jobs recorded yet)");
+        println!("No tasks.jsonl found (no concurrent tasks recorded yet)");
         return Ok(());
     }
 
     let f = File::open(&path)?;
     let reader = BufReader::new(f);
 
-    let mut agg: HashMap<String, JobAggregate> = HashMap::new();
+    let mut agg: HashMap<String, TaskAggregate> = HashMap::new();
     for line_res in reader.lines() {
         let line = match line_res { Ok(l) => l, Err(_) => continue };
         if line.trim().is_empty() { continue; }
         let raw: serde_json::Value = match serde_json::from_str(&line) { Ok(v) => v, Err(_) => continue };
         let rec: RawRecord = match serde_json::from_value(raw) { Ok(r) => r, Err(_) => continue };
-        let Some(job_id) = rec.job_id.clone() else { continue }; // must have job_id
-        let entry = agg.entry(job_id.clone()).or_insert_with(|| JobAggregate { job_id: job_id.clone(), ..Default::default() });
+        let Some(task_id) = rec.task_id.clone() else { continue }; // must have task_id
+        let entry = agg.entry(task_id.clone()).or_insert_with(|| TaskAggregate { task_id: task_id.clone(), ..Default::default() });
         if rec.start_time.is_some() { // initial metadata line
             entry.pid = rec.pid.or(entry.pid);
             entry.branch = rec.branch.or(entry.branch.clone());
@@ -119,48 +119,48 @@ fn list_jobs(args: JobsListArgs) -> anyhow::Result<()> {
     }
 
     // Collect and sort by start_time desc
-    let mut jobs: Vec<JobAggregate> = agg.into_values().collect();
-    jobs.sort_by_key(|j| std::cmp::Reverse(j.start_time.unwrap_or(0)));
+    let mut tasks: Vec<TaskAggregate> = agg.into_values().collect();
+    tasks.sort_by_key(|j| std::cmp::Reverse(j.start_time.unwrap_or(0)));
 
-    if !args.all { jobs.retain(|j| j.state.as_deref() != Some("done")); }
-    if let Some(limit) = args.limit { jobs.truncate(limit); }
+    if !args.all { tasks.retain(|j| j.state.as_deref() != Some("done")); }
+    if let Some(limit) = args.limit { tasks.truncate(limit); }
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&jobs)?);
+        println!("{}", serde_json::to_string_pretty(&tasks)?);
         return Ok(());
     }
 
-    if jobs.is_empty() {
-        println!("No jobs found");
+    if tasks.is_empty() {
+        println!("No tasks found");
         return Ok(());
     }
 
     // Table header
     if args.all_columns {
-        println!("{:<8} {:>6} {:<22} {:<12} {:<8} {:>8} {:<12} {}", "JOB_ID", "PID", "BRANCH", "START", "STATE", "TOKENS", "MODEL", "PROMPT");
+        println!("{:<8} {:>6} {:<22} {:<12} {:<8} {:>8} {:<12} {}", "TASK_ID", "PID", "BRANCH", "START", "STATE", "TOKENS", "MODEL", "PROMPT");
     } else {
         // Widened branch column to 22 chars for better readability.
-        println!("{:<8} {:>6} {:<22} {:<12} {:<8} {:>8} {:<12}", "JOB_ID", "PID", "BRANCH", "START", "STATE", "TOKENS", "MODEL");
+        println!("{:<8} {:>6} {:<22} {:<12} {:<8} {:>8} {:<12}", "TASK_ID", "PID", "BRANCH", "START", "STATE", "TOKENS", "MODEL");
     }
-    for j in jobs {
-        let job_short = if j.job_id.len() > 8 { &j.job_id[..8] } else { &j.job_id };
-        let pid_str = j.pid.map(|p| p.to_string()).unwrap_or_default();
-        let mut branch = j.branch.clone().unwrap_or_default();
+    for t in tasks {
+        let task_short = if t.task_id.len() > 8 { &t.task_id[..8] } else { &t.task_id };
+        let pid_str = t.pid.map(|p| p.to_string()).unwrap_or_default();
+        let mut branch = t.branch.clone().unwrap_or_default();
         let branch_limit = if args.all_columns { 22 } else { 22 }; // unified width
         if branch.len() > branch_limit { branch.truncate(branch_limit); }
-        let start = j.start_time.map(format_epoch_short).unwrap_or_default();
-        let tokens = j.total_tokens.map(|t| t.to_string()).unwrap_or_default();
-        let state = j.state.clone().unwrap_or_else(|| "?".into());
-        let mut model = j.model.clone().unwrap_or_default();
+        let start = t.start_time.map(format_epoch_short).unwrap_or_default();
+        let tokens = t.total_tokens.map(|t| t.to_string()).unwrap_or_default();
+        let state = t.state.clone().unwrap_or_else(|| "?".into());
+        let mut model = t.model.clone().unwrap_or_default();
         if model.trim().is_empty() { model = resolve_default_model(); }
         if model.is_empty() { model.push('-'); }
         if model.len() > 12 { model.truncate(12); }
         if args.all_columns {
-            let mut prompt = j.prompt.clone().unwrap_or_default().replace('\n', " ");
+            let mut prompt = t.prompt.clone().unwrap_or_default().replace('\n', " ");
             if prompt.len() > 60 { prompt.truncate(60); }
-            println!("{:<8} {:>6} {:<22} {:<12} {:<8} {:>8} {:<12} {}", job_short, pid_str, branch, start, state, tokens, model, prompt);
+            println!("{:<8} {:>6} {:<22} {:<12} {:<8} {:>8} {:<12} {}", task_short, pid_str, branch, start, state, tokens, model, prompt);
         } else {
-            println!("{:<8} {:>6} {:<22} {:<12} {:<8} {:>8} {:<12}", job_short, pid_str, branch, start, state, tokens, model);
+            println!("{:<8} {:>6} {:<22} {:<12} {:<8} {:>8} {:<12}", task_short, pid_str, branch, start, state, tokens, model);
         }
     }
 

@@ -208,7 +208,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                     self.last_message_path.as_deref(),
                 );
                 // On completion, append a final state entry with last token count snapshot.
-                if let Ok(job_id) = std::env::var("CODEX_JOB_ID") {
+                if let Ok(task_id) = std::env::var("CODEX_TASK_ID") {
                     if let Some(base) = codex_base_dir_for_logging() {
                         let tasks_path = base.join("tasks.jsonl");
                         let ts = std::time::SystemTime::now()
@@ -223,7 +223,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                             "total_tokens": u.total_tokens,
                         }));
                         let mut obj = serde_json::json!({
-                            "job_id": job_id,
+                            "task_id": task_id,
                             "completion_time": ts,
                             "end_time": ts,
                             "state": "done",
@@ -236,6 +236,23 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             }
             EventMsg::TokenCount(TokenUsage { total_tokens, .. }) => {
                 ts_println!(self, "tokens used: {total_tokens}");
+                if let Ok(task_id) = std::env::var("CODEX_TASK_ID") {
+                    if let Some(base) = codex_base_dir_for_logging() {
+                        let tasks_path = base.join("tasks.jsonl");
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let full = serde_json::json!({
+                            "task_id": task_id,
+                            "update_time": ts,
+                            "token_count": {
+                                "total_tokens": total_tokens,
+                            }
+                        });
+                        let _ = append_json_line(&tasks_path, &full);
+                    }
+                }
             }
             EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }) => {
                 if !self.answer_started {
