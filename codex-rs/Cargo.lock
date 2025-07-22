@@ -626,6 +626,7 @@ name = "codex-cli"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "assert_cmd",
  "chrono",
  "clap",
  "clap_complete",
@@ -639,6 +640,7 @@ dependencies = [
  "codex-tui",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
