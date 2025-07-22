@@ -4,6 +4,7 @@ use clap_complete::Shell;
 use clap_complete::generate;
 use codex_chatgpt::apply_command::ApplyCommand;
 use codex_chatgpt::apply_command::run_apply_command;
+use codex_cli::concurrent::maybe_spawn_concurrent;
 use codex_cli::LandlockCommand;
 use codex_cli::SeatbeltCommand;
 use codex_cli::login::run_login_with_chatgpt;
@@ -31,6 +32,21 @@ struct MultitoolCli {
 
     #[clap(flatten)]
     interactive: TuiCli,
+
+    /// Autonomous mode: run the command in the background & concurrently using a git worktree.
+    /// Requires the current directory (or --cd provided path) to be a git repository.
+    #[clap(long)]
+    concurrent: bool,
+
+    /// Control whether the concurrent run auto-merges the worktree branch back into the original branch.
+    /// Defaults to true (may also be set via CONCURRENT_AUTOMERGE env var).
+    #[clap(long = "concurrent-automerge", value_name = "BOOL")]
+    concurrent_automerge: Option<bool>,
+
+    /// Explicit branch name to use for the concurrent worktree instead of the default `codex/<slug>`.
+    /// May also be set via CONCURRENT_BRANCH_NAME env var.
+    #[clap(long = "concurrent-branch-name", value_name = "BRANCH")]
+    concurrent_branch_name: Option<String>,
 
     #[clap(subcommand)]
     subcommand: Option<Subcommand>,
@@ -104,9 +120,25 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
     match cli.subcommand {
         None => {
             let mut tui_cli = cli.interactive;
+            let root_raw_overrides = cli.config_overrides.raw_overrides.clone();
             prepend_config_flags(&mut tui_cli.config_overrides, cli.config_overrides);
-            let usage = codex_tui::run_main(tui_cli, codex_linux_sandbox_exe)?;
-            println!("{}", codex_core::protocol::FinalOutput::from(usage));
+            // Attempt concurrent background spawn; if it returns true we skip launching the TUI.
+            if let Ok(spawned) = maybe_spawn_concurrent(
+                &mut tui_cli,
+                &root_raw_overrides,
+                cli.concurrent,
+                cli.concurrent_automerge,
+                &cli.concurrent_branch_name,
+            ) {
+                if !spawned {
+                    let usage = codex_tui::run_main(tui_cli, codex_linux_sandbox_exe)?;
+                    println!("{}", codex_core::protocol::FinalOutput::from(usage));
+                }
+            } else {
+                // On error fallback to interactive.
+                let usage = codex_tui::run_main(tui_cli, codex_linux_sandbox_exe)?;
+                println!("{}", codex_core::protocol::FinalOutput::from(usage));
+            }
         }
         Some(Subcommand::Exec(mut exec_cli)) => {
             prepend_config_flags(&mut exec_cli.config_overrides, cli.config_overrides);
