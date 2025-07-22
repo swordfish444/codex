@@ -164,6 +164,8 @@ pub fn maybe_spawn_concurrent(
                 if let Some(oc) = &original_commit { cmd.env("CODEX_ORIGINAL_COMMIT", oc); }
                 if let Ok(orig_root) = std::env::current_dir() { cmd.env("CODEX_ORIGINAL_ROOT", orig_root); }
             }
+            // Provide job id so child process can emit token_count updates to tasks.jsonl.
+            cmd.env("CODEX_JOB_ID", &job_id);
             cmd.stdout(Stdio::from(file));
             if let Some(f2) = file_err { cmd.stderr(Stdio::from(f2)); }
             match cmd.spawn() {
@@ -187,7 +189,7 @@ pub fn maybe_spawn_concurrent(
                         .map(|d| d.as_secs())
                         .unwrap_or(0);
                     if let Ok(base) = codex_base_dir() {
-                        let jobs_path = base.join("jobs.jsonl");
+                        let tasks_path = base.join("tasks.jsonl");
                         let record = serde_json::json!({
                             "job_id": job_id,
                             "pid": child.id(),
@@ -197,17 +199,20 @@ pub fn maybe_spawn_concurrent(
                             "original_commit": original_commit,
                             "log_path": log_path.display().to_string(),
                             "prompt": raw_prompt,
+                            "model": tui_cli.model.clone(),
                             "start_time": record_time,
                             "automerge": effective_automerge,
                             "explicit_branch_name": user_branch_name_opt,
+                            "token_count": serde_json::Value::Null,
+                            "state": "started",
                         });
-                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&jobs_path) {
+                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&tasks_path) {
                             use std::io::Write;
                             if let Err(e) = writeln!(f, "{}", record.to_string()) {
-                                eprintln!("Warning: failed writing job record to {}: {e}", jobs_path.display());
+                                eprintln!("Warning: failed writing task record to {}: {e}", tasks_path.display());
                             }
                         } else {
-                            eprintln!("Warning: could not open jobs log file at {}", jobs_path.display());
+                            eprintln!("Warning: could not open tasks log file at {}", tasks_path.display());
                         }
                     }
                     return Ok(true); // background spawned
