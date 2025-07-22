@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub use cli::Cli;
+use codex_common::load_dotenv;
 use codex_core::codex_wrapper;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
@@ -31,6 +32,8 @@ use tracing_subscriber::EnvFilter;
 use crate::event_processor::EventProcessor;
 
 pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
+    load_dotenv();
+
     let Cli {
         images,
         model,
