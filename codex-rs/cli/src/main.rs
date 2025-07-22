@@ -77,6 +77,15 @@ enum Subcommand {
     /// Apply the latest diff produced by Codex agent as a `git apply` to your local working tree.
     #[clap(visible_alias = "a")]
     Apply(ApplyCommand),
+
+    /// Manage / inspect concurrent background jobs.
+    Jobs(codex_cli::jobs::JobsCli),
+
+    /// Show or follow logs for a specific job.
+    Logs(codex_cli::logs::LogsCli),
+
+    /// Inspect full metadata for a job.
+    Inspect(codex_cli::inspect::InspectCli),
 }
 
 #[derive(Debug, Parser)]
@@ -179,6 +188,15 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
         Some(Subcommand::Apply(mut apply_cli)) => {
             prepend_config_flags(&mut apply_cli.config_overrides, cli.config_overrides);
             run_apply_command(apply_cli, None).await?;
+        }
+        Some(Subcommand::Jobs(jobs_cli)) => {
+            codex_cli::jobs::run_jobs(jobs_cli)?;
+        }
+        Some(Subcommand::Logs(logs_cli)) => {
+            codex_cli::logs::run_logs(logs_cli)?;
+        }
+        Some(Subcommand::Inspect(inspect_cli)) => {
+            codex_cli::inspect::run_inspect(inspect_cli)?;
         }
     }
 
