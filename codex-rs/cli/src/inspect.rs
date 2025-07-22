@@ -7,7 +7,7 @@ use std::fs;
 
 #[derive(Debug, Parser)]
 pub struct InspectCli {
-    /// Job identifier (full/short job id or exact branch name)
+    /// Task identifier (full/short task id or exact branch name)
     pub id: String,
     /// Output JSON instead of human table
     #[arg(long)]
@@ -16,7 +16,7 @@ pub struct InspectCli {
 
 #[derive(Debug, Deserialize)]
 struct RawRecord {
-    job_id: Option<String>,
+    task_id: Option<String>,
     pid: Option<u64>,
     worktree: Option<String>,
     branch: Option<String>,
@@ -36,8 +36,8 @@ struct RawRecord {
 }
 
 #[derive(Debug, serde::Serialize, Default, Clone)]
-struct JobFull {
-    job_id: String,
+struct TaskFull {
+    task_id: String,
     pid: Option<u64>,
     branch: Option<String>,
     worktree: Option<String>,
@@ -61,25 +61,25 @@ struct JobFull {
 
 pub fn run_inspect(cli: InspectCli) -> anyhow::Result<()> {
     let id = cli.id.to_lowercase();
-    let jobs = load_job_records()?;
-    let matches: Vec<JobFull> = jobs
+    let tasks = load_task_records()?;
+    let matches: Vec<TaskFull> = tasks
         .into_iter()
-        .filter(|j| j.job_id.starts_with(&id) || j.branch.as_deref().map(|b| b == id).unwrap_or(false))
+        .filter(|t| t.task_id.starts_with(&id) || t.branch.as_deref().map(|b| b == id).unwrap_or(false))
         .collect();
     if matches.is_empty() {
-        eprintln!("No job matches identifier '{}'.", id);
+        eprintln!("No task matches identifier '{}'.", id);
         return Ok(());
     }
     if matches.len() > 1 {
-        eprintln!("Identifier '{}' is ambiguous; matches: {}", id, matches.iter().map(|m| &m.job_id[..8]).collect::<Vec<_>>().join(", "));
+        eprintln!("Identifier '{}' is ambiguous; matches: {}", id, matches.iter().map(|m| &m.task_id[..8]).collect::<Vec<_>>().join(", "));
         return Ok(());
     }
-    let job = &matches[0];
+    let task = &matches[0];
     if cli.json {
-        println!("{}", serde_json::to_string_pretty(job)?);
+        println!("{}", serde_json::to_string_pretty(task)?);
         return Ok(());
     }
-    print_human(job);
+    print_human(task);
     Ok(())
 }
 
@@ -89,8 +89,8 @@ fn base_dir() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".codex"))
 }
 
-fn load_job_records() -> anyhow::Result<Vec<JobFull>> {
-    let mut map: std::collections::HashMap<String, JobFull> = std::collections::HashMap::new();
+fn load_task_records() -> anyhow::Result<Vec<TaskFull>> {
+    let mut map: std::collections::HashMap<String, TaskFull> = std::collections::HashMap::new();
     let Some(base) = base_dir() else { return Ok(vec![]); };
     let tasks = base.join("tasks.jsonl");
     if !tasks.exists() { return Ok(vec![]); }
@@ -101,8 +101,8 @@ fn load_job_records() -> anyhow::Result<Vec<JobFull>> {
         if line.trim().is_empty() { continue; }
         let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
         let Ok(rec) = serde_json::from_value::<RawRecord>(val) else { continue };
-        let Some(job_id) = rec.job_id.clone() else { continue };
-        let entry = map.entry(job_id.clone()).or_insert_with(|| JobFull { job_id: job_id.clone(), ..Default::default() });
+        let Some(task_id) = rec.task_id.clone() else { continue };
+        let entry = map.entry(task_id.clone()).or_insert_with(|| TaskFull { task_id: task_id.clone(), ..Default::default() });
         // Initial metadata fields
         if rec.start_time.is_some() {
             entry.pid = rec.pid.or(entry.pid);
@@ -130,32 +130,32 @@ fn load_job_records() -> anyhow::Result<Vec<JobFull>> {
         }
     }
     // Compute duration
-    for j in map.values_mut() {
-        if let (Some(s), Some(e)) = (j.start_time, j.end_time) { j.duration_secs = Some(e.saturating_sub(s)); }
+    for t in map.values_mut() {
+        if let (Some(s), Some(e)) = (t.start_time, t.end_time) { t.duration_secs = Some(e.saturating_sub(s)); }
     }
     Ok(map.into_values().collect())
 }
 
-fn print_human(job: &JobFull) {
-    println!("Job {}", job.job_id);
-    println!("State: {}", job.state.as_deref().unwrap_or("?"));
-    if let Some(model) = &job.model { println!("Model: {}", model); } else { println!("Model: {}", resolve_default_model()); }
-    if let Some(branch) = &job.branch { println!("Branch: {}", branch); }
-    if let Some(wt) = &job.worktree { println!("Worktree: {}", wt); }
-    if let Some(ob) = &job.original_branch { println!("Original branch: {}", ob); }
-    if let Some(oc) = &job.original_commit { println!("Original commit: {}", oc); }
-    if let Some(start) = job.start_time { println!("Start: {}", format_epoch(start)); }
-    if let Some(end) = job.end_time { println!("End: {}", format_epoch(end)); }
-    if let Some(d) = job.duration_secs { println!("Duration: {}s", d); }
-    if let Some(pid) = job.pid { println!("PID: {}", pid); }
-    if let Some(log) = &job.log_path { println!("Log: {}", log); }
-    if let Some(am) = job.automerge { println!("Automerge: {}", am); }
-    if let Some(exp) = &job.explicit_branch_name { println!("Explicit branch name: {}", exp); }
-    if let Some(total) = job.total_tokens { println!("Total tokens: {}", total); }
-    if job.input_tokens.is_some() || job.output_tokens.is_some() {
-        println!("  Input: {:?} Output: {:?} Reasoning: {:?}", job.input_tokens, job.output_tokens, job.reasoning_output_tokens);
+fn print_human(task: &TaskFull) {
+    println!("Task {}", task.task_id);
+    println!("State: {}", task.state.as_deref().unwrap_or("?"));
+    if let Some(model) = &task.model { println!("Model: {}", model); } else { println!("Model: {}", resolve_default_model()); }
+    if let Some(branch) = &task.branch { println!("Branch: {}", branch); }
+    if let Some(wt) = &task.worktree { println!("Worktree: {}", wt); }
+    if let Some(ob) = &task.original_branch { println!("Original branch: {}", ob); }
+    if let Some(oc) = &task.original_commit { println!("Original commit: {}", oc); }
+    if let Some(start) = task.start_time { println!("Start: {}", format_epoch(start)); }
+    if let Some(end) = task.end_time { println!("End: {}", format_epoch(end)); }
+    if let Some(d) = task.duration_secs { println!("Duration: {}s", d); }
+    if let Some(pid) = task.pid { println!("PID: {}", pid); }
+    if let Some(log) = &task.log_path { println!("Log: {}", log); }
+    if let Some(am) = task.automerge { println!("Automerge: {}", am); }
+    if let Some(exp) = &task.explicit_branch_name { println!("Explicit branch name: {}", exp); }
+    if let Some(total) = task.total_tokens { println!("Total tokens: {}", total); }
+    if task.input_tokens.is_some() || task.output_tokens.is_some() {
+        println!("  Input: {:?} Output: {:?} Reasoning: {:?}", task.input_tokens, task.output_tokens, task.reasoning_output_tokens);
     }
-    if let Some(p) = &job.prompt { println!("Prompt:\n{}", p); }
+    if let Some(p) = &task.prompt { println!("Prompt:\n{}", p); }
 }
 
 fn format_epoch(secs: u64) -> String {

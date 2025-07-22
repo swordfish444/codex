@@ -78,13 +78,13 @@ enum Subcommand {
     #[clap(visible_alias = "a")]
     Apply(ApplyCommand),
 
-    /// Manage / inspect concurrent background jobs.
-    Jobs(codex_cli::jobs::JobsCli),
+    /// Manage / inspect concurrent background tasks.
+    Tasks(codex_cli::tasks::TasksCli),
 
-    /// Show or follow logs for a specific job.
+    /// Show or follow logs for a specific task.
     Logs(codex_cli::logs::LogsCli),
 
-    /// Inspect full metadata for a job.
+    /// Inspect full metadata for a task.
     Inspect(codex_cli::inspect::InspectCli),
 }
 
@@ -185,8 +185,8 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
             prepend_config_flags(&mut apply_cli.config_overrides, cli.config_overrides);
             run_apply_command(apply_cli).await?;
         }
-        Some(Subcommand::Jobs(jobs_cli)) => {
-            codex_cli::jobs::run_jobs(jobs_cli)?;
+        Some(Subcommand::Tasks(tasks_cli)) => {
+            codex_cli::tasks::run_tasks(tasks_cli)?;
         }
         Some(Subcommand::Logs(logs_cli)) => {
             codex_cli::logs::run_logs(logs_cli)?;

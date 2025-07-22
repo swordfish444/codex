@@ -192,7 +192,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             }
             EventMsg::TaskComplete(_) => {
                 // On completion, append a final state entry with last token count snapshot.
-                if let Ok(job_id) = std::env::var("CODEX_JOB_ID") {
+                if let Ok(task_id) = std::env::var("CODEX_TASK_ID") {
                     if let Some(base) = codex_base_dir_for_logging() {
                         let tasks_path = base.join("tasks.jsonl");
                         let ts = std::time::SystemTime::now()
@@ -207,7 +207,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                             "total_tokens": u.total_tokens,
                         }));
                         let mut obj = serde_json::json!({
-                            "job_id": job_id,
+                            "task_id": task_id,
                             "completion_time": ts,
                             "end_time": ts,
                             "state": "done",
@@ -220,7 +220,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             EventMsg::TokenCount(token_usage_full) => {
                 self.last_token_usage = Some(token_usage_full.clone());
                 ts_println!(self, "tokens used: {}", token_usage_full.total_tokens);
-                if let Ok(job_id) = std::env::var("CODEX_JOB_ID") {
+                if let Ok(task_id) = std::env::var("CODEX_TASK_ID") {
                     if let Some(base) = codex_base_dir_for_logging() {
                         let tasks_path = base.join("tasks.jsonl");
                         let ts = std::time::SystemTime::now()
@@ -228,7 +228,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                             .map(|d| d.as_secs())
                             .unwrap_or(0);
                         let full = serde_json::json!({
-                            "job_id": job_id,
+                            "task_id": task_id,
                             "update_time": ts,
                             "token_count": {
                                 "input_tokens": token_usage_full.input_tokens,
