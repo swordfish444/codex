@@ -41,7 +41,12 @@ pub(crate) async fn stream_chat_completions(
 
     for item in &prompt.input {
         match item {
-            ResponseItem::Message { role, content } => {
+            ResponseItem::Message {
+                // id will always be None for input items
+                id: _,
+                role,
+                content,
+            } => {
                 let mut text = String::new();
                 for c in content {
                     match c {
@@ -255,6 +260,7 @@ async fn process_chat_sse<S>(
                 .and_then(|c| c.as_str())
             {
                 let item = ResponseItem::Message {
+                    id: None,
                     role: "assistant".to_string(),
                     content: vec![ContentItem::OutputText {
                         text: content.to_string(),
@@ -402,6 +408,7 @@ where
                 }))) => {
                     if !this.cumulative.is_empty() {
                         let aggregated_item = crate::models::ResponseItem::Message {
+                            id: None,
                             role: "assistant".to_string(),
                             content: vec![crate::models::ContentItem::OutputText {
                                 text: std::mem::take(&mut this.cumulative),
@@ -430,8 +437,8 @@ where
                     // will never appear in a Chat Completions stream.
                     continue;
                 }
-                Poll::Ready(Some(Ok(ResponseEvent::OutputTextDelta(_))))
-                | Poll::Ready(Some(Ok(ResponseEvent::ReasoningSummaryDelta(_)))) => {
+                Poll::Ready(Some(Ok(ResponseEvent::OutputTextDelta { .. })))
+                | Poll::Ready(Some(Ok(ResponseEvent::ReasoningSummaryDelta { .. }))) => {
                     // Deltas are ignored here since aggregation waits for the
                     // final OutputItemDone.
                     continue;

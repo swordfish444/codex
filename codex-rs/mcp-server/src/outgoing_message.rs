@@ -16,6 +16,7 @@ use serde::Serialize;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tracing::trace;
 use tracing::warn;
 
 pub(crate) struct OutgoingMessageSender {
@@ -79,6 +80,7 @@ impl OutgoingMessageSender {
     }
 
     pub(crate) async fn send_event_as_notification(&self, event: &Event) {
+        trace!(?event, "sending event as notification");
         #[expect(clippy::expect_used)]
         let params = Some(serde_json::to_value(event).expect("Event must serialize"));
         let outgoing_message = OutgoingMessage::Notification(OutgoingNotification {

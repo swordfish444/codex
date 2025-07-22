@@ -37,6 +37,7 @@ pub enum ContentItem {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseItem {
     Message {
+        id: Option<String>,
         role: String,
         content: Vec<ContentItem>,
     },
@@ -78,7 +79,11 @@ pub enum ResponseItem {
 impl From<ResponseInputItem> for ResponseItem {
     fn from(item: ResponseInputItem) -> Self {
         match item {
-            ResponseInputItem::Message { role, content } => Self::Message { role, content },
+            ResponseInputItem::Message { role, content } => Self::Message {
+                id: None,
+                role,
+                content,
+            },
             ResponseInputItem::FunctionCallOutput { call_id, output } => {
                 Self::FunctionCallOutput { call_id, output }
             }

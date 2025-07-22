@@ -174,7 +174,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             EventMsg::TokenCount(TokenUsage { total_tokens, .. }) => {
                 ts_println!(self, "tokens used: {total_tokens}");
             }
-            EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }) => {
+            EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta, item_id: _ }) => {
                 if !self.answer_started {
                     ts_println!(self, "{}\n", "codex".style(self.italic).style(self.magenta));
                     self.answer_started = true;
@@ -183,7 +183,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 #[allow(clippy::expect_used)]
                 std::io::stdout().flush().expect("could not flush stdout");
             }
-            EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }) => {
+            EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta, item_id: _ }) => {
                 if !self.show_agent_reasoning {
                     return;
                 }
@@ -199,7 +199,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 #[allow(clippy::expect_used)]
                 std::io::stdout().flush().expect("could not flush stdout");
             }
-            EventMsg::AgentMessage(AgentMessageEvent { message }) => {
+            EventMsg::AgentMessage(AgentMessageEvent { id: _, message }) => {
                 // if answer_started is false, this means we haven't received any
                 // delta. Thus, we need to print the message as a new answer.
                 if !self.answer_started {

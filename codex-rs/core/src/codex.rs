@@ -1248,17 +1248,17 @@ async fn try_run_turn(
                 state.previous_response_id = Some(response_id);
                 return Ok(output);
             }
-            ResponseEvent::OutputTextDelta(delta) => {
+            ResponseEvent::OutputTextDelta { delta, item_id } => {
                 let event = Event {
                     id: sub_id.to_string(),
-                    msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }),
+                    msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta, item_id }),
                 };
                 sess.tx_event.send(event).await.ok();
             }
-            ResponseEvent::ReasoningSummaryDelta(delta) => {
+            ResponseEvent::ReasoningSummaryDelta { delta, item_id } => {
                 let event = Event {
                     id: sub_id.to_string(),
-                    msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }),
+                    msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta, item_id }),
                 };
                 sess.tx_event.send(event).await.ok();
             }
@@ -1273,26 +1273,32 @@ async fn handle_response_item(
 ) -> CodexResult<Option<ResponseInputItem>> {
     debug!(?item, "Output item");
     let output = match item {
-        ResponseItem::Message { content, .. } => {
+        ResponseItem::Message { content, id, .. } => {
             for item in content {
                 if let ContentItem::OutputText { text } = item {
                     let event = Event {
                         id: sub_id.to_string(),
-                        msg: EventMsg::AgentMessage(AgentMessageEvent { message: text }),
+                        msg: EventMsg::AgentMessage(AgentMessageEvent {
+                            id: id.clone(),
+                            message: text,
+                        }),
                     };
                     sess.tx_event.send(event).await.ok();
                 }
             }
             None
         }
-        ResponseItem::Reasoning { id: _, summary } => {
+        ResponseItem::Reasoning { id, summary } => {
             for item in summary {
                 let text = match item {
                     ReasoningItemReasoningSummary::SummaryText { text } => text,
                 };
                 let event = Event {
                     id: sub_id.to_string(),
-                    msg: EventMsg::AgentReasoning(AgentReasoningEvent { text }),
+                    msg: EventMsg::AgentReasoning(AgentReasoningEvent {
+                        id: id.clone(),
+                        text,
+                    }),
                 };
                 sess.tx_event.send(event).await.ok();
             }
@@ -2092,7 +2098,7 @@ fn format_exec_output(output: &str, exit_code: i32, duration: Duration) -> Strin
 
 fn get_last_assistant_message_from_turn(responses: &[ResponseItem]) -> Option<String> {
     responses.iter().rev().find_map(|item| {
-        if let ResponseItem::Message { role, content } = item {
+        if let ResponseItem::Message { role, content, .. } = item {
             if role == "assistant" {
                 content.iter().rev().find_map(|ci| {
                     if let ContentItem::OutputText { text } = ci {

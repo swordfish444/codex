@@ -246,7 +246,7 @@ impl ChatWidget<'_> {
 
                 self.request_redraw();
             }
-            EventMsg::AgentMessage(AgentMessageEvent { message }) => {
+            EventMsg::AgentMessage(AgentMessageEvent { id: _, message }) => {
                 // if the answer buffer is empty, this means we haven't received any
                 // delta. Thus, we need to print the message as a new answer.
                 if self.answer_buffer.is_empty() {
@@ -259,7 +259,7 @@ impl ChatWidget<'_> {
                 self.answer_buffer.clear();
                 self.request_redraw();
             }
-            EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }) => {
+            EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta, .. }) => {
                 if self.answer_buffer.is_empty() {
                     self.conversation_history
                         .add_agent_message(&self.config, "".to_string());
@@ -269,7 +269,7 @@ impl ChatWidget<'_> {
                     .replace_prev_agent_message(&self.config, self.answer_buffer.clone());
                 self.request_redraw();
             }
-            EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }) => {
+            EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta, .. }) => {
                 if self.reasoning_buffer.is_empty() {
                     self.conversation_history
                         .add_agent_reasoning(&self.config, "".to_string());
@@ -279,7 +279,7 @@ impl ChatWidget<'_> {
                     .replace_prev_agent_reasoning(&self.config, self.reasoning_buffer.clone());
                 self.request_redraw();
             }
-            EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
+            EventMsg::AgentReasoning(AgentReasoningEvent { id: _, text }) => {
                 // if the reasoning buffer is empty, this means we haven't received any
                 // delta. Thus, we need to print the message as a new reasoning.
                 if self.reasoning_buffer.is_empty() {

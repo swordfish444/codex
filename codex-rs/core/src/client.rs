@@ -230,6 +230,7 @@ struct SseEvent {
     response: Option<Value>,
     item: Option<Value>,
     delta: Option<String>,
+    item_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -360,21 +361,22 @@ async fn process_sse<S>(
                 };
 
                 let event = ResponseEvent::OutputItemDone(item);
+                trace!(?event, "output_item.done");
                 if tx_event.send(Ok(event)).await.is_err() {
                     return;
                 }
             }
             "response.output_text.delta" => {
-                if let Some(delta) = event.delta {
-                    let event = ResponseEvent::OutputTextDelta(delta);
+                if let (Some(delta), Some(item_id)) = (event.delta, event.item_id) {
+                    let event = ResponseEvent::OutputTextDelta { delta, item_id };
                     if tx_event.send(Ok(event)).await.is_err() {
                         return;
                     }
                 }
             }
             "response.reasoning_summary_text.delta" => {
-                if let Some(delta) = event.delta {
-                    let event = ResponseEvent::ReasoningSummaryDelta(delta);
+                if let (Some(delta), Some(item_id)) = (event.delta, event.item_id) {
+                    let event = ResponseEvent::ReasoningSummaryDelta { delta, item_id };
                     if tx_event.send(Ok(event)).await.is_err() {
                         return;
                     }

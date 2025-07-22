@@ -56,6 +56,8 @@ impl Prompt {
     }
 }
 
+/// Events emitted by the response stream.
+/// https://platform.openai.com/docs/api-reference/responses-streaming/response
 #[derive(Debug)]
 pub enum ResponseEvent {
     Created,
@@ -64,8 +66,14 @@ pub enum ResponseEvent {
         response_id: String,
         token_usage: Option<TokenUsage>,
     },
-    OutputTextDelta(String),
-    ReasoningSummaryDelta(String),
+    OutputTextDelta {
+        delta: String,
+        item_id: String,
+    },
+    ReasoningSummaryDelta {
+        delta: String,
+        item_id: String,
+    },
 }
 
 #[derive(Debug, Serialize)]

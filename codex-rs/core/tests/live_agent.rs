@@ -120,7 +120,7 @@ async fn live_streaming_and_prev_id_reset() {
             .expect("agent closed");
 
         match &ev.msg {
-            EventMsg::AgentMessage(AgentMessageEvent { message })
+            EventMsg::AgentMessage(AgentMessageEvent { id: _, message })
                 if message.contains("second turn succeeded") =>
             {
                 got_expected = true;

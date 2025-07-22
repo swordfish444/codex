@@ -351,22 +351,26 @@ pub struct TokenUsage {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentMessageEvent {
+    pub id: Option<String>,
     pub message: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentMessageDeltaEvent {
     pub delta: String,
+    pub item_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentReasoningEvent {
+    pub id: String,
     pub text: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentReasoningDeltaEvent {
     pub delta: String,
+    pub item_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
