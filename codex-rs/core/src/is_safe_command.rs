@@ -269,6 +269,40 @@ mod tests {
     }
 
     #[test]
+    fn ripgrep_rules() {
+        // Safe ripgrep invocations – none of the unsafe flags are present.
+        assert!(is_safe_to_call_with_exec(&vec_str(&[
+            "rg",
+            "Cargo.toml",
+            "-n"
+        ])));
+
+        // Unsafe flags that do not take an argument (present verbatim).
+        for args in [
+            vec_str(&["rg", "--search-zip", "files"]),
+            vec_str(&["rg", "-z", "files"]),
+        ] {
+            assert!(
+                !is_safe_to_call_with_exec(&args),
+                "expected {args:?} to be considered unsafe due to zip-search flag",
+            );
+        }
+
+        // Unsafe flags that expect a value, provided in both split and = forms.
+        for args in [
+            vec_str(&["rg", "--pre", "pwned", "files"]),
+            vec_str(&["rg", "--pre=pwned", "files"]),
+            vec_str(&["rg", "--hostname-bin", "pwned", "files"]),
+            vec_str(&["rg", "--hostname-bin=pwned", "files"]),
+        ] {
+            assert!(
+                !is_safe_to_call_with_exec(&args),
+                "expected {args:?} to be considered unsafe due to external-command flag",
+            );
+        }
+    }
+
+    #[test]
     fn bash_lc_safe_examples() {
         assert!(is_known_safe_command(&vec_str(&["bash", "-lc", "ls"])));
         assert!(is_known_safe_command(&vec_str(&["bash", "-lc", "ls -1"])));
