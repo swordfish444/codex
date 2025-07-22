@@ -123,7 +123,7 @@ async fn responses_api_stream_cli() {
 }
 
 /// End-to-end: create a session (writes rollout), verify the file, then resume and confirm append.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn integration_creates_and_checks_session_file() {
     // Honor sandbox network restrictions for CI parity with the other tests.
     if std::env::var(CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
