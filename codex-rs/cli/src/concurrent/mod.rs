@@ -187,10 +187,21 @@ pub fn maybe_spawn_concurrent(
             if let Some(f2) = file_err { cmd.stderr(Stdio::from(f2)); }
             match cmd.spawn() {
                 Ok(child) => {
-                    // Previous verbose status lines replaced with a single short id output for scripting.
-                    let _ = child;
-                    let short_task_id = &task_id[..8];
-                    println!("{}", short_task_id);
+                    // Human-friendly multi-line output with bold headers.
+                    let branch_val = created_worktree.as_ref().map(|(_, b)| b.as_str()).unwrap_or("(none)");
+                    let worktree_val = created_worktree
+                        .as_ref()
+                        .map(|(p, _)| p.display().to_string())
+                        .unwrap_or_else(|| "(original cwd)".to_string());
+                    // ANSI escape for bold: \x1b[1m ... \x1b[0m
+                    println!("\x1b[1mTask ID:\x1b[0m {}", task_id);
+                    println!("\x1b[1mPID:\x1b[0m {}", child.id());
+                    println!("\x1b[1mBranch:\x1b[0m {}", branch_val);
+                    println!("\x1b[1mWorktree:\x1b[0m {}", worktree_val);
+                    println!("\x1b[1mState:\x1b[0m started");
+                    // Use bold bright magenta (95) for actionable follow-up commands.
+                    println!("\nMonitor all tasks: \x1b[1;95mcodex tasks ls\x1b[0m");
+                    println!("Watch this task: \x1b[1;95mcodex logs {} -f\x1b[0m", task_id);
 
                     // Record task metadata to CODEX_HOME/tasks.jsonl (JSON Lines file).
                     let record_time = std::time::SystemTime::now()
