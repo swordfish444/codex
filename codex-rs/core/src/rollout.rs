@@ -14,6 +14,7 @@ use time::macros::format_description;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::{self};
+use tokio::sync::oneshot;
 use tracing::info;
 use tracing::warn;
 use uuid::Uuid;
@@ -66,6 +67,7 @@ pub(crate) struct RolloutRecorder {
 enum RolloutCmd {
     AddItems(Vec<ResponseItem>),
     UpdateState(SessionStateSnapshot),
+    Shutdown { ack: oneshot::Sender<()> },
 }
 
 impl RolloutRecorder {
@@ -209,6 +211,21 @@ impl RolloutRecorder {
         info!("Resumed rollout successfully from {path:?}");
         Ok((Self { tx }, saved))
     }
+
+    pub async fn shutdown(&self) -> std::io::Result<()> {
+        let (tx_done, rx_done) = oneshot::channel();
+        match self.tx.send(RolloutCmd::Shutdown { ack: tx_done }).await {
+            Ok(_) => rx_done
+                .await
+                .map_err(|e| IoError::other(format!("failed waiting for rollout shutdown: {e}"))),
+            Err(e) => {
+                warn!("failed to send rollout shutdown command: {e}");
+                Err(IoError::other(format!(
+                    "failed to send rollout shutdown command: {e}"
+                )))
+            }
+        }
+    }
 }
 struct LogFileInfo {
     /// Opened file handle to the rollout file.
@@ -315,6 +332,9 @@ async fn rollout_writer(
                 if let Err(e) = write_json_line(&mut file, &line).await {
                     warn!("Failed to write state: {e}");
                 }
+            }
+            RolloutCmd::Shutdown { ack } => {
+                let _ = ack.send(());
             }
         }
     }
