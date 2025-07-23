@@ -48,6 +48,10 @@ struct MultitoolCli {
     #[clap(long = "concurrent-branch-name", value_name = "BRANCH")]
     concurrent_branch_name: Option<String>,
 
+    /// Best-of-n: run n concurrent worktrees (1-4) and let user pick the best result. Implies --concurrent and disables automerge.
+    #[clap(long = "best-of-n", short = 'n', value_name = "N", default_value_t = 1)]
+    pub best_of_n: u8,
+
     #[clap(subcommand)]
     subcommand: Option<Subcommand>,
 }
@@ -131,18 +135,61 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
             let mut tui_cli = cli.interactive;
             let root_raw_overrides = cli.config_overrides.raw_overrides.clone();
             prepend_config_flags(&mut tui_cli.config_overrides, cli.config_overrides);
-            // Attempt concurrent background spawn; if it returns true we skip launching the TUI.
-            if let Ok(spawned) = maybe_spawn_concurrent(
-                &mut tui_cli,
-                &root_raw_overrides,
-                cli.concurrent,
-                cli.concurrent_automerge,
-                &cli.concurrent_branch_name,
-            ) {
-                if !spawned { codex_tui::run_main(tui_cli, codex_linux_sandbox_exe)?; }
+            // Best-of-n logic
+            if cli.best_of_n > 1 {
+                let n = cli.best_of_n.min(4).max(1);
+                let mut spawned_any = false;
+                let base_branch = if let Some(ref name) = cli.concurrent_branch_name {
+                    name.trim().to_string()
+                } else {
+                    // Derive slug from prompt (copied from maybe_spawn_concurrent)
+                    let raw_prompt = tui_cli.prompt.as_deref().unwrap_or("");
+                    let snippet = raw_prompt.chars().take(32).collect::<String>();
+                    let mut slug: String = snippet
+                        .chars()
+                        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+                        .collect();
+                    while slug.contains("--") { slug = slug.replace("--", "-"); }
+                    slug = slug.trim_matches('-').to_string();
+                    if slug.is_empty() { slug = "prompt".into(); }
+                    format!("codex/{}", slug)
+                };
+                for i in 1..=n {
+                    let mut tui_cli_n = tui_cli.clone();
+                    // Suffix branch name with -01, -02, etc.
+                    let branch_name = format!("{}-{:02}", base_branch, i);
+                    let branch_name_opt = Some(branch_name);
+                    // Always automerge = false for best-of-n
+                    match maybe_spawn_concurrent(
+                        &mut tui_cli_n,
+                        &root_raw_overrides,
+                        true, // force concurrent
+                        Some(false),
+                        &branch_name_opt,
+                    ) {
+                        Ok(true) => { spawned_any = true; },
+                        Ok(false) => {},
+                        Err(e) => { eprintln!("Error spawning best-of-n run {}: {e}", i); },
+                    }
+                }
+                if !spawned_any {
+                    codex_tui::run_main(tui_cli, codex_linux_sandbox_exe)?;
+                }
+                // If any spawned, do not run TUI (user will see task IDs)
             } else {
-                // On error fallback to interactive.
-                codex_tui::run_main(tui_cli, codex_linux_sandbox_exe)?;
+                // Attempt concurrent background spawn; if it returns true we skip launching the TUI.
+                if let Ok(spawned) = maybe_spawn_concurrent(
+                    &mut tui_cli,
+                    &root_raw_overrides,
+                    cli.concurrent,
+                    cli.concurrent_automerge,
+                    &cli.concurrent_branch_name,
+                ) {
+                    if !spawned { codex_tui::run_main(tui_cli, codex_linux_sandbox_exe)?; }
+                } else {
+                    // On error fallback to interactive.
+                    codex_tui::run_main(tui_cli, codex_linux_sandbox_exe)?;
+                }
             }
         }
         Some(Subcommand::Exec(mut exec_cli)) => {
