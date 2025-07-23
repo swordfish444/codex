@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::fs;
+use chrono::Local;
+use codex_common::elapsed::format_duration;
 
 #[derive(Debug, Parser)]
 pub struct TasksCli {
@@ -148,7 +150,15 @@ fn list_tasks(args: TasksListArgs) -> anyhow::Result<()> {
         let mut branch = t.branch.clone().unwrap_or_default();
         let branch_limit = if args.all_columns { 22 } else { 22 }; // unified width
         if branch.len() > branch_limit { branch.truncate(branch_limit); }
-        let start = t.start_time.map(format_epoch_short).unwrap_or_default();
+        let start = t.start_time.map(|start_secs| {
+            let now = Local::now().timestamp() as u64;
+            if now > start_secs {
+                let elapsed = std::time::Duration::from_secs(now - start_secs);
+                format!("{} ago", format_duration(elapsed))
+            } else {
+                "just now".to_string()
+            }
+        }).unwrap_or_default();
         let tokens = t.total_tokens.map(|t| t.to_string()).unwrap_or_default();
         let state = t.state.clone().unwrap_or_else(|| "?".into());
         let mut model = t.model.clone().unwrap_or_default();
@@ -165,21 +175,6 @@ fn list_tasks(args: TasksListArgs) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-fn format_epoch_short(secs: u64) -> String {
-    use chrono::{Datelike, Local, TimeZone};
-    let dt = Local.timestamp_opt(secs as i64, 0).single();
-    if let Some(dt) = dt {
-        let now = Local::now();
-        if dt.year() == now.year() {
-            dt.format("%d %b %H:%M").to_string() // e.g. 22 Jul 11:56
-        } else {
-            dt.format("%d %b %Y").to_string() // older year
-        }
-    } else {
-        String::new()
-    }
 }
 
 fn resolve_default_model() -> String {
