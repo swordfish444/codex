@@ -46,7 +46,6 @@ pub struct SavedSession {
 pub struct RolloutSetup {
     pub recorder: Option<RolloutRecorder>,
     pub restored_items: Option<Vec<ResponseItem>>,
-    pub restored_prev_id: Option<String>,
     pub session_id: Uuid,
 }
 
@@ -323,18 +322,16 @@ async fn rollout_writer(
 
 pub async fn prepare_rollout_recorder(
     config: &Config,
-    mut session_id: Uuid,
+    session_id: Uuid,
     instructions: Option<String>,
     resume_path: Option<&Path>,
 ) -> RolloutSetup {
     // Try to resume
-    let (mut restored_items, mut restored_prev_id, mut recorder_opt) = (None, None, None);
+    let (mut restored_items, mut recorder_opt) = (None, None);
 
     if let Some(path) = resume_path {
         match RolloutRecorder::resume(path).await {
             Ok((rec, saved)) => {
-                session_id = saved.session_id;
-                restored_prev_id = saved.state.previous_response_id;
                 if !saved.items.is_empty() {
                     restored_items = Some(saved.items);
                 }
@@ -359,7 +356,6 @@ pub async fn prepare_rollout_recorder(
     RolloutSetup {
         recorder: recorder_opt,
         restored_items,
-        restored_prev_id,
         session_id,
     }
 }

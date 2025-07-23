@@ -516,7 +516,7 @@ impl AgentTask {
 }
 
 async fn submission_loop(
-    mut session_id: Uuid,
+    session_id: Uuid,
     config: Arc<Config>,
     rx_sub: Receiver<Submission>,
     tx_event: Sender<Event>,
@@ -595,12 +595,11 @@ async fn submission_loop(
                 let RolloutSetup {
                     recorder: rollout_recorder,
                     restored_items,
-                    restored_prev_id,
                     session_id,
                 } = crate::rollout::prepare_rollout_recorder(
                     &config,
                     session_id,
-                    instructions.clone(),
+                    user_instructions.clone(),
                     resume_path.as_deref(),
                 )
                 .await;
