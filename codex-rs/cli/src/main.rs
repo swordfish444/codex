@@ -48,6 +48,10 @@ struct MultitoolCli {
     #[clap(long = "concurrent-branch-name", value_name = "BRANCH")]
     concurrent_branch_name: Option<String>,
 
+    /// Best-of-n: run n concurrent worktrees (1-4) and let user pick the best result. Implies --concurrent and disables automerge.
+    #[clap(long = "best-of-n", short = 'n', value_name = "N", default_value_t = 1)]
+    pub best_of_n: u8,
+
     #[clap(subcommand)]
     subcommand: Option<Subcommand>,
 }
