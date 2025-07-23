@@ -139,10 +139,10 @@ fn list_tasks(args: TasksListArgs) -> anyhow::Result<()> {
 
     // Table header
     if args.all_columns {
-        println!("{:<8} {:>6} {:<22} {:<12} {:<8} {:>8} {:<12} {}", "TASK_ID", "PID", "BRANCH", "START", "STATE", "TOKENS", "MODEL", "PROMPT");
+        println!("\x1b[1m{:<8} {:>6} {:<22} {:<12} {:<8} {:>8} {:<12} {}\x1b[0m", "TASK_ID", "PID", "BRANCH", "START", "STATE", "TOKENS", "MODEL", "PROMPT");
     } else {
         // Widened branch column to 22 chars for better readability.
-        println!("{:<8} {:>6} {:<22} {:<12} {:<8} {:>8} {:<12}", "TASK_ID", "PID", "BRANCH", "START", "STATE", "TOKENS", "MODEL");
+        println!("\x1b[1m{:<8} {:>6} {:<22} {:<12} {:<8} {:>8} {:<12}\x1b[0m", "TASK_ID", "PID", "BRANCH", "START", "STATE", "TOKENS", "MODEL");
     }
     for t in tasks {
         let task_short = if t.task_id.len() > 8 { &t.task_id[..8] } else { &t.task_id };
