@@ -83,6 +83,7 @@ use crate::protocol::SessionConfiguredEvent;
 use crate::protocol::Submission;
 use crate::protocol::TaskCompleteEvent;
 use crate::rollout::RolloutRecorder;
+use crate::rollout::RolloutSetup;
 use crate::safety::SafetyCheck;
 use crate::safety::assess_command_safety;
 use crate::safety::assess_patch_safety;
@@ -598,14 +599,18 @@ async fn submission_loop(
                     return;
                 }
 
-                let (rollout_recorder, restored_items, restored_prev_id, session_id) =
-                    crate::rollout::prepare_rollout_recorder(
-                        &config,
-                        session_id,
-                        instructions.clone(),
-                        resume_path.as_deref(),
-                    )
-                    .await;
+                let RolloutSetup {
+                    recorder: rollout_recorder,
+                    restored_items,
+                    restored_prev_id,
+                    session_id,
+                } = crate::rollout::prepare_rollout_recorder(
+                    &config,
+                    session_id,
+                    instructions.clone(),
+                    resume_path.as_deref(),
+                )
+                .await;
 
                 let client = ModelClient::new(
                     config.clone(),

@@ -130,7 +130,6 @@ async fn integration_creates_and_checks_session_file() {
     // 2. Unique marker we'll look for in the session log.
     let marker = format!("integration-test-{}", Uuid::new_v4());
     let prompt = format!("echo {marker}");
-    eprintln!("prompt: {prompt}");
 
     // 3. Use the same offline SSE fixture as responses_api_stream_cli so the test is hermetic.
     let fixture =
@@ -163,7 +162,6 @@ async fn integration_creates_and_checks_session_file() {
     while !sessions_dir.exists() && Instant::now() < dir_deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
-    eprintln!("sessions_dir: {sessions_dir:?}");
     assert!(sessions_dir.exists(), "sessions directory never appeared");
 
     // Find the session file that contains `marker`.
@@ -174,39 +172,30 @@ async fn integration_creates_and_checks_session_file() {
             let entry = match entry {
                 Ok(e) => e,
                 Err(_) => {
-                    eprintln!("error walking dir: {entry:?}");
                     continue;
                 }
             };
             if !entry.file_type().is_file() {
-                eprintln!("not a file: {entry:?}");
                 continue;
             }
             if !entry.file_name().to_string_lossy().ends_with(".jsonl") {
-                eprintln!("not a jsonl file: {entry:?}");
                 continue;
             }
             let path = entry.path();
             let Ok(content) = std::fs::read_to_string(path) else {
-                eprintln!("error reading file: {path:?}");
                 continue;
             };
             let mut lines = content.lines();
             if lines.next().is_none() {
-                eprintln!("no lines in file: {path:?}");
                 continue;
             }
-            eprintln!("lines: {lines:?}");
             for line in lines {
-                eprintln!("line: {line:?}");
                 if line.trim().is_empty() {
-                    eprintln!("empty line in file: {path:?}");
                     continue;
                 }
                 let item: serde_json::Value = match serde_json::from_str(line) {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!("error parsing line as json: {line:?}");
                         continue;
                     }
                 };
@@ -214,7 +203,6 @@ async fn integration_creates_and_checks_session_file() {
                     if let Some(c) = item.get("content") {
                         if c.to_string().contains(&marker) {
                             matching_path = Some(path.to_path_buf());
-                            eprintln!("found matching path: {path:?}");
                             break;
                         }
                     }
@@ -225,7 +213,6 @@ async fn integration_creates_and_checks_session_file() {
             std::thread::sleep(Duration::from_millis(50));
         }
     }
-    eprintln!("matching_path: {matching_path:?}");
 
     let path = match matching_path {
         Some(p) => p,

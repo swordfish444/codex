@@ -45,6 +45,13 @@ pub struct SavedSession {
     pub session_id: Uuid,
 }
 
+pub struct RolloutSetup {
+    pub recorder: Option<RolloutRecorder>,
+    pub restored_items: Option<Vec<ResponseItem>>,
+    pub restored_prev_id: Option<String>,
+    pub session_id: Uuid,
+}
+
 /// Records all [`ResponseItem`]s for a session and flushes them to disk after
 /// every update.
 ///
@@ -258,7 +265,6 @@ async fn rollout_writer(
         let mut buf = serde_json::to_vec(value)?;
         buf.push(b'\n');
         file.write_all(&buf).await?;
-        // TODO: decide if we want to flush here or TaskComplete is enough.
         file.flush().await?;
         Ok(())
     }
@@ -315,12 +321,7 @@ pub async fn prepare_rollout_recorder(
     mut session_id: Uuid,
     instructions: Option<String>,
     resume_path: Option<&Path>,
-) -> (
-    Option<RolloutRecorder>,
-    Option<Vec<ResponseItem>>, // restored_items
-    Option<String>,            // restored_prev_id
-    Uuid,                      // possibly updated session_id
-) {
+) -> RolloutSetup {
     // Try to resume
     let (mut restored_items, mut restored_prev_id, mut recorder_opt) = (None, None, None);
 
@@ -350,5 +351,10 @@ pub async fn prepare_rollout_recorder(
         }
     }
 
-    (recorder_opt, restored_items, restored_prev_id, session_id)
+    RolloutSetup {
+        recorder: recorder_opt,
+        restored_items,
+        restored_prev_id,
+        session_id,
+    }
 }
