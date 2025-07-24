@@ -15,7 +15,7 @@ This is the home of the **Codex CLI**, which is a coding agent from OpenAI that 
 <!-- Begin ToC -->
 
 - [Experimental technology disclaimer](#experimental-technology-disclaimer)
-- [Quickstart](#quickstart)
+- [Quick start](#quickstart)
   - [OpenAI API Users](#openai-api-users)
   - [OpenAI Plus/Pro Users](#openai-pluspro-users)
 - [Why Codex?](#why-codex)
