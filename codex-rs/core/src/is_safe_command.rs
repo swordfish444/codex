@@ -35,9 +35,10 @@ fn is_safe_to_call_with_exec(command: &[String]) -> bool {
     let cmd0 = command.first().map(String::as_str);
 
     match cmd0 {
-        Some("cat" | "cd" | "echo" | "grep" | "head" | "ls" | "pwd" | "tail" | "wc" | "which") => {
-            true
-        }
+        Some(
+            "cat" | "cd" | "echo" | "false" | "grep" | "head" | "ls" | "pwd" | "tail" | "true"
+            | "wc" | "which",
+        ) => true,
 
         Some("find") => {
             // Certain options to `find` can delete files, write to files, or
@@ -245,6 +246,11 @@ mod tests {
             "bash",
             "-lc",
             "grep -R \"Cargo.toml\" -n"
+        ])));
+        assert!(is_known_safe_command(&vec_str(&[
+            "bash",
+            "-lc",
+            "grep -R \"Cargo.toml\" -n || true"
         ])));
         assert!(is_known_safe_command(&vec_str(&[
             "bash",
