@@ -293,9 +293,6 @@ async fn rollout_writer(
         if let Err(e) = write_json_line(&mut file, &meta).await {
             warn!("Failed to write session meta: {e}");
         }
-        if let Err(e) = file.flush().await {
-            warn!("Failed to flush meta: {e}");
-        }
     }
 
     // Main loop
@@ -347,7 +344,8 @@ pub async fn prepare_rollout_recorder(
     resume_path: Option<&Path>,
 ) -> RolloutSetup {
     // Try to resume
-    let (mut restored_items, mut recorder_opt) = (None, None);
+    let mut restored_items = None;
+    let mut recorder_opt = None;
 
     if let Some(path) = resume_path {
         match RolloutRecorder::resume(path).await {
