@@ -1,4 +1,4 @@
-mod common;
+// Support code lives in the `mcp_test_support` crate under tests/common.
 
 use std::collections::HashMap;
 use std::env;
@@ -26,11 +26,11 @@ use tempfile::TempDir;
 use tokio::time::timeout;
 use wiremock::MockServer;
 
-use crate::common::McpProcess;
-use crate::common::create_apply_patch_sse_response;
-use crate::common::create_final_assistant_message_sse_response;
-use crate::common::create_mock_chat_completions_server;
-use crate::common::create_shell_sse_response;
+use mcp_test_support::McpProcess;
+use mcp_test_support::create_apply_patch_sse_response;
+use mcp_test_support::create_final_assistant_message_sse_response;
+use mcp_test_support::create_mock_chat_completions_server;
+use mcp_test_support::create_shell_sse_response;
 
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -60,8 +60,7 @@ async fn shell_command_approval_triggers_elicitation() -> anyhow::Result<()> {
 
     let McpHandle {
         process: mut mcp_process,
-        server: _server,
-        dir: _dir,
+        ..
     } = create_mcp_process(vec![
         create_shell_sse_response(
             shell_command.clone(),
@@ -171,6 +170,7 @@ fn create_expected_elicitation_request(
             codex_event_id,
             codex_command: command,
             codex_cwd: workdir.to_path_buf(),
+            codex_call_id: "call1234".to_string(),
         })?),
     })
 }
@@ -203,8 +203,7 @@ async fn patch_approval_triggers_elicitation() -> anyhow::Result<()> {
 
     let McpHandle {
         process: mut mcp_process,
-        server: _server,
-        dir: _dir,
+        ..
     } = create_mcp_process(vec![
         create_apply_patch_sse_response(&patch_content, "call1234")?,
         create_final_assistant_message_sse_response("Patch has been applied successfully!")?,
@@ -384,6 +383,7 @@ fn create_expected_patch_approval_elicitation_request(
             codex_reason: reason,
             codex_grant_root: grant_root,
             codex_changes: changes,
+            codex_call_id: "call1234".to_string(),
         })?),
     })
 }
@@ -393,11 +393,9 @@ fn create_expected_patch_approval_elicitation_request(
 pub struct McpHandle {
     pub process: McpProcess,
     /// Retain the server for the lifetime of the McpProcess.
-    #[allow(dead_code)]
-    server: MockServer,
+    _server: MockServer,
     /// Retain the temporary directory for the lifetime of the McpProcess.
-    #[allow(dead_code)]
-    dir: TempDir,
+    _dir: TempDir,
 }
 
 async fn create_mcp_process(responses: Vec<String>) -> anyhow::Result<McpHandle> {
@@ -408,8 +406,8 @@ async fn create_mcp_process(responses: Vec<String>) -> anyhow::Result<McpHandle>
     timeout(DEFAULT_READ_TIMEOUT, mcp_process.initialize()).await??;
     Ok(McpHandle {
         process: mcp_process,
-        server,
-        dir: codex_home,
+        _server: server,
+        _dir: codex_home,
     })
 }
 
