@@ -82,7 +82,6 @@ use crate::protocol::SessionConfiguredEvent;
 use crate::protocol::Submission;
 use crate::protocol::TaskCompleteEvent;
 use crate::rollout::RolloutRecorder;
-use crate::rollout::RolloutSetup;
 use crate::safety::SafetyCheck;
 use crate::safety::assess_command_safety;
 use crate::safety::assess_patch_safety;
@@ -516,7 +515,7 @@ impl AgentTask {
 }
 
 async fn submission_loop(
-    session_id: Uuid,
+    mut session_id: Uuid,
     config: Arc<Config>,
     rx_sub: Receiver<Submission>,
     tx_event: Sender<Event>,
@@ -591,18 +590,41 @@ async fn submission_loop(
                     }
                     return;
                 }
+                // Optionally resume an existing rollout.
+                let mut restored_items: Option<Vec<ResponseItem>> = None;
+                let rollout_recorder: Option<RolloutRecorder> =
+                    if let Some(path) = resume_path.as_ref() {
+                        match RolloutRecorder::resume(path, cwd.clone()).await {
+                            Ok((rec, saved)) => {
+                                session_id = saved.session_id;
+                                if !saved.items.is_empty() {
+                                    restored_items = Some(saved.items);
+                                }
+                                Some(rec)
+                            }
+                            Err(e) => {
+                                warn!("failed to resume rollout from {path:?}: {e}");
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
 
-                let RolloutSetup {
-                    recorder: rollout_recorder,
-                    restored_items,
-                    session_id,
-                } = crate::rollout::prepare_rollout_recorder(
-                    &config,
-                    session_id,
-                    user_instructions.clone(),
-                    resume_path.as_deref(),
-                )
-                .await;
+                let rollout_recorder = match rollout_recorder {
+                    Some(rec) => Some(rec),
+                    None => {
+                        match RolloutRecorder::new(&config, session_id, user_instructions.clone())
+                            .await
+                        {
+                            Ok(r) => Some(r),
+                            Err(e) => {
+                                warn!("failed to initialise rollout recorder: {e}");
+                                None
+                            }
+                        }
+                    }
+                };
 
                 let client = ModelClient::new(
                     config.clone(),

@@ -20,6 +20,8 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::config::Config;
+use crate::git_info::GitInfo;
+use crate::git_info::collect_git_info;
 use crate::models::ResponseItem;
 
 const SESSIONS_SUBDIR: &str = "sessions";
@@ -29,6 +31,14 @@ pub struct SessionMeta {
     pub id: Uuid,
     pub timestamp: String,
     pub instructions: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SessionMetaWithGit {
+    #[serde(flatten)]
+    meta: SessionMeta,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    git: Option<GitInfo>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -41,12 +51,6 @@ pub struct SavedSession {
     pub items: Vec<ResponseItem>,
     #[serde(default)]
     pub state: SessionStateSnapshot,
-    pub session_id: Uuid,
-}
-
-pub struct RolloutSetup {
-    pub recorder: Option<RolloutRecorder>,
-    pub restored_items: Option<Vec<ResponseItem>>,
     pub session_id: Uuid,
 }
 
@@ -92,11 +96,8 @@ impl RolloutRecorder {
             .format(timestamp_format)
             .map_err(|e| IoError::other(format!("failed to format timestamp: {e}")))?;
 
-        let meta = SessionMeta {
-            timestamp,
-            id: session_id,
-            instructions,
-        };
+        // Clone the cwd for the spawned task to collect git info asynchronously
+        let cwd = config.cwd.clone();
 
         // A reasonably-sized bounded channel. If the buffer fills up the send
         // future will yield, which is fine – we only need to ensure we do not
@@ -109,7 +110,12 @@ impl RolloutRecorder {
         tokio::task::spawn(rollout_writer(
             tokio::fs::File::from_std(file),
             rx,
-            Some(meta),
+            Some(SessionMeta {
+                timestamp,
+                id: session_id,
+                instructions,
+            }),
+            cwd,
         ));
 
         Ok(Self { tx })
@@ -149,7 +155,10 @@ impl RolloutRecorder {
             .map_err(|e| IoError::other(format!("failed to queue rollout state: {e}")))
     }
 
-    pub async fn resume(path: &Path) -> std::io::Result<(Self, SavedSession)> {
+    pub async fn resume(
+        path: &Path,
+        cwd: std::path::PathBuf,
+    ) -> std::io::Result<(Self, SavedSession)> {
         info!("Resuming rollout from {path:?}");
         let text = tokio::fs::read_to_string(path).await?;
         let mut lines = text.lines();
@@ -207,7 +216,12 @@ impl RolloutRecorder {
             .open(path)?;
 
         let (tx, rx) = mpsc::channel::<RolloutCmd>(256);
-        tokio::task::spawn(rollout_writer(tokio::fs::File::from_std(file), rx, None));
+        tokio::task::spawn(rollout_writer(
+            tokio::fs::File::from_std(file),
+            rx,
+            None,
+            cwd,
+        ));
         info!("Resumed rollout successfully from {path:?}");
         Ok((Self { tx }, saved))
     }
@@ -227,6 +241,7 @@ impl RolloutRecorder {
         }
     }
 }
+
 struct LogFileInfo {
     /// Opened file handle to the rollout file.
     file: File,
@@ -240,11 +255,12 @@ struct LogFileInfo {
 
 fn create_log_file(config: &Config, session_id: Uuid) -> std::io::Result<LogFileInfo> {
     // Resolve ~/.codex/sessions/YYYY/MM/DD and create it if missing.
-    let timestamp = OffsetDateTime::now_utc();
+    let timestamp = OffsetDateTime::now_local()
+        .map_err(|e| IoError::other(format!("failed to get local time: {e}")))?;
     let mut dir = config.codex_home.clone();
     dir.push(SESSIONS_SUBDIR);
     dir.push(timestamp.year().to_string());
-    dir.push(format!("{:02}", timestamp.month() as u8));
+    dir.push(format!("{:02}", u8::from(timestamp.month())));
     dir.push(format!("{:02}", timestamp.day()));
     fs::create_dir_all(&dir)?;
 
@@ -274,28 +290,26 @@ fn create_log_file(config: &Config, session_id: Uuid) -> std::io::Result<LogFile
 async fn rollout_writer(
     mut file: tokio::fs::File,
     mut rx: mpsc::Receiver<RolloutCmd>,
-    meta: Option<SessionMeta>,
+    mut meta: Option<SessionMeta>,
+    cwd: std::path::PathBuf,
 ) {
-    // Helper to serialize and write a single line (JSON + newline)
-    async fn write_json_line<T: serde::Serialize>(
-        file: &mut tokio::fs::File,
-        value: &T,
-    ) -> std::io::Result<()> {
-        let mut buf = serde_json::to_vec(value)?;
-        buf.push(b'\n');
-        file.write_all(&buf).await?;
-        file.flush().await?;
-        Ok(())
-    }
+    // If we have a meta, collect git info asynchronously and write meta first
+    if let Some(session_meta) = meta.take() {
+        let git_info = collect_git_info(&cwd).await;
+        let session_meta_with_git = SessionMetaWithGit {
+            meta: session_meta,
+            git: git_info,
+        };
 
-    // Write meta line if present
-    if let Some(meta) = meta {
-        if let Err(e) = write_json_line(&mut file, &meta).await {
-            warn!("Failed to write session meta: {e}");
+        // Write the SessionMeta as the first item in the file
+        if let Ok(json) = serde_json::to_string(&session_meta_with_git) {
+            let _ = file.write_all(json.as_bytes()).await;
+            let _ = file.write_all(b"\n").await;
+            let _ = file.flush().await;
         }
     }
 
-    // Main loop
+    // Process rollout commands
     while let Some(cmd) = rx.recv().await {
         match cmd {
             RolloutCmd::AddItems(items) => {
@@ -314,6 +328,7 @@ async fn rollout_writer(
                         ResponseItem::Other => {}
                     }
                 }
+                let _ = file.flush().await;
             }
             RolloutCmd::UpdateState(state) => {
                 #[derive(Serialize)]
@@ -322,58 +337,18 @@ async fn rollout_writer(
                     #[serde(flatten)]
                     state: &'a SessionStateSnapshot,
                 }
-                let line = StateLine {
+                if let Ok(json) = serde_json::to_string(&StateLine {
                     record_type: "state",
                     state: &state,
-                };
-                if let Err(e) = write_json_line(&mut file, &line).await {
-                    warn!("Failed to write state: {e}");
+                }) {
+                    let _ = file.write_all(json.as_bytes()).await;
+                    let _ = file.write_all(b"\n").await;
+                    let _ = file.flush().await;
                 }
             }
             RolloutCmd::Shutdown { ack } => {
                 let _ = ack.send(());
             }
         }
-    }
-}
-
-pub async fn prepare_rollout_recorder(
-    config: &Config,
-    session_id: Uuid,
-    instructions: Option<String>,
-    resume_path: Option<&Path>,
-) -> RolloutSetup {
-    // Try to resume
-    let mut restored_items = None;
-    let mut recorder_opt = None;
-
-    if let Some(path) = resume_path {
-        match RolloutRecorder::resume(path).await {
-            Ok((rec, saved)) => {
-                if !saved.items.is_empty() {
-                    restored_items = Some(saved.items);
-                }
-                recorder_opt = Some(rec);
-            }
-            Err(e) => {
-                warn!("failed to resume rollout from {path:?}: {e}");
-            }
-        }
-    }
-
-    // If not resumed, create a new recorder
-    if recorder_opt.is_none() {
-        match RolloutRecorder::new(config, session_id, instructions.clone()).await {
-            Ok(r) => recorder_opt = Some(r),
-            Err(e) => {
-                warn!("failed to initialise rollout recorder: {e}");
-            }
-        }
-    }
-
-    RolloutSetup {
-        recorder: recorder_opt,
-        restored_items,
-        session_id,
     }
 }
