@@ -33,10 +33,9 @@ use tokio::process::Command;
 pub struct McpProcess {
     next_request_id: AtomicI64,
     /// Retain this child process until the client is dropped. The Tokio runtime
-    /// will make a "best effort" to reap the process after it exits, but it is
+    /// will make a best effort to reap the process after it exits, but it is
     /// not a guarantee. See the `kill_on_drop` documentation for details.
-    #[allow(dead_code)]
-    process: Child,
+    _process: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
 }
@@ -71,7 +70,7 @@ impl McpProcess {
         let stdout = BufReader::new(stdout);
         Ok(Self {
             next_request_id: AtomicI64::new(0),
-            process,
+            _process: process,
             stdin,
             stdout,
         })
@@ -191,8 +190,6 @@ impl McpProcess {
         Ok(request_id)
     }
 
-    // allow dead code
-    #[allow(dead_code)]
     pub async fn send_response(
         &mut self,
         id: RequestId,
@@ -220,8 +217,6 @@ impl McpProcess {
         let message = serde_json::from_str::<JSONRPCMessage>(&line)?;
         Ok(message)
     }
-    // allow dead code
-    #[allow(dead_code)]
     pub async fn read_stream_until_request_message(&mut self) -> anyhow::Result<JSONRPCRequest> {
         loop {
             let message = self.read_jsonrpc_message().await?;
@@ -244,8 +239,6 @@ impl McpProcess {
         }
     }
 
-    // allow dead code
-    #[allow(dead_code)]
     pub async fn read_stream_until_response_message(
         &mut self,
         request_id: RequestId,
@@ -312,8 +305,6 @@ impl McpProcess {
         }
     }
 
-    // allow dead code
-    #[allow(dead_code)]
     pub async fn send_notification(
         &mut self,
         method: &str,
