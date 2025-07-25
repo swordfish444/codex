@@ -45,6 +45,9 @@ mod text_formatting;
 mod tui;
 mod user_approval_widget;
 
+// Re-export for integration tests
+pub use insert_history::insert_history_lines;
+
 pub use cli::Cli;
 
 pub fn run_main(

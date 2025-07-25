@@ -1,4 +1,3 @@
-use crate::tui;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Line;
@@ -114,7 +113,9 @@ impl LineBuilder {
     }
 }
 
-pub(crate) fn insert_history_lines(terminal: &mut tui::Tui, lines: Vec<Line<'static>>) {
+use ratatui::backend::Backend;
+
+pub fn insert_history_lines<B: Backend>(terminal: &mut ratatui::Terminal<B>, lines: Vec<Line<'static>>) {
     let term_width = terminal.size().map(|a| a.width).unwrap_or(80) as usize;
     let mut physical: Vec<Line<'static>> = Vec::new();
 
@@ -176,3 +177,5 @@ pub(crate) fn insert_history_lines(terminal: &mut tui::Tui, lines: Vec<Line<'sta
         })
         .ok();
 }
+
+// Tests are implemented as integration tests (see tests/insert_history.rs)
