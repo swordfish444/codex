@@ -45,9 +45,7 @@ pub fn maybe_spawn_concurrent(
 
     let ap = tui_cli.approval_policy;
     let approval_on_failure = matches!(ap, Some(ApprovalModeCliArg::OnFailure));
-    let autonomous = tui_cli.full_auto
-        || tui_cli.dangerously_bypass_approvals_and_sandbox
-        || approval_on_failure;
+    // (removed unused `autonomous` variable – full_auto logic applied directly below where needed)
 
     // Build exec args from interactive CLI for autonomous run without TUI (background).
     // todo: pap dynamically get those
@@ -158,90 +156,71 @@ pub fn maybe_spawn_concurrent(
             return Ok(false);
         }
     };
-
-    match File::create(&log_path) {
-        Ok(file) => {
-            let file_err = file.try_clone().ok();
-            let mut cmd = Command::new(
-                std::env::current_exe().unwrap_or_else(|_| PathBuf::from("codex"))
-            );
-            cmd.arg("worker");
-            for a in &worker_args { cmd.arg(a); }
-            // Provide metadata for auto merge if we created a worktree.
-            if let Some((wt_path, branch)) = &created_worktree {
-                if effective_automerge { cmd.env("CODEX_CONCURRENT_AUTOMERGE", "1"); }
-                cmd.env("CODEX_CONCURRENT_BRANCH", branch);
-                cmd.env("CODEX_CONCURRENT_WORKTREE", wt_path);
-                if let Some(ob) = &original_branch { cmd.env("CODEX_ORIGINAL_BRANCH", ob); }
-                if let Some(oc) = &original_commit { cmd.env("CODEX_ORIGINAL_COMMIT", oc); }
-                if let Ok(orig_root) = std::env::current_dir() { cmd.env("CODEX_ORIGINAL_ROOT", orig_root); }
-            }
-            // Provide task id so child process can emit token_count updates to tasks.jsonl.
-            cmd.env("CODEX_TASK_ID", &task_id);
-            cmd.stdout(Stdio::from(file));
-            if let Some(f2) = file_err { cmd.stderr(Stdio::from(f2)); }
-            match cmd.spawn() {
-                Ok(mut child) => {
-                    // Human-friendly multi-line output with bold headers.
-                    let branch_val = created_worktree.as_ref().map(|(_, b)| b.as_str()).unwrap_or("(none)");
-                    let worktree_val = created_worktree
-                        .as_ref()
-                        .map(|(p, _)| p.display().to_string())
-                        .unwrap_or_else(|| "(original cwd)".to_string());
-                    // ANSI escape for bold: \x1b[1m ... \x1b[0m
-                    println!("\x1b[1mTask ID:\x1b[0m {}", task_id);
-                    println!("\x1b[1mPID:\x1b[0m {}", child.id());
-                    println!("\x1b[1mBranch:\x1b[0m {}", branch_val);
-                    println!("\x1b[1mWorktree:\x1b[0m {}", worktree_val);
-                    let initial_state = "started";
-                    println!("\x1b[1mState:\x1b[0m {}", initial_state);
-                    println!("\nStreaming logs (press Ctrl+C to abort view; task will continue)...\n");
-
-                    // Record task metadata to CODEX_HOME/tasks.jsonl (JSON Lines file).
-                    let record_time = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    if let Ok(base) = codex_base_dir() {
-                        let tasks_path = base.join("tasks.jsonl");
-                        let record = serde_json::json!({
-                            "task_id": task_id,
-                            "pid": child.id(),
-                            "worktree": created_worktree.as_ref().map(|(p, _)| p.display().to_string()),
-                            "branch": created_worktree.as_ref().map(|(_, b)| b.clone()),
-                            "original_branch": original_branch,
-                            "original_commit": original_commit,
-                            "log_path": log_path.display().to_string(),
-                            "prompt": raw_prompt,
-                            "model": tui_cli.model.clone(),
-                            "start_time": record_time,
-                            "automerge": effective_automerge,
-                            "explicit_branch_name": user_branch_name_opt,
-                            "token_count": serde_json::Value::Null,
-                            "state": initial_state,
-                        });
-                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&tasks_path) {
-                            use std::io::Write;
-                            let _ = writeln!(f, "{}", record.to_string());
-                        }
-                    }
-
-                    // Attach: tail the log file until process exits.
-                    if let Err(e) = stream_log_until_exit(&log_path, &mut child) {
-                        eprintln!("Error streaming logs: {e}");
-                    }
-                    return Ok(true); // run handled inline
-                }
-                Err(e) => {
-                    eprintln!("Failed to start background exec: {e}. Falling back to interactive mode.");
+    let file_err = file.try_clone().ok();
+    let mut cmd = Command::new(
+        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("codex"))
+    );
+    cmd.arg("worker");
+    for a in &worker_args { cmd.arg(a); }
+    if let Some((wt_path, branch)) = &created_worktree {
+        if effective_automerge { cmd.env("CODEX_CONCURRENT_AUTOMERGE", "1"); }
+        cmd.env("CODEX_CONCURRENT_BRANCH", branch);
+        cmd.env("CODEX_CONCURRENT_WORKTREE", wt_path);
+        if let Some(ob) = &original_branch { cmd.env("CODEX_ORIGINAL_BRANCH", ob); }
+        if let Some(oc) = &original_commit { cmd.env("CODEX_ORIGINAL_COMMIT", oc); }
+        if let Ok(orig_root) = std::env::current_dir() { cmd.env("CODEX_ORIGINAL_ROOT", orig_root); }
+    }
+    cmd.env("CODEX_TASK_ID", &task_id);
+    cmd.stdout(Stdio::from(file));
+    if let Some(f2) = file_err { cmd.stderr(Stdio::from(f2)); }
+    match cmd.spawn() {
+        Ok(mut child) => {
+            let branch_val = created_worktree.as_ref().map(|(_, b)| b.as_str()).unwrap_or("(none)");
+            let worktree_val = created_worktree
+                .as_ref()
+                .map(|(p, _)| p.display().to_string())
+                .unwrap_or_else(|| "(original cwd)".to_string());
+            println!("\x1b[1mTask ID:\x1b[0m {}", task_id);
+            println!("\x1b[1mPID:\x1b[0m {}", child.id());
+            println!("\x1b[1mBranch:\x1b[0m {}", branch_val);
+            println!("\x1b[1mWorktree:\x1b[0m {}", worktree_val);
+            let initial_state = "started";
+            println!("\x1b[1mState:\x1b[0m {}", initial_state);
+            println!("\nStreaming logs (press Ctrl+C to abort view; task will continue)...\n");
+            let record_time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            if let Ok(base) = codex_base_dir() {
+                let tasks_path = base.join("tasks.jsonl");
+                let record = serde_json::json!({
+                    "task_id": task_id,
+                    "pid": child.id(),
+                    "worktree": created_worktree.as_ref().map(|(p, _)| p.display().to_string()),
+                    "branch": created_worktree.as_ref().map(|(_, b)| b.clone()),
+                    "original_branch": original_branch,
+                    "original_commit": original_commit,
+                    "log_path": log_path.display().to_string(),
+                    "prompt": raw_prompt,
+                    "model": tui_cli.model.clone(),
+                    "start_time": record_time,
+                    "automerge": effective_automerge,
+                    "explicit_branch_name": user_branch_name_opt,
+                    "token_count": serde_json::Value::Null,
+                    "state": initial_state,
+                });
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&tasks_path) {
+                    use std::io::Write;
+                    let _ = writeln!(f, "{}", record.to_string());
                 }
             }
+            if let Err(e) = stream_log_until_exit(&log_path, &mut child) {
+                eprintln!("Error streaming logs: {e}");
+            }
+            return Ok(true);
         }
         Err(e) => {
-            eprintln!(
-                "Failed to create log file {}: {e}. Falling back to interactive mode.",
-                log_path.display()
-            );
+            eprintln!("Failed to start background exec: {e}. Falling back to interactive mode.");
         }
     }
 
@@ -357,12 +336,11 @@ fn stream_log_until_exit(log_path: &std::path::Path, child: &mut std::process::C
     use std::io::{Read, Seek, SeekFrom};
     use std::time::Duration;
     let mut f = std::fs::OpenOptions::new().read(true).open(log_path)?;
-    let mut pos: u64 = 0;
     // Print any existing content first.
     let mut existing = String::new();
     f.read_to_string(&mut existing)?;
     print!("{}", existing);
-    pos = existing.len() as u64;
+    let mut pos: u64 = existing.len() as u64;
     loop {
         // Check if process has exited.
         if let Some(status) = child.try_wait()? {
