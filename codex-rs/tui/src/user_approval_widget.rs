@@ -33,7 +33,7 @@ use crate::exec_command::relativize_to_home;
 use crate::exec_command::strip_bash_lc_and_escape;
 
 /// Request coming from the agent that needs user approval.
-pub(crate) enum ApprovalRequest {
+pub enum ApprovalRequest {
     Exec {
         id: String,
         command: Vec<String>,
@@ -97,7 +97,7 @@ enum Mode {
 }
 
 /// A modal prompting the user to approve or deny the pending request.
-pub(crate) struct UserApprovalWidget<'a> {
+pub struct UserApprovalWidget<'a> {
     approval_request: ApprovalRequest,
     app_event_tx: AppEventSender,
     confirmation_prompt: Paragraph<'a>,
@@ -117,7 +117,7 @@ pub(crate) struct UserApprovalWidget<'a> {
 }
 
 impl UserApprovalWidget<'_> {
-    pub(crate) fn new(approval_request: ApprovalRequest, app_event_tx: AppEventSender) -> Self {
+    pub fn new(approval_request: ApprovalRequest, app_event_tx: AppEventSender) -> Self {
         let input = Input::default();
         let confirmation_prompt = match &approval_request {
             ApprovalRequest::Exec {
@@ -196,7 +196,7 @@ impl UserApprovalWidget<'_> {
     /// Process a key event originating from crossterm. As the modal fully
     /// captures input while visible, we don’t need to report whether the event
     /// was consumed—callers can assume it always is.
-    pub(crate) fn handle_key_event(&mut self, key: KeyEvent) {
+    pub fn handle_key_event(&mut self, key: KeyEvent) {
         match self.mode {
             Mode::Select => self.handle_select_key(key),
             Mode::Input => self.handle_input_key(key),
@@ -289,7 +289,7 @@ impl UserApprovalWidget<'_> {
 
     /// Returns `true` once the user has made a decision and the widget no
     /// longer needs to be displayed.
-    pub(crate) fn is_complete(&self) -> bool {
+    pub fn is_complete(&self) -> bool {
         self.done
     }
 }
