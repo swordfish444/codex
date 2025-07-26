@@ -7,6 +7,7 @@ use std::io::IsTerminal;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::path::Path;
 
 pub use cli::Cli;
 use codex_core::codex_wrapper;
