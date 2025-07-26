@@ -6,7 +6,7 @@ use ratatui::text::Line;
 use crate::slash_command::SlashCommand;
 
 #[allow(clippy::large_enum_variant)]
-pub enum AppEvent {
+pub(crate) enum AppEvent {
     CodexEvent(Event),
 
     /// Request a redraw which will be debounced by the [`App`].

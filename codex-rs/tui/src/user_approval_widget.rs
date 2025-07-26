@@ -33,7 +33,7 @@ use crate::exec_command::relativize_to_home;
 use crate::exec_command::strip_bash_lc_and_escape;
 
 /// Request coming from the agent that needs user approval.
-pub enum ApprovalRequest {
+pub(crate) enum ApprovalRequest {
     Exec {
         id: String,
         command: Vec<String>,
@@ -97,7 +97,7 @@ enum Mode {
 }
 
 /// A modal prompting the user to approve or deny the pending request.
-pub struct UserApprovalWidget<'a> {
+pub(crate) struct UserApprovalWidget<'a> {
     approval_request: ApprovalRequest,
     app_event_tx: AppEventSender,
     confirmation_prompt: Paragraph<'a>,
@@ -117,7 +117,7 @@ pub struct UserApprovalWidget<'a> {
 }
 
 impl UserApprovalWidget<'_> {
-    pub fn new(approval_request: ApprovalRequest, app_event_tx: AppEventSender) -> Self {
+    pub(crate) fn new(approval_request: ApprovalRequest, app_event_tx: AppEventSender) -> Self {
         let input = Input::default();
         let confirmation_prompt = match &approval_request {
             ApprovalRequest::Exec {
@@ -196,7 +196,7 @@ impl UserApprovalWidget<'_> {
     /// Process a key event originating from crossterm. As the modal fully
     /// captures input while visible, we don’t need to report whether the event
     /// was consumed—callers can assume it always is.
-    pub fn handle_key_event(&mut self, key: KeyEvent) {
+    pub(crate) fn handle_key_event(&mut self, key: KeyEvent) {
         match self.mode {
             Mode::Select => self.handle_select_key(key),
             Mode::Input => self.handle_input_key(key),
@@ -289,7 +289,7 @@ impl UserApprovalWidget<'_> {
 
     /// Returns `true` once the user has made a decision and the widget no
     /// longer needs to be displayed.
-    pub fn is_complete(&self) -> bool {
+    pub(crate) fn is_complete(&self) -> bool {
         self.done
     }
 }
@@ -366,5 +366,104 @@ impl WidgetRef for &UserApprovalWidget<'_> {
         outer.render(area, buf);
         self.confirmation_prompt.clone().render(prompt_chunk, buf);
         Widget::render(List::new(lines), response_chunk, buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_event::AppEvent;
+    use crate::app_event_sender::AppEventSender;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::widgets::WidgetRef;
+    use std::path::PathBuf;
+    use std::sync::mpsc::channel;
+
+    #[test]
+    fn exec_command_is_visible_in_small_viewport() {
+        let long_reason = "This is a very long explanatory reason that would normally occupy many lines in the confirmation prompt. \
+It should not cause the actual command or the response options to be scrolled out of the visible area.";
+
+        let (tx, _rx) = channel::<AppEvent>();
+        let app_tx = AppEventSender::new(tx);
+
+        let cwd = PathBuf::from("/home/alice/project");
+        let command = vec![
+            "bash".to_string(),
+            "-lc".to_string(),
+            "echo 123 && printf 'hello'".to_string(),
+        ];
+
+        let widget = UserApprovalWidget::new(
+            ApprovalRequest::Exec {
+                id: "test-id".to_string(),
+                command: command.clone(),
+                cwd: cwd.clone(),
+                reason: Some(long_reason.to_string()),
+            },
+            app_tx,
+        );
+
+        let area = Rect::new(0, 0, 50, 12);
+        let mut buf = Buffer::empty(area);
+        (&widget).render_ref(area, &mut buf);
+
+        let mut rendered = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                let cell = &buf[(x, y)];
+                rendered.push(cell.symbol().chars().next().unwrap_or('\0'));
+            }
+            rendered.push('\n');
+        }
+
+        assert!(
+            rendered.contains("echo 123 && printf 'hello'"),
+            "rendered buffer did not contain the command.\n--- buffer ---\n{rendered}\n----------------"
+        );
+        assert!(rendered.contains("Yes (y)"));
+    }
+
+    #[test]
+    fn all_options_visible_in_reasonable_viewport() {
+        let (tx, _rx) = channel::<AppEvent>();
+        let app_tx = AppEventSender::new(tx);
+
+        let widget = UserApprovalWidget::new(
+            ApprovalRequest::Exec {
+                id: "test-id".to_string(),
+                command: vec![
+                    "bash".into(),
+                    "-lc".into(),
+                    "echo 123 && printf 'hello'".into(),
+                ],
+                cwd: PathBuf::from("/home/alice/project"),
+                reason: Some("short reason".into()),
+            },
+            app_tx,
+        );
+
+        // Use a generous area to avoid truncation of either the prompt or the options.
+        let area = Rect::new(0, 0, 100, 30);
+        let mut buf = Buffer::empty(area);
+        (&widget).render_ref(area, &mut buf);
+
+        let mut rendered = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                let cell = &buf[(x, y)];
+                rendered.push(cell.symbol().chars().next().unwrap_or('\0'));
+            }
+            rendered.push('\n');
+        }
+
+        for opt in super::SELECT_OPTIONS {
+            assert!(
+                rendered.contains(opt.label),
+                "expected option label to be visible: {}\n--- buffer ---\n{rendered}\n----------------",
+                opt.label
+            );
+        }
     }
 }

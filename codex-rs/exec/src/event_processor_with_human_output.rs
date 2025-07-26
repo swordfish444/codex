@@ -591,7 +591,7 @@ mod tests {
             ConfigOverrides::default(),
             std::env::temp_dir(),
         )
-        .unwrap()
+        .unwrap_or_else(|e| panic!("failed to load test configuration: {e}"))
     }
 
     #[test]

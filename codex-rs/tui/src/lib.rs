@@ -45,12 +45,6 @@ mod text_formatting;
 mod tui;
 mod user_approval_widget;
 
-// Re-export a small subset of internal types used by integration tests.
-pub use app_event::AppEvent;
-pub use app_event_sender::AppEventSender;
-pub use user_approval_widget::ApprovalRequest;
-pub use user_approval_widget::UserApprovalWidget;
-
 pub use cli::Cli;
 
 pub fn run_main(
