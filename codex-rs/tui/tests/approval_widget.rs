@@ -6,7 +6,10 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::WidgetRef;
 
-use codex_tui::{AppEvent, AppEventSender, ApprovalRequest, UserApprovalWidget};
+use codex_tui::AppEvent;
+use codex_tui::AppEventSender;
+use codex_tui::ApprovalRequest;
+use codex_tui::UserApprovalWidget;
 
 /// Regression test: ensure that the exec command line (cwd + command) is always
 /// visible when rendering the approval modal, even when the available viewport
