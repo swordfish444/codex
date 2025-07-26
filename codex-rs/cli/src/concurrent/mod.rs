@@ -48,32 +48,24 @@ pub fn maybe_spawn_concurrent(
     let autonomous = tui_cli.full_auto
         || tui_cli.dangerously_bypass_approvals_and_sandbox
         || approval_on_failure;
-    if !autonomous {
-        eprintln!(
-            "Error: --concurrent requires autonomous mode. Use one of: --full-auto, --ask-for-approval on-failure, or --dangerously-bypass-approvals-and-sandbox."
-        );
-        std::process::exit(2);
-    }
-    if tui_cli.prompt.is_none() {
-        eprintln!(
-            "Error: --concurrent requires a prompt argument so the agent does not wait for interactive input."
-        );
-        std::process::exit(2);
-    }
 
     // Build exec args from interactive CLI for autonomous run without TUI (background).
-    let mut exec_args: Vec<String> = Vec::new();
-    if !tui_cli.images.is_empty() {
-        exec_args.push("--image".into());
-        exec_args.push(tui_cli.images.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(","));
-    }
-    if let Some(model) = &tui_cli.model { exec_args.push("--model".into()); exec_args.push(model.clone()); }
-    if let Some(profile) = &tui_cli.config_profile { exec_args.push("--profile".into()); exec_args.push(profile.clone()); }
-    if let Some(sandbox) = &tui_cli.sandbox_mode { exec_args.push("--sandbox".into()); exec_args.push(format!("{sandbox:?}").to_lowercase().replace('_', "-")); }
-    if tui_cli.full_auto { exec_args.push("--full-auto".into()); }
-    if tui_cli.dangerously_bypass_approvals_and_sandbox { exec_args.push("--dangerously-bypass-approvals-and-sandbox".into()); }
-    if tui_cli.skip_git_repo_check { exec_args.push("--skip-git-repo-check".into()); }
-    for raw in root_raw_overrides { exec_args.push("-c".into()); exec_args.push(raw.clone()); }
+    // todo: pap dynamically get those
+    let mut worker_args: Vec<String> = Vec::new();
+    // Map model/profile directly.
+    if let Some(model) = &tui_cli.model { worker_args.push("--model".into()); worker_args.push(model.clone()); }
+    if let Some(profile) = &tui_cli.config_profile { worker_args.push("--profile".into()); worker_args.push(profile.clone()); }
+    // Derive approval-policy & sandbox (respect explicit flags first, then full-auto / dangerous shortcuts).
+    let mut approval_policy: Option<String> = tui_cli.approval_policy.map(|a| format!("{a:?}").to_lowercase().replace('_', "-"));
+    let mut sandbox: Option<String> = tui_cli.sandbox_mode.map(|s| format!("{s:?}").to_lowercase().replace('_', "-"));
+    if approval_policy.is_none() && tui_cli.full_auto { approval_policy = Some("on-failure".into()); }
+    if sandbox.is_none() && tui_cli.full_auto { sandbox = Some("workspace-write".into()); }
+    if tui_cli.dangerously_bypass_approvals_and_sandbox { approval_policy = Some("never".into()); sandbox = Some("danger-full-access".into()); }
+    if let Some(ap) = approval_policy { worker_args.push("--approval-policy".into()); worker_args.push(ap); }
+    if let Some(sb) = sandbox { worker_args.push("--sandbox".into()); worker_args.push(sb); }
+    // Config overrides (-c) from root and interactive CLI.
+    for raw in root_raw_overrides { worker_args.push("--worker-config".into()); worker_args.push(raw.clone()); }
+    for raw in &tui_cli.config_overrides.raw_overrides { worker_args.push("--worker-config".into()); worker_args.push(raw.clone()); }
 
     // Derive a single slug (shared by worktree branch & log filename) from the prompt.
     let raw_prompt = tui_cli.prompt.as_deref().unwrap_or("");
@@ -122,8 +114,9 @@ pub fn maybe_spawn_concurrent(
         original_commit = git_capture(["rev-parse", "HEAD"]).ok();
         match create_concurrent_worktree(&branch_name_effective) {
             Ok(Some(info)) => {
-                exec_args.push("--cd".into());
-                exec_args.push(info.worktree_path.display().to_string());
+                // Record worktree path to pass as --cwd to worker
+                worker_args.push("--cwd".into());
+                worker_args.push(info.worktree_path.display().to_string());
                 created_worktree = Some((info.worktree_path, info.branch_name.clone()));
                 // Keep the original git output plus a concise created line (for log file only).
                 pre_spawn_logs.push_str(&info.logs);
@@ -142,12 +135,14 @@ pub fn maybe_spawn_concurrent(
             }
         }
     } else if let Some(explicit) = &tui_cli.cwd {
-        exec_args.push("--cd".into());
-        exec_args.push(explicit.display().to_string());
+        worker_args.push("--cwd".into());
+        worker_args.push(explicit.display().to_string());
     }
 
-    // Prompt (safe to unwrap due to earlier validation).
-    if let Some(prompt) = tui_cli.prompt.clone() { exec_args.push(prompt); }
+    // Prompt (safe to unwrap due to earlier validation in autonomous case). For non-autonomous
+    // (interactive later) runs we intentionally do NOT pass the prompt to the subprocess so it
+    // will wait for a Submission over stdin.
+    if let Some(prompt) = tui_cli.prompt.clone() { worker_args.push("--prompt".into()); worker_args.push(prompt); } else { eprintln!("Error: --concurrent requires a prompt."); return Ok(false); }
 
     // Create (or truncate) the log file and write any pre-spawn logs we captured.
     let file = match File::create(&log_path) {
@@ -170,8 +165,8 @@ pub fn maybe_spawn_concurrent(
             let mut cmd = Command::new(
                 std::env::current_exe().unwrap_or_else(|_| PathBuf::from("codex"))
             );
-            cmd.arg("exec");
-            for a in &exec_args { cmd.arg(a); }
+            cmd.arg("worker");
+            for a in &worker_args { cmd.arg(a); }
             // Provide metadata for auto merge if we created a worktree.
             if let Some((wt_path, branch)) = &created_worktree {
                 if effective_automerge { cmd.env("CODEX_CONCURRENT_AUTOMERGE", "1"); }
@@ -186,7 +181,7 @@ pub fn maybe_spawn_concurrent(
             cmd.stdout(Stdio::from(file));
             if let Some(f2) = file_err { cmd.stderr(Stdio::from(f2)); }
             match cmd.spawn() {
-                Ok(child) => {
+                Ok(mut child) => {
                     // Human-friendly multi-line output with bold headers.
                     let branch_val = created_worktree.as_ref().map(|(_, b)| b.as_str()).unwrap_or("(none)");
                     let worktree_val = created_worktree
@@ -198,10 +193,9 @@ pub fn maybe_spawn_concurrent(
                     println!("\x1b[1mPID:\x1b[0m {}", child.id());
                     println!("\x1b[1mBranch:\x1b[0m {}", branch_val);
                     println!("\x1b[1mWorktree:\x1b[0m {}", worktree_val);
-                    println!("\x1b[1mState:\x1b[0m started");
-                    // Use bold bright magenta (95) for actionable follow-up commands.
-                    println!("\nMonitor all tasks: \x1b[1;95mcodex tasks ls\x1b[0m");
-                    println!("Watch this task: \x1b[1;95mcodex logs {} -f\x1b[0m", task_id);
+                    let initial_state = "started";
+                    println!("\x1b[1mState:\x1b[0m {}", initial_state);
+                    println!("\nStreaming logs (press Ctrl+C to abort view; task will continue)...\n");
 
                     // Record task metadata to CODEX_HOME/tasks.jsonl (JSON Lines file).
                     let record_time = std::time::SystemTime::now()
@@ -224,18 +218,19 @@ pub fn maybe_spawn_concurrent(
                             "automerge": effective_automerge,
                             "explicit_branch_name": user_branch_name_opt,
                             "token_count": serde_json::Value::Null,
-                            "state": "started",
+                            "state": initial_state,
                         });
                         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&tasks_path) {
                             use std::io::Write;
-                            if let Err(e) = writeln!(f, "{}", record.to_string()) {
-                                eprintln!("Warning: failed writing task record to {}: {e}", tasks_path.display());
-                            }
-                        } else {
-                            eprintln!("Warning: could not open tasks log file at {}", tasks_path.display());
+                            let _ = writeln!(f, "{}", record.to_string());
                         }
                     }
-                    return Ok(true); // background spawned
+
+                    // Attach: tail the log file until process exits.
+                    if let Err(e) = stream_log_until_exit(&log_path, &mut child) {
+                        eprintln!("Error streaming logs: {e}");
+                    }
+                    return Ok(true); // run handled inline
                 }
                 Err(e) => {
                     eprintln!("Failed to start background exec: {e}. Falling back to interactive mode.");
@@ -354,4 +349,42 @@ fn parse_env_bool(name: &str) -> Option<bool> {
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,
     }
+}
+
+// Attach helper: follow the log file while the child runs.
+// todo: remove this once we have a tui
+fn stream_log_until_exit(log_path: &std::path::Path, child: &mut std::process::Child) -> anyhow::Result<()> {
+    use std::io::{Read, Seek, SeekFrom};
+    use std::time::Duration;
+    let mut f = std::fs::OpenOptions::new().read(true).open(log_path)?;
+    let mut pos: u64 = 0;
+    // Print any existing content first.
+    let mut existing = String::new();
+    f.read_to_string(&mut existing)?;
+    print!("{}", existing);
+    pos = existing.len() as u64;
+    loop {
+        // Check if process has exited.
+        if let Some(status) = child.try_wait()? {
+            // Drain any remaining bytes.
+            let mut tail = String::new();
+            f.seek(SeekFrom::Start(pos))?;
+            f.read_to_string(&mut tail)?;
+            if !tail.is_empty() { print!("{}", tail); }
+            println!("\n\x1b[1mTask exited with status: {}\x1b[0m", status);
+            break;
+        }
+        // Read new bytes if any.
+        let meta = f.metadata()?;
+        let len = meta.len();
+        if len > pos {
+            f.seek(SeekFrom::Start(pos))?;
+            let mut buf = String::new();
+            f.read_to_string(&mut buf)?;
+            if !buf.is_empty() { print!("{}", buf); }
+            pos = len;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    Ok(())
 } 

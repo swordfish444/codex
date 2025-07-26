@@ -199,7 +199,21 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 ts_println!(self, "{}", message.style(self.dimmed));
             }
             EventMsg::TaskStarted => {
-                // Ignore.
+                if let Ok(task_id) = std::env::var("CODEX_TASK_ID") {
+                    if let Some(base) = codex_base_dir_for_logging() {
+                        let tasks_path = base.join("tasks.jsonl");
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let obj = serde_json::json!({
+                            "task_id": task_id,
+                            "update_time": ts,
+                            "state": "started",
+                        });
+                        let _ = append_json_line(&tasks_path, &obj);
+                    }
+                }
             }
             EventMsg::TaskComplete(TaskCompleteEvent { last_agent_message }) => {
                 
@@ -537,10 +551,41 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 }
             }
             EventMsg::ExecApprovalRequest(_) => {
-                // Should we exit?
+                // When a background task requests execution approval, persist a state transition
+                // so `codex tasks ls` can reflect that it is waiting on user input.
+                if let Ok(task_id) = std::env::var("CODEX_TASK_ID") {
+                    if let Some(base) = codex_base_dir_for_logging() {
+                        let tasks_path = base.join("tasks.jsonl");
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let obj = serde_json::json!({
+                            "task_id": task_id,
+                            "update_time": ts,
+                            "state": "waiting_exec_approval",
+                        });
+                        let _ = append_json_line(&tasks_path, &obj);
+                    }
+                }
             }
             EventMsg::ApplyPatchApprovalRequest(_) => {
-                // Should we exit?
+                // todo: test/verify and verify if useful to keep now
+                if let Ok(task_id) = std::env::var("CODEX_TASK_ID") {
+                    if let Some(base) = codex_base_dir_for_logging() {
+                        let tasks_path = base.join("tasks.jsonl");
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let obj = serde_json::json!({
+                            "task_id": task_id,
+                            "update_time": ts,
+                            "state": "waiting_patch_approval",
+                        });
+                        let _ = append_json_line(&tasks_path, &obj);
+                    }
+                }
             }
             EventMsg::AgentReasoning(agent_reasoning_event) => {
                 if self.show_agent_reasoning {
