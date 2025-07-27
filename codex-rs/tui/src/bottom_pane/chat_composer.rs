@@ -510,6 +510,11 @@ impl ChatComposer<'_> {
             ..
         } = input
         {
+            // First try image placeholders (any backspace inside one removes it entirely)
+            if self.try_remove_image_placeholder_on_backspace() {
+                return (InputResult::None, true);
+            }
+            // Then try pasted-content placeholders (only when at end)
             if self.try_remove_placeholder_at_cursor() {
                 return (InputResult::None, true);
             }
@@ -567,6 +572,61 @@ impl ChatComposer<'_> {
         } else {
             false
         }
+    }
+
+    /// Attempts to remove an attached image placeholder if a backspace occurs *anywhere* inside it.
+    /// Returns true if a placeholder + image mapping was removed.
+    fn try_remove_image_placeholder_on_backspace(&mut self) -> bool {
+        if self.attached_images.is_empty() {
+            return false;
+        }
+
+        // Materialize full text and compute global cursor + deletion indices.
+        let lines: Vec<String> = self.textarea.lines().to_vec();
+        let (cursor_row, cursor_col) = self.textarea.cursor();
+
+        // Compute global char index of cursor (in characters, since placeholders are ASCII).
+        let mut global_index: usize = 0;
+        for (i, line) in lines.iter().enumerate() {
+            if i == cursor_row {
+                global_index += cursor_col as usize;
+                break;
+            } else {
+                global_index += line.chars().count() + 1; // +1 for the newline that will be joined
+            }
+        }
+        if global_index == 0 { return false; }
+        let deletion_index = global_index - 1; // char that will be removed by backspace
+
+        let text = lines.join("\n");
+
+        // Iterate over attached images; search each placeholder occurrence.
+        for idx in 0..self.attached_images.len() {
+            let (placeholder, _path) = &self.attached_images[idx];
+            let ph_len = placeholder.len();
+            let mut search_from = 0;
+            while let Some(rel_pos) = text[search_from..].find(placeholder) {
+                let ph_start = search_from + rel_pos;
+                let ph_end = ph_start + ph_len; // exclusive
+                if deletion_index >= ph_start && deletion_index < ph_end {
+                    // Deletion inside this placeholder: remove entire placeholder.
+                    let mut new_text = String::with_capacity(text.len() - ph_len);
+                    new_text.push_str(&text[..ph_start]);
+                    new_text.push_str(&text[ph_end..]);
+
+                    // Replace textarea contents.
+                    self.textarea.select_all();
+                    self.textarea.cut();
+                    let _ = self.textarea.insert_str(new_text);
+
+                    // Remove attached image entry.
+                    self.attached_images.remove(idx);
+                    return true;
+                }
+                search_from = ph_start + ph_len; // continue searching for additional occurrences
+            }
+        }
+        false
     }
 
     /// Synchronize `self.command_popup` with the current text in the
@@ -1227,5 +1287,32 @@ mod tests {
         assert!(matches!(result, InputResult::None));
         assert!(composer.take_recent_submission_images().is_empty());
         assert_eq!(composer.attached_images.len(), 1); // still pending
+    }
+
+    #[test]
+    fn image_placeholder_removed_on_backspace_anywhere() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, sender);
+        let path = std::path::PathBuf::from("/tmp/image3.png");
+        assert!(composer.attach_image(path.clone(), 20, 10, "PNG"));
+        let placeholder = composer.attached_images[0].0.clone();
+
+        // Case 1: backspace at end
+        composer.textarea.move_cursor(tui_textarea::CursorMove::End);
+        composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert!(composer.textarea.lines().join("\n").contains(&placeholder) == false);
+        assert!(composer.attached_images.is_empty());
+
+        // Re-add and test backspace in middle
+        assert!(composer.attach_image(path.clone(), 20, 10, "PNG"));
+        let placeholder2 = composer.attached_images[0].0.clone();
+        // Move cursor to roughly middle of placeholder
+        let mid = (placeholder2.len() / 2) as u16;
+        composer.textarea.move_cursor(tui_textarea::CursorMove::Jump(0, mid));
+        composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert!(composer.textarea.lines().join("\n").contains(&placeholder2) == false);
+        assert!(composer.attached_images.is_empty());
     }
 }
