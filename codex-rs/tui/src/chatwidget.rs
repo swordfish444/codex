@@ -143,7 +143,7 @@ impl ChatWidget<'_> {
         match self.bottom_pane.handle_key_event(key_event) {
             InputResult::Submitted(text) => {
                 let images = self.bottom_pane.take_recent_submission_images();
-                self.submit_user_message(UserMessage { text, image_paths: images });
+                self.submit_user_message(UserMessage { text: text.into(), image_paths: images });
             }
             InputResult::None => {}
         }
