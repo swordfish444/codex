@@ -348,7 +348,7 @@ impl App<'_> {
                     AppState::Chat { widget } => widget.update_latest_log(line),
                     AppState::Login { .. } | AppState::GitWarning { .. } => {}
                 },
-                AppEvent::DispatchCommand(command) => match command {
+                AppEvent::DispatchSlashCommand(command) => match command {
                     SlashCommand::New => {
                         let new_widget = Box::new(ChatWidget::new(
                             self.config.clone(),
@@ -381,19 +381,6 @@ impl App<'_> {
                                 "`/diff` — _not inside a git repository_".to_string()
                             };
                             widget.add_diff_output(text);
-                        }
-                    }
-                    SlashCommand::Image => {
-                        match crate::clipboard_paste::paste_image_to_temp_png() {
-                            Ok((path, info)) => {
-                                tracing::info!("slash_command_image imported path={:?} width={} height={} format={}", path, info.width, info.height, info.encoded_format_label);
-                                self.app_event_tx.send(AppEvent::AttachImage { path, width: info.width, height: info.height, format_label: info.encoded_format_label });
-                            }
-                            Err(err) => {
-                                if let AppState::Chat { widget } = &mut self.app_state {
-                                    widget.add_background_event(format!("image import failed: {err}"));
-                                }
-                            }
                         }
                     }
                 },

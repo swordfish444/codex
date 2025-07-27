@@ -14,7 +14,6 @@ pub enum SlashCommand {
     // more frequently used commands should be listed first.
     New,
     Diff,
-    Image, // import image from clipboard
     Quit,
 }
 
@@ -27,7 +26,6 @@ impl SlashCommand {
             SlashCommand::Diff => {
                 "Show git diff of the working directory (including untracked files)"
             }
-            SlashCommand::Image => "Import an image from the system clipboard (can be used with ctrl+v).",
         }
     }
 
