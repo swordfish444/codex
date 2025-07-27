@@ -14,6 +14,21 @@ use ratatui::widgets::WidgetRef;
 
 use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
+use crate::at_command::{AtCommand, built_in_at_commands}; // NEW
+
+pub trait CommandInfo: Copy {
+    fn command(&self) -> &'static str;
+    fn description(&self) -> &'static str;
+}
+
+impl CommandInfo for SlashCommand {
+    fn command(&self) -> &'static str { SlashCommand::command(*self) }
+    fn description(&self) -> &'static str { SlashCommand::description(*self) }
+}
+impl CommandInfo for AtCommand {
+    fn command(&self) -> &'static str { AtCommand::command(*self) }
+    fn description(&self) -> &'static str { AtCommand::description(*self) }
+}
 
 const MAX_POPUP_ROWS: usize = 5;
 /// Ideally this is enough to show the longest command name.
@@ -21,44 +36,30 @@ const FIRST_COLUMN_WIDTH: u16 = 20;
 
 use ratatui::style::Modifier;
 
-pub(crate) struct CommandPopup {
+pub(crate) struct CommandPopup<C: CommandInfo> { // generic
+    prefix: char,
     command_filter: String,
-    all_commands: Vec<(&'static str, SlashCommand)>,
+    all_commands: Vec<(&'static str, C)>,
     selected_idx: Option<usize>,
 }
 
-impl CommandPopup {
-    pub(crate) fn new() -> Self {
-        Self {
-            command_filter: String::new(),
-            all_commands: built_in_slash_commands(),
-            selected_idx: None,
-        }
+impl<C: CommandInfo> CommandPopup<C> {
+    pub(crate) fn new(prefix: char, all_commands: Vec<(&'static str, C)>) -> Self {
+        Self { prefix, command_filter: String::new(), all_commands, selected_idx: None }
     }
 
     /// Update the filter string based on the current composer text. The text
-    /// passed in is expected to start with a leading '/'. Everything after the
-    /// *first* '/" on the *first* line becomes the active filter that is used
-    /// to narrow down the list of available commands.
+    /// passed in is expected to start with this popup's prefix (e.g. '/' or '@').
+    /// Everything after the prefix up to the first ASCII whitespace becomes
+    /// the active filter token.
     pub(crate) fn on_composer_text_change(&mut self, text: String) {
         let first_line = text.lines().next().unwrap_or("");
-
-        if let Some(stripped) = first_line.strip_prefix('/') {
-            // Extract the *first* token (sequence of non-whitespace
-            // characters) after the slash so that `/clear something` still
-            // shows the help for `/clear`.
+        if first_line.starts_with(self.prefix) {
+            let stripped = &first_line[self.prefix.len_utf8()..];
             let token = stripped.trim_start();
             let cmd_token = token.split_whitespace().next().unwrap_or("");
-
-            // Update the filter keeping the original case (commands are all
-            // lower-case for now but this may change in the future).
             self.command_filter = cmd_token.to_string();
-        } else {
-            // The composer no longer starts with '/'. Reset the filter so the
-            // popup shows the *full* command list if it is still displayed
-            // for some reason.
-            self.command_filter.clear();
-        }
+        } else { self.command_filter.clear(); }
 
         // Reset or clamp selected index based on new filtered list.
         let matches_len = self.filtered_commands().len();
@@ -81,7 +82,7 @@ impl CommandPopup {
 
     /// Return the list of commands that match the current filter. Matching is
     /// performed using a *prefix* comparison on the command name.
-    fn filtered_commands(&self) -> Vec<&SlashCommand> {
+    fn filtered_commands(&self) -> Vec<&C> {
         self.all_commands
             .iter()
             .filter_map(|(_name, cmd)| {
@@ -95,7 +96,7 @@ impl CommandPopup {
                     None
                 }
             })
-            .collect::<Vec<&SlashCommand>>()
+            .collect::<Vec<&C>>()
     }
 
     /// Move the selection cursor one step up.
@@ -135,18 +136,26 @@ impl CommandPopup {
     }
 
     /// Return currently selected command, if any.
-    pub(crate) fn selected_command(&self) -> Option<&SlashCommand> {
+    pub(crate) fn selected_command(&self) -> Option<&C> {
         let matches = self.filtered_commands();
         self.selected_idx.and_then(|idx| matches.get(idx).copied())
     }
 }
 
-impl WidgetRef for CommandPopup {
+impl CommandPopup<SlashCommand> {
+    pub(crate) fn slash() -> Self { CommandPopup::new('/', built_in_slash_commands()) }
+}
+
+impl CommandPopup<AtCommand> {
+    pub(crate) fn at() -> Self { CommandPopup::new('@', built_in_at_commands()) }
+}
+
+impl<C: CommandInfo> WidgetRef for CommandPopup<C> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let matches = self.filtered_commands();
 
         let mut rows: Vec<Row> = Vec::new();
-        let visible_matches: Vec<&SlashCommand> =
+        let visible_matches: Vec<&C> =
             matches.into_iter().take(MAX_POPUP_ROWS).collect();
 
         if visible_matches.is_empty() {
@@ -168,7 +177,7 @@ impl WidgetRef for CommandPopup {
                 };
 
                 rows.push(Row::new(vec![
-                    Cell::from(format!("/{}", cmd.command())).style(cmd_style),
+                    Cell::from(format!("{}{}", self.prefix, cmd.command())).style(cmd_style),
                     Cell::from(cmd.description().to_string()).style(desc_style),
                 ]));
             }

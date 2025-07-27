@@ -22,6 +22,7 @@ mod status_indicator_view;
 
 pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
+pub(crate) use command_popup::CommandInfo;
 
 use approval_modal_view::ApprovalModalView;
 use status_indicator_view::StatusIndicatorView;

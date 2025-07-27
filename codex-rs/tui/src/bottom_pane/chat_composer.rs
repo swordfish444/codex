@@ -17,6 +17,8 @@ use tui_textarea::TextArea;
 use super::chat_composer_history::ChatComposerHistory;
 use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
+use crate::slash_command::SlashCommand; // for typing
+use crate::at_command::AtCommand; // for typing
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -49,8 +51,9 @@ pub(crate) struct ChatComposer<'a> {
 /// Popup state – at most one can be visible at any time.
 enum ActivePopup {
     None,
-    Command(CommandPopup),
+    Slash(CommandPopup<SlashCommand>),
     File(FileSearchPopup),
+    At(CommandPopup<AtCommand>),
 }
 
 impl ChatComposer<'_> {
@@ -140,8 +143,13 @@ impl ChatComposer<'_> {
         } else {
             self.textarea.insert_str(&pasted);
         }
-        self.sync_command_popup();
-        self.sync_file_search_popup();
+        self.sync_slash_command_popup();
+        if !matches!(self.active_popup, ActivePopup::Slash(_)) {
+            self.sync_at_command_popup();
+            if !matches!(self.active_popup, ActivePopup::At(_)) {
+                self.sync_file_search_popup();
+            }
+        }
         true
     }
 
@@ -181,17 +189,24 @@ impl ChatComposer<'_> {
     /// Handle a key event coming from the main UI.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
         let result = match &mut self.active_popup {
-            ActivePopup::Command(_) => self.handle_key_event_with_slash_popup(key_event),
+            ActivePopup::Slash(_) => self.handle_key_event_with_slash_popup(key_event),
             ActivePopup::File(_) => self.handle_key_event_with_file_popup(key_event),
+            ActivePopup::At(_) => self.handle_key_event_with_at_popup(key_event),
             ActivePopup::None => self.handle_key_event_without_popup(key_event),
         };
 
         // Update (or hide/show) popup after processing the key.
-        self.sync_command_popup();
-        if matches!(self.active_popup, ActivePopup::Command(_)) {
+        self.sync_slash_command_popup();
+        if matches!(self.active_popup, ActivePopup::Slash(_)) {
             self.dismissed_file_popup_token = None;
         } else {
-            self.sync_file_search_popup();
+            // Try @-command popup next if slash popup not active.
+            self.sync_at_command_popup();
+            if matches!(self.active_popup, ActivePopup::At(_)) {
+                self.dismissed_file_popup_token = None;
+            } else {
+                self.sync_file_search_popup();
+            }
         }
 
         result
@@ -199,7 +214,7 @@ impl ChatComposer<'_> {
 
     /// Handle key event when the slash-command popup is visible.
     fn handle_key_event_with_slash_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
-        let ActivePopup::Command(popup) = &mut self.active_popup else {
+        let ActivePopup::Slash(popup) = &mut self.active_popup else {
             unreachable!();
         };
 
@@ -296,6 +311,38 @@ impl ChatComposer<'_> {
                     return (InputResult::None, true);
                 }
                 (InputResult::None, false)
+            }
+            input => self.handle_input_basic(input),
+        }
+    }
+
+    /// Handle key event when the @-command popup is visible.
+    fn handle_key_event_with_at_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        let ActivePopup::At(popup) = &mut self.active_popup else { unreachable!() };
+        match key_event.into() {
+            Input { key: Key::Up, .. } => { popup.move_up(); (InputResult::None, true) }
+            Input { key: Key::Down, .. } => { popup.move_down(); (InputResult::None, true) }
+            Input { key: Key::Tab, .. } => {
+                if let Some(cmd) = popup.selected_command() {
+                    let first_line = self.textarea.lines().first().map(|s| s.as_str()).unwrap_or("");
+                    let starts_with_cmd = first_line.trim_start().starts_with(&format!("@{}", cmd.command()));
+                    if !starts_with_cmd {
+                        self.textarea.select_all();
+                        self.textarea.cut();
+                        let _ = self.textarea.insert_str(format!("@{} ", cmd.command()));
+                    }
+                }
+                (InputResult::None, true)
+            }
+            Input { key: Key::Enter, shift: false, alt: false, ctrl: false } => {
+                if let Some(cmd) = popup.selected_command() {
+                    self.app_event_tx.send(AppEvent::DispatchAtCommand(*cmd));
+                    self.textarea.select_all();
+                    self.textarea.cut();
+                    self.active_popup = ActivePopup::None;
+                    return (InputResult::None, true);
+                }
+                self.handle_key_event_without_popup(key_event)
             }
             input => self.handle_input_basic(input),
         }
@@ -632,7 +679,7 @@ impl ChatComposer<'_> {
     /// Synchronize `self.command_popup` with the current text in the
     /// textarea. This must be called after every modification that can change
     /// the text so the popup is shown/updated/hidden as appropriate.
-    fn sync_command_popup(&mut self) {
+    fn sync_slash_command_popup(&mut self) {
         // Inspect only the first line to decide whether to show the popup. In
         // the common case (no leading slash) we avoid copying the entire
         // textarea contents.
@@ -645,7 +692,7 @@ impl ChatComposer<'_> {
 
         let input_starts_with_slash = first_line.starts_with('/');
         match &mut self.active_popup {
-            ActivePopup::Command(popup) => {
+            ActivePopup::Slash(popup) => {
                 if input_starts_with_slash {
                     popup.on_composer_text_change(first_line.to_string());
                 } else {
@@ -654,9 +701,9 @@ impl ChatComposer<'_> {
             }
             _ => {
                 if input_starts_with_slash {
-                    let mut command_popup = CommandPopup::new();
+                    let mut command_popup = CommandPopup::slash();
                     command_popup.on_composer_text_change(first_line.to_string());
-                    self.active_popup = ActivePopup::Command(command_popup);
+                    self.active_popup = ActivePopup::Slash(command_popup);
                 }
             }
         }
@@ -698,6 +745,23 @@ impl ChatComposer<'_> {
         self.dismissed_file_popup_token = None;
     }
 
+    // NEW: Synchronize @-command popup.
+    fn sync_at_command_popup(&mut self) {
+        // Do not show if slash popup active.
+        if matches!(self.active_popup, ActivePopup::Slash(_)) { return; }
+
+        let first_line = self.textarea.lines().first().map(|s| s.as_str()).unwrap_or("");
+        let input_starts_with_at = first_line.starts_with('@');
+        match &mut self.active_popup {
+            ActivePopup::At(popup) => {
+                if input_starts_with_at { popup.on_composer_text_change(first_line.to_string()); } else { self.active_popup = ActivePopup::None; }
+            }
+            _ => {
+                if input_starts_with_at { let mut popup: CommandPopup<AtCommand> = CommandPopup::at(); popup.on_composer_text_change(first_line.to_string()); self.active_popup = ActivePopup::At(popup); }
+            }
+        }
+    }
+
     fn update_border(&mut self, has_focus: bool) {
         struct BlockState {
             right_title: Line<'static>,
@@ -737,7 +801,7 @@ impl ChatComposer<'_> {
 impl WidgetRef for &ChatComposer<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         match &self.active_popup {
-            ActivePopup::Command(popup) => {
+            ActivePopup::Slash(popup) => {
                 let popup_height = popup.calculate_required_height(&area);
 
                 // Split the provided rect so that the popup is rendered at the
@@ -781,6 +845,13 @@ impl WidgetRef for &ChatComposer<'_> {
             }
             ActivePopup::None => {
                 self.textarea.render(area, buf);
+            }
+            ActivePopup::At(popup) => {
+                let popup_height = popup.calculate_required_height(&area);
+                let popup_rect = Rect { x: area.x, y: area.y, width: area.width, height: popup_height.min(area.height) };
+                let textarea_rect = Rect { x: area.x, y: area.y + popup_rect.height, width: area.width, height: area.height.saturating_sub(popup_rect.height) };
+                popup.render(popup_rect, buf);
+                self.textarea.render(textarea_rect, buf);
             }
         }
     }
@@ -1314,5 +1385,24 @@ mod tests {
         composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         assert!(composer.textarea.lines().join("\n").contains(&placeholder2) == false);
         assert!(composer.attached_images.is_empty());
+    }
+
+    #[test]
+    fn at_image_command_triggers_dispatch() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use std::sync::mpsc::Receiver;
+        use crate::app_event::AppEvent;
+        use crate::at_command::AtCommand;
+
+        let (tx, rx):(std::sync::mpsc::Sender<AppEvent>, Receiver<AppEvent>) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, sender);
+        // Type '@' to open popup
+        composer.handle_key_event(KeyEvent::new(KeyCode::Char('@'), KeyModifiers::NONE));
+        // Press Enter (should dispatch Image since only option)
+        composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        // Expect a DispatchCommand(Image)
+        let ev = rx.try_recv().expect("expected an event");
+        match ev { AppEvent::DispatchAtCommand(AtCommand::Image) => {}, other => panic!("unexpected event: {:?}", other) }
     }
 }

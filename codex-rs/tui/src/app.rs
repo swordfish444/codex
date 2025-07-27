@@ -397,6 +397,21 @@ impl App<'_> {
                         }
                     }
                 },
+                AppEvent::DispatchAtCommand(at_command) => match at_command {
+                    crate::at_command::AtCommand::Image => {
+                        match crate::clipboard_paste::paste_image_to_temp_png() {
+                            Ok((path, info)) => {
+                                tracing::info!("at_command_image imported path={:?} width={} height={} format={}", path, info.width, info.height, info.encoded_format_label);
+                                self.app_event_tx.send(AppEvent::AttachImage { path, width: info.width, height: info.height, format_label: info.encoded_format_label });
+                            }
+                            Err(err) => {
+                                if let AppState::Chat { widget } = &mut self.app_state {
+                                    widget.add_background_event(format!("image import failed: {err}"));
+                                }
+                            }
+                        }
+                    }
+                },
                 AppEvent::StartFileSearch(query) => {
                     self.file_search.on_user_query(query);
                 }

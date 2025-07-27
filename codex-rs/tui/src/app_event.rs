@@ -4,6 +4,7 @@ use crossterm::event::KeyEvent;
 use ratatui::text::Line;
 
 use crate::slash_command::SlashCommand;
+use crate::at_command::AtCommand;
 
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum AppEvent {
@@ -37,6 +38,8 @@ pub(crate) enum AppEvent {
     /// Dispatch a recognized slash command from the UI (composer) to the app
     /// layer so it can be handled centrally.
     DispatchCommand(SlashCommand),
+    /// Dispatch an @ command.
+    DispatchAtCommand(AtCommand),
 
     /// Kick off an asynchronous file search for the given query (text after
     /// the `@`). Previous searches may be cancelled by the app layer so there
