@@ -171,7 +171,7 @@ impl App<'_> {
                                     scroll_event_helper.scroll_down();
                                 }
                                 crossterm::event::Event::Paste(pasted) => {
-                                                                        // Many terminals convert newlines to \r when
+                                    // Many terminals convert newlines to \r when
                                     // pasting, e.g. [iTerm2][]. But [tui-textarea
                                     // expects \n][tui-textarea]. This seems like a bug
                                     // in tui-textarea IMO, but work around it for now.

@@ -14,7 +14,7 @@ use ratatui::widgets::WidgetRef;
 
 use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
-use crate::at_command::{AtCommand, built_in_at_commands}; // NEW
+use crate::at_command::{AtCommand, built_in_at_commands};
 
 pub trait CommandInfo: Copy {
     fn command(&self) -> &'static str;
@@ -36,7 +36,7 @@ const FIRST_COLUMN_WIDTH: u16 = 20;
 
 use ratatui::style::Modifier;
 
-pub(crate) struct CommandPopup<C: CommandInfo> { // generic
+pub(crate) struct CommandPopup<C: CommandInfo> {
     prefix: char,
     command_filter: String,
     all_commands: Vec<(&'static str, C)>,
@@ -51,7 +51,7 @@ impl<C: CommandInfo> CommandPopup<C> {
     /// Update the filter string based on the current composer text. The text
     /// passed in is expected to start with this popup's prefix (e.g. '/' or '@').
     /// Everything after the prefix up to the first ASCII whitespace becomes
-    /// the active filter token.
+    /// the active filter that is used to narrow down the list of available commands.
     pub(crate) fn on_composer_text_change(&mut self, text: String) {
         let first_line = text.lines().next().unwrap_or("");
         if first_line.starts_with(self.prefix) {

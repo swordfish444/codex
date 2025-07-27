@@ -17,13 +17,13 @@ use tui_textarea::TextArea;
 use super::chat_composer_history::ChatComposerHistory;
 use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
-use crate::slash_command::SlashCommand; // for typing
-use crate::at_command::{AtCommand, built_in_at_commands}; // for typing and lookup
+use crate::slash_command::SlashCommand;
+use crate::at_command::{AtCommand, built_in_at_commands};
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use codex_file_search::FileMatch;
-use std::path::Path; // added for image extension checks
+use std::path::Path;
 
 const BASE_PLACEHOLDER_TEXT: &str = "send a message";
 /// If the pasted content exceeds this number of characters, replace it with a
@@ -777,7 +777,6 @@ impl ChatComposer<'_> {
         self.dismissed_file_popup_token = None;
     }
 
-    // NEW: Synchronize @-command popup.
     fn sync_at_command_popup(&mut self) {
         if matches!(self.active_popup, ActivePopup::Slash(_) | ActivePopup::File(_)) { return; }
         let (row, col) = self.textarea.cursor();
