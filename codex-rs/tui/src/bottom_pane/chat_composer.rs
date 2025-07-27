@@ -324,24 +324,11 @@ impl ChatComposer<'_> {
                                 let (row, col) = self.textarea.cursor();
                                 let mut lines: Vec<String> = self.textarea.lines().to_vec();
                                 if let Some(line) = lines.get_mut(row) {
-                                    let cursor_byte_offset = line.chars().take(col).map(|c| c.len_utf8()).sum::<usize>();
-                                    let before_cursor = &line[..cursor_byte_offset];
-                                    let after_cursor = &line[cursor_byte_offset..];
-                                    let start_idx = before_cursor
-                                        .char_indices()
-                                        .rfind(|(_, c)| c.is_whitespace())
-                                        .map(|(idx, c)| idx + c.len_utf8())
-                                        .unwrap_or(0);
-                                    let end_rel_idx = after_cursor
-                                        .char_indices()
-                                        .find(|(_, c)| c.is_whitespace())
-                                        .map(|(idx, _)| idx)
-                                        .unwrap_or(after_cursor.len());
-                                    let end_idx = cursor_byte_offset + end_rel_idx;
-                                    if start_idx < end_idx { // slice out token
-                                        let mut new_line = String::with_capacity(line.len() - (end_idx - start_idx));
-                                        new_line.push_str(&line[..start_idx]);
-                                        new_line.push_str(&line[end_idx..]);
+                                    let cursor_byte_offset = cursor_byte_offset(line, col as usize);
+                                    if let Some((start, end)) = at_token_bounds(line, cursor_byte_offset, true) {
+                                        let mut new_line = String::with_capacity(line.len() - (end - start));
+                                        new_line.push_str(&line[..start]);
+                                        new_line.push_str(&line[end..]);
                                         *line = new_line;
                                         let new_text = lines.join("\n");
                                         self.textarea.select_all();
@@ -437,44 +424,10 @@ impl ChatComposer<'_> {
     ///   one additional character, that token (without `@`) is returned.
     fn current_at_token(textarea: &tui_textarea::TextArea) -> Option<String> {
         let (row, col) = textarea.cursor();
-
-        // Guard against out-of-bounds rows.
         let line = textarea.lines().get(row)?.as_str();
-
-        // Calculate byte offset for cursor position
-        let cursor_byte_offset = line.chars().take(col).map(|c| c.len_utf8()).sum::<usize>();
-
-        // Split the line at the cursor position so we can search for word
-        // boundaries on both sides.
-        let before_cursor = &line[..cursor_byte_offset];
-        let after_cursor = &line[cursor_byte_offset..];
-
-        // Find start index (first character **after** the previous multi-byte whitespace).
-        let start_idx = before_cursor
-            .char_indices()
-            .rfind(|(_, c)| c.is_whitespace())
-            .map(|(idx, c)| idx + c.len_utf8())
-            .unwrap_or(0);
-
-        // Find end index (first multi-byte whitespace **after** the cursor position).
-        let end_rel_idx = after_cursor
-            .char_indices()
-            .find(|(_, c)| c.is_whitespace())
-            .map(|(idx, _)| idx)
-            .unwrap_or(after_cursor.len());
-        let end_idx = cursor_byte_offset + end_rel_idx;
-
-        if start_idx >= end_idx {
-            return None;
-        }
-
-        let token = &line[start_idx..end_idx];
-
-        if token.starts_with('@') && token.len() > 1 {
-            Some(token[1..].to_string())
-        } else {
-            None
-        }
+        let cursor_byte_offset = cursor_byte_offset(line, col as usize);
+        let (start, end) = at_token_bounds(line, cursor_byte_offset, false)?;
+        Some(line[start + 1..end].to_string())
     }
 
     /// Remove the @token under the cursor (including partial) without clearing the rest of the text.
@@ -483,27 +436,12 @@ impl ChatComposer<'_> {
         let (row, col) = self.textarea.cursor();
         let mut lines: Vec<String> = self.textarea.lines().to_vec();
         if let Some(line) = lines.get_mut(row) {
-            // Compute byte offset of cursor.
-            let cursor_byte_offset = line.chars().take(col).map(|c| c.len_utf8()).sum::<usize>();
-            let before_cursor = &line[..cursor_byte_offset];
-            let after_cursor = &line[cursor_byte_offset..];
-            let start_idx = before_cursor
-                .char_indices()
-                .rfind(|(_, c)| c.is_whitespace())
-                .map(|(idx, c)| idx + c.len_utf8())
-                .unwrap_or(0);
-            let end_rel_idx = after_cursor
-                .char_indices()
-                .find(|(_, c)| c.is_whitespace())
-                .map(|(idx, _)| idx)
-                .unwrap_or(after_cursor.len());
-            let end_idx = cursor_byte_offset + end_rel_idx;
-            if start_idx < end_idx && line[start_idx..].starts_with('@') {
-                let mut new_line = String::with_capacity(line.len() - (end_idx - start_idx));
-                new_line.push_str(&line[..start_idx]);
-                new_line.push_str(&line[end_idx..]);
+            let cursor_byte_offset = cursor_byte_offset(line, col as usize);
+            if let Some((start, end)) = at_token_bounds(line, cursor_byte_offset, true) {
+                let mut new_line = String::with_capacity(line.len() - (end - start));
+                new_line.push_str(&line[..start]);
+                new_line.push_str(&line[end..]);
                 *line = new_line;
-                // Re-populate textarea with modified content.
                 let new_text = lines.join("\n");
                 self.textarea.select_all();
                 self.textarea.cut();
@@ -516,79 +454,30 @@ impl ChatComposer<'_> {
     fn current_at_token_allow_empty(textarea: &tui_textarea::TextArea) -> Option<String> {
         let (row, col) = textarea.cursor();
         let line = textarea.lines().get(row)?.as_str();
-        let cursor_byte_offset = line.chars().take(col).map(|c| c.len_utf8()).sum::<usize>();
-        let before_cursor = &line[..cursor_byte_offset];
-        let after_cursor = &line[cursor_byte_offset..];
-        let start_idx = before_cursor
-            .char_indices()
-            .rfind(|(_, c)| c.is_whitespace())
-            .map(|(idx, c)| idx + c.len_utf8())
-            .unwrap_or(0);
-        let end_rel_idx = after_cursor
-            .char_indices()
-            .find(|(_, c)| c.is_whitespace())
-            .map(|(idx, _)| idx)
-            .unwrap_or(after_cursor.len());
-        let end_idx = cursor_byte_offset + end_rel_idx;
-        if start_idx >= end_idx { return None; }
-        let token = &line[start_idx..end_idx];
-        if token.starts_with('@') {
-            // Return body which may be empty.
-            Some(token[1..].to_string())
-        } else { None }
+        let cursor_byte_offset = cursor_byte_offset(line, col as usize);
+        let (start, end) = at_token_bounds(line, cursor_byte_offset, true)?;
+        Some(line[start + 1..end].to_string()) // body may be empty
     }
 
     /// Replace the active `@token` (the one under the cursor) with `path`.
-    ///
-    /// The algorithm mirrors `current_at_token` so replacement works no matter
-    /// where the cursor is within the token and regardless of how many
-    /// `@tokens` exist in the line.
+    /// Mirrors legacy logic using new shared helpers.
     fn insert_selected_path(&mut self, path: &str) {
         let (row, col) = self.textarea.cursor();
-
-        // Materialize the textarea lines so we can mutate them easily.
         let mut lines: Vec<String> = self.textarea.lines().to_vec();
-
         if let Some(line) = lines.get_mut(row) {
-            // Calculate byte offset for cursor position
-            let cursor_byte_offset = line.chars().take(col).map(|c| c.len_utf8()).sum::<usize>();
-
-            let before_cursor = &line[..cursor_byte_offset];
-            let after_cursor = &line[cursor_byte_offset..];
-
-            // Determine token boundaries.
-            let start_idx = before_cursor
-                .char_indices()
-                .rfind(|(_, c)| c.is_whitespace())
-                .map(|(idx, c)| idx + c.len_utf8())
-                .unwrap_or(0);
-
-            let end_rel_idx = after_cursor
-                .char_indices()
-                .find(|(_, c)| c.is_whitespace())
-                .map(|(idx, _)| idx)
-                .unwrap_or(after_cursor.len());
-            let end_idx = cursor_byte_offset + end_rel_idx;
-
-            // Replace the slice `[start_idx, end_idx)` with the chosen path and a trailing space.
-            let mut new_line =
-                String::with_capacity(line.len() - (end_idx - start_idx) + path.len() + 1);
-            new_line.push_str(&line[..start_idx]);
-            new_line.push_str(path);
-            new_line.push(' ');
-            new_line.push_str(&line[end_idx..]);
-
-            *line = new_line;
-
-            // Re-populate the textarea.
-            let new_text = lines.join("\n");
-            self.textarea.select_all();
-            self.textarea.cut();
-            let _ = self.textarea.insert_str(new_text);
-
-            // Note: tui-textarea currently exposes only relative cursor
-            // movements. Leaving the cursor position unchanged is acceptable
-            // as subsequent typing will move the cursor naturally.
+            let cursor_byte_offset = cursor_byte_offset(line, col as usize);
+            if let Some((start, end)) = token_bounds(line, cursor_byte_offset) {
+                let mut new_line = String::with_capacity(line.len() - (end - start) + path.len() + 1);
+                new_line.push_str(&line[..start]);
+                new_line.push_str(path);
+                new_line.push(' ');
+                new_line.push_str(&line[end..]);
+                *line = new_line;
+                let new_text = lines.join("\n");
+                self.textarea.select_all();
+                self.textarea.cut();
+                let _ = self.textarea.insert_str(new_text);
+            }
         }
     }
 
@@ -890,35 +779,17 @@ impl ChatComposer<'_> {
 
     // NEW: Synchronize @-command popup.
     fn sync_at_command_popup(&mut self) {
-        // Do not show if slash or file popup already active.
         if matches!(self.active_popup, ActivePopup::Slash(_) | ActivePopup::File(_)) { return; }
-
-        // Determine if cursor is within an @token (even partial like just '@').
         let (row, col) = self.textarea.cursor();
         let line = match self.textarea.lines().get(row) { Some(l) => l.as_str(), None => return };
-        // Compute token boundaries similar to current_at_token but allow zero-length body.
-        let cursor_byte = line.chars().take(col).map(|c| c.len_utf8()).sum::<usize>();
-        let before = &line[..cursor_byte];
-        let after = &line[cursor_byte..];
-        let start_idx = before
-            .char_indices()
-            .rfind(|(_, c)| c.is_whitespace())
-            .map(|(idx, c)| idx + c.len_utf8())
-            .unwrap_or(0);
-        let end_rel = after
-            .char_indices()
-            .find(|(_, c)| c.is_whitespace())
-            .map(|(idx, _)| idx)
-            .unwrap_or(after.len());
-        let end_idx = cursor_byte + end_rel;
-        let show = if start_idx < end_idx && line[start_idx..].starts_with('@') {
-            let body = &line[start_idx + 1..end_idx]; // may be empty
-            // Show popup if body is prefix of an at command.
+        let cursor_byte = cursor_byte_offset(line, col as usize);
+        let show = if let Some((start, end)) = at_token_bounds(line, cursor_byte, true) {
+            let body = &line[start + 1..end];
             built_in_at_commands().iter().any(|(name, _)| name.starts_with(&body.to_ascii_lowercase()))
         } else { false };
-
         if show {
-            let body = &line[start_idx + 1..end_idx];
+            let (start, end) = at_token_bounds(line, cursor_byte, true).unwrap();
+            let body = &line[start + 1..end];
             let synthetic = format!("@{}", body);
             match &mut self.active_popup {
                 ActivePopup::At(popup) => popup.on_composer_text_change(synthetic),
@@ -928,10 +799,7 @@ impl ChatComposer<'_> {
                     self.active_popup = ActivePopup::At(popup);
                 }
             }
-        } else if matches!(self.active_popup, ActivePopup::At(_)) {
-            // Hide if no longer in an at-command context.
-            self.active_popup = ActivePopup::None;
-        }
+        } else if matches!(self.active_popup, ActivePopup::At(_)) { self.active_popup = ActivePopup::None; }
     }
 
     fn update_border(&mut self, has_focus: bool) {
@@ -1027,6 +895,38 @@ impl WidgetRef for &ChatComposer<'_> {
             }
         }
     }
+}
+
+// -----------------------------------------------------------------------------
+// Shared helper functions for token boundary calculations.
+// Centralizing these reduces subtle divergence between behaviors that rely on
+// the exact same definition of a *token* (whitespace-delimited) and *@token*.
+// -----------------------------------------------------------------------------
+
+/// Convert a cursor column expressed in characters (as provided by tui-textarea)
+/// to a byte offset into `line`.
+fn cursor_byte_offset(line: &str, cursor_col_chars: usize) -> usize {
+    line.chars().take(cursor_col_chars).map(|c| c.len_utf8()).sum()
+}
+
+/// Return (start_byte, end_byte) of the token (whitespace-delimited) containing
+/// `cursor_byte_offset`. Returns None if there is no non-empty token.
+fn token_bounds(line: &str, cursor_byte_offset: usize) -> Option<(usize, usize)> {
+    if cursor_byte_offset > line.len() { return None; }
+    let before = &line[..cursor_byte_offset];
+    let after = &line[cursor_byte_offset..];
+    let start = before.char_indices().rfind(|(_, c)| c.is_whitespace()).map(|(i, c)| i + c.len_utf8()).unwrap_or(0);
+    let end_rel = after.char_indices().find(|(_, c)| c.is_whitespace()).map(|(i, _)| i).unwrap_or(after.len());
+    let end = cursor_byte_offset + end_rel;
+    if start >= end { None } else { Some((start, end)) }
+}
+
+/// Like `token_bounds` but ensures the token starts with '@'. If `allow_empty`
+/// is false, requires at least one character after '@'. Returns byte bounds.
+fn at_token_bounds(line: &str, cursor_byte_offset: usize, allow_empty: bool) -> Option<(usize, usize)> {
+    let (start, end) = token_bounds(line, cursor_byte_offset)?;
+    let token = &line[start..end];
+    if token.starts_with('@') && (allow_empty || token.len() > 1) { Some((start, end)) } else { None }
 }
 
 #[cfg(test)]
