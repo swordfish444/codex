@@ -23,6 +23,7 @@ use crate::at_command::{AtCommand, built_in_at_commands}; // for typing and look
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use codex_file_search::FileMatch;
+use std::path::Path; // added for image extension checks
 
 const BASE_PLACEHOLDER_TEXT: &str = "send a message";
 /// If the pasted content exceeds this number of characters, replace it with a
@@ -309,8 +310,64 @@ impl ChatComposer<'_> {
             } => {
                 if let Some(sel) = popup.selected_match() {
                     let sel_path = sel.to_string();
-                    // Drop popup borrow before using self mutably again.
-                    self.insert_selected_path(&sel_path);
+                    // If selected path looks like an image (png/jpeg), attach as image instead of inserting text.
+                    let is_image = {
+                        let lower = sel_path.to_ascii_lowercase();
+                        lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg")
+                    };
+                    if is_image {
+                        // Determine dimensions; if that fails fall back to normal path insertion.
+                        let path_buf = std::path::PathBuf::from(&sel_path);
+                        match image::image_dimensions(&path_buf) {
+                            Ok((w, h)) => {
+                                // Remove the current @token (mirror logic from insert_selected_path without inserting text)
+                                let (row, col) = self.textarea.cursor();
+                                let mut lines: Vec<String> = self.textarea.lines().to_vec();
+                                if let Some(line) = lines.get_mut(row) {
+                                    let cursor_byte_offset = line.chars().take(col).map(|c| c.len_utf8()).sum::<usize>();
+                                    let before_cursor = &line[..cursor_byte_offset];
+                                    let after_cursor = &line[cursor_byte_offset..];
+                                    let start_idx = before_cursor
+                                        .char_indices()
+                                        .rfind(|(_, c)| c.is_whitespace())
+                                        .map(|(idx, c)| idx + c.len_utf8())
+                                        .unwrap_or(0);
+                                    let end_rel_idx = after_cursor
+                                        .char_indices()
+                                        .find(|(_, c)| c.is_whitespace())
+                                        .map(|(idx, _)| idx)
+                                        .unwrap_or(after_cursor.len());
+                                    let end_idx = cursor_byte_offset + end_rel_idx;
+                                    if start_idx < end_idx { // slice out token
+                                        let mut new_line = String::with_capacity(line.len() - (end_idx - start_idx));
+                                        new_line.push_str(&line[..start_idx]);
+                                        new_line.push_str(&line[end_idx..]);
+                                        *line = new_line;
+                                        let new_text = lines.join("\n");
+                                        self.textarea.select_all();
+                                        self.textarea.cut();
+                                        let _ = self.textarea.insert_str(new_text);
+                                    }
+                                }
+                                let format_label = match Path::new(&sel_path).extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase()) {
+                                    Some(ext) if ext == "png" => "PNG",
+                                    Some(ext) if ext == "jpg" || ext == "jpeg" => "JPEG",
+                                    _ => "IMG",
+                                };
+                                self.app_event_tx.send(AppEvent::AttachImage { path: path_buf.clone(), width: w, height: h, format_label });
+                                tracing::info!("file_search_image selected path={:?} width={} height={} format={}", path_buf, w, h, format_label);
+                                // Optionally add a trailing space to keep typing fluid.
+                                let _ = self.textarea.insert_str(" ");
+                            }
+                            Err(_) => {
+                                // Fallback to plain path insertion if metadata read fails.
+                                self.insert_selected_path(&sel_path);
+                            }
+                        }
+                    } else {
+                        // Non-image: original behavior.
+                        self.insert_selected_path(&sel_path);
+                    }
                     self.active_popup = ActivePopup::None;
                     self.file_search_mode = false; // end session on selection
                     return (InputResult::None, true);
