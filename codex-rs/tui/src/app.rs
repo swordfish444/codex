@@ -411,6 +411,10 @@ impl App<'_> {
                             }
                         }
                     }
+                    crate::at_command::AtCommand::File => {
+                        // Currently file search popup is handled entirely in the chat composer.
+                        // No-op here to keep the match exhaustive.
+                    }
                 },
                 AppEvent::StartFileSearch(query) => {
                     self.file_search.on_user_query(query);

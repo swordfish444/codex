@@ -336,11 +336,27 @@ impl ChatComposer<'_> {
             }
             Input { key: Key::Enter, shift: false, alt: false, ctrl: false } => {
                 if let Some(cmd) = popup.selected_command() {
-                    self.app_event_tx.send(AppEvent::DispatchAtCommand(*cmd));
-                    self.textarea.select_all();
-                    self.textarea.cut();
-                    self.active_popup = ActivePopup::None;
-                    return (InputResult::None, true);
+                    match cmd {
+                        AtCommand::Image => {
+                            self.app_event_tx.send(AppEvent::DispatchAtCommand(*cmd));
+                            self.textarea.select_all();
+                            self.textarea.cut();
+                            self.active_popup = ActivePopup::None;
+                            return (InputResult::None, true);
+                        }
+                        AtCommand::File => {
+                            // Replace the textarea content with the token so file search logic picks it up.
+                            self.textarea.select_all();
+                            self.textarea.cut();
+                            let _ = self.textarea.insert_str("@file");
+                            // Initialize file search popup with the current query ("file").
+                            let mut file_popup = FileSearchPopup::new();
+                            file_popup.set_query("file");
+                            self.app_event_tx.send(AppEvent::StartFileSearch("file".to_string()));
+                            self.active_popup = ActivePopup::File(file_popup);
+                            return (InputResult::None, true);
+                        }
+                    }
                 }
                 self.handle_key_event_without_popup(key_event)
             }
@@ -747,8 +763,8 @@ impl ChatComposer<'_> {
 
     // NEW: Synchronize @-command popup.
     fn sync_at_command_popup(&mut self) {
-        // Do not show if slash popup active.
-        if matches!(self.active_popup, ActivePopup::Slash(_)) { return; }
+        // Do not show if slash or file popup active.
+        if matches!(self.active_popup, ActivePopup::Slash(_) | ActivePopup::File(_)) { return; }
 
         let first_line = self.textarea.lines().first().map(|s| s.as_str()).unwrap_or("");
         let input_starts_with_at = first_line.starts_with('@');
@@ -1403,6 +1419,6 @@ mod tests {
         composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         // Expect a DispatchCommand(Image)
         let ev = rx.try_recv().expect("expected an event");
-        match ev { AppEvent::DispatchAtCommand(AtCommand::Image) => {}, other => panic!("unexpected event: {:?}", other) }
+        match ev { AppEvent::DispatchAtCommand(AtCommand::Image) => {}, AppEvent::DispatchAtCommand(AtCommand::File) => {}, other => panic!("unexpected event: {:?}", other) }
     }
 }
