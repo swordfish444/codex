@@ -174,11 +174,23 @@ impl ChatWidget<'_> {
             }
             InputFocus::BottomPane => match self.bottom_pane.handle_key_event(key_event) {
                 InputResult::Submitted(text) => {
-                    self.submit_user_message(text.into());
+                    let images = self.bottom_pane.take_recent_submission_images();
+                    self.submit_user_message(UserMessage { text, image_paths: images });
                 }
                 InputResult::None => {}
             },
         }
+    }
+
+    pub(crate) fn attach_image(&mut self, path: std::path::PathBuf, width: u32, height: u32, format_label: &str) {
+        tracing::info!("attach_image path={:?} width={} height={} format={}", path, width, height, format_label);
+        // Forward to bottom pane; width/height/format currently only affect placeholder text.
+        let _ = (width, height, format_label); // reserved for future use (e.g., status flash)
+        self.bottom_pane.attach_image(path.clone(), width, height, format_label);
+        // Surface a quick background event so user sees confirmation.
+        self.conversation_history.add_background_event(format!("[image copied] {}x{} {}", width, height, format_label));
+        self.emit_last_history_entry();
+        self.request_redraw();
     }
 
     pub(crate) fn handle_paste(&mut self, text: String) {
@@ -515,6 +527,12 @@ impl ChatWidget<'_> {
 
     pub(crate) fn token_usage(&self) -> &TokenUsage {
         &self.token_usage
+    }
+
+    pub(crate) fn add_background_event(&mut self, msg: String) {
+        self.conversation_history.add_background_event(msg);
+        self.emit_last_history_entry();
+        self.request_redraw();
     }
 }
 

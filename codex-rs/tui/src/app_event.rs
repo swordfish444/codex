@@ -52,4 +52,7 @@ pub(crate) enum AppEvent {
     },
 
     InsertHistory(Vec<Line<'static>>),
+
+    /// Image pasted via Cmd+V (clipboard image attachment).
+    AttachImage { path: std::path::PathBuf, width: u32, height: u32, format_label: &'static str },
 }

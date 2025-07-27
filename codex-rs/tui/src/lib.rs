@@ -44,6 +44,7 @@ mod text_block;
 mod text_formatting;
 mod tui;
 mod user_approval_widget;
+mod clipboard_paste;
 
 pub use cli::Cli;
 

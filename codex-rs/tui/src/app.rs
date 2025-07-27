@@ -28,6 +28,57 @@ use std::time::Duration;
 /// Time window for debouncing redraw requests.
 const REDRAW_DEBOUNCE: Duration = Duration::from_millis(10);
 
+// Testable helper: generic over paste function so we can inject stubs in unit tests.
+fn try_handle_ctrl_v_with<F>(
+    app_event_tx: &AppEventSender,
+    key_event: &KeyEvent,
+    paste_fn: F,
+) -> bool
+where
+    F: Fn() -> Result<
+        (std::path::PathBuf, crate::clipboard_paste::PastedImageInfo),
+        crate::clipboard_paste::PasteImageError,
+    >,
+{
+    if key_event.code == KeyCode::Char('v')
+        && key_event
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+    {
+        tracing::debug!(
+            "Ctrl+V detected – attempting clipboard image import (shortcut for /image)"
+        );
+        match paste_fn() {
+            Ok((path, info)) => {
+                tracing::info!(
+                    "ctrl_v_image imported path={:?} width={} height={} format={}",
+                    path,
+                    info.width,
+                    info.height,
+                    info.encoded_format_label
+                );
+                app_event_tx.send(AppEvent::AttachImage {
+                    path,
+                    width: info.width,
+                    height: info.height,
+                    format_label: info.encoded_format_label,
+                });
+                return true; // consumed
+            }
+            Err(err) => {
+                tracing::debug!("Ctrl+V image import failed: {err}");
+            }
+        }
+    }
+    false
+}
+
+fn try_handle_ctrl_v(app_event_tx: &AppEventSender, key_event: &KeyEvent) -> bool {
+    try_handle_ctrl_v_with(app_event_tx, key_event, || {
+        crate::clipboard_paste::paste_image_to_temp_png()
+    })
+}
+
 /// Top-level application state: which full-screen view is currently active.
 #[allow(clippy::large_enum_variant)]
 enum AppState<'a> {
@@ -99,6 +150,9 @@ impl App<'_> {
                         if let Ok(event) = crossterm::event::read() {
                             match event {
                                 crossterm::event::Event::Key(key_event) => {
+                                    if try_handle_ctrl_v(&app_event_tx, &key_event) {
+                                        continue;
+                                    }
                                     app_event_tx.send(AppEvent::KeyEvent(key_event));
                                 }
                                 crossterm::event::Event::Resize(_, _) => {
@@ -117,7 +171,7 @@ impl App<'_> {
                                     scroll_event_helper.scroll_down();
                                 }
                                 crossterm::event::Event::Paste(pasted) => {
-                                    // Many terminals convert newlines to \r when
+                                                                        // Many terminals convert newlines to \r when
                                     // pasting, e.g. [iTerm2][]. But [tui-textarea
                                     // expects \n][tui-textarea]. This seems like a bug
                                     // in tui-textarea IMO, but work around it for now.
@@ -329,6 +383,19 @@ impl App<'_> {
                             widget.add_diff_output(text);
                         }
                     }
+                    SlashCommand::Image => {
+                        match crate::clipboard_paste::paste_image_to_temp_png() {
+                            Ok((path, info)) => {
+                                tracing::info!("slash_command_image imported path={:?} width={} height={} format={}", path, info.width, info.height, info.encoded_format_label);
+                                self.app_event_tx.send(AppEvent::AttachImage { path, width: info.width, height: info.height, format_label: info.encoded_format_label });
+                            }
+                            Err(err) => {
+                                if let AppState::Chat { widget } = &mut self.app_state {
+                                    widget.add_background_event(format!("image import failed: {err}"));
+                                }
+                            }
+                        }
+                    }
                 },
                 AppEvent::StartFileSearch(query) => {
                     self.file_search.on_user_query(query);
@@ -336,6 +403,11 @@ impl App<'_> {
                 AppEvent::FileSearchResult { query, matches } => {
                     if let AppState::Chat { widget } = &mut self.app_state {
                         widget.apply_file_search_result(query, matches);
+                    }
+                }
+                AppEvent::AttachImage { path, width, height, format_label } => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.attach_image(path, width, height, format_label);
                     }
                 }
             }
@@ -425,5 +497,40 @@ impl App<'_> {
             AppState::Chat { widget } => widget.handle_codex_event(event),
             AppState::Login { .. } | AppState::GitWarning { .. } => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyModifiers};
+
+    #[test]
+    fn ctrl_v_success_attaches_image() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let key_event = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL);
+        let dummy_info = crate::clipboard_paste::PastedImageInfo { width: 10, height: 5, encoded_format_label: "PNG" };
+        let handled = try_handle_ctrl_v_with(&sender, &key_event, || Ok((std::path::PathBuf::from("/tmp/test.png"), dummy_info.clone())));
+        assert!(handled, "expected ctrl+v to be handled on success");
+        match rx.recv().expect("event") {
+            AppEvent::AttachImage { path, width, height, format_label } => {
+                assert_eq!(path, std::path::PathBuf::from("/tmp/test.png"));
+                assert_eq!(width, 10);
+                assert_eq!(height, 5);
+                assert_eq!(format_label, "PNG");
+            }
+            _ => panic!("unexpected event (not AttachImage)"),
+        }
+    }
+
+    #[test]
+    fn ctrl_v_failure_not_consumed() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let key_event = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL);
+        let handled = try_handle_ctrl_v_with(&sender, &key_event, || Err(crate::clipboard_paste::PasteImageError::NoImage("none".into())));
+        assert!(!handled, "on failure ctrl+v should not be considered consumed");
+        assert!(rx.try_recv().is_err(), "no events should be sent on failure");
     }
 }

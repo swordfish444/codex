@@ -42,6 +42,8 @@ pub(crate) struct ChatComposer<'a> {
     dismissed_file_popup_token: Option<String>,
     current_file_query: Option<String>,
     pending_pastes: Vec<(String, String)>,
+    attached_images: Vec<(String, std::path::PathBuf)>,
+    recent_submission_images: Vec<std::path::PathBuf>,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -66,6 +68,8 @@ impl ChatComposer<'_> {
             dismissed_file_popup_token: None,
             current_file_query: None,
             pending_pastes: Vec::new(),
+            attached_images: Vec::new(),
+            recent_submission_images: Vec::new(),
         };
         this.update_border(has_input_focus);
         this
@@ -143,6 +147,17 @@ impl ChatComposer<'_> {
         self.sync_command_popup();
         self.sync_file_search_popup();
         true
+    }
+
+    pub fn attach_image(&mut self, path: std::path::PathBuf, width: u32, height: u32, format_label: &str) -> bool {
+        let placeholder = format!("[image {width}x{height} {format_label}]");
+        self.textarea.insert_str(&placeholder);
+        self.attached_images.push((placeholder, path));
+        true
+    }
+
+    pub fn take_recent_submission_images(&mut self) -> Vec<std::path::PathBuf> {
+        std::mem::take(&mut self.recent_submission_images)
     }
 
     /// Integrate results from an asynchronous file search.
@@ -445,10 +460,33 @@ impl ChatComposer<'_> {
                 }
                 self.pending_pastes.clear();
 
+                // If removing all image placeholders leaves only whitespace, treat as empty (no submission).
+                let mut content_without_images = text.clone();
+                for (placeholder, _) in &self.attached_images {
+                    content_without_images = content_without_images.replace(placeholder, "");
+                }
+                if content_without_images.trim().is_empty() {
+                    return (InputResult::None, true);
+                }
+
+                // Consume image placeholders and stage their paths (text now guaranteed non-empty after removal).
+                let mut attached_paths = Vec::new();
+                for (placeholder, path) in &self.attached_images {
+                    if text.contains(placeholder) {
+                        text = text.replace(placeholder, "");
+                        attached_paths.push(path.clone());
+                    }
+                }
+                if !attached_paths.is_empty() {
+                    self.recent_submission_images = attached_paths;
+                    text = text.trim().to_string();
+                }
+
                 if text.is_empty() {
                     (InputResult::None, true)
                 } else {
                     self.history.record_local_submission(&text);
+                    self.attached_images.clear();
                     (InputResult::Submitted(text), true)
                 }
             }
@@ -1169,5 +1207,36 @@ mod tests {
                 (false, 0), // After deleting from end
             ]
         );
+    }
+
+    // --- Image attachment tests ---
+    #[test]
+    fn attach_image_and_submit_includes_image_paths() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, sender);
+        let path = std::path::PathBuf::from("/tmp/image1.png");
+        assert!(composer.attach_image(path.clone(), 32, 16, "PNG"));
+        composer.handle_paste(" hi".into());
+        let (result, _) = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        match result { InputResult::Submitted(text) => assert_eq!(text, "hi"), _ => panic!("expected Submitted") }
+        let imgs = composer.take_recent_submission_images();
+        assert_eq!(imgs.len(), 1);
+        assert_eq!(imgs[0], path);
+    }
+
+    #[test]
+    fn attach_image_without_text_not_submitted() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, sender);
+        let path = std::path::PathBuf::from("/tmp/image2.png");
+        assert!(composer.attach_image(path.clone(), 10, 5, "PNG"));
+        let (result, _) = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(result, InputResult::None));
+        assert!(composer.take_recent_submission_images().is_empty());
+        assert_eq!(composer.attached_images.len(), 1); // still pending
     }
 }
