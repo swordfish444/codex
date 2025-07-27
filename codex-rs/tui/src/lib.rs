@@ -46,7 +46,6 @@ mod tui;
 mod user_approval_widget;
 mod clipboard_paste;
 mod at_command;
-mod command;
 
 pub use cli::Cli;
 

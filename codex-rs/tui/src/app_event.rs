@@ -6,6 +6,7 @@ use ratatui::text::Line;
 use crate::slash_command::SlashCommand;
 use crate::at_command::AtCommand;
 
+#[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum AppEvent {
     CodexEvent(Event),
