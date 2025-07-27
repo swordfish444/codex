@@ -385,7 +385,7 @@ impl App<'_> {
                     }
                 },
                 AppEvent::DispatchAtCommand(at_command) => match at_command {
-                    crate::at_command::AtCommand::Image => {
+                    crate::at_command::AtCommand::ClipboardImage => {
                         match crate::clipboard_paste::paste_image_to_temp_png() {
                             Ok((path, info)) => {
                                 tracing::info!("at_command_image imported path={:?} width={} height={} format={}", path, info.width, info.height, info.encoded_format_label);

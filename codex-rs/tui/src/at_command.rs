@@ -5,14 +5,14 @@ use strum_macros::{AsRefStr, EnumIter, EnumString, IntoStaticStr};
 #[strum(serialize_all = "kebab-case")]
 pub enum AtCommand {
     // Order is presentation order in @ popup.
-    Image, // import image from clipboard
+    ClipboardImage, // import image from clipboard
     File,  // open file search popup
 }
 
 impl AtCommand {
     pub fn description(self) -> &'static str {
         match self {
-            AtCommand::Image => "Import an image from the system clipboard (can be used with ctrl+v).",
+            AtCommand::ClipboardImage => "Import an image from the system clipboard (can be used with ctrl+v).",
             AtCommand::File => "Search for a file to insert its path.",
         }
     }

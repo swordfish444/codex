@@ -342,7 +342,7 @@ impl ChatComposer<'_> {
             Input { key: Key::Enter, shift: false, alt: false, ctrl: false } => {
                 if let Some(cmd) = popup.selected_command() {
                     match cmd {
-                        AtCommand::Image => {
+                        AtCommand::ClipboardImage => {
                             // Dispatch image import request but only remove the @token itself (not entire input).
                             self.app_event_tx.send(AppEvent::DispatchAtCommand(*cmd));
                             self.remove_current_at_token();
@@ -1503,7 +1503,7 @@ mod tests {
     }
 
     #[test]
-    fn at_image_command_triggers_dispatch() {
+    fn at_clipboard_image_command_triggers_dispatch() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         use std::sync::mpsc::Receiver;
         use crate::app_event::AppEvent;
@@ -1518,6 +1518,6 @@ mod tests {
         composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         // Expect a DispatchAtCommand(Image) or DispatchAtCommand(File); slash commands use DispatchSlashCommand
         let ev = rx.try_recv().expect("expected an event");
-        match ev { AppEvent::DispatchAtCommand(AtCommand::Image) => {}, AppEvent::DispatchAtCommand(AtCommand::File) => {}, other => panic!("unexpected event: {:?}", other) }
+        match ev { AppEvent::DispatchAtCommand(AtCommand::ClipboardImage) => {}, AppEvent::DispatchAtCommand(AtCommand::File) => {}, other => panic!("unexpected event: {:?}", other) }
     }
 }
