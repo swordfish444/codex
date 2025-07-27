@@ -18,7 +18,7 @@ use super::chat_composer_history::ChatComposerHistory;
 use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
 use crate::slash_command::SlashCommand; // for typing
-use crate::at_command::AtCommand; // for typing
+use crate::at_command::{AtCommand, built_in_at_commands}; // for typing and lookup
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -46,6 +46,8 @@ pub(crate) struct ChatComposer<'a> {
     pending_pastes: Vec<(String, String)>,
     attached_images: Vec<(String, std::path::PathBuf)>,
     recent_submission_images: Vec<std::path::PathBuf>,
+    /// When true we are in an explicit file search session initiated via @file.
+    file_search_mode: bool,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -73,6 +75,7 @@ impl ChatComposer<'_> {
             pending_pastes: Vec::new(),
             attached_images: Vec::new(),
             recent_submission_images: Vec::new(),
+            file_search_mode: false,
         };
         this.update_border(has_input_focus);
         this
@@ -256,7 +259,7 @@ impl ChatComposer<'_> {
             } => {
                 if let Some(cmd) = popup.selected_command() {
                     // Send command to the app layer.
-                    self.app_event_tx.send(AppEvent::DispatchCommand(*cmd));
+                    self.app_event_tx.send(AppEvent::DispatchSlashCommand(*cmd));
 
                     // Clear textarea so no residual text remains.
                     self.textarea.select_all();
@@ -294,6 +297,7 @@ impl ChatComposer<'_> {
                     self.dismissed_file_popup_token = Some(tok.to_string());
                 }
                 self.active_popup = ActivePopup::None;
+                self.file_search_mode = false; // end session
                 (InputResult::None, true)
             }
             Input { key: Key::Tab, .. }
@@ -308,6 +312,7 @@ impl ChatComposer<'_> {
                     // Drop popup borrow before using self mutably again.
                     self.insert_selected_path(&sel_path);
                     self.active_popup = ActivePopup::None;
+                    self.file_search_mode = false; // end session on selection
                     return (InputResult::None, true);
                 }
                 (InputResult::None, false)
@@ -338,22 +343,21 @@ impl ChatComposer<'_> {
                 if let Some(cmd) = popup.selected_command() {
                     match cmd {
                         AtCommand::Image => {
+                            // Dispatch image import request but only remove the @token itself (not entire input).
                             self.app_event_tx.send(AppEvent::DispatchAtCommand(*cmd));
-                            self.textarea.select_all();
-                            self.textarea.cut();
+                            self.remove_current_at_token();
                             self.active_popup = ActivePopup::None;
                             return (InputResult::None, true);
                         }
                         AtCommand::File => {
                             // Replace the textarea content with the token so file search logic picks it up.
-                            self.textarea.select_all();
-                            self.textarea.cut();
-                            let _ = self.textarea.insert_str("@file");
-                            // Initialize file search popup with the current query ("file").
-                            let mut file_popup = FileSearchPopup::new();
-                            file_popup.set_query("file");
-                            self.app_event_tx.send(AppEvent::StartFileSearch("file".to_string()));
+                            // Remove only current token then insert @file at cursor.
+                            self.remove_current_at_token();
+                            // Insert a bare '@' to begin a fresh file query (do not pre-fill with 'file').
+                            let _ = self.textarea.insert_str("@");
+                            let file_popup = FileSearchPopup::new(); // starts empty; we will show placeholder until user types.
                             self.active_popup = ActivePopup::File(file_popup);
+                            self.file_search_mode = true; // mark explicit session
                             return (InputResult::None, true);
                         }
                     }
@@ -414,6 +418,67 @@ impl ChatComposer<'_> {
         } else {
             None
         }
+    }
+
+    /// Remove the @token under the cursor (including partial) without clearing the rest of the text.
+    /// If cursor not on an @token, no-op.
+    fn remove_current_at_token(&mut self) {
+        let (row, col) = self.textarea.cursor();
+        let mut lines: Vec<String> = self.textarea.lines().to_vec();
+        if let Some(line) = lines.get_mut(row) {
+            // Compute byte offset of cursor.
+            let cursor_byte_offset = line.chars().take(col).map(|c| c.len_utf8()).sum::<usize>();
+            let before_cursor = &line[..cursor_byte_offset];
+            let after_cursor = &line[cursor_byte_offset..];
+            let start_idx = before_cursor
+                .char_indices()
+                .rfind(|(_, c)| c.is_whitespace())
+                .map(|(idx, c)| idx + c.len_utf8())
+                .unwrap_or(0);
+            let end_rel_idx = after_cursor
+                .char_indices()
+                .find(|(_, c)| c.is_whitespace())
+                .map(|(idx, _)| idx)
+                .unwrap_or(after_cursor.len());
+            let end_idx = cursor_byte_offset + end_rel_idx;
+            if start_idx < end_idx && line[start_idx..].starts_with('@') {
+                let mut new_line = String::with_capacity(line.len() - (end_idx - start_idx));
+                new_line.push_str(&line[..start_idx]);
+                new_line.push_str(&line[end_idx..]);
+                *line = new_line;
+                // Re-populate textarea with modified content.
+                let new_text = lines.join("\n");
+                self.textarea.select_all();
+                self.textarea.cut();
+                let _ = self.textarea.insert_str(new_text);
+            }
+        }
+    }
+
+    /// Similar to `current_at_token` but returns Some("") if cursor is on a bare '@' token (no body yet).
+    fn current_at_token_allow_empty(textarea: &tui_textarea::TextArea) -> Option<String> {
+        let (row, col) = textarea.cursor();
+        let line = textarea.lines().get(row)?.as_str();
+        let cursor_byte_offset = line.chars().take(col).map(|c| c.len_utf8()).sum::<usize>();
+        let before_cursor = &line[..cursor_byte_offset];
+        let after_cursor = &line[cursor_byte_offset..];
+        let start_idx = before_cursor
+            .char_indices()
+            .rfind(|(_, c)| c.is_whitespace())
+            .map(|(idx, c)| idx + c.len_utf8())
+            .unwrap_or(0);
+        let end_rel_idx = after_cursor
+            .char_indices()
+            .find(|(_, c)| c.is_whitespace())
+            .map(|(idx, _)| idx)
+            .unwrap_or(after_cursor.len());
+        let end_idx = cursor_byte_offset + end_rel_idx;
+        if start_idx >= end_idx { return None; }
+        let token = &line[start_idx..end_idx];
+        if token.starts_with('@') {
+            // Return body which may be empty.
+            Some(token[1..].to_string())
+        } else { None }
     }
 
     /// Replace the active `@token` (the one under the cursor) with `path`.
@@ -728,31 +793,36 @@ impl ChatComposer<'_> {
     /// Synchronize `self.file_search_popup` with the current text in the textarea.
     /// Note this is only called when self.active_popup is NOT Command.
     fn sync_file_search_popup(&mut self) {
-        // Determine if there is an @token underneath the cursor.
-        let query = match Self::current_at_token(&self.textarea) {
-            Some(token) => token,
-            None => {
-                self.active_popup = ActivePopup::None;
-                self.dismissed_file_popup_token = None;
-                return;
-            }
+        // Only active during an explicit @file initiated session.
+        if !self.file_search_mode { return; }
+
+        // Determine current query (may be empty if user just selected @file and hasn't typed yet).
+        let query_opt = Self::current_at_token_allow_empty(&self.textarea);
+        let Some(query) = query_opt else {
+            // Token removed – end session.
+            self.active_popup = ActivePopup::None;
+            self.dismissed_file_popup_token = None;
+            self.file_search_mode = false;
+            return;
         };
 
         // If user dismissed popup for this exact query, don't reopen until text changes.
         if self.dismissed_file_popup_token.as_ref() == Some(&query) {
             return;
         }
-
-        self.app_event_tx
-            .send(AppEvent::StartFileSearch(query.clone()));
+        // Only trigger a search when query non-empty. (Empty shows an idle popup.)
+        if !query.is_empty() {
+            self.app_event_tx
+                .send(AppEvent::StartFileSearch(query.clone()));
+        }
 
         match &mut self.active_popup {
             ActivePopup::File(popup) => {
-                popup.set_query(&query);
+                if !query.is_empty() { popup.set_query(&query); }
             }
             _ => {
                 let mut popup = FileSearchPopup::new();
-                popup.set_query(&query);
+                if !query.is_empty() { popup.set_query(&query); }
                 self.active_popup = ActivePopup::File(popup);
             }
         }
@@ -763,18 +833,47 @@ impl ChatComposer<'_> {
 
     // NEW: Synchronize @-command popup.
     fn sync_at_command_popup(&mut self) {
-        // Do not show if slash or file popup active.
+        // Do not show if slash or file popup already active.
         if matches!(self.active_popup, ActivePopup::Slash(_) | ActivePopup::File(_)) { return; }
 
-        let first_line = self.textarea.lines().first().map(|s| s.as_str()).unwrap_or("");
-        let input_starts_with_at = first_line.starts_with('@');
-        match &mut self.active_popup {
-            ActivePopup::At(popup) => {
-                if input_starts_with_at { popup.on_composer_text_change(first_line.to_string()); } else { self.active_popup = ActivePopup::None; }
+        // Determine if cursor is within an @token (even partial like just '@').
+        let (row, col) = self.textarea.cursor();
+        let line = match self.textarea.lines().get(row) { Some(l) => l.as_str(), None => return };
+        // Compute token boundaries similar to current_at_token but allow zero-length body.
+        let cursor_byte = line.chars().take(col).map(|c| c.len_utf8()).sum::<usize>();
+        let before = &line[..cursor_byte];
+        let after = &line[cursor_byte..];
+        let start_idx = before
+            .char_indices()
+            .rfind(|(_, c)| c.is_whitespace())
+            .map(|(idx, c)| idx + c.len_utf8())
+            .unwrap_or(0);
+        let end_rel = after
+            .char_indices()
+            .find(|(_, c)| c.is_whitespace())
+            .map(|(idx, _)| idx)
+            .unwrap_or(after.len());
+        let end_idx = cursor_byte + end_rel;
+        let show = if start_idx < end_idx && line[start_idx..].starts_with('@') {
+            let body = &line[start_idx + 1..end_idx]; // may be empty
+            // Show popup if body is prefix of an at command.
+            built_in_at_commands().iter().any(|(name, _)| name.starts_with(&body.to_ascii_lowercase()))
+        } else { false };
+
+        if show {
+            let body = &line[start_idx + 1..end_idx];
+            let synthetic = format!("@{}", body);
+            match &mut self.active_popup {
+                ActivePopup::At(popup) => popup.on_composer_text_change(synthetic),
+                _ => {
+                    let mut popup: CommandPopup<AtCommand> = CommandPopup::at();
+                    popup.on_composer_text_change(synthetic);
+                    self.active_popup = ActivePopup::At(popup);
+                }
             }
-            _ => {
-                if input_starts_with_at { let mut popup: CommandPopup<AtCommand> = CommandPopup::at(); popup.on_composer_text_change(first_line.to_string()); self.active_popup = ActivePopup::At(popup); }
-            }
+        } else if matches!(self.active_popup, ActivePopup::At(_)) {
+            // Hide if no longer in an at-command context.
+            self.active_popup = ActivePopup::None;
         }
     }
 
@@ -1417,7 +1516,7 @@ mod tests {
         composer.handle_key_event(KeyEvent::new(KeyCode::Char('@'), KeyModifiers::NONE));
         // Press Enter (should dispatch Image since only option)
         composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        // Expect a DispatchCommand(Image)
+        // Expect a DispatchAtCommand(Image) or DispatchAtCommand(File); slash commands use DispatchSlashCommand
         let ev = rx.try_recv().expect("expected an event");
         match ev { AppEvent::DispatchAtCommand(AtCommand::Image) => {}, AppEvent::DispatchAtCommand(AtCommand::File) => {}, other => panic!("unexpected event: {:?}", other) }
     }
