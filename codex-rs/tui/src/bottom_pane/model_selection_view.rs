@@ -81,14 +81,15 @@ impl ModelSelectionView {
             return rows;
         }
 
-        // Searching: include pinned current model first (even if it doesn't match),
-        // then fuzzy-matched models sorted by score.
+        // Searching: only include current model if it matches the query.
         let mut rows: Vec<DisplayRow> = Vec::new();
-        rows.push(DisplayRow::Model {
-            name: self.current_model.clone(),
-            match_indices: fuzzy_indices(&self.current_model, &self.query),
-            is_current: true,
-        });
+        if let Some(indices) = fuzzy_indices(&self.current_model, &self.query) {
+            rows.push(DisplayRow::Model {
+                name: self.current_model.clone(),
+                match_indices: Some(indices),
+                is_current: true,
+            });
+        }
 
         // Build list of matches among others.
         let mut matches: Vec<(String, Vec<usize>, i32)> = Vec::new();
@@ -106,11 +107,14 @@ impl ModelSelectionView {
         });
 
         for (name, indices, _score) in matches {
-            rows.push(DisplayRow::Model {
-                name,
-                match_indices: Some(indices),
-                is_current: false,
-            });
+            // Don't duplicate the current model if it matched above
+            if name != self.current_model {
+                rows.push(DisplayRow::Model {
+                    name,
+                    match_indices: Some(indices),
+                    is_current: false,
+                });
+            }
         }
 
         rows
