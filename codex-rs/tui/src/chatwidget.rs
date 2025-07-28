@@ -504,14 +504,16 @@ impl ChatWidget<'_> {
         let config_path = self.config.codex_home.join("config.toml");
         if let Ok(contents) = std::fs::read_to_string(&config_path) {
             if let Ok(cfg) = toml::from_str::<ConfigToml>(&contents) {
-                if let Some(m) = cfg.model {
-                    options.push(m);
-                }
+                let mut config_models: Vec<String> = Vec::new();
+                if let Some(m) = cfg.model { config_models.push(m); }
                 for (_name, profile) in cfg.profiles.into_iter() {
                     if let Some(m) = profile.model {
-                        options.push(m);
+                        config_models.push(m);
                     }
                 }
+                // Keep it simple and deterministic: alphabetical ordering for config models.
+                config_models.sort();
+                options.extend(config_models);
             }
         }
 

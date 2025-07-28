@@ -21,7 +21,6 @@ use crate::app_event_sender::AppEventSender;
 
 use super::BottomPane;
 use super::BottomPaneView;
-use codex_core::openai_model_info::compare_models_by_preference;
 
 /// Simple dropdown to select a model.
 pub(crate) struct ModelSelectionView {
@@ -54,16 +53,15 @@ impl ModelSelectionView {
     /// sort preference, and search filter.
     fn build_display_rows(&self) -> Vec<DisplayRow> {
         // Determine candidate list excluding the current model (it is always pinned first).
-        let mut others: Vec<&str> = self
+        let others: Vec<&str> = self
             .options
             .iter()
             .map(|s| s.as_str())
             .filter(|m| *m != self.current_model)
             .collect();
 
-        // If not searching, apply preference sort; otherwise, we'll score by fuzzy match.
+        // If not searching, maintain provided ordering; otherwise, we'll score by fuzzy match.
         if self.query.is_empty() {
-            others.sort_by(|a, b| compare_models_by_preference(a, b));
             let mut rows: Vec<DisplayRow> = Vec::new();
             // Pinned current model always first.
             rows.push(DisplayRow::Model {
@@ -99,11 +97,10 @@ impl ModelSelectionView {
                 matches.push((name.to_string(), indices, score));
             }
         }
-        // Sort by score (ascending => better). If equal, fall back to preference then alphabetical.
+        // Sort by score (ascending => better). If equal, fall back to alphabetical and match tightness.
         matches.sort_by(|(a_name, a_idx, a_score), (b_name, b_idx, b_score)| {
             a_score
                 .cmp(b_score)
-                .then_with(|| compare_models_by_preference(a_name, b_name))
                 .then_with(|| a_name.cmp(b_name))
                 .then_with(|| a_idx.len().cmp(&b_idx.len()))
         });
@@ -415,8 +412,7 @@ impl<'a> BottomPaneView<'a> for ModelSelectionView {
                 unique.push(m);
             }
         }
-        // Sort by preference for stable display when query is empty.
-        unique.sort_by(|a, b| compare_models_by_preference(a, b));
+        // Preserve provided ordering without applying preference ranking.
         self.options = unique;
 
         // Clamp selection to available rows.
