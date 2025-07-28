@@ -1,11 +1,3 @@
-#[cfg(target_os = "linux")]
-mod landlock;
-#[cfg(target_os = "linux")]
-mod linux_run_main;
-
-#[cfg(target_os = "linux")]
-pub use linux_run_main::run_main;
-
 use std::future::Future;
 use std::path::PathBuf;
 
@@ -24,7 +16,7 @@ use std::path::PathBuf;
 ///
 /// This function eliminates duplicated code across the various `main.rs`
 /// entry-points.
-pub fn run_with_sandbox<F, Fut>(main_fn: F) -> anyhow::Result<()>
+pub fn arg0_dispatch_or_else<F, Fut>(main_fn: F) -> anyhow::Result<()>
 where
     F: FnOnce(Option<PathBuf>) -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
@@ -40,7 +32,7 @@ where
 
     if exe_name == "codex-linux-sandbox" {
         // Safety: [`run_main`] never returns.
-        crate::run_main();
+        codex_linux_sandbox::run_main();
     }
 
     // This modifies the environment, which is not thread-safe, so do this
@@ -59,11 +51,6 @@ where
 
         main_fn(codex_linux_sandbox_exe).await
     })
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn run_main() -> ! {
-    panic!("codex-linux-sandbox is only supported on Linux");
 }
 
 /// Load env vars from ~/.codex/.env and `$(pwd)/.env`.
