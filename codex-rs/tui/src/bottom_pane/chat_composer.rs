@@ -225,8 +225,26 @@ impl ChatComposer<'_> {
                 ctrl: false,
             } => {
                 if let Some(cmd) = popup.selected_command() {
-                    // Send command to the app layer.
-                    self.app_event_tx.send(AppEvent::DispatchCommand(*cmd));
+                    // Extract arguments after the command from the first line.
+                    let first_line = self
+                        .textarea
+                        .lines()
+                        .first()
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+
+                    let args = if let Some(stripped) = first_line.strip_prefix('/') {
+                        let token = stripped.trim_start();
+                        let cmd_token = token.split_whitespace().next().unwrap_or("");
+                        let rest = &token[cmd_token.len()..];
+                        rest.trim_start().to_string()
+                    } else {
+                        String::new()
+                    };
+
+                    // Send command + args to the app layer.
+                    self.app_event_tx
+                        .send(AppEvent::DispatchCommandWithArgs(*cmd, args));
 
                     // Clear textarea so no residual text remains.
                     self.textarea.select_all();

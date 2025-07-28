@@ -69,3 +69,47 @@ pub(crate) fn get_model_info(name: &str) -> Option<ModelInfo> {
         _ => None,
     }
 }
+
+/// Return a curated list of commonly-used OpenAI model names for selection UIs.
+pub fn get_all_model_names() -> Vec<&'static str> {
+    vec![
+        // codex models
+        "codex-mini-latest",
+        // reasoning models
+        "o3",
+        "o4-mini",
+        // GPT-4.1 family
+        "gpt-4.1",
+        // GPT-4o family (canonical plus a few snapshots)
+        "gpt-4o",
+    ]
+}
+
+/// Sort order by preference groups, then alphabetically.
+pub fn preference_rank(name: &str) -> u8 {
+    // Lower is more preferred.
+    if name == "codex-mini-latest" {
+        return 0;
+    }
+    if name.starts_with("o4-mini") {
+        return 1;
+    }
+    if name == "o3" || name.starts_with("o3") {
+        return 2;
+    }
+    if name == "gpt-4.1" || name.starts_with("gpt-4.1") {
+        return 3;
+    }
+    // Handle both spellings just in case.
+    if name == "gpt4-o" || name.starts_with("gpt-4o") {
+        return 4;
+    }
+    5
+}
+
+/// Compare two model names by preference ranking.
+pub fn compare_models_by_preference(a: &str, b: &str) -> std::cmp::Ordering {
+    preference_rank(a)
+        .cmp(&preference_rank(b))
+        .then_with(|| a.cmp(b))
+}

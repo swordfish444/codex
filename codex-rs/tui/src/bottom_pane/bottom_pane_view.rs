@@ -43,4 +43,10 @@ pub(crate) trait BottomPaneView<'a> {
     ) -> Option<ApprovalRequest> {
         Some(request)
     }
+
+    /// Optional hook: if this view is a model selector, update the options.
+    /// Returns true if options were applied and a redraw is desired.
+    fn set_model_options(&mut self, _current_model: &str, _options: Vec<String>) -> bool {
+        false
+    }
 }

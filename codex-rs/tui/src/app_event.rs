@@ -38,6 +38,10 @@ pub(crate) enum AppEvent {
     /// layer so it can be handled centrally.
     DispatchCommand(SlashCommand),
 
+    /// Dispatch a recognized slash command along with the raw argument string
+    /// following the command on the first line.
+    DispatchCommandWithArgs(SlashCommand, String),
+
     /// Kick off an asynchronous file search for the given query (text after
     /// the `@`). Previous searches may be cancelled by the app layer so there
     /// is at most one in-flight search.
@@ -52,4 +56,7 @@ pub(crate) enum AppEvent {
     },
 
     InsertHistory(Vec<Line<'static>>),
+
+    /// User selected a model from the model-selection dropdown.
+    SelectModel(String),
 }

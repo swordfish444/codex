@@ -111,20 +111,7 @@ impl Codex {
 
         let user_instructions = get_user_instructions(&config).await;
 
-        let configure_session = Op::ConfigureSession {
-            provider: config.model_provider.clone(),
-            model: config.model.clone(),
-            model_reasoning_effort: config.model_reasoning_effort,
-            model_reasoning_summary: config.model_reasoning_summary,
-            user_instructions,
-            base_instructions: config.base_instructions.clone(),
-            approval_policy: config.approval_policy,
-            sandbox_policy: config.sandbox_policy.clone(),
-            disable_response_storage: config.disable_response_storage,
-            notify: config.notify.clone(),
-            cwd: config.cwd.clone(),
-            resume_path: resume_path.clone(),
-        };
+        let configure_session = config.to_configure_session_op(Some(config.model.clone()), user_instructions);
 
         let config = Arc::new(config);
 
@@ -633,8 +620,15 @@ async fn submission_loop(
                     }
                 };
 
+                // Create a session-specific Config that only overrides the model.
+                let client_config = {
+                    let mut c = (*config).clone();
+                    c.model = model.clone();
+                    Arc::new(c)
+                };
+
                 let client = ModelClient::new(
-                    config.clone(),
+                    client_config,
                     provider.clone(),
                     model_reasoning_effort,
                     model_reasoning_summary,

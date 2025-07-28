@@ -4,6 +4,7 @@ use std::sync::Arc;
 use codex_core::codex_wrapper::CodexConversation;
 use codex_core::codex_wrapper::init_codex;
 use codex_core::config::Config;
+use codex_core::config::ConfigToml;
 use codex_core::protocol::AgentMessageDeltaEvent;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::AgentReasoningDeltaEvent;
@@ -485,6 +486,60 @@ impl ChatWidget<'_> {
     pub(crate) fn token_usage(&self) -> &TokenUsage {
         &self.token_usage
     }
+
+    /// Open the model selection view in the bottom pane.
+    pub(crate) fn show_model_selector(&mut self) {
+        let current = self.config.model.clone();
+
+        // Start with curated OpenAI models.
+        let mut options = codex_core::openai_model_info::get_all_model_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
+
+        // Always include the currently configured model (covers custom values).
+        options.push(current.clone());
+
+        // Append any models found in config.toml profiles and top-level model.
+        let config_path = self.config.codex_home.join("config.toml");
+        if let Ok(contents) = std::fs::read_to_string(&config_path) {
+            if let Ok(cfg) = toml::from_str::<ConfigToml>(&contents) {
+                if let Some(m) = cfg.model {
+                    options.push(m);
+                }
+                for (_name, profile) in cfg.profiles.into_iter() {
+                    if let Some(m) = profile.model {
+                        options.push(m);
+                    }
+                }
+            }
+        }
+
+        self.bottom_pane.show_model_selector(&current, options);
+    }
+
+    /// Update the current model and reconfigure the running Codex session.
+    pub(crate) fn update_model_and_reconfigure(&mut self, model: String) {
+        // Update local config so UI reflects the new model.
+        let changed = self.config.model != model;
+        self.config.model = model.clone();
+
+        // Emit a lightweight event in the conversation log so the change is visible.
+        if changed {
+            self.conversation_history
+                .add_background_event(format!("Set model to {}.", model));
+            self.emit_last_history_entry();
+        }
+
+        // Reconfigure the agent session with the same provider and policies.
+        // Build the op from the config to avoid drift when fields are added.
+        let op = self
+            .config
+            .to_configure_session_op(None, self.config.user_instructions.clone());
+        self.submit_op(op);
+        self.request_redraw();
+    }
+
 }
 
 impl WidgetRef for &ChatWidget<'_> {

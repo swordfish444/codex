@@ -14,6 +14,7 @@ pub enum SlashCommand {
     // more frequently used commands should be listed first.
     New,
     Diff,
+    Model,
     Quit,
 }
 
@@ -23,6 +24,7 @@ impl SlashCommand {
         match self {
             SlashCommand::New => "Start a new chat.",
             SlashCommand::Quit => "Exit the application.",
+            SlashCommand::Model => "Select the model to use.",
             SlashCommand::Diff => {
                 "Show git diff of the working directory (including untracked files)"
             }
