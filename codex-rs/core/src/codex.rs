@@ -29,6 +29,7 @@ use tracing::trace;
 use tracing::warn;
 use uuid::Uuid;
 
+use crate::apply_patch::InternalApplyPatchInvocation;
 use crate::apply_patch::convert_apply_patch_to_protocol;
 use crate::apply_patch::get_writable_roots;
 use crate::apply_patch::{self};
@@ -1411,82 +1412,118 @@ async fn handle_container_exec_with_params(
     call_id: String,
 ) -> ResponseInputItem {
     // check if this was a patch, and apply it if so
-    match maybe_parse_apply_patch_verified(&params.command, &params.cwd) {
-        MaybeApplyPatchVerified::Body(changes) => {
-            return apply_patch::apply_patch(sess, sub_id, call_id, changes).await;
-        }
-        MaybeApplyPatchVerified::CorrectnessError(parse_error) => {
-            // It looks like an invocation of `apply_patch`, but we
-            // could not resolve it into a patch that would apply
-            // cleanly. Return to model for resample.
-            return ResponseInputItem::FunctionCallOutput {
-                call_id,
-                output: FunctionCallOutputPayload {
-                    content: format!("error: {parse_error:#}"),
-                    success: None,
-                },
-            };
-        }
-        MaybeApplyPatchVerified::ShellParseError(error) => {
-            trace!("Failed to parse shell command, {error:?}");
-        }
-        MaybeApplyPatchVerified::NotApplyPatch => (),
-    }
-
-    // safety checks
-    let safety = {
-        let state = sess.state.lock().unwrap();
-        assess_command_safety(
-            &params.command,
-            sess.approval_policy,
-            &sess.sandbox_policy,
-            &state.approved_commands,
-        )
-    };
-    let sandbox_type = match safety {
-        SafetyCheck::AutoApprove { sandbox_type } => sandbox_type,
-        SafetyCheck::AskUser => {
-            let rx_approve = sess
-                .request_command_approval(
-                    sub_id.clone(),
-                    call_id.clone(),
-                    params.command.clone(),
-                    params.cwd.clone(),
-                    None,
-                )
-                .await;
-            match rx_approve.await.unwrap_or_default() {
-                ReviewDecision::Approved => (),
-                ReviewDecision::ApprovedForSession => {
-                    sess.add_approved_command(params.command.clone());
+    let apply_patch_action_for_exec =
+        match maybe_parse_apply_patch_verified(&params.command, &params.cwd) {
+            MaybeApplyPatchVerified::Body(changes) => {
+                match apply_patch::apply_patch(sess, &sub_id, &call_id, changes).await {
+                    InternalApplyPatchInvocation::Output(item) => return item,
+                    InternalApplyPatchInvocation::DelegateToExec(action) => Some(action),
                 }
-                ReviewDecision::Denied | ReviewDecision::Abort => {
+            }
+            MaybeApplyPatchVerified::CorrectnessError(parse_error) => {
+                // It looks like an invocation of `apply_patch`, but we
+                // could not resolve it into a patch that would apply
+                // cleanly. Return to model for resample.
+                return ResponseInputItem::FunctionCallOutput {
+                    call_id,
+                    output: FunctionCallOutputPayload {
+                        content: format!("error: {parse_error:#}"),
+                        success: None,
+                    },
+                };
+            }
+            MaybeApplyPatchVerified::ShellParseError(error) => {
+                trace!("Failed to parse shell command, {error:?}");
+                None
+            }
+            MaybeApplyPatchVerified::NotApplyPatch => None,
+        };
+
+    let (sandbox_type, params) = match apply_patch_action_for_exec {
+        Some(ApplyPatchAction { patch, cwd, .. }) => {
+            // If we are applying a patch, we do not run the command in a sandbox.
+            // Instead, we run it directly in the host environment.
+            (
+                // TODO(mbolin): Need to get this from assess_command_safety()?
+                SandboxType::None,
+                ExecParams {
+                    // TODO(mbolin): Do not blow up if current_exe is not UTF-8?
+                    #[allow(clippy::unwrap_used)]
+                    command: vec![
+                        std::env::current_exe()
+                            .ok()
+                            .unwrap()
+                            .to_string_lossy()
+                            .to_string(),
+                        "--codex-run-as-apply-patch".to_string(),
+                        patch,
+                    ],
+                    cwd,
+                    timeout_ms: params.timeout_ms,
+                    env: HashMap::new(),
+                },
+            )
+        }
+        None => {
+            // safety checks
+            let safety = {
+                let state = sess.state.lock().unwrap();
+                assess_command_safety(
+                    &params.command,
+                    sess.approval_policy,
+                    &sess.sandbox_policy,
+                    &state.approved_commands,
+                )
+            };
+            let sandbox_type = match safety {
+                SafetyCheck::AutoApprove { sandbox_type } => sandbox_type,
+                SafetyCheck::AskUser => {
+                    let rx_approve = sess
+                        .request_command_approval(
+                            sub_id.clone(),
+                            call_id.clone(),
+                            params.command.clone(),
+                            params.cwd.clone(),
+                            None,
+                        )
+                        .await;
+                    match rx_approve.await.unwrap_or_default() {
+                        ReviewDecision::Approved => (),
+                        ReviewDecision::ApprovedForSession => {
+                            sess.add_approved_command(params.command.clone());
+                        }
+                        ReviewDecision::Denied | ReviewDecision::Abort => {
+                            return ResponseInputItem::FunctionCallOutput {
+                                call_id,
+                                output: FunctionCallOutputPayload {
+                                    content: "exec command rejected by user".to_string(),
+                                    success: None,
+                                },
+                            };
+                        }
+                    }
+                    // No sandboxing is applied because the user has given
+                    // explicit approval. Often, we end up in this case because
+                    // the command cannot be run in a sandbox, such as
+                    // installing a new dependency that requires network access.
+                    SandboxType::None
+                }
+                SafetyCheck::Reject { reason } => {
                     return ResponseInputItem::FunctionCallOutput {
                         call_id,
                         output: FunctionCallOutputPayload {
-                            content: "exec command rejected by user".to_string(),
+                            content: format!("exec command rejected: {reason}"),
                             success: None,
                         },
                     };
                 }
-            }
-            // No sandboxing is applied because the user has given
-            // explicit approval. Often, we end up in this case because
-            // the command cannot be run in a sandbox, such as
-            // installing a new dependency that requires network access.
-            SandboxType::None
-        }
-        SafetyCheck::Reject { reason } => {
-            return ResponseInputItem::FunctionCallOutput {
-                call_id,
-                output: FunctionCallOutputPayload {
-                    content: format!("exec command rejected: {reason}"),
-                    success: None,
-                },
             };
+
+            (sandbox_type, params)
         }
     };
 
+    // This will look funny for apply_patch?
     sess.notify_exec_command_begin(&sub_id, &call_id, &params)
         .await;
 
