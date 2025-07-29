@@ -253,11 +253,11 @@ Key flags: `--model/-m`, `--ask-for-approval/-a`.
 
 ## Memory & project docs
 
-You can give Codex extra instructions and guidance using `AGENTS.md` files. Codex looks for `AGENTS.md` files in the following places, and merges them top-down:
+You can give Codex extra instructions and guidance using `AGENTS.md` files. Codex looks for `AGENTS.md` files in the following order and uses the first one:
 
-1. `~/.codex/AGENTS.md` - personal global guidance
-2. `AGENTS.md` at repo root - shared project notes
-3. `AGENTS.md` in the current working directory - sub-folder/feature specifics
+1. `AGENTS.md` in the current working directory
+2. `AGENTS.md` at repo root
+
 
 ---
 
