@@ -27,6 +27,7 @@ use std::time::Instant;
 
 use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
+use crate::event_processor::ExperimentalInstructionsOrigin;
 use crate::event_processor::create_config_summary_entries;
 use crate::event_processor::handle_last_message;
 
@@ -59,6 +60,7 @@ pub(crate) struct EventProcessorWithHumanOutput {
     answer_started: bool,
     reasoning_started: bool,
     last_message_path: Option<PathBuf>,
+    experimental_origin: Option<ExperimentalInstructionsOrigin>,
 }
 
 impl EventProcessorWithHumanOutput {
@@ -66,6 +68,7 @@ impl EventProcessorWithHumanOutput {
         with_ansi: bool,
         config: &Config,
         last_message_path: Option<PathBuf>,
+        experimental_origin: Option<ExperimentalInstructionsOrigin>,
     ) -> Self {
         let call_id_to_command = HashMap::new();
         let call_id_to_patch = HashMap::new();
@@ -87,6 +90,7 @@ impl EventProcessorWithHumanOutput {
                 answer_started: false,
                 reasoning_started: false,
                 last_message_path,
+                experimental_origin,
             }
         } else {
             Self {
@@ -104,6 +108,7 @@ impl EventProcessorWithHumanOutput {
                 answer_started: false,
                 reasoning_started: false,
                 last_message_path,
+                experimental_origin,
             }
         }
     }
@@ -150,7 +155,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             VERSION
         );
 
-        let entries = create_config_summary_entries(config);
+        let entries = create_config_summary_entries(config, self.experimental_origin.as_ref());
 
         for (key, value) in entries {
             println!("{} {}", format!("{key}:").style(self.bold), value);

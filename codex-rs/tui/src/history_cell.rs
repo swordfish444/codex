@@ -33,6 +33,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 use tracing::error;
+#[cfg(test)]
+use uuid::Uuid;
 
 pub(crate) struct CommandOutput {
     pub(crate) exit_code: i32,
@@ -151,6 +153,7 @@ impl HistoryCell {
         config: &Config,
         event: SessionConfiguredEvent,
         is_first_event: bool,
+        prompt_label: Option<&str>,
     ) -> Self {
         let SessionConfiguredEvent {
             model,
@@ -183,6 +186,9 @@ impl HistoryCell {
                 ("approval", config.approval_policy.to_string()),
                 ("sandbox", summarize_sandbox_policy(&config.sandbox_policy)),
             ];
+            if let Some(label) = prompt_label {
+                entries.push(("prompt", label.to_string()));
+            }
             if config.model_provider.wire_api == WireApi::Responses
                 && model_supports_reasoning_summaries(config)
             {
@@ -578,6 +584,87 @@ impl HistoryCell {
         HistoryCell::PendingPatch {
             view: TextBlock::new(lines),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_core::config::Config;
+    use codex_core::config::ConfigOverrides;
+    use codex_core::config::ConfigToml;
+
+    use tempfile::TempDir;
+
+    fn minimal_config() -> Config {
+        let cwd = match TempDir::new() {
+            Ok(t) => t,
+            Err(e) => panic!("tempdir error: {e}"),
+        };
+        let codex_home = match TempDir::new() {
+            Ok(t) => t,
+            Err(e) => panic!("tempdir error: {e}"),
+        };
+        let cfg = ConfigToml {
+            ..Default::default()
+        };
+        let overrides = ConfigOverrides {
+            cwd: Some(cwd.path().to_path_buf()),
+            ..Default::default()
+        };
+        match Config::load_from_base_config_with_overrides(
+            cfg,
+            overrides,
+            codex_home.path().to_path_buf(),
+        ) {
+            Ok(c) => c,
+            Err(e) => panic!("config error: {e}"),
+        }
+    }
+
+    fn lines_to_strings(lines: &[Line<'static>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| line.spans.iter().map(|s| s.content.to_string()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn welcome_includes_prompt_label_experimental() {
+        let cfg = minimal_config();
+        let event = SessionConfiguredEvent {
+            session_id: Uuid::nil(),
+            model: cfg.model.clone(),
+            history_log_id: 0,
+            history_entry_count: 0,
+        };
+        let cell = HistoryCell::new_session_info(&cfg, event, true, Some("experimental"));
+        let lines = cell.plain_lines();
+        let strings = lines_to_strings(&lines);
+        assert!(
+            strings.iter().any(|s| s.contains("prompt: experimental")),
+            "welcome should include prompt label; got: {strings:?}"
+        );
+    }
+
+    #[test]
+    fn welcome_includes_prompt_label_filename() {
+        let cfg = minimal_config();
+        let event = SessionConfiguredEvent {
+            session_id: Uuid::nil(),
+            model: cfg.model.clone(),
+            history_log_id: 0,
+            history_entry_count: 0,
+        };
+        let cell = HistoryCell::new_session_info(&cfg, event, true, Some("instructions.md"));
+        let lines = cell.plain_lines();
+        let strings = lines_to_strings(&lines);
+        assert!(
+            strings
+                .iter()
+                .any(|s| s.contains("prompt: instructions.md")),
+            "welcome should include filename prompt label; got: {strings:?}"
+        );
     }
 }
 

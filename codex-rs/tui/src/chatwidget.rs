@@ -55,6 +55,7 @@ pub(crate) struct ChatWidget<'a> {
     // We wait for the final AgentMessage event and then emit the full text
     // at once into scrollback so the history contains a single message.
     answer_buffer: String,
+    prompt_label: Option<String>,
 }
 
 struct UserMessage {
@@ -85,6 +86,7 @@ impl ChatWidget<'_> {
         app_event_tx: AppEventSender,
         initial_prompt: Option<String>,
         initial_images: Vec<PathBuf>,
+        prompt_label: Option<String>,
     ) -> Self {
         let (codex_op_tx, mut codex_op_rx) = unbounded_channel::<Op>();
 
@@ -140,6 +142,7 @@ impl ChatWidget<'_> {
             token_usage: TokenUsage::default(),
             reasoning_buffer: String::new(),
             answer_buffer: String::new(),
+            prompt_label,
         }
     }
 
@@ -209,8 +212,11 @@ impl ChatWidget<'_> {
         match msg {
             EventMsg::SessionConfigured(event) => {
                 // Record session information at the top of the conversation.
-                self.conversation_history
-                    .add_session_info(&self.config, event.clone());
+                self.conversation_history.add_session_info(
+                    &self.config,
+                    event.clone(),
+                    self.prompt_label.as_deref(),
+                );
                 // Immediately surface the session banner / settings summary in
                 // scrollback so the user can review configuration (model,
                 // sandbox, approvals, etc.) before interacting.

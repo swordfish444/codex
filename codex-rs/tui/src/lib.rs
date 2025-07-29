@@ -14,6 +14,7 @@ use codex_core::util::is_inside_git_repo;
 use codex_login::try_read_openai_api_key;
 use log_layer::TuiLogLayer;
 use std::fs::OpenOptions;
+use std::path::Path;
 use std::path::PathBuf;
 use tracing_appender::non_blocking;
 use tracing_subscriber::EnvFilter;
@@ -68,8 +69,38 @@ pub fn run_main(
         )
     };
 
-    let config = {
+    let (config, experimental_prompt_label) = {
         // Load configuration and support CLI overrides.
+        // If the experimental instructions flag points at a file, read its
+        // contents; otherwise use the value verbatim. Avoid printing to stdout
+        // or stderr in this library crate – fallback to the raw string on
+        // errors.
+        let base_instructions = cli
+            .experimental_instructions
+            .as_deref()
+            .and_then(|s| maybe_read_file(s).unwrap_or(Some(s.to_string())));
+
+        // Derive a label shown in the welcome banner describing the origin of
+        // the experimental instructions: filename for file paths and
+        // "experimental" for literals.
+        let experimental_prompt_label = cli.experimental_instructions.as_deref().map(|s| {
+            let p = Path::new(s);
+            if p.is_file() {
+                p.file_name()
+                    .map(|os| os.to_string_lossy().to_string())
+                    .unwrap_or_else(|| s.to_string())
+            } else {
+                "experimental".to_string()
+            }
+        });
+
+        // Do not show a label if the file was empty (base_instructions is None).
+        let experimental_prompt_label = if base_instructions.is_some() {
+            experimental_prompt_label
+        } else {
+            None
+        };
+
         let overrides = ConfigOverrides {
             model: cli.model.clone(),
             approval_policy,
@@ -78,7 +109,7 @@ pub fn run_main(
             model_provider: None,
             config_profile: cli.config_profile.clone(),
             codex_linux_sandbox_exe,
-            base_instructions: None,
+            base_instructions,
         };
         // Parse `-c` overrides from the CLI.
         let cli_kv_overrides = match cli.config_overrides.parse_overrides() {
@@ -92,7 +123,7 @@ pub fn run_main(
 
         #[allow(clippy::print_stderr)]
         match Config::load_with_cli_overrides(cli_kv_overrides, overrides) {
-            Ok(config) => config,
+            Ok(config) => (config, experimental_prompt_label),
             Err(err) => {
                 eprintln!("Error loading configuration: {err}");
                 std::process::exit(1);
@@ -150,8 +181,28 @@ pub fn run_main(
     // `--allow-no-git-exec` flag.
     let show_git_warning = !cli.skip_git_repo_check && !is_inside_git_repo(&config);
 
-    run_ratatui_app(cli, config, show_login_screen, show_git_warning, log_rx)
-        .map_err(|err| std::io::Error::other(err.to_string()))
+    run_ratatui_app(
+        cli,
+        config,
+        show_login_screen,
+        show_git_warning,
+        experimental_prompt_label,
+        log_rx,
+    )
+    .map_err(|err| std::io::Error::other(err.to_string()))
+}
+
+// If `val` is a path to a readable file, return its trimmed contents. If the
+// file is empty after trimming, return None. Otherwise, return Some(val).
+fn maybe_read_file(val: &str) -> std::io::Result<Option<String>> {
+    let p = Path::new(val);
+    if p.is_file() {
+        let s = std::fs::read_to_string(p)?;
+        let s = s.trim().to_string();
+        if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
+    } else {
+        Ok(Some(val.to_string()))
+    }
 }
 
 fn run_ratatui_app(
@@ -159,6 +210,7 @@ fn run_ratatui_app(
     config: Config,
     show_login_screen: bool,
     show_git_warning: bool,
+    experimental_prompt_label: Option<String>,
     mut log_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
 ) -> color_eyre::Result<codex_core::protocol::TokenUsage> {
     color_eyre::install()?;
@@ -178,6 +230,7 @@ fn run_ratatui_app(
         show_login_screen,
         show_git_warning,
         images,
+        experimental_prompt_label,
     );
 
     // Bridge log receiver into the AppEvent channel so latest log lines update the UI.
@@ -243,4 +296,57 @@ fn is_in_need_of_openai_api_key(config: &Config) -> bool {
         .map(|s| s == OPENAI_API_KEY_ENV_VAR)
         .unwrap_or(false);
     is_using_openai_key && get_openai_api_key().is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::maybe_read_file;
+    use std::fs;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn temp_path() -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("codex_tui_test_{}.txt", Uuid::new_v4()));
+        p
+    }
+
+    #[test]
+    fn maybe_read_file_returns_literal_for_non_path() {
+        let res = match maybe_read_file("Base instructions as a string") {
+            Ok(v) => v,
+            Err(e) => panic!("error: {e}"),
+        };
+        assert_eq!(res, Some("Base instructions as a string".to_string()));
+    }
+
+    #[test]
+    fn maybe_read_file_reads_and_trims_file_contents() {
+        let p = temp_path();
+        if let Err(e) = fs::write(&p, "  file text  \n") {
+            panic!("write temp file: {e}");
+        }
+        let p_s = p.to_string_lossy().to_string();
+        let res = match maybe_read_file(&p_s) {
+            Ok(v) => v,
+            Err(e) => panic!("error: {e}"),
+        };
+        assert_eq!(res, Some("file text".to_string()));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn maybe_read_file_empty_file_returns_none() {
+        let p = temp_path();
+        if let Err(e) = fs::write(&p, "  \n\t") {
+            panic!("write temp file: {e}");
+        }
+        let p_s = p.to_string_lossy().to_string();
+        let res = match maybe_read_file(&p_s) {
+            Ok(v) => v,
+            Err(e) => panic!("error: {e}"),
+        };
+        assert_eq!(res, None);
+        let _ = std::fs::remove_file(&p);
+    }
 }

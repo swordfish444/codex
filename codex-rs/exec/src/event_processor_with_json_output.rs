@@ -9,22 +9,30 @@ use serde_json::json;
 
 use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
+use crate::event_processor::ExperimentalInstructionsOrigin;
 use crate::event_processor::create_config_summary_entries;
 use crate::event_processor::handle_last_message;
 
 pub(crate) struct EventProcessorWithJsonOutput {
     last_message_path: Option<PathBuf>,
+    experimental_origin: Option<ExperimentalInstructionsOrigin>,
 }
 
 impl EventProcessorWithJsonOutput {
-    pub fn new(last_message_path: Option<PathBuf>) -> Self {
-        Self { last_message_path }
+    pub fn new(
+        last_message_path: Option<PathBuf>,
+        experimental_origin: Option<ExperimentalInstructionsOrigin>,
+    ) -> Self {
+        Self {
+            last_message_path,
+            experimental_origin,
+        }
     }
 }
 
 impl EventProcessor for EventProcessorWithJsonOutput {
     fn print_config_summary(&mut self, config: &Config, prompt: &str) {
-        let entries = create_config_summary_entries(config)
+        let entries = create_config_summary_entries(config, self.experimental_origin.as_ref())
             .into_iter()
             .map(|(key, value)| (key.to_string(), value))
             .collect::<HashMap<String, String>>();

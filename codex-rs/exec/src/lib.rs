@@ -5,9 +5,11 @@ mod event_processor_with_json_output;
 
 use std::io::IsTerminal;
 use std::io::Read;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::event_processor::ExperimentalInstructionsOrigin;
 pub use cli::Cli;
 use codex_core::codex_wrapper::CodexConversation;
 use codex_core::codex_wrapper::{self};
@@ -45,8 +47,37 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         json: json_mode,
         sandbox_mode: sandbox_mode_cli_arg,
         prompt,
+        experimental_instructions,
         config_overrides,
     } = cli;
+
+    // Determine how to describe experimental instructions in the summary and
+    // prepare the effective base instructions. If the flag points at a file,
+    // read its contents; otherwise use the value verbatim.
+    let mut experimental_origin = match experimental_instructions.as_deref() {
+        Some(val) => {
+            let p = std::path::Path::new(val);
+            if p.is_file() {
+                Some(ExperimentalInstructionsOrigin::File(p.to_path_buf()))
+            } else {
+                Some(ExperimentalInstructionsOrigin::Literal)
+            }
+        }
+        None => None,
+    };
+
+    let experimental_instructions = match experimental_instructions {
+        Some(val) => match maybe_read_file(&val) {
+            Ok(Some(contents)) => Some(contents),
+            Ok(None) => None,
+            Err(e) => {
+                eprintln!("Failed to read --experimental-instructions file: {e}");
+                std::process::exit(1);
+            }
+        },
+        None => None,
+    };
+    let has_experimental = experimental_instructions.is_some();
 
     // Determine the prompt based on CLI arg and/or stdin.
     let prompt = match prompt {
@@ -111,7 +142,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         cwd: cwd.map(|p| p.canonicalize().unwrap_or(p)),
         model_provider: None,
         codex_linux_sandbox_exe,
-        base_instructions: None,
+        base_instructions: experimental_instructions,
     };
     // Parse `-c` overrides.
     let cli_kv_overrides = match config_overrides.parse_overrides() {
@@ -123,13 +154,21 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     };
 
     let config = Config::load_with_cli_overrides(cli_kv_overrides, overrides)?;
+    if !has_experimental {
+        experimental_origin = None;
+    }
+
     let mut event_processor: Box<dyn EventProcessor> = if json_mode {
-        Box::new(EventProcessorWithJsonOutput::new(last_message_file.clone()))
+        Box::new(EventProcessorWithJsonOutput::new(
+            last_message_file.clone(),
+            experimental_origin.clone(),
+        ))
     } else {
         Box::new(EventProcessorWithHumanOutput::create_with_ansi(
             stdout_with_ansi,
             &config,
             last_message_file.clone(),
+            experimental_origin,
         ))
     };
 
@@ -244,4 +283,67 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     }
 
     Ok(())
+}
+
+// If `val` is a path to a readable file, return its trimmed contents. If the
+// file is empty after trimming, return Ok(None). Otherwise, return Ok(Some(val)).
+fn maybe_read_file(val: &str) -> std::io::Result<Option<String>> {
+    let p = Path::new(val);
+    if p.is_file() {
+        let s = std::fs::read_to_string(p)?;
+        let s = s.trim().to_string();
+        if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
+    } else {
+        Ok(Some(val.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::maybe_read_file;
+    use std::fs;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn maybe_read_file_returns_literal_for_non_path() {
+        let res = match maybe_read_file("You are a helpful assistant.") {
+            Ok(v) => v,
+            Err(e) => panic!("error: {e}"),
+        };
+        assert_eq!(res, Some("You are a helpful assistant.".to_string()));
+    }
+
+    #[test]
+    fn maybe_read_file_reads_and_trims_file_contents() {
+        let tf = match NamedTempFile::new() {
+            Ok(t) => t,
+            Err(e) => panic!("tempfile: {e}"),
+        };
+        if let Err(e) = fs::write(tf.path(), "  Hello world\n") {
+            panic!("write temp file: {e}");
+        }
+        let path_s = tf.path().to_string_lossy().to_string();
+        let res = match maybe_read_file(&path_s) {
+            Ok(v) => v,
+            Err(e) => panic!("should read file successfully: {e}"),
+        };
+        assert_eq!(res, Some("Hello world".to_string()));
+    }
+
+    #[test]
+    fn maybe_read_file_empty_file_returns_none() {
+        let tf = match NamedTempFile::new() {
+            Ok(t) => t,
+            Err(e) => panic!("tempfile: {e}"),
+        };
+        if let Err(e) = fs::write(tf.path(), " \n\t ") {
+            panic!("write temp file: {e}");
+        }
+        let path_s = tf.path().to_string_lossy().to_string();
+        let res = match maybe_read_file(&path_s) {
+            Ok(v) => v,
+            Err(e) => panic!("should read file successfully: {e}"),
+        };
+        assert_eq!(res, None);
+    }
 }

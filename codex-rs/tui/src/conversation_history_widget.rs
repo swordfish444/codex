@@ -99,7 +99,12 @@ impl ConversationHistoryWidget {
 
     /// Note `model` could differ from `config.model` if the agent decided to
     /// use a different model than the one requested by the user.
-    pub fn add_session_info(&mut self, config: &Config, event: SessionConfiguredEvent) {
+    pub fn add_session_info(
+        &mut self,
+        config: &Config,
+        event: SessionConfiguredEvent,
+        prompt_label: Option<&str>,
+    ) {
         // In practice, SessionConfiguredEvent should always be the first entry
         // in the history, but it is possible that an error could be sent
         // before the session info.
@@ -111,6 +116,7 @@ impl ConversationHistoryWidget {
             config,
             event,
             !has_welcome_message,
+            prompt_label,
         ));
     }
 

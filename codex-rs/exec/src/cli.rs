@@ -63,6 +63,40 @@ pub struct Cli {
     /// if `-` is used), instructions are read from stdin.
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
+
+    /// Override the built-in system prompt (base instructions).
+    ///
+    /// If the value looks like a path to an existing file, the contents of the
+    /// file are used. Otherwise, the value itself is used verbatim as the
+    /// instructions string.
+    #[arg(long = "experimental-instructions")]
+    pub experimental_instructions: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cli;
+    use clap::CommandFactory;
+
+    #[test]
+    fn help_includes_file_behavior_for_experimental_instructions() {
+        let mut cmd = Cli::command();
+        let mut buf: Vec<u8> = Vec::new();
+        assert!(cmd.write_long_help(&mut buf).is_ok(), "help should render");
+        let help = match String::from_utf8(buf) {
+            Ok(s) => s,
+            Err(e) => panic!("invalid utf8: {e}"),
+        };
+        assert!(help.contains("Override the built-in system prompt (base instructions)."));
+        assert!(help.contains(
+            "If the value looks like a path to an existing file, the contents of the file are used."
+        ));
+        assert!(
+            help.contains(
+                "Otherwise, the value itself is used verbatim as the instructions string."
+            )
+        );
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
