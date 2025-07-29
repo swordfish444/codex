@@ -74,8 +74,10 @@ mod fake_compact_tests {
         };
         let home = std::env::temp_dir().join("codex_fake_model_tests");
         let _ = std::fs::create_dir_all(&home);
-        Config::load_from_base_config_with_overrides(cfg, overrides, home)
-            .expect("failed to build test config")
+        match Config::load_from_base_config_with_overrides(cfg, overrides, home) {
+            Ok(cfg) => cfg,
+            Err(e) => panic!("failed to build test config: {e}"),
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -95,7 +97,10 @@ mod fake_compact_tests {
         widget.request_compact();
 
         // Wait for the CompactSummaryReady event.
-        let summary = wait_for_summary(rx).expect("no summary event");
+        let summary = match wait_for_summary(rx) {
+            Some(s) => s,
+            None => panic!("no summary event"),
+        };
         assert!(summary.contains("FAKE SUMMARY"));
         assert!(summary.contains("hello"));
     }
@@ -103,10 +108,9 @@ mod fake_compact_tests {
     fn wait_for_summary(rx: Receiver<AppEvent>) -> Option<String> {
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         while std::time::Instant::now() < deadline {
-            if let Ok(ev) = rx.recv_timeout(Duration::from_millis(50)) {
-                if let AppEvent::CompactSummaryReady(s) = ev {
-                    return Some(s);
-                }
+            if let Ok(AppEvent::CompactSummaryReady(s)) = rx.recv_timeout(Duration::from_millis(50))
+            {
+                return Some(s);
             }
         }
         None
@@ -232,7 +236,6 @@ impl ChatWidget<'_> {
         // Show status indicator while the background task runs.
         self.bottom_pane.set_task_running(true);
 
-        let config = self.config.clone();
         let app_event_tx = self.app_event_tx.clone();
 
         #[cfg(feature = "fake-compact-model")]
@@ -248,6 +251,7 @@ impl ChatWidget<'_> {
 
         #[cfg(not(feature = "fake-compact-model"))]
         {
+            let config = self.config.clone();
             let provider = config.model_provider.clone();
             let effort = config.model_reasoning_effort;
             let summary_pref = config.model_reasoning_summary;
@@ -264,10 +268,12 @@ impl ChatWidget<'_> {
 
                 const SYSTEM_PROMPT: &str = "You are an expert coding assistant. Your goal is to generate a concise, structured summary of the conversation below that captures all essential information needed to continue development after context replacement. Include tasks performed, code areas modified or reviewed, key decisions or assumptions, test results or errors, and outstanding tasks or next steps.";
 
-                let mut prompt = Prompt::default();
-                prompt.base_instructions_override = Some(SYSTEM_PROMPT.to_string());
-                prompt.user_instructions = None;
-                prompt.store = true;
+                let mut prompt = Prompt {
+                    base_instructions_override: Some(SYSTEM_PROMPT.to_string()),
+                    user_instructions: None,
+                    store: true,
+                    ..Default::default()
+                };
 
                 let user_content = format!(
                     "Here is the conversation so far:\n{convo_text}\n\nPlease summarize this conversation, covering:\n1. Tasks performed and outcomes\n2. Code files, modules, or functions modified or examined\n3. Important decisions or assumptions made\n4. Errors encountered and test or build results\n5. Remaining tasks, open questions, or next steps\nProvide the summary in a clear, concise format."
@@ -291,23 +297,24 @@ impl ChatWidget<'_> {
                                     summary.push_str(&delta);
                                 }
                             }
-                            Ok(ResponseEvent::OutputItemDone(item)) => {
-                                // Prefer the fully provided final item over any
-                                // previously streamed deltas to avoid
-                                // duplicating content.
-                                if let ResponseItem::Message { content, .. } = item {
-                                    let mut final_text = String::new();
-                                    for c in content {
-                                        if let ContentItem::OutputText { text } = c {
-                                            final_text.push_str(&text);
-                                        }
-                                    }
-                                    if !final_text.is_empty() {
-                                        summary = final_text;
-                                        got_final_item = true;
+                            Ok(ResponseEvent::OutputItemDone(ResponseItem::Message {
+                                content,
+                                ..
+                            })) => {
+                                // Prefer the fully provided final item over any previously streamed
+                                // deltas to avoid duplicating content.
+                                let mut final_text = String::new();
+                                for c in content {
+                                    if let ContentItem::OutputText { text } = c {
+                                        final_text.push_str(&text);
                                     }
                                 }
+                                if !final_text.is_empty() {
+                                    summary = final_text;
+                                    got_final_item = true;
+                                }
                             }
+                            Ok(ResponseEvent::OutputItemDone(_)) => {}
                             Ok(ResponseEvent::Completed { .. }) => break,
                             _ => {}
                         }

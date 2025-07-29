@@ -1,6 +1,5 @@
 use codex_core::protocol::SandboxPolicy;
 
-#[allow(dead_code)]
 pub fn summarize_sandbox_policy(sandbox_policy: &SandboxPolicy) -> String {
     match sandbox_policy {
         SandboxPolicy::DangerFullAccess => "danger-full-access".to_string(),
