@@ -22,14 +22,14 @@ pub(crate) trait EventProcessor {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ExperimentalInstructionsOrigin {
+pub(crate) enum PromptOrigin {
     File(PathBuf),
     Literal,
 }
 
 pub(crate) fn create_config_summary_entries(
     config: &Config,
-    experimental_origin: Option<&ExperimentalInstructionsOrigin>,
+    prompt_origin: Option<&PromptOrigin>,
 ) -> Vec<(&'static str, String)> {
     let mut entries = vec![
         ("workdir", config.cwd.display().to_string()),
@@ -38,15 +38,15 @@ pub(crate) fn create_config_summary_entries(
         ("approval", config.approval_policy.to_string()),
         ("sandbox", summarize_sandbox_policy(&config.sandbox_policy)),
     ];
-    if let Some(origin) = experimental_origin {
+    if let Some(origin) = prompt_origin {
         let prompt_val = match origin {
-            ExperimentalInstructionsOrigin::Literal => "experimental".to_string(),
-            ExperimentalInstructionsOrigin::File(path) => path
+            PromptOrigin::Literal => "experimental".to_string(),
+            PromptOrigin::File(path) => path
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| path.display().to_string()),
         };
-        entries.push(("prompt", prompt_val));
+        entries.push(("prompt_origin", prompt_val));
     }
     if config.model_provider.wire_api == WireApi::Responses
         && model_supports_reasoning_summaries(config)
@@ -125,27 +125,26 @@ mod tests {
     }
 
     #[test]
-    fn entries_include_prompt_experimental_for_literal_origin() {
+    fn entries_include_prompt_origin_experimental_for_literal_origin() {
         let mut cfg = minimal_config();
         cfg.base_instructions = Some("hello".to_string());
-        let entries =
-            create_config_summary_entries(&cfg, Some(&ExperimentalInstructionsOrigin::Literal));
+        let entries = create_config_summary_entries(&cfg, Some(&PromptOrigin::Literal));
         let map: HashMap<_, _> = entries.into_iter().collect();
-        assert_eq!(map.get("prompt").cloned(), Some("experimental".to_string()));
+        assert_eq!(
+            map.get("prompt_origin").cloned(),
+            Some("experimental".to_string())
+        );
     }
 
     #[test]
-    fn entries_include_prompt_filename_for_file_origin() {
+    fn entries_include_prompt_origin_filename_for_file_origin() {
         let mut cfg = minimal_config();
         cfg.base_instructions = Some("hello".to_string());
         let path = PathBuf::from("/tmp/custom_instructions.txt");
-        let entries = create_config_summary_entries(
-            &cfg,
-            Some(&ExperimentalInstructionsOrigin::File(path.clone())),
-        );
+        let entries = create_config_summary_entries(&cfg, Some(&PromptOrigin::File(path.clone())));
         let map: HashMap<_, _> = entries.into_iter().collect();
         assert_eq!(
-            map.get("prompt").cloned(),
+            map.get("prompt_origin").cloned(),
             Some("custom_instructions.txt".to_string())
         );
     }

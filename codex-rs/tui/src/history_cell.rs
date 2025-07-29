@@ -33,8 +33,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 use tracing::error;
-#[cfg(test)]
-use uuid::Uuid;
 
 pub(crate) struct CommandOutput {
     pub(crate) exit_code: i32,
@@ -593,6 +591,7 @@ mod tests {
     use codex_core::config::Config;
     use codex_core::config::ConfigOverrides;
     use codex_core::config::ConfigToml;
+    use uuid::Uuid;
 
     use tempfile::TempDir;
 

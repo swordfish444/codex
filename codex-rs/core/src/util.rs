@@ -64,3 +64,21 @@ pub fn is_inside_git_repo(config: &Config) -> bool {
 
     false
 }
+
+/// If `val` is a path to a readable file, return its trimmed contents.
+///
+/// - When `val` points to a file, this reads the file, trims leading/trailing
+///   whitespace and returns `Ok(Some(contents))` unless the trimmed contents are
+///   empty in which case it returns `Ok(None)`.
+/// - When `val` is not a file path, return `Ok(Some(val.to_string()))` so
+///   callers can treat the value as a literal string.
+pub fn maybe_read_file(val: &str) -> std::io::Result<Option<String>> {
+    let p = std::path::Path::new(val);
+    if p.is_file() {
+        let s = std::fs::read_to_string(p)?;
+        let s = s.trim().to_string();
+        if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
+    } else {
+        Ok(Some(val.to_string()))
+    }
+}

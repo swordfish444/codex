@@ -5,11 +5,10 @@ mod event_processor_with_json_output;
 
 use std::io::IsTerminal;
 use std::io::Read;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::event_processor::ExperimentalInstructionsOrigin;
+use crate::event_processor::PromptOrigin;
 pub use cli::Cli;
 use codex_core::codex_wrapper::CodexConversation;
 use codex_core::codex_wrapper::{self};
@@ -23,6 +22,7 @@ use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
 use codex_core::protocol::TaskCompleteEvent;
 use codex_core::util::is_inside_git_repo;
+use codex_core::util::maybe_read_file;
 use event_processor_with_human_output::EventProcessorWithHumanOutput;
 use event_processor_with_json_output::EventProcessorWithJsonOutput;
 use tracing::debug;
@@ -54,13 +54,13 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     // Determine how to describe experimental instructions in the summary and
     // prepare the effective base instructions. If the flag points at a file,
     // read its contents; otherwise use the value verbatim.
-    let mut experimental_origin = match experimental_instructions.as_deref() {
+    let mut prompt_origin = match experimental_instructions.as_deref() {
         Some(val) => {
             let p = std::path::Path::new(val);
             if p.is_file() {
-                Some(ExperimentalInstructionsOrigin::File(p.to_path_buf()))
+                Some(PromptOrigin::File(p.to_path_buf()))
             } else {
-                Some(ExperimentalInstructionsOrigin::Literal)
+                Some(PromptOrigin::Literal)
             }
         }
         None => None,
@@ -155,20 +155,20 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
 
     let config = Config::load_with_cli_overrides(cli_kv_overrides, overrides)?;
     if !has_experimental {
-        experimental_origin = None;
+        prompt_origin = None;
     }
 
     let mut event_processor: Box<dyn EventProcessor> = if json_mode {
         Box::new(EventProcessorWithJsonOutput::new(
             last_message_file.clone(),
-            experimental_origin.clone(),
+            prompt_origin.clone(),
         ))
     } else {
         Box::new(EventProcessorWithHumanOutput::create_with_ansi(
             stdout_with_ansi,
             &config,
             last_message_file.clone(),
-            experimental_origin,
+            prompt_origin,
         ))
     };
 
@@ -285,22 +285,9 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     Ok(())
 }
 
-// If `val` is a path to a readable file, return its trimmed contents. If the
-// file is empty after trimming, return Ok(None). Otherwise, return Ok(Some(val)).
-fn maybe_read_file(val: &str) -> std::io::Result<Option<String>> {
-    let p = Path::new(val);
-    if p.is_file() {
-        let s = std::fs::read_to_string(p)?;
-        let s = s.trim().to_string();
-        if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
-    } else {
-        Ok(Some(val.to_string()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::maybe_read_file;
+    use codex_core::util::maybe_read_file;
     use std::fs;
     use tempfile::NamedTempFile;
 

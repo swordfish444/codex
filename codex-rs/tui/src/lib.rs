@@ -11,6 +11,7 @@ use codex_core::openai_api_key::get_openai_api_key;
 use codex_core::openai_api_key::set_openai_api_key;
 use codex_core::protocol::AskForApproval;
 use codex_core::util::is_inside_git_repo;
+use codex_core::util::maybe_read_file;
 use codex_login::try_read_openai_api_key;
 use log_layer::TuiLogLayer;
 use std::fs::OpenOptions;
@@ -69,16 +70,28 @@ pub fn run_main(
         )
     };
 
+    // Capture any read error for experimental instructions so we can log it
+    // after the tracing subscriber has been initialized.
+    let mut experimental_read_error: Option<String> = None;
+
     let (config, experimental_prompt_label) = {
         // Load configuration and support CLI overrides.
         // If the experimental instructions flag points at a file, read its
         // contents; otherwise use the value verbatim. Avoid printing to stdout
         // or stderr in this library crate – fallback to the raw string on
         // errors.
-        let base_instructions = cli
-            .experimental_instructions
-            .as_deref()
-            .and_then(|s| maybe_read_file(s).unwrap_or(Some(s.to_string())));
+        let base_instructions =
+            cli.experimental_instructions
+                .as_deref()
+                .and_then(|s| match maybe_read_file(s) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        experimental_read_error = Some(format!(
+                            "Failed to read experimental instructions from '{s}': {e}"
+                        ));
+                        Some(s.to_string())
+                    }
+                });
 
         // Derive a label shown in the welcome banner describing the origin of
         // the experimental instructions: filename for file paths and
@@ -173,6 +186,12 @@ pub fn run_main(
         .with(tui_layer)
         .try_init();
 
+    if let Some(msg) = experimental_read_error {
+        // Now that logging is initialized, record a warning so the user
+        // can see that Codex fell back to using the literal string.
+        tracing::warn!("{msg}");
+    }
+
     let show_login_screen = should_show_login_screen(&config);
 
     // Determine whether we need to display the "not a git repo" warning
@@ -190,19 +209,6 @@ pub fn run_main(
         log_rx,
     )
     .map_err(|err| std::io::Error::other(err.to_string()))
-}
-
-// If `val` is a path to a readable file, return its trimmed contents. If the
-// file is empty after trimming, return None. Otherwise, return Some(val).
-fn maybe_read_file(val: &str) -> std::io::Result<Option<String>> {
-    let p = Path::new(val);
-    if p.is_file() {
-        let s = std::fs::read_to_string(p)?;
-        let s = s.trim().to_string();
-        if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
-    } else {
-        Ok(Some(val.to_string()))
-    }
 }
 
 fn run_ratatui_app(
@@ -300,7 +306,7 @@ fn is_in_need_of_openai_api_key(config: &Config) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::maybe_read_file;
+    use codex_core::util::maybe_read_file;
     use std::fs;
     use std::path::PathBuf;
     use uuid::Uuid;
