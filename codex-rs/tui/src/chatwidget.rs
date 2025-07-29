@@ -71,6 +71,7 @@ mod fake_compact_tests {
             config_profile: None,
             codex_linux_sandbox_exe: None,
             base_instructions: None,
+            include_plan_tool: None,
         };
         let home = std::env::temp_dir().join("codex_fake_model_tests");
         let _ = std::fs::create_dir_all(&home);
