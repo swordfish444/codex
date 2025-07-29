@@ -22,11 +22,13 @@ use tracing_subscriber::prelude::*;
 mod app;
 mod app_event;
 mod app_event_sender;
+mod at_command;
 mod bottom_pane;
 mod cell_widget;
 mod chatwidget;
 mod citation_regex;
 mod cli;
+mod clipboard_paste;
 mod conversation_history_widget;
 mod exec_command;
 mod file_search;
@@ -44,8 +46,6 @@ mod text_block;
 mod text_formatting;
 mod tui;
 mod user_approval_widget;
-mod clipboard_paste;
-mod at_command;
 
 pub use cli::Cli;
 

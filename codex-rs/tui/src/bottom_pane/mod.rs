@@ -223,10 +223,20 @@ impl BottomPane<'_> {
         self.request_redraw();
     }
 
-    pub(crate) fn attach_image(&mut self, path: std::path::PathBuf, width: u32, height: u32, format_label: &str) {
+    pub(crate) fn attach_image(
+        &mut self,
+        path: std::path::PathBuf,
+        width: u32,
+        height: u32,
+        format_label: &str,
+    ) {
         if self.active_view.is_none() {
-            let needs_redraw = self.composer.attach_image(path, width, height, format_label);
-            if needs_redraw { self.request_redraw(); }
+            let needs_redraw = self
+                .composer
+                .attach_image(path, width, height, format_label);
+            if needs_redraw {
+                self.request_redraw();
+            }
         }
     }
 

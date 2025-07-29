@@ -3,8 +3,8 @@ use codex_file_search::FileMatch;
 use crossterm::event::KeyEvent;
 use ratatui::text::Line;
 
-use crate::slash_command::SlashCommand;
 use crate::at_command::AtCommand;
+use crate::slash_command::SlashCommand;
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -58,5 +58,10 @@ pub(crate) enum AppEvent {
     InsertHistory(Vec<Line<'static>>),
 
     /// Image pasted via Cmd+V (clipboard image attachment).
-    AttachImage { path: std::path::PathBuf, width: u32, height: u32, format_label: &'static str },
+    AttachImage {
+        path: std::path::PathBuf,
+        width: u32,
+        height: u32,
+        format_label: &'static str,
+    },
 }

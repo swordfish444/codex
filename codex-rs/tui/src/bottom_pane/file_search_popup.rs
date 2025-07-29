@@ -164,7 +164,11 @@ impl FileSearchPopup {
             }
         }
         self.matches = entries;
-        self.selected_idx = if self.matches.is_empty() { None } else { Some(0) };
+        self.selected_idx = if self.matches.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
     }
 }
 

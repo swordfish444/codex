@@ -17,8 +17,8 @@ use tui_textarea::TextArea;
 use super::chat_composer_history::ChatComposerHistory;
 use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
-use crate::slash_command::SlashCommand;
 use crate::at_command::{AtCommand, built_in_at_commands};
+use crate::slash_command::SlashCommand;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -157,7 +157,13 @@ impl ChatComposer<'_> {
         true
     }
 
-    pub fn attach_image(&mut self, path: std::path::PathBuf, width: u32, height: u32, format_label: &str) -> bool {
+    pub fn attach_image(
+        &mut self,
+        path: std::path::PathBuf,
+        width: u32,
+        height: u32,
+        format_label: &str,
+    ) -> bool {
         let placeholder = format!("[image {width}x{height} {format_label}]");
         self.textarea.insert_str(&placeholder);
         self.attached_images.push((placeholder, path));
@@ -313,7 +319,9 @@ impl ChatComposer<'_> {
                     // If selected path looks like an image (png/jpeg), attach as image instead of inserting text.
                     let is_image = {
                         let lower = sel_path.to_ascii_lowercase();
-                        lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg")
+                        lower.ends_with(".png")
+                            || lower.ends_with(".jpg")
+                            || lower.ends_with(".jpeg")
                     };
                     if is_image {
                         // Determine dimensions; if that fails fall back to normal path insertion.
@@ -325,8 +333,11 @@ impl ChatComposer<'_> {
                                 let mut lines: Vec<String> = self.textarea.lines().to_vec();
                                 if let Some(line) = lines.get_mut(row) {
                                     let cursor_byte_offset = cursor_byte_offset(line, col as usize);
-                                    if let Some((start, end)) = at_token_bounds(line, cursor_byte_offset, true) {
-                                        let mut new_line = String::with_capacity(line.len() - (end - start));
+                                    if let Some((start, end)) =
+                                        at_token_bounds(line, cursor_byte_offset, true)
+                                    {
+                                        let mut new_line =
+                                            String::with_capacity(line.len() - (end - start));
                                         new_line.push_str(&line[..start]);
                                         new_line.push_str(&line[end..]);
                                         *line = new_line;
@@ -336,13 +347,28 @@ impl ChatComposer<'_> {
                                         let _ = self.textarea.insert_str(new_text);
                                     }
                                 }
-                                let format_label = match Path::new(&sel_path).extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase()) {
+                                let format_label = match Path::new(&sel_path)
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .map(|s| s.to_ascii_lowercase())
+                                {
                                     Some(ext) if ext == "png" => "PNG",
                                     Some(ext) if ext == "jpg" || ext == "jpeg" => "JPEG",
                                     _ => "IMG",
                                 };
-                                self.app_event_tx.send(AppEvent::AttachImage { path: path_buf.clone(), width: w, height: h, format_label });
-                                tracing::info!("file_search_image selected path={:?} width={} height={} format={}", path_buf, w, h, format_label);
+                                self.app_event_tx.send(AppEvent::AttachImage {
+                                    path: path_buf.clone(),
+                                    width: w,
+                                    height: h,
+                                    format_label,
+                                });
+                                tracing::info!(
+                                    "file_search_image selected path={:?} width={} height={} format={}",
+                                    path_buf,
+                                    w,
+                                    h,
+                                    format_label
+                                );
                                 // Optionally add a trailing space to keep typing fluid.
                                 let _ = self.textarea.insert_str(" ");
                             }
@@ -367,14 +393,29 @@ impl ChatComposer<'_> {
 
     /// Handle key event when the @-command popup is visible.
     fn handle_key_event_with_at_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
-        let ActivePopup::At(popup) = &mut self.active_popup else { unreachable!() };
+        let ActivePopup::At(popup) = &mut self.active_popup else {
+            unreachable!()
+        };
         match key_event.into() {
-            Input { key: Key::Up, .. } => { popup.move_up(); (InputResult::None, true) }
-            Input { key: Key::Down, .. } => { popup.move_down(); (InputResult::None, true) }
+            Input { key: Key::Up, .. } => {
+                popup.move_up();
+                (InputResult::None, true)
+            }
+            Input { key: Key::Down, .. } => {
+                popup.move_down();
+                (InputResult::None, true)
+            }
             Input { key: Key::Tab, .. } => {
                 if let Some(cmd) = popup.selected_command() {
-                    let first_line = self.textarea.lines().first().map(|s| s.as_str()).unwrap_or("");
-                    let starts_with_cmd = first_line.trim_start().starts_with(&format!("@{}", cmd.command()));
+                    let first_line = self
+                        .textarea
+                        .lines()
+                        .first()
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+                    let starts_with_cmd = first_line
+                        .trim_start()
+                        .starts_with(&format!("@{}", cmd.command()));
                     if !starts_with_cmd {
                         self.textarea.select_all();
                         self.textarea.cut();
@@ -383,7 +424,12 @@ impl ChatComposer<'_> {
                 }
                 (InputResult::None, true)
             }
-            Input { key: Key::Enter, shift: false, alt: false, ctrl: false } => {
+            Input {
+                key: Key::Enter,
+                shift: false,
+                alt: false,
+                ctrl: false,
+            } => {
                 if let Some(cmd) = popup.selected_command() {
                     match cmd {
                         AtCommand::ClipboardImage => {
@@ -467,7 +513,8 @@ impl ChatComposer<'_> {
         if let Some(line) = lines.get_mut(row) {
             let cursor_byte_offset = cursor_byte_offset(line, col as usize);
             if let Some((start, end)) = token_bounds(line, cursor_byte_offset) {
-                let mut new_line = String::with_capacity(line.len() - (end - start) + path.len() + 1);
+                let mut new_line =
+                    String::with_capacity(line.len() - (end - start) + path.len() + 1);
                 new_line.push_str(&line[..start]);
                 new_line.push_str(path);
                 new_line.push(' ');
@@ -669,7 +716,9 @@ impl ChatComposer<'_> {
                 global_index += line.chars().count() + 1; // +1 for the newline that will be joined
             }
         }
-        if global_index == 0 { return false; }
+        if global_index == 0 {
+            return false;
+        }
         let deletion_index = global_index - 1; // char that will be removed by backspace
 
         let text = lines.join("\n");
@@ -740,7 +789,9 @@ impl ChatComposer<'_> {
     /// Note this is only called when self.active_popup is NOT Command.
     fn sync_file_search_popup(&mut self) {
         // Only active during an explicit @file initiated session.
-        if !self.file_search_mode { return; }
+        if !self.file_search_mode {
+            return;
+        }
 
         // Determine current query (may be empty if user just selected @file and hasn't typed yet).
         let query_opt = Self::current_at_token_allow_empty(&self.textarea);
@@ -764,11 +815,15 @@ impl ChatComposer<'_> {
 
         match &mut self.active_popup {
             ActivePopup::File(popup) => {
-                if !query.is_empty() { popup.set_query(&query); }
+                if !query.is_empty() {
+                    popup.set_query(&query);
+                }
             }
             _ => {
                 let mut popup = FileSearchPopup::new();
-                if !query.is_empty() { popup.set_query(&query); }
+                if !query.is_empty() {
+                    popup.set_query(&query);
+                }
                 self.active_popup = ActivePopup::File(popup);
             }
         }
@@ -778,14 +833,26 @@ impl ChatComposer<'_> {
     }
 
     fn sync_at_command_popup(&mut self) {
-        if matches!(self.active_popup, ActivePopup::Slash(_) | ActivePopup::File(_)) { return; }
+        if matches!(
+            self.active_popup,
+            ActivePopup::Slash(_) | ActivePopup::File(_)
+        ) {
+            return;
+        }
         let (row, col) = self.textarea.cursor();
-        let line = match self.textarea.lines().get(row) { Some(l) => l.as_str(), None => return };
+        let line = match self.textarea.lines().get(row) {
+            Some(l) => l.as_str(),
+            None => return,
+        };
         let cursor_byte = cursor_byte_offset(line, col as usize);
         let show = if let Some((start, end)) = at_token_bounds(line, cursor_byte, true) {
             let body = &line[start + 1..end];
-            built_in_at_commands().iter().any(|(name, _)| name.starts_with(&body.to_ascii_lowercase()))
-        } else { false };
+            built_in_at_commands()
+                .iter()
+                .any(|(name, _)| name.starts_with(&body.to_ascii_lowercase()))
+        } else {
+            false
+        };
         if show {
             let (start, end) = at_token_bounds(line, cursor_byte, true).unwrap();
             let body = &line[start + 1..end];
@@ -798,7 +865,9 @@ impl ChatComposer<'_> {
                     self.active_popup = ActivePopup::At(popup);
                 }
             }
-        } else if matches!(self.active_popup, ActivePopup::At(_)) { self.active_popup = ActivePopup::None; }
+        } else if matches!(self.active_popup, ActivePopup::At(_)) {
+            self.active_popup = ActivePopup::None;
+        }
     }
 
     fn update_border(&mut self, has_focus: bool) {
@@ -887,8 +956,18 @@ impl WidgetRef for &ChatComposer<'_> {
             }
             ActivePopup::At(popup) => {
                 let popup_height = popup.calculate_required_height(&area);
-                let popup_rect = Rect { x: area.x, y: area.y, width: area.width, height: popup_height.min(area.height) };
-                let textarea_rect = Rect { x: area.x, y: area.y + popup_rect.height, width: area.width, height: area.height.saturating_sub(popup_rect.height) };
+                let popup_rect = Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: area.width,
+                    height: popup_height.min(area.height),
+                };
+                let textarea_rect = Rect {
+                    x: area.x,
+                    y: area.y + popup_rect.height,
+                    width: area.width,
+                    height: area.height.saturating_sub(popup_rect.height),
+                };
                 popup.render(popup_rect, buf);
                 self.textarea.render(textarea_rect, buf);
             }
@@ -905,27 +984,52 @@ impl WidgetRef for &ChatComposer<'_> {
 /// Convert a cursor column expressed in characters (as provided by tui-textarea)
 /// to a byte offset into `line`.
 fn cursor_byte_offset(line: &str, cursor_col_chars: usize) -> usize {
-    line.chars().take(cursor_col_chars).map(|c| c.len_utf8()).sum()
+    line.chars()
+        .take(cursor_col_chars)
+        .map(|c| c.len_utf8())
+        .sum()
 }
 
 /// Return (start_byte, end_byte) of the token (whitespace-delimited) containing
 /// `cursor_byte_offset`. Returns None if there is no non-empty token.
 fn token_bounds(line: &str, cursor_byte_offset: usize) -> Option<(usize, usize)> {
-    if cursor_byte_offset > line.len() { return None; }
+    if cursor_byte_offset > line.len() {
+        return None;
+    }
     let before = &line[..cursor_byte_offset];
     let after = &line[cursor_byte_offset..];
-    let start = before.char_indices().rfind(|(_, c)| c.is_whitespace()).map(|(i, c)| i + c.len_utf8()).unwrap_or(0);
-    let end_rel = after.char_indices().find(|(_, c)| c.is_whitespace()).map(|(i, _)| i).unwrap_or(after.len());
+    let start = before
+        .char_indices()
+        .rfind(|(_, c)| c.is_whitespace())
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(0);
+    let end_rel = after
+        .char_indices()
+        .find(|(_, c)| c.is_whitespace())
+        .map(|(i, _)| i)
+        .unwrap_or(after.len());
     let end = cursor_byte_offset + end_rel;
-    if start >= end { None } else { Some((start, end)) }
+    if start >= end {
+        None
+    } else {
+        Some((start, end))
+    }
 }
 
 /// Like `token_bounds` but ensures the token starts with '@'. If `allow_empty`
 /// is false, requires at least one character after '@'. Returns byte bounds.
-fn at_token_bounds(line: &str, cursor_byte_offset: usize, allow_empty: bool) -> Option<(usize, usize)> {
+fn at_token_bounds(
+    line: &str,
+    cursor_byte_offset: usize,
+    allow_empty: bool,
+) -> Option<(usize, usize)> {
     let (start, end) = token_bounds(line, cursor_byte_offset)?;
     let token = &line[start..end];
-    if token.starts_with('@') && (allow_empty || token.len() > 1) { Some((start, end)) } else { None }
+    if token.starts_with('@') && (allow_empty || token.len() > 1) {
+        Some((start, end))
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -1410,8 +1514,12 @@ mod tests {
         let path = std::path::PathBuf::from("/tmp/image1.png");
         assert!(composer.attach_image(path.clone(), 32, 16, "PNG"));
         composer.handle_paste(" hi".into());
-        let (result, _) = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        match result { InputResult::Submitted(text) => assert_eq!(text, "hi"), _ => panic!("expected Submitted") }
+        let (result, _) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        match result {
+            InputResult::Submitted(text) => assert_eq!(text, "hi"),
+            _ => panic!("expected Submitted"),
+        }
         let imgs = composer.take_recent_submission_images();
         assert_eq!(imgs.len(), 1);
         assert_eq!(imgs[0], path);
@@ -1425,7 +1533,8 @@ mod tests {
         let mut composer = ChatComposer::new(true, sender);
         let path = std::path::PathBuf::from("/tmp/image2.png");
         assert!(composer.attach_image(path.clone(), 10, 5, "PNG"));
-        let (result, _) = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let (result, _) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(matches!(result, InputResult::None));
         assert!(composer.take_recent_submission_images().is_empty());
         assert_eq!(composer.attached_images.len(), 1); // still pending
@@ -1452,7 +1561,9 @@ mod tests {
         let placeholder2 = composer.attached_images[0].0.clone();
         // Move cursor to roughly middle of placeholder
         let mid = (placeholder2.len() / 2) as u16;
-        composer.textarea.move_cursor(tui_textarea::CursorMove::Jump(0, mid));
+        composer
+            .textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(0, mid));
         composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         assert!(composer.textarea.lines().join("\n").contains(&placeholder2) == false);
         assert!(composer.attached_images.is_empty());
@@ -1460,12 +1571,13 @@ mod tests {
 
     #[test]
     fn at_clipboard_image_command_triggers_dispatch() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        use std::sync::mpsc::Receiver;
         use crate::app_event::AppEvent;
         use crate::at_command::AtCommand;
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use std::sync::mpsc::Receiver;
 
-        let (tx, rx):(std::sync::mpsc::Sender<AppEvent>, Receiver<AppEvent>) = std::sync::mpsc::channel();
+        let (tx, rx): (std::sync::mpsc::Sender<AppEvent>, Receiver<AppEvent>) =
+            std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(true, sender);
         // Type '@' to open popup
@@ -1474,6 +1586,10 @@ mod tests {
         composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         // Expect a DispatchAtCommand(Image) or DispatchAtCommand(File); slash commands use DispatchSlashCommand
         let ev = rx.try_recv().expect("expected an event");
-        match ev { AppEvent::DispatchAtCommand(AtCommand::ClipboardImage) => {}, AppEvent::DispatchAtCommand(AtCommand::File) => {}, other => panic!("unexpected event: {:?}", other) }
+        match ev {
+            AppEvent::DispatchAtCommand(AtCommand::ClipboardImage) => {}
+            AppEvent::DispatchAtCommand(AtCommand::File) => {}
+            other => panic!("unexpected event: {:?}", other),
+        }
     }
 }

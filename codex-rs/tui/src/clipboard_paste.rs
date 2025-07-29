@@ -52,7 +52,14 @@ pub fn paste_image_as_png() -> Result<(Vec<u8>, PastedImageInfo), PasteImageErro
     }
 
     tracing::debug!("clipboard image encoded to PNG ({} bytes)", png.len());
-    Ok((png, PastedImageInfo { width: w, height: h, encoded_format_label: "PNG" }))
+    Ok((
+        png,
+        PastedImageInfo {
+            width: w,
+            height: h,
+            encoded_format_label: "PNG",
+        },
+    ))
 }
 
 /// Convenience: write to a temp file and return its path + info.
@@ -63,4 +70,4 @@ pub fn paste_image_to_temp_png() -> Result<(PathBuf, PastedImageInfo), PasteImag
     path.push(fname);
     std::fs::write(&path, &png).map_err(|e| PasteImageError::IoError(e.to_string()))?;
     Ok((path, info))
-} 
+}

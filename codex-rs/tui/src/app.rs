@@ -388,12 +388,25 @@ impl App<'_> {
                     crate::at_command::AtCommand::ClipboardImage => {
                         match crate::clipboard_paste::paste_image_to_temp_png() {
                             Ok((path, info)) => {
-                                tracing::info!("at_command_image imported path={:?} width={} height={} format={}", path, info.width, info.height, info.encoded_format_label);
-                                self.app_event_tx.send(AppEvent::AttachImage { path, width: info.width, height: info.height, format_label: info.encoded_format_label });
+                                tracing::info!(
+                                    "at_command_image imported path={:?} width={} height={} format={}",
+                                    path,
+                                    info.width,
+                                    info.height,
+                                    info.encoded_format_label
+                                );
+                                self.app_event_tx.send(AppEvent::AttachImage {
+                                    path,
+                                    width: info.width,
+                                    height: info.height,
+                                    format_label: info.encoded_format_label,
+                                });
                             }
                             Err(err) => {
                                 if let AppState::Chat { widget } = &mut self.app_state {
-                                    widget.add_background_event(format!("image import failed: {err}"));
+                                    widget.add_background_event(format!(
+                                        "image import failed: {err}"
+                                    ));
                                 }
                             }
                         }
@@ -411,7 +424,12 @@ impl App<'_> {
                         widget.apply_file_search_result(query, matches);
                     }
                 }
-                AppEvent::AttachImage { path, width, height, format_label } => {
+                AppEvent::AttachImage {
+                    path,
+                    width,
+                    height,
+                    format_label,
+                } => {
                     if let AppState::Chat { widget } = &mut self.app_state {
                         widget.attach_image(path, width, height, format_label);
                     }
@@ -509,18 +527,32 @@ impl App<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{KeyModifiers};
+    use crossterm::event::KeyModifiers;
 
     #[test]
     fn ctrl_v_success_attaches_image() {
         let (tx, rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
         let key_event = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL);
-        let dummy_info = crate::clipboard_paste::PastedImageInfo { width: 10, height: 5, encoded_format_label: "PNG" };
-        let handled = try_handle_ctrl_v_with(&sender, &key_event, || Ok((std::path::PathBuf::from("/tmp/test.png"), dummy_info.clone())));
+        let dummy_info = crate::clipboard_paste::PastedImageInfo {
+            width: 10,
+            height: 5,
+            encoded_format_label: "PNG",
+        };
+        let handled = try_handle_ctrl_v_with(&sender, &key_event, || {
+            Ok((
+                std::path::PathBuf::from("/tmp/test.png"),
+                dummy_info.clone(),
+            ))
+        });
         assert!(handled, "expected ctrl+v to be handled on success");
         match rx.recv().expect("event") {
-            AppEvent::AttachImage { path, width, height, format_label } => {
+            AppEvent::AttachImage {
+                path,
+                width,
+                height,
+                format_label,
+            } => {
                 assert_eq!(path, std::path::PathBuf::from("/tmp/test.png"));
                 assert_eq!(width, 10);
                 assert_eq!(height, 5);
@@ -535,8 +567,18 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
         let key_event = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL);
-        let handled = try_handle_ctrl_v_with(&sender, &key_event, || Err(crate::clipboard_paste::PasteImageError::NoImage("none".into())));
-        assert!(!handled, "on failure ctrl+v should not be considered consumed");
-        assert!(rx.try_recv().is_err(), "no events should be sent on failure");
+        let handled = try_handle_ctrl_v_with(&sender, &key_event, || {
+            Err(crate::clipboard_paste::PasteImageError::NoImage(
+                "none".into(),
+            ))
+        });
+        assert!(
+            !handled,
+            "on failure ctrl+v should not be considered consumed"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "no events should be sent on failure"
+        );
     }
 }

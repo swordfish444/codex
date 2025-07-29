@@ -12,9 +12,9 @@ use ratatui::widgets::Table;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
 
+use crate::at_command::{AtCommand, built_in_at_commands};
 use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
-use crate::at_command::{AtCommand, built_in_at_commands};
 
 pub trait CommandInfo: Copy {
     fn command(&self) -> &'static str;
@@ -22,12 +22,20 @@ pub trait CommandInfo: Copy {
 }
 
 impl CommandInfo for SlashCommand {
-    fn command(&self) -> &'static str { SlashCommand::command(*self) }
-    fn description(&self) -> &'static str { SlashCommand::description(*self) }
+    fn command(&self) -> &'static str {
+        SlashCommand::command(*self)
+    }
+    fn description(&self) -> &'static str {
+        SlashCommand::description(*self)
+    }
 }
 impl CommandInfo for AtCommand {
-    fn command(&self) -> &'static str { AtCommand::command(*self) }
-    fn description(&self) -> &'static str { AtCommand::description(*self) }
+    fn command(&self) -> &'static str {
+        AtCommand::command(*self)
+    }
+    fn description(&self) -> &'static str {
+        AtCommand::description(*self)
+    }
 }
 
 const MAX_POPUP_ROWS: usize = 5;
@@ -45,7 +53,12 @@ pub(crate) struct CommandPopup<C: CommandInfo> {
 
 impl<C: CommandInfo> CommandPopup<C> {
     pub(crate) fn new(prefix: char, all_commands: Vec<(&'static str, C)>) -> Self {
-        Self { prefix, command_filter: String::new(), all_commands, selected_idx: None }
+        Self {
+            prefix,
+            command_filter: String::new(),
+            all_commands,
+            selected_idx: None,
+        }
     }
 
     /// Update the filter string based on the current composer text. The text
@@ -59,7 +72,9 @@ impl<C: CommandInfo> CommandPopup<C> {
             let token = stripped.trim_start();
             let cmd_token = token.split_whitespace().next().unwrap_or("");
             self.command_filter = cmd_token.to_string();
-        } else { self.command_filter.clear(); }
+        } else {
+            self.command_filter.clear();
+        }
 
         // Reset or clamp selected index based on new filtered list.
         let matches_len = self.filtered_commands().len();
@@ -143,11 +158,15 @@ impl<C: CommandInfo> CommandPopup<C> {
 }
 
 impl CommandPopup<SlashCommand> {
-    pub(crate) fn slash() -> Self { CommandPopup::new('/', built_in_slash_commands()) }
+    pub(crate) fn slash() -> Self {
+        CommandPopup::new('/', built_in_slash_commands())
+    }
 }
 
 impl CommandPopup<AtCommand> {
-    pub(crate) fn at() -> Self { CommandPopup::new('@', built_in_at_commands()) }
+    pub(crate) fn at() -> Self {
+        CommandPopup::new('@', built_in_at_commands())
+    }
 }
 
 impl<C: CommandInfo> WidgetRef for CommandPopup<C> {
@@ -155,8 +174,7 @@ impl<C: CommandInfo> WidgetRef for CommandPopup<C> {
         let matches = self.filtered_commands();
 
         let mut rows: Vec<Row> = Vec::new();
-        let visible_matches: Vec<&C> =
-            matches.into_iter().take(MAX_POPUP_ROWS).collect();
+        let visible_matches: Vec<&C> = matches.into_iter().take(MAX_POPUP_ROWS).collect();
 
         if visible_matches.is_empty() {
             rows.push(Row::new(vec![
