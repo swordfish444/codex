@@ -31,7 +31,11 @@ pub fn discover_project_doc_path(config: &Config) -> std::io::Result<Option<std:
         return Ok(None);
     }
 
-    discover_project_doc_path_from_dir(&config.cwd, CANDIDATE_FILENAMES, config.project_doc_max_bytes)
+    discover_project_doc_path_from_dir(
+        &config.cwd,
+        CANDIDATE_FILENAMES,
+        config.project_doc_max_bytes,
+    )
 }
 
 fn discover_project_doc_path_from_dir(
@@ -163,7 +167,6 @@ async fn find_project_doc(config: &Config) -> std::io::Result<Option<String>> {
     Ok(Some(contents))
 }
 
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
@@ -292,7 +295,8 @@ mod tests {
             .expect("discovery should succeed")
             .expect("path should be found");
         let discovered_canon = fs::canonicalize(&discovered).expect("canonicalize discovered");
-        let expected_canon = fs::canonicalize(nested.join("AGENTS.md")).expect("canonicalize expected");
+        let expected_canon =
+            fs::canonicalize(nested.join("AGENTS.md")).expect("canonicalize expected");
         assert_eq!(discovered_canon, expected_canon);
 
         // get_user_instructions should load the nested document contents.
@@ -322,7 +326,8 @@ mod tests {
             .expect("discovery should succeed")
             .expect("path should be found");
         let discovered_canon = fs::canonicalize(&discovered).expect("canonicalize discovered");
-        let expected_canon = fs::canonicalize(repo.path().join("AGENTS.md")).expect("canonicalize expected");
+        let expected_canon =
+            fs::canonicalize(repo.path().join("AGENTS.md")).expect("canonicalize expected");
         assert_eq!(discovered_canon, expected_canon);
 
         let res = get_user_instructions(&cfg).await.expect("doc expected");
