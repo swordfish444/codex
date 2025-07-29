@@ -52,4 +52,13 @@ pub(crate) enum AppEvent {
     },
 
     InsertHistory(Vec<Line<'static>>),
+
+    /// Result of a /compact request – the generated summary text. Handled by
+    /// the app layer to replace the current chat widget with a fresh one that
+    /// displays the summary at the top.
+    CompactSummaryReady(String),
+
+    /// Failed to generate a compact summary. Contains a human-readable error
+    /// message that will be surfaced in the conversation history.
+    CompactSummaryFailed(String),
 }

@@ -847,6 +847,7 @@ dependencies = [
  "codex-login",
  "color-eyre",
  "crossterm",
+ "futures",
  "image",
  "insta",
  "lazy_static",

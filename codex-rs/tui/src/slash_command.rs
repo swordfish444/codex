@@ -13,6 +13,9 @@ pub enum SlashCommand {
     // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
     // more frequently used commands should be listed first.
     New,
+    /// Generate a concise summary of the current conversation and replace the
+    /// history with that summary so you can continue with a fresh context.
+    Compact,
     Diff,
     Quit,
 }
@@ -22,6 +25,7 @@ impl SlashCommand {
     pub fn description(self) -> &'static str {
         match self {
             SlashCommand::New => "Start a new chat.",
+            SlashCommand::Compact => "Clear conversation history but keep a summary in context.",
             SlashCommand::Quit => "Exit the application.",
             SlashCommand::Diff => {
                 "Show git diff of the working directory (including untracked files)"
@@ -39,4 +43,19 @@ impl SlashCommand {
 /// Return all built-in commands in a Vec paired with their command string.
 pub fn built_in_slash_commands() -> Vec<(&'static str, SlashCommand)> {
     SlashCommand::iter().map(|c| (c.command(), c)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn menu_includes_compact() {
+        let cmds = built_in_slash_commands();
+        let names: Vec<&str> = cmds.iter().map(|(n, _)| *n).collect();
+        assert!(
+            names.contains(&"compact"),
+            "/compact must be present in the slash menu"
+        );
+    }
 }

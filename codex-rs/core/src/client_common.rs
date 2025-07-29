@@ -177,7 +177,7 @@ pub fn model_supports_reasoning_summaries(config: &Config) -> bool {
     model.starts_with("o") || model.starts_with("codex")
 }
 
-pub(crate) struct ResponseStream {
+pub struct ResponseStream {
     pub(crate) rx_event: mpsc::Receiver<Result<ResponseEvent>>,
 }
 

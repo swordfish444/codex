@@ -1,9 +1,19 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[cfg(not(feature = "fake-compact-model"))]
+use codex_core::client::ModelClient;
+#[cfg(not(feature = "fake-compact-model"))]
+use codex_core::client_common::Prompt;
+#[cfg(not(feature = "fake-compact-model"))]
+use codex_core::client_common::ResponseEvent;
 use codex_core::codex_wrapper::CodexConversation;
 use codex_core::codex_wrapper::init_codex;
 use codex_core::config::Config;
+#[cfg(not(feature = "fake-compact-model"))]
+use codex_core::models::ContentItem;
+#[cfg(not(feature = "fake-compact-model"))]
+use codex_core::models::ResponseItem;
 use codex_core::protocol::AgentMessageDeltaEvent;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::AgentReasoningDeltaEvent;
@@ -25,7 +35,6 @@ use codex_core::protocol::TokenUsage;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::unbounded_channel;
@@ -41,6 +50,68 @@ use crate::exec_command::strip_bash_lc_and_escape;
 use crate::history_cell::PatchEventType;
 use crate::user_approval_widget::ApprovalRequest;
 use codex_file_search::FileMatch;
+
+#[cfg(all(test, feature = "fake-compact-model"))]
+mod fake_compact_tests {
+    use super::*;
+    use codex_core::config::Config;
+    use codex_core::config::ConfigOverrides;
+    use codex_core::config::ConfigToml;
+    use std::sync::mpsc::Receiver;
+    use std::time::Duration;
+
+    fn build_test_config() -> Config {
+        let cfg = ConfigToml::default();
+        let overrides = ConfigOverrides {
+            model: None,
+            cwd: Some(std::env::temp_dir()),
+            approval_policy: None,
+            sandbox_mode: None,
+            model_provider: None,
+            config_profile: None,
+            codex_linux_sandbox_exe: None,
+            base_instructions: None,
+        };
+        let home = std::env::temp_dir().join("codex_fake_model_tests");
+        let _ = std::fs::create_dir_all(&home);
+        Config::load_from_base_config_with_overrides(cfg, overrides, home)
+            .expect("failed to build test config")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn request_compact_uses_fake_model_and_emits_event() {
+        let (tx, rx) = std::sync::mpsc::channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+
+        let config = build_test_config();
+        let mut widget = ChatWidget::new_for_tests(config, sender.clone());
+        widget
+            .conversation_history
+            .add_user_message("User: hello".to_string());
+        widget
+            .conversation_history
+            .add_agent_message(&widget.config, "Assistant: hi".to_string());
+
+        widget.request_compact();
+
+        // Wait for the CompactSummaryReady event.
+        let summary = wait_for_summary(rx).expect("no summary event");
+        assert!(summary.contains("FAKE SUMMARY"));
+        assert!(summary.contains("hello"));
+    }
+
+    fn wait_for_summary(rx: Receiver<AppEvent>) -> Option<String> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            if let Ok(ev) = rx.recv_timeout(Duration::from_millis(50)) {
+                if let AppEvent::CompactSummaryReady(s) = ev {
+                    return Some(s);
+                }
+            }
+        }
+        None
+    }
+}
 
 pub(crate) struct ChatWidget<'a> {
     app_event_tx: AppEventSender,
@@ -137,6 +208,170 @@ impl ChatWidget<'_> {
                 initial_prompt.unwrap_or_default(),
                 initial_images,
             ),
+            token_usage: TokenUsage::default(),
+            reasoning_buffer: String::new(),
+            answer_buffer: String::new(),
+        }
+    }
+
+    /// Kick off a background task to generate a compact summary of the
+    /// conversation, then surface either the summary (replacing the current
+    /// session) or an error message.
+    pub(crate) fn request_compact(&mut self) {
+        // Extract plain-text representation of the conversation.
+        let convo_text = self.conversation_history.to_compact_summary_text();
+        if convo_text.trim().is_empty() {
+            // Nothing to summarize – surface a friendly message.
+            self.conversation_history
+                .add_background_event("Conversation is empty – nothing to compact.".to_string());
+            self.emit_last_history_entry();
+            self.request_redraw();
+            return;
+        }
+
+        // Show status indicator while the background task runs.
+        self.bottom_pane.set_task_running(true);
+
+        let config = self.config.clone();
+        let app_event_tx = self.app_event_tx.clone();
+
+        #[cfg(feature = "fake-compact-model")]
+        {
+            tokio::spawn(async move {
+                use tokio::time::Duration;
+                use tokio::time::sleep;
+                sleep(Duration::from_millis(5)).await;
+                let summary = Self::fake_compact_summary(&convo_text);
+                app_event_tx.send(crate::app_event::AppEvent::CompactSummaryReady(summary));
+            });
+        }
+
+        #[cfg(not(feature = "fake-compact-model"))]
+        {
+            let provider = config.model_provider.clone();
+            let effort = config.model_reasoning_effort;
+            let summary_pref = config.model_reasoning_summary;
+            let session_id = uuid::Uuid::new_v4();
+
+            tokio::spawn(async move {
+                let client = ModelClient::new(
+                    std::sync::Arc::new(config.clone()),
+                    provider,
+                    effort,
+                    summary_pref,
+                    session_id,
+                );
+
+                const SYSTEM_PROMPT: &str = "You are an expert coding assistant. Your goal is to generate a concise, structured summary of the conversation below that captures all essential information needed to continue development after context replacement. Include tasks performed, code areas modified or reviewed, key decisions or assumptions, test results or errors, and outstanding tasks or next steps.";
+
+                let mut prompt = Prompt::default();
+                prompt.base_instructions_override = Some(SYSTEM_PROMPT.to_string());
+                prompt.user_instructions = None;
+                prompt.store = true;
+
+                let user_content = format!(
+                    "Here is the conversation so far:\n{convo_text}\n\nPlease summarize this conversation, covering:\n1. Tasks performed and outcomes\n2. Code files, modules, or functions modified or examined\n3. Important decisions or assumptions made\n4. Errors encountered and test or build results\n5. Remaining tasks, open questions, or next steps\nProvide the summary in a clear, concise format."
+                );
+
+                prompt.input.push(ResponseItem::Message {
+                    id: None,
+                    role: "user".to_string(),
+                    content: vec![ContentItem::InputText { text: user_content }],
+                });
+
+                let mut summary = String::new();
+                let res = async {
+                    let mut stream = client.stream(&prompt).await?;
+                    use futures::StreamExt;
+                    let mut got_final_item = false;
+                    while let Some(ev) = stream.next().await {
+                        match ev {
+                            Ok(ResponseEvent::OutputTextDelta(delta)) => {
+                                if !got_final_item {
+                                    summary.push_str(&delta);
+                                }
+                            }
+                            Ok(ResponseEvent::OutputItemDone(item)) => {
+                                // Prefer the fully provided final item over any
+                                // previously streamed deltas to avoid
+                                // duplicating content.
+                                if let ResponseItem::Message { content, .. } = item {
+                                    let mut final_text = String::new();
+                                    for c in content {
+                                        if let ContentItem::OutputText { text } = c {
+                                            final_text.push_str(&text);
+                                        }
+                                    }
+                                    if !final_text.is_empty() {
+                                        summary = final_text;
+                                        got_final_item = true;
+                                    }
+                                }
+                            }
+                            Ok(ResponseEvent::Completed { .. }) => break,
+                            _ => {}
+                        }
+                    }
+                    Ok::<(), codex_core::error::CodexErr>(())
+                }
+                .await;
+
+                match res {
+                    Ok(()) => {
+                        if summary.trim().is_empty() {
+                            app_event_tx.send(crate::app_event::AppEvent::CompactSummaryFailed(
+                                "Model did not return a summary".to_string(),
+                            ));
+                        } else {
+                            app_event_tx
+                                .send(crate::app_event::AppEvent::CompactSummaryReady(summary));
+                        }
+                    }
+                    Err(e) => {
+                        app_event_tx.send(crate::app_event::AppEvent::CompactSummaryFailed(
+                            format!("Failed to generate compact summary: {e}"),
+                        ));
+                    }
+                }
+            });
+        }
+    }
+
+    /// Display the generated compact summary at the top of a fresh session.
+    pub(crate) fn show_compact_summary(&mut self, summary: String) {
+        self.conversation_history
+            .add_agent_message(&self.config, summary);
+        self.emit_last_history_entry();
+        self.request_redraw();
+    }
+
+    pub(crate) fn show_compact_error(&mut self, message: String) {
+        self.conversation_history.add_error(message);
+        self.emit_last_history_entry();
+        self.bottom_pane.set_task_running(false);
+        self.request_redraw();
+    }
+
+    #[cfg(feature = "fake-compact-model")]
+    fn fake_compact_summary(text: &str) -> String {
+        let lines: Vec<&str> = text.lines().collect();
+        let head = lines.iter().take(3).copied().collect::<Vec<_>>().join("\n");
+        format!("FAKE SUMMARY ({} lines)\n{}", lines.len(), head)
+    }
+
+    #[cfg(all(test, feature = "fake-compact-model"))]
+    pub(crate) fn new_for_tests(config: Config, app_event_tx: AppEventSender) -> Self {
+        let (codex_op_tx, _rx) = unbounded_channel::<Op>();
+        Self {
+            app_event_tx: app_event_tx.clone(),
+            codex_op_tx,
+            conversation_history: ConversationHistoryWidget::new(),
+            bottom_pane: BottomPane::new(BottomPaneParams {
+                app_event_tx,
+                has_input_focus: true,
+            }),
+            config,
+            initial_user_message: None,
             token_usage: TokenUsage::default(),
             reasoning_buffer: String::new(),
             answer_buffer: String::new(),
@@ -451,6 +686,15 @@ impl ChatWidget<'_> {
         self.request_redraw();
     }
 
+    /// Echo a slash command invocation into the transcript so users can see
+    /// which command was executed.
+    pub(crate) fn echo_slash_command(&mut self, cmd: &str) {
+        self.conversation_history
+            .add_background_event(format!("`{cmd}`"));
+        self.emit_last_history_entry();
+        self.request_redraw();
+    }
+
     pub(crate) fn handle_scroll_delta(&mut self, scroll_delta: i32) {
         // If the user is trying to scroll exactly one line, we let them, but
         // otherwise we assume they are trying to scroll in larger increments.
@@ -513,7 +757,7 @@ impl WidgetRef for &ChatWidget<'_> {
         // In the hybrid inline viewport mode we only draw the interactive
         // bottom pane; history entries are injected directly into scrollback
         // via `Terminal::insert_before`.
-        (&self.bottom_pane).render(area, buf);
+        (&self.bottom_pane).render_ref(area, buf);
     }
 }
 

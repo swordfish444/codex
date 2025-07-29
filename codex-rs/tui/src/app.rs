@@ -305,6 +305,11 @@ impl App<'_> {
                         self.app_state = AppState::Chat { widget: new_widget };
                         self.app_event_tx.send(AppEvent::RequestRedraw);
                     }
+                    SlashCommand::Compact => {
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.request_compact();
+                        }
+                    }
                     SlashCommand::Quit => {
                         break;
                     }
@@ -329,6 +334,39 @@ impl App<'_> {
                             widget.add_diff_output(text);
                         }
                     }
+                },
+                AppEvent::CompactSummaryReady(summary) => {
+                    // Replace the current chat widget with a fresh one and show the summary.
+                    // Also bake the summary into the new session's base instructions so the
+                    // model uses it as context going forward.
+                    let mut cfg = self.config.clone();
+                    let prefix = "Conversation summary:";
+                    let appended = match cfg.base_instructions.take() {
+                        Some(existing) => format!("{existing}\n\n{prefix}\n{summary}\n"),
+                        None => format!("{prefix}\n{summary}\n"),
+                    };
+                    cfg.base_instructions = Some(appended);
+
+                    let new_widget = Box::new(ChatWidget::new(
+                        cfg,
+                        self.app_event_tx.clone(),
+                        None,
+                        Vec::new(),
+                    ));
+                    self.app_state = AppState::Chat { widget: new_widget };
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        // Echo the invoked command at the top of the new session
+                        // so the transcript clearly shows what was run.
+                        widget.echo_slash_command("/compact");
+                        widget.show_compact_summary(summary);
+                    }
+                    self.app_event_tx.send(AppEvent::RequestRedraw);
+                }
+                AppEvent::CompactSummaryFailed(message) => match &mut self.app_state {
+                    AppState::Chat { widget } => {
+                        widget.show_compact_error(message);
+                    }
+                    AppState::Login { .. } | AppState::GitWarning { .. } => {}
                 },
                 AppEvent::StartFileSearch(query) => {
                     self.file_search.on_user_query(query);

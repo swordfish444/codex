@@ -97,6 +97,38 @@ impl ConversationHistoryWidget {
         self.scroll_position = usize::MAX;
     }
 
+    /// Produce a plain-text representation of the conversation suitable for
+    /// feeding to a model to generate a compact summary. Only user and
+    /// assistant messages are included; tool calls, diffs, errors and other
+    /// background events are omitted.
+    pub(crate) fn to_compact_summary_text(&self) -> String {
+        let mut out = String::new();
+        for entry in &self.entries {
+            match &entry.cell {
+                HistoryCell::UserPrompt { view } => {
+                    let text = lines_to_plain_string(&view.lines);
+                    if !text.trim().is_empty() {
+                        out.push_str("user: ");
+                        out.push_str(text.trim());
+                        out.push('\n');
+                    }
+                }
+                HistoryCell::AgentMessage { view } => {
+                    let text = lines_to_plain_string(&view.lines);
+                    if !text.trim().is_empty() {
+                        out.push_str("assistant: ");
+                        out.push_str(text.trim());
+                        out.push('\n');
+                    }
+                }
+                _ => {
+                    // Skip other entry types.
+                }
+            }
+        }
+        out
+    }
+
     /// Note `model` could differ from `config.model` if the agent decided to
     /// use a different model than the one requested by the user.
     pub fn add_session_info(&mut self, config: &Config, event: SessionConfiguredEvent) {
@@ -251,6 +283,19 @@ impl ConversationHistoryWidget {
             }
         }
     }
+}
+
+fn lines_to_plain_string(lines: &[Line<'static>]) -> String {
+    let mut s = String::new();
+    for (idx, line) in lines.iter().enumerate() {
+        for span in &line.spans {
+            s.push_str(span.content.as_ref());
+        }
+        if idx + 1 < lines.len() {
+            s.push('\n');
+        }
+    }
+    s
 }
 
 impl WidgetRef for ConversationHistoryWidget {
@@ -426,4 +471,40 @@ impl WidgetRef for ConversationHistoryWidget {
 #[inline]
 pub(crate) const fn wrap_cfg() -> ratatui::widgets::Wrap {
     ratatui::widgets::Wrap { trim: false }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::text_block::TextBlock;
+    use std::cell::Cell as StdCell2; // avoid clash with Cell type alias above
+
+    #[test]
+    fn compact_summary_text_includes_user_and_assistant() {
+        let mut history = ConversationHistoryWidget::new();
+        // Manually construct entries to avoid depending on Config state.
+        history.entries.push(Entry {
+            cell: HistoryCell::UserPrompt {
+                view: TextBlock::new(vec![Line::from("Hello world")]),
+            },
+            line_count: StdCell2::new(0),
+        });
+        history.entries.push(Entry {
+            cell: HistoryCell::AgentMessage {
+                view: TextBlock::new(vec![Line::from("Hi there")]),
+            },
+            line_count: StdCell2::new(0),
+        });
+        history.entries.push(Entry {
+            cell: HistoryCell::BackgroundEvent {
+                view: TextBlock::new(vec![Line::from("ignored")]),
+            },
+            line_count: StdCell2::new(0),
+        });
+
+        let summary = history.to_compact_summary_text();
+        assert!(summary.contains("user: Hello world"));
+        assert!(summary.contains("assistant: Hi there"));
+        assert!(!summary.contains("ignored"));
+    }
 }

@@ -640,7 +640,11 @@ impl WidgetRef for &ChatComposer<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         match &self.active_popup {
             ActivePopup::Command(popup) => {
-                let popup_height = popup.calculate_required_height(&area);
+                let requested = popup.calculate_required_height(&area);
+                // Reserve at least a few rows for the textarea so the user can see what they are typing.
+                let min_textarea_height: u16 = 3;
+                let max_popup_height = area.height.saturating_sub(min_textarea_height).max(1);
+                let popup_height = requested.min(max_popup_height).max(1);
 
                 // Split the provided rect so that the popup is rendered at the
                 // *top* and the textarea occupies the remaining space below.
@@ -662,7 +666,10 @@ impl WidgetRef for &ChatComposer<'_> {
                 self.textarea.render(textarea_rect, buf);
             }
             ActivePopup::File(popup) => {
-                let popup_height = popup.calculate_required_height(&area);
+                let requested = popup.calculate_required_height(&area);
+                let min_textarea_height: u16 = 3;
+                let max_popup_height = area.height.saturating_sub(min_textarea_height).max(1);
+                let popup_height = requested.min(max_popup_height).max(1);
 
                 let popup_rect = Rect {
                     x: area.x,
@@ -1110,6 +1117,9 @@ mod tests {
             ]
         );
     }
+
+    // Unit tests for the slash popup live in command_popup.rs where we can
+    // directly inspect the filtered list.
 
     #[test]
     fn test_partial_placeholder_deletion() {
