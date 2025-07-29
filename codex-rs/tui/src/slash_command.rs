@@ -16,7 +16,6 @@ pub enum SlashCommand {
     Diff,
     Compact,
     Quit,
-    ToggleMouseMode,
 }
 
 impl SlashCommand {
@@ -24,9 +23,6 @@ impl SlashCommand {
     pub fn description(self) -> &'static str {
         match self {
             SlashCommand::New => "Start a new chat.",
-            SlashCommand::ToggleMouseMode => {
-                "Toggle mouse mode (enable for scrolling, disable for text selection)"
-            }
             SlashCommand::Quit => "Exit the application.",
             SlashCommand::Diff => {
                 "Show git diff of the working directory (including untracked files)"

@@ -63,7 +63,10 @@ pub struct Config {
     pub disable_response_storage: bool,
 
     /// User-provided instructions from instructions.md.
-    pub instructions: Option<String>,
+    pub user_instructions: Option<String>,
+
+    /// Base instructions override.
+    pub base_instructions: Option<String>,
 
     /// Optional external notifier command. When set, Codex will spawn this
     /// program after each completed *turn* (i.e. when the agent finishes
@@ -130,6 +133,16 @@ pub struct Config {
     /// If not "none", the value to use for `reasoning.summary` when making a
     /// request using the Responses API.
     pub model_reasoning_summary: ReasoningSummary,
+
+    /// When set to `true`, overrides the default heuristic and forces
+    /// `model_supports_reasoning_summaries()` to return `true`.
+    pub model_supports_reasoning_summaries: bool,
+
+    /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
+    pub chatgpt_base_url: String,
+
+    /// Experimental rollout resume path (absolute path to .jsonl; undocumented).
+    pub experimental_resume: Option<PathBuf>,
 }
 
 impl Config {
@@ -308,6 +321,18 @@ pub struct ConfigToml {
 
     pub model_reasoning_effort: Option<ReasoningEffort>,
     pub model_reasoning_summary: Option<ReasoningSummary>,
+
+    /// Override to force-enable reasoning summaries for the configured model.
+    pub model_supports_reasoning_summaries: Option<bool>,
+
+    /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
+    pub chatgpt_base_url: Option<String>,
+
+    /// Experimental rollout resume path (absolute path to .jsonl; undocumented).
+    pub experimental_resume: Option<PathBuf>,
+
+    /// Experimental path to a file whose contents replace the built-in BASE_INSTRUCTIONS.
+    pub experimental_instructions_file: Option<PathBuf>,
 }
 
 impl ConfigToml {
@@ -340,6 +365,7 @@ pub struct ConfigOverrides {
     pub model_provider: Option<String>,
     pub config_profile: Option<String>,
     pub codex_linux_sandbox_exe: Option<PathBuf>,
+    pub base_instructions: Option<String>,
 }
 
 impl Config {
@@ -350,7 +376,7 @@ impl Config {
         overrides: ConfigOverrides,
         codex_home: PathBuf,
     ) -> std::io::Result<Self> {
-        let instructions = Self::load_instructions(Some(&codex_home));
+        let user_instructions = Self::load_instructions(Some(&codex_home));
 
         // Destructure ConfigOverrides fully to ensure all overrides are applied.
         let ConfigOverrides {
@@ -361,6 +387,7 @@ impl Config {
             model_provider,
             config_profile: config_profile_key,
             codex_linux_sandbox_exe,
+            base_instructions,
         } = overrides;
 
         let config_profile = match config_profile_key.as_ref().or(cfg.profile.as_ref()) {
@@ -435,6 +462,13 @@ impl Config {
                 .as_ref()
                 .map(|info| info.max_output_tokens)
         });
+
+        let experimental_resume = cfg.experimental_resume;
+
+        let base_instructions = base_instructions.or(Self::get_base_instructions(
+            cfg.experimental_instructions_file.as_ref(),
+        ));
+
         let config = Self {
             model,
             model_context_window,
@@ -453,7 +487,8 @@ impl Config {
                 .or(cfg.disable_response_storage)
                 .unwrap_or(false),
             notify: cfg.notify,
-            instructions,
+            user_instructions,
+            base_instructions,
             mcp_servers: cfg.mcp_servers,
             model_providers,
             project_doc_max_bytes: cfg.project_doc_max_bytes.unwrap_or(PROJECT_DOC_MAX_BYTES),
@@ -472,6 +507,17 @@ impl Config {
                 .model_reasoning_summary
                 .or(cfg.model_reasoning_summary)
                 .unwrap_or_default(),
+
+            model_supports_reasoning_summaries: cfg
+                .model_supports_reasoning_summaries
+                .unwrap_or(false),
+
+            chatgpt_base_url: config_profile
+                .chatgpt_base_url
+                .or(cfg.chatgpt_base_url)
+                .unwrap_or("https://chatgpt.com/backend-api/".to_string()),
+
+            experimental_resume,
         };
         Ok(config)
     }
@@ -492,6 +538,15 @@ impl Config {
             }
         })
     }
+
+    fn get_base_instructions(path: Option<&PathBuf>) -> Option<String> {
+        let path = path.as_ref()?;
+
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
 }
 
 fn default_model() -> String {
@@ -506,7 +561,7 @@ fn default_model() -> String {
 ///   function will Err if the path does not exist.
 /// - If `CODEX_HOME` is not set, this function does not verify that the
 ///   directory exists.
-fn find_codex_home() -> std::io::Result<PathBuf> {
+pub fn find_codex_home() -> std::io::Result<PathBuf> {
     // Honor the `CODEX_HOME` environment variable when it is set to allow users
     // (and tests) to override the default location.
     if let Ok(val) = std::env::var("CODEX_HOME") {
@@ -660,6 +715,9 @@ name = "OpenAI using Chat Completions"
 base_url = "https://api.openai.com/v1"
 env_key = "OPENAI_API_KEY"
 wire_api = "chat"
+request_max_retries = 4            # retry failed HTTP requests
+stream_max_retries = 10            # retry dropped SSE streams
+stream_idle_timeout_ms = 300000    # 5m idle timeout
 
 [profiles.o3]
 model = "o3"
@@ -700,6 +758,9 @@ disable_response_storage = true
             query_params: None,
             http_headers: None,
             env_http_headers: None,
+            request_max_retries: Some(4),
+            stream_max_retries: Some(10),
+            stream_idle_timeout_ms: Some(300_000),
         };
         let model_provider_map = {
             let mut model_provider_map = built_in_model_providers();
@@ -762,7 +823,7 @@ disable_response_storage = true
                 sandbox_policy: SandboxPolicy::new_read_only_policy(),
                 shell_environment_policy: ShellEnvironmentPolicy::default(),
                 disable_response_storage: false,
-                instructions: None,
+                user_instructions: None,
                 notify: None,
                 cwd: fixture.cwd(),
                 mcp_servers: HashMap::new(),
@@ -776,6 +837,10 @@ disable_response_storage = true
                 hide_agent_reasoning: false,
                 model_reasoning_effort: ReasoningEffort::High,
                 model_reasoning_summary: ReasoningSummary::Detailed,
+                model_supports_reasoning_summaries: false,
+                chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
+                experimental_resume: None,
+                base_instructions: None,
             },
             o3_profile_config
         );
@@ -806,7 +871,7 @@ disable_response_storage = true
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             shell_environment_policy: ShellEnvironmentPolicy::default(),
             disable_response_storage: false,
-            instructions: None,
+            user_instructions: None,
             notify: None,
             cwd: fixture.cwd(),
             mcp_servers: HashMap::new(),
@@ -820,6 +885,10 @@ disable_response_storage = true
             hide_agent_reasoning: false,
             model_reasoning_effort: ReasoningEffort::default(),
             model_reasoning_summary: ReasoningSummary::default(),
+            model_supports_reasoning_summaries: false,
+            chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
+            experimental_resume: None,
+            base_instructions: None,
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -865,7 +934,7 @@ disable_response_storage = true
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             shell_environment_policy: ShellEnvironmentPolicy::default(),
             disable_response_storage: true,
-            instructions: None,
+            user_instructions: None,
             notify: None,
             cwd: fixture.cwd(),
             mcp_servers: HashMap::new(),
@@ -879,6 +948,10 @@ disable_response_storage = true
             hide_agent_reasoning: false,
             model_reasoning_effort: ReasoningEffort::default(),
             model_reasoning_summary: ReasoningSummary::default(),
+            model_supports_reasoning_summaries: false,
+            chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
+            experimental_resume: None,
+            base_instructions: None,
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);

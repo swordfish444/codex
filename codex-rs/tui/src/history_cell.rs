@@ -17,6 +17,7 @@ use image::GenericImageView;
 use image::ImageReader;
 use lazy_static::lazy_static;
 use mcp_types::EmbeddedResourceResource;
+use mcp_types::ResourceLink;
 use ratatui::prelude::*;
 use ratatui::style::Color;
 use ratatui::style::Modifier;
@@ -122,6 +123,30 @@ pub(crate) enum HistoryCell {
 const TOOL_CALL_MAX_LINES: usize = 5;
 
 impl HistoryCell {
+    /// Return a cloned, plain representation of the cell's lines suitable for
+    /// one‑shot insertion into the terminal scrollback. Image cells are
+    /// represented with a simple placeholder for now.
+    pub(crate) fn plain_lines(&self) -> Vec<Line<'static>> {
+        match self {
+            HistoryCell::WelcomeMessage { view }
+            | HistoryCell::UserPrompt { view }
+            | HistoryCell::AgentMessage { view }
+            | HistoryCell::AgentReasoning { view }
+            | HistoryCell::BackgroundEvent { view }
+            | HistoryCell::GitDiffOutput { view }
+            | HistoryCell::ErrorEvent { view }
+            | HistoryCell::SessionInfo { view }
+            | HistoryCell::CompletedExecCommand { view }
+            | HistoryCell::CompletedMcpToolCall { view }
+            | HistoryCell::PendingPatch { view }
+            | HistoryCell::ActiveExecCommand { view, .. }
+            | HistoryCell::ActiveMcpToolCall { view, .. } => view.lines.clone(),
+            HistoryCell::CompletedMcpToolCallWithImageOutput { .. } => vec![
+                Line::from("tool result (image output omitted)"),
+                Line::from(""),
+            ],
+        }
+    }
     pub(crate) fn new_session_info(
         config: &Config,
         event: SessionConfiguredEvent,
@@ -140,7 +165,7 @@ impl HistoryCell {
                 Line::from(vec![
                     "OpenAI ".into(),
                     "Codex".bold(),
-                    format!(" v{}", VERSION).into(),
+                    format!(" v{VERSION}").into(),
                     " (research preview)".dim(),
                 ]),
                 Line::from(""),
@@ -155,11 +180,11 @@ impl HistoryCell {
                 ("workdir", config.cwd.display().to_string()),
                 ("model", config.model.clone()),
                 ("provider", config.model_provider_id.clone()),
-                ("approval", format!("{:?}", config.approval_policy)),
+                ("approval", config.approval_policy.to_string()),
                 ("sandbox", summarize_sandbox_policy(&config.sandbox_policy)),
             ];
             if config.model_provider.wire_api == WireApi::Responses
-                && model_supports_reasoning_summaries(&config.model)
+                && model_supports_reasoning_summaries(config)
             {
                 entries.push((
                     "reasoning effort",
@@ -185,7 +210,7 @@ impl HistoryCell {
             let lines = vec![
                 Line::from("model changed:".magenta().bold()),
                 Line::from(format!("requested: {}", config.model)),
-                Line::from(format!("used: {}", model)),
+                Line::from(format!("used: {model}")),
                 Line::from(""),
             ];
             HistoryCell::SessionInfo {
@@ -276,7 +301,7 @@ impl HistoryCell {
         }
         let remaining = lines_iter.count();
         if remaining > 0 {
-            lines.push(Line::from(format!("... {} additional lines", remaining)).dim());
+            lines.push(Line::from(format!("... {remaining} additional lines")).dim());
         }
         lines.push(Line::from(""));
 
@@ -331,8 +356,7 @@ impl HistoryCell {
     ) -> Option<Self> {
         match result {
             Ok(mcp_types::CallToolResult { content, .. }) => {
-                if let Some(mcp_types::CallToolResultContent::ImageContent(image)) = content.first()
-                {
+                if let Some(mcp_types::ContentBlock::ImageContent(image)) = content.first() {
                     let raw_data =
                         match base64::engine::general_purpose::STANDARD.decode(&image.data) {
                             Ok(data) => data,
@@ -405,21 +429,21 @@ impl HistoryCell {
 
                     for tool_call_result in content {
                         let line_text = match tool_call_result {
-                            mcp_types::CallToolResultContent::TextContent(text) => {
+                            mcp_types::ContentBlock::TextContent(text) => {
                                 format_and_truncate_tool_result(
                                     &text.text,
                                     TOOL_CALL_MAX_LINES,
                                     num_cols as usize,
                                 )
                             }
-                            mcp_types::CallToolResultContent::ImageContent(_) => {
+                            mcp_types::ContentBlock::ImageContent(_) => {
                                 // TODO show images even if they're not the first result, will require a refactor of `CompletedMcpToolCall`
                                 "<image content>".to_string()
                             }
-                            mcp_types::CallToolResultContent::AudioContent(_) => {
+                            mcp_types::ContentBlock::AudioContent(_) => {
                                 "<audio content>".to_string()
                             }
-                            mcp_types::CallToolResultContent::EmbeddedResource(resource) => {
+                            mcp_types::ContentBlock::EmbeddedResource(resource) => {
                                 let uri = match resource.resource {
                                     EmbeddedResourceResource::TextResourceContents(text) => {
                                         text.uri
@@ -429,6 +453,9 @@ impl HistoryCell {
                                     }
                                 };
                                 format!("embedded resource: {uri}")
+                            }
+                            mcp_types::ContentBlock::ResourceLink(ResourceLink { uri, .. }) => {
+                                format!("link: {uri}")
                             }
                         };
                         lines.push(Line::styled(line_text, Style::default().fg(Color::Gray)));

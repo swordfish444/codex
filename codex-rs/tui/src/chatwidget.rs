@@ -1,9 +1,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use codex_core::codex_wrapper::CodexConversation;
 use codex_core::codex_wrapper::init_codex;
 use codex_core::config::Config;
+use codex_core::protocol::AgentMessageDeltaEvent;
 use codex_core::protocol::AgentMessageEvent;
+use codex_core::protocol::AgentReasoningDeltaEvent;
 use codex_core::protocol::AgentReasoningEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::ErrorEvent;
@@ -21,9 +24,6 @@ use codex_core::protocol::TaskCompleteEvent;
 use codex_core::protocol::TokenUsage;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Constraint;
-use ratatui::layout::Direction;
-use ratatui::layout::Layout;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
@@ -34,11 +34,13 @@ use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::BottomPane;
 use crate::bottom_pane::BottomPaneParams;
+use crate::bottom_pane::CancellationEvent;
 use crate::bottom_pane::InputResult;
 use crate::compact::Role;
 use crate::compact::TranscriptEntry;
 use crate::compact::generate_compact_summary;
 use crate::conversation_history_widget::ConversationHistoryWidget;
+use crate::exec_command::strip_bash_lc_and_escape;
 use crate::history_cell::PatchEventType;
 use crate::user_approval_widget::ApprovalRequest;
 use codex_file_search::FileMatch;
@@ -48,17 +50,15 @@ pub(crate) struct ChatWidget<'a> {
     codex_op_tx: UnboundedSender<Op>,
     conversation_history: ConversationHistoryWidget,
     bottom_pane: BottomPane<'a>,
-    input_focus: InputFocus,
     config: Config,
     initial_user_message: Option<UserMessage>,
     token_usage: TokenUsage,
+    // Buffer for streaming assistant reasoning text; emitted on final event.
+    reasoning_buffer: String,
+    // Buffer for streaming assistant answer text; emitted on final event.
+    answer_buffer: String,
+    // Transcript of chat for `/compact` summarization.
     transcript: Vec<TranscriptEntry>,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum InputFocus {
-    HistoryPane,
-    BottomPane,
 }
 
 struct UserMessage {
@@ -96,7 +96,11 @@ impl ChatWidget<'_> {
         // Create the Codex asynchronously so the UI loads as quickly as possible.
         let config_for_agent_loop = config.clone();
         tokio::spawn(async move {
-            let (codex, session_event, _ctrl_c) = match init_codex(config_for_agent_loop).await {
+            let CodexConversation {
+                codex,
+                session_configured,
+                ..
+            } = match init_codex(config_for_agent_loop).await {
                 Ok(vals) => vals,
                 Err(e) => {
                     // TODO: surface this error to the user.
@@ -107,7 +111,7 @@ impl ChatWidget<'_> {
 
             // Forward the captured `SessionInitialized` event that was consumed
             // inside `init_codex()` so it can be rendered in the UI.
-            app_event_tx_clone.send(AppEvent::CodexEvent(session_event.clone()));
+            app_event_tx_clone.send(AppEvent::CodexEvent(session_configured.clone()));
             let codex = Arc::new(codex);
             let codex_clone = codex.clone();
             tokio::spawn(async move {
@@ -132,50 +136,37 @@ impl ChatWidget<'_> {
                 app_event_tx,
                 has_input_focus: true,
             }),
-            input_focus: InputFocus::BottomPane,
             config,
             initial_user_message: create_initial_user_message(
                 initial_prompt.unwrap_or_default(),
                 initial_images,
             ),
             token_usage: TokenUsage::default(),
+            reasoning_buffer: String::new(),
+            answer_buffer: String::new(),
             transcript: Vec::new(),
         }
     }
 
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
         self.bottom_pane.clear_ctrl_c_quit_hint();
-        // Special-case <Tab>: normally toggles focus between history and bottom panes.
-        // However, when the slash-command popup is visible we forward the key
-        // to the bottom pane so it can handle auto-completion.
-        if matches!(key_event.code, crossterm::event::KeyCode::Tab)
-            && !self.bottom_pane.is_popup_visible()
-        {
-            self.input_focus = match self.input_focus {
-                InputFocus::HistoryPane => InputFocus::BottomPane,
-                InputFocus::BottomPane => InputFocus::HistoryPane,
-            };
-            self.conversation_history
-                .set_input_focus(self.input_focus == InputFocus::HistoryPane);
-            self.bottom_pane
-                .set_input_focus(self.input_focus == InputFocus::BottomPane);
-            self.request_redraw();
-            return;
-        }
 
-        match self.input_focus {
-            InputFocus::HistoryPane => {
-                let needs_redraw = self.conversation_history.handle_key_event(key_event);
-                if needs_redraw {
-                    self.request_redraw();
-                }
+        match self.bottom_pane.handle_key_event(key_event) {
+            InputResult::Submitted(text) => {
+                self.submit_user_message(text.into());
             }
-            InputFocus::BottomPane => match self.bottom_pane.handle_key_event(key_event) {
-                InputResult::Submitted(text) => {
-                    self.submit_user_message(text.into());
-                }
-                InputResult::None => {}
-            },
+            InputResult::None => {}
+        }
+    }
+
+    pub(crate) fn handle_paste(&mut self, text: String) {
+        self.bottom_pane.handle_paste(text);
+    }
+
+    /// Emits the last entry's plain lines from conversation_history, if any.
+    fn emit_last_history_entry(&mut self) {
+        if let Some(lines) = self.conversation_history.last_entry_plain_lines() {
+            self.app_event_tx.send(AppEvent::InsertHistory(lines));
         }
     }
 
@@ -212,9 +203,10 @@ impl ChatWidget<'_> {
 
         // Only show text portion in conversation history for now.
         if !text.is_empty() {
-            // Forward a *copy* of the text to the history widget so we can
-            // still use the original value afterwards.
+            // Forward a copy for history and emit into scrollback.
             self.conversation_history.add_user_message(text.clone());
+            self.emit_last_history_entry();
+            // Record in transcript for `/compact`.
             self.transcript.push(TranscriptEntry {
                 role: Role::User,
                 text,
@@ -230,6 +222,10 @@ impl ChatWidget<'_> {
                 // Record session information at the top of the conversation.
                 self.conversation_history
                     .add_session_info(&self.config, event.clone());
+                // Immediately surface the session banner / settings summary in
+                // scrollback so the user can review configuration (model,
+                // sandbox, approvals, etc.) before interacting.
+                self.emit_last_history_entry();
 
                 // Forward history metadata to the bottom pane so the chat
                 // composer can navigate through past messages.
@@ -245,22 +241,53 @@ impl ChatWidget<'_> {
                 self.request_redraw();
             }
             EventMsg::AgentMessage(AgentMessageEvent { message }) => {
-                // Preserve `message` for the transcript after adding it to the
-                // conversation history.
-                self.conversation_history
-                    .add_agent_message(&self.config, message.clone());
-                self.transcript.push(TranscriptEntry {
-                    role: Role::Assistant,
-                    text: message,
-                });
+                // Final assistant answer. Prefer the fully provided message.
+                let full = if message.is_empty() {
+                    std::mem::take(&mut self.answer_buffer)
+                } else {
+                    self.answer_buffer.clear();
+                    message
+                };
+                if !full.is_empty() {
+                    self.conversation_history
+                        .add_agent_message(&self.config, full.clone());
+                    self.emit_last_history_entry();
+                    // Record final answer in transcript for `/compact`.
+                    self.transcript.push(TranscriptEntry {
+                        role: Role::Assistant,
+                        text: full,
+                    });
+                }
                 self.request_redraw();
             }
+            EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }) => {
+                // Buffer only – do not emit partial lines. This avoids cases
+                // where long responses appear truncated if the terminal
+                // wrapped early. The full message is emitted on
+                // AgentMessage.
+                self.answer_buffer.push_str(&delta);
+            }
+            EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }) => {
+                // Buffer only – disable incremental reasoning streaming so we
+                // avoid truncated intermediate lines. Full text emitted on
+                // AgentReasoning.
+                self.reasoning_buffer.push_str(&delta);
+            }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
-                if !self.config.hide_agent_reasoning {
+                // Emit full reasoning text once. Some providers might send
+                // final event with empty text if only deltas were used.
+                let full = if text.is_empty() {
+                    std::mem::take(&mut self.reasoning_buffer)
+                } else {
+                    self.reasoning_buffer.clear();
+                    text
+                };
+                if !full.is_empty() {
                     self.conversation_history
-                        .add_agent_reasoning(&self.config, text);
-                    self.request_redraw();
+                        .add_agent_reasoning(&self.config, full);
+                    self.emit_last_history_entry();
                 }
+                self.request_redraw();
             }
             EventMsg::TaskStarted => {
                 self.bottom_pane.clear_ctrl_c_quit_hint();
@@ -279,14 +306,30 @@ impl ChatWidget<'_> {
                     .set_token_usage(self.token_usage.clone(), self.config.model_context_window);
             }
             EventMsg::Error(ErrorEvent { message }) => {
-                self.conversation_history.add_error(message);
+                self.conversation_history.add_error(message.clone());
+                self.emit_last_history_entry();
                 self.bottom_pane.set_task_running(false);
             }
             EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
+                call_id: _,
                 command,
                 cwd,
                 reason,
             }) => {
+                // Print the command to the history so it is visible in the
+                // transcript *before* the modal asks for approval.
+                let cmdline = strip_bash_lc_and_escape(&command);
+                let text = format!(
+                    "command requires approval:\n$ {cmdline}{reason}",
+                    reason = reason
+                        .as_ref()
+                        .map(|r| format!("\n{r}"))
+                        .unwrap_or_default()
+                );
+                self.conversation_history.add_background_event(text);
+                self.emit_last_history_entry();
+                self.conversation_history.scroll_to_bottom();
+
                 let request = ApprovalRequest::Exec {
                     id,
                     command,
@@ -294,8 +337,10 @@ impl ChatWidget<'_> {
                     reason,
                 };
                 self.bottom_pane.push_approval_request(request);
+                self.request_redraw();
             }
             EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
+                call_id: _,
                 changes,
                 reason,
                 grant_root,
@@ -313,6 +358,7 @@ impl ChatWidget<'_> {
 
                 self.conversation_history
                     .add_patch_event(PatchEventType::ApprovalRequest, changes);
+                self.emit_last_history_entry();
 
                 self.conversation_history.scroll_to_bottom();
 
@@ -332,6 +378,7 @@ impl ChatWidget<'_> {
             }) => {
                 self.conversation_history
                     .add_active_exec_command(call_id, command);
+                self.emit_last_history_entry();
                 self.request_redraw();
             }
             EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
@@ -343,6 +390,7 @@ impl ChatWidget<'_> {
                 // summary so the user can follow along.
                 self.conversation_history
                     .add_patch_event(PatchEventType::ApplyBegin { auto_approved }, changes);
+                self.emit_last_history_entry();
                 if !auto_approved {
                     self.conversation_history.scroll_to_bottom();
                 }
@@ -366,6 +414,7 @@ impl ChatWidget<'_> {
             }) => {
                 self.conversation_history
                     .add_active_mcp_tool_call(call_id, server, tool, arguments);
+                self.emit_last_history_entry();
                 self.request_redraw();
             }
             EventMsg::McpToolCallEnd(mcp_tool_call_end_event) => {
@@ -386,9 +435,13 @@ impl ChatWidget<'_> {
                 self.bottom_pane
                     .on_history_entry_response(log_id, offset, entry.map(|e| e.text));
             }
+            EventMsg::ShutdownComplete => {
+                self.app_event_tx.send(AppEvent::ExitRequest);
+            }
             event => {
                 self.conversation_history
                     .add_background_event(format!("{event:?}"));
+                self.emit_last_history_entry();
                 self.request_redraw();
             }
         }
@@ -401,11 +454,13 @@ impl ChatWidget<'_> {
     }
 
     fn request_redraw(&mut self) {
-        self.app_event_tx.send(AppEvent::Redraw);
+        self.app_event_tx.send(AppEvent::RequestRedraw);
     }
 
     pub(crate) fn add_diff_output(&mut self, diff_output: String) {
-        self.conversation_history.add_diff_output(diff_output);
+        self.conversation_history
+            .add_diff_output(diff_output.clone());
+        self.emit_last_history_entry();
         self.request_redraw();
     }
 
@@ -476,18 +531,19 @@ impl ChatWidget<'_> {
 
                 // Re-configure the Codex session so that the backend agent starts with
                 // a clean conversation context.
-                let instructions = self.config.instructions.clone();
                 let op = Op::ConfigureSession {
                     provider: self.config.model_provider.clone(),
                     model: self.config.model.clone(),
                     model_reasoning_effort: self.config.model_reasoning_effort,
                     model_reasoning_summary: self.config.model_reasoning_summary,
-                    instructions,
+                    user_instructions: self.config.user_instructions.clone(),
+                    base_instructions: self.config.base_instructions.clone(),
                     approval_policy: self.config.approval_policy,
                     sandbox_policy: self.config.sandbox_policy.clone(),
                     disable_response_storage: self.config.disable_response_storage,
                     notify: self.config.notify.clone(),
                     cwd: self.config.cwd.clone(),
+                    resume_path: None,
                 };
                 self.submit_op(op);
 
@@ -509,19 +565,30 @@ impl ChatWidget<'_> {
     }
 
     /// Handle Ctrl-C key press.
-    /// Returns true if the key press was handled, false if it was not.
-    /// If the key press was not handled, the caller should handle it (likely by exiting the process).
-    pub(crate) fn on_ctrl_c(&mut self) -> bool {
+    /// Returns CancellationEvent::Handled if the event was consumed by the UI, or
+    /// CancellationEvent::Ignored if the caller should handle it (e.g. exit).
+    pub(crate) fn on_ctrl_c(&mut self) -> CancellationEvent {
+        match self.bottom_pane.on_ctrl_c() {
+            CancellationEvent::Handled => return CancellationEvent::Handled,
+            CancellationEvent::Ignored => {}
+        }
         if self.bottom_pane.is_task_running() {
             self.bottom_pane.clear_ctrl_c_quit_hint();
             self.submit_op(Op::Interrupt);
-            false
+            self.answer_buffer.clear();
+            self.reasoning_buffer.clear();
+            CancellationEvent::Ignored
         } else if self.bottom_pane.ctrl_c_quit_hint_visible() {
-            true
+            self.submit_op(Op::Shutdown);
+            CancellationEvent::Handled
         } else {
             self.bottom_pane.show_ctrl_c_quit_hint();
-            false
+            CancellationEvent::Ignored
         }
+    }
+
+    pub(crate) fn composer_is_empty(&self) -> bool {
+        self.bottom_pane.composer_is_empty()
     }
 
     /// Forward an `Op` directly to codex.
@@ -530,19 +597,18 @@ impl ChatWidget<'_> {
             tracing::error!("failed to submit op: {e}");
         }
     }
+
+    pub(crate) fn token_usage(&self) -> &TokenUsage {
+        &self.token_usage
+    }
 }
 
 impl WidgetRef for &ChatWidget<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        let bottom_height = self.bottom_pane.calculate_required_height(&area);
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(bottom_height)])
-            .split(area);
-
-        self.conversation_history.render(chunks[0], buf);
-        (&self.bottom_pane).render(chunks[1], buf);
+        // In the hybrid inline viewport mode we only draw the interactive
+        // bottom pane; history entries are injected directly into scrollback
+        // via `Terminal::insert_before`.
+        (&self.bottom_pane).render(area, buf);
     }
 }
 

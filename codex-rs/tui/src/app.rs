@@ -6,7 +6,6 @@ use crate::get_git_diff::get_git_diff;
 use crate::git_warning_screen::GitWarningOutcome;
 use crate::git_warning_screen::GitWarningScreen;
 use crate::login_screen::LoginScreen;
-use crate::mouse_capture::MouseCapture;
 use crate::scroll_event_helper::ScrollEventHelper;
 use crate::slash_command::SlashCommand;
 use crate::tui;
@@ -18,8 +17,16 @@ use crossterm::event::KeyEvent;
 use crossterm::event::MouseEvent;
 use crossterm::event::MouseEventKind;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::channel;
+use std::thread;
+use std::time::Duration;
+
+/// Time window for debouncing redraw requests.
+const REDRAW_DEBOUNCE: Duration = Duration::from_millis(10);
 
 /// Top-level application state: which full-screen view is currently active.
 #[allow(clippy::large_enum_variant)]
@@ -46,6 +53,9 @@ pub(crate) struct App<'a> {
 
     file_search: FileSearchManager,
 
+    /// True when a redraw has been scheduled but not yet executed.
+    pending_redraw: Arc<AtomicBool>,
+
     /// Stored parameters needed to instantiate the ChatWidget later, e.g.,
     /// after dismissing the Git-repo warning.
     chat_args: Option<ChatWidgetArgs>,
@@ -60,7 +70,7 @@ struct ChatWidgetArgs {
     initial_images: Vec<PathBuf>,
 }
 
-impl<'a> App<'a> {
+impl App<'_> {
     pub(crate) fn new(
         config: Config,
         initial_prompt: Option<String>,
@@ -70,6 +80,7 @@ impl<'a> App<'a> {
     ) -> Self {
         let (app_event_tx, app_event_rx) = channel();
         let app_event_tx = AppEventSender::new(app_event_tx);
+        let pending_redraw = Arc::new(AtomicBool::new(false));
         let scroll_event_helper = ScrollEventHelper::new(app_event_tx.clone());
 
         // Spawn a dedicated thread for reading the crossterm event loop and
@@ -77,46 +88,51 @@ impl<'a> App<'a> {
         {
             let app_event_tx = app_event_tx.clone();
             std::thread::spawn(move || {
-                while let Ok(event) = crossterm::event::read() {
-                    match event {
-                        crossterm::event::Event::Key(key_event) => {
-                            app_event_tx.send(AppEvent::KeyEvent(key_event));
-                        }
-                        crossterm::event::Event::Resize(_, _) => {
-                            app_event_tx.send(AppEvent::Redraw);
-                        }
-                        crossterm::event::Event::Mouse(MouseEvent {
-                            kind: MouseEventKind::ScrollUp,
-                            ..
-                        }) => {
-                            scroll_event_helper.scroll_up();
-                        }
-                        crossterm::event::Event::Mouse(MouseEvent {
-                            kind: MouseEventKind::ScrollDown,
-                            ..
-                        }) => {
-                            scroll_event_helper.scroll_down();
-                        }
-                        crossterm::event::Event::Paste(pasted) => {
-                            use crossterm::event::KeyModifiers;
-
-                            for ch in pasted.chars() {
-                                let key_event = match ch {
-                                    '\n' | '\r' => {
-                                        // Represent newline as <Shift+Enter> so that the bottom
-                                        // pane treats it as a literal newline instead of a submit
-                                        // action (submission is only triggered on Enter *without*
-                                        // any modifiers).
-                                        KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)
-                                    }
-                                    _ => KeyEvent::new(KeyCode::Char(ch), KeyModifiers::empty()),
-                                };
-                                app_event_tx.send(AppEvent::KeyEvent(key_event));
+                loop {
+                    // This timeout is necessary to avoid holding the event lock
+                    // that crossterm::event::read() acquires. In particular,
+                    // reading the cursor position (crossterm::cursor::position())
+                    // needs to acquire the event lock, and so will fail if it
+                    // can't acquire it within 2 sec. Resizing the terminal
+                    // crashes the app if the cursor position can't be read.
+                    if let Ok(true) = crossterm::event::poll(Duration::from_millis(100)) {
+                        if let Ok(event) = crossterm::event::read() {
+                            match event {
+                                crossterm::event::Event::Key(key_event) => {
+                                    app_event_tx.send(AppEvent::KeyEvent(key_event));
+                                }
+                                crossterm::event::Event::Resize(_, _) => {
+                                    app_event_tx.send(AppEvent::RequestRedraw);
+                                }
+                                crossterm::event::Event::Mouse(MouseEvent {
+                                    kind: MouseEventKind::ScrollUp,
+                                    ..
+                                }) => {
+                                    scroll_event_helper.scroll_up();
+                                }
+                                crossterm::event::Event::Mouse(MouseEvent {
+                                    kind: MouseEventKind::ScrollDown,
+                                    ..
+                                }) => {
+                                    scroll_event_helper.scroll_down();
+                                }
+                                crossterm::event::Event::Paste(pasted) => {
+                                    // Many terminals convert newlines to \r when
+                                    // pasting, e.g. [iTerm2][]. But [tui-textarea
+                                    // expects \n][tui-textarea]. This seems like a bug
+                                    // in tui-textarea IMO, but work around it for now.
+                                    // [tui-textarea]: https://github.com/rhysd/tui-textarea/blob/4d18622eeac13b309e0ff6a55a46ac6706da68cf/src/textarea.rs#L782-L783
+                                    // [iTerm2]: https://github.com/gnachman/iTerm2/blob/5d0c0d9f68523cbd0494dad5422998964a2ecd8d/sources/iTermPasteHelper.m#L206-L216
+                                    let pasted = pasted.replace("\r", "\n");
+                                    app_event_tx.send(AppEvent::Paste(pasted));
+                                }
+                                _ => {
+                                    // Ignore any other events.
+                                }
                             }
                         }
-                        _ => {
-                            // Ignore any other events.
-                        }
+                    } else {
+                        // Timeout expired, no `Event` is available
                     }
                 }
             });
@@ -166,6 +182,7 @@ impl<'a> App<'a> {
             app_state,
             config,
             file_search,
+            pending_redraw,
             chat_args,
         }
     }
@@ -176,17 +193,42 @@ impl<'a> App<'a> {
         self.app_event_tx.clone()
     }
 
-    pub(crate) fn run(
-        &mut self,
-        terminal: &mut tui::Tui,
-        mouse_capture: &mut MouseCapture,
-    ) -> Result<()> {
+    /// Schedule a redraw if one is not already pending.
+    #[allow(clippy::unwrap_used)]
+    fn schedule_redraw(&self) {
+        // Attempt to set the flag to `true`. If it was already `true`, another
+        // redraw is already pending so we can return early.
+        if self
+            .pending_redraw
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+
+        let tx = self.app_event_tx.clone();
+        let pending_redraw = self.pending_redraw.clone();
+        thread::spawn(move || {
+            thread::sleep(REDRAW_DEBOUNCE);
+            tx.send(AppEvent::Redraw);
+            pending_redraw.store(false, Ordering::SeqCst);
+        });
+    }
+
+    pub(crate) fn run(&mut self, terminal: &mut tui::Tui) -> Result<()> {
         // Insert an event to trigger the first render.
         let app_event_tx = self.app_event_tx.clone();
-        app_event_tx.send(AppEvent::Redraw);
+        app_event_tx.send(AppEvent::RequestRedraw);
 
         while let Ok(event) = self.app_event_rx.recv() {
             match event {
+                AppEvent::InsertHistory(lines) => {
+                    crate::insert_history::insert_history_lines(terminal, lines);
+                    self.app_event_tx.send(AppEvent::RequestRedraw);
+                }
+                AppEvent::RequestRedraw => {
+                    self.schedule_redraw();
+                }
                 AppEvent::Redraw => {
                     self.draw_next_frame(terminal)?;
                 }
@@ -199,9 +241,7 @@ impl<'a> App<'a> {
                         } => {
                             match &mut self.app_state {
                                 AppState::Chat { widget } => {
-                                    if widget.on_ctrl_c() {
-                                        self.app_event_tx.send(AppEvent::ExitRequest);
-                                    }
+                                    widget.on_ctrl_c();
                                 }
                                 AppState::Login { .. } | AppState::GitWarning { .. } => {
                                     // No-op.
@@ -213,7 +253,21 @@ impl<'a> App<'a> {
                             modifiers: crossterm::event::KeyModifiers::CONTROL,
                             ..
                         } => {
-                            self.app_event_tx.send(AppEvent::ExitRequest);
+                            match &mut self.app_state {
+                                AppState::Chat { widget } => {
+                                    if widget.composer_is_empty() {
+                                        self.app_event_tx.send(AppEvent::ExitRequest);
+                                    } else {
+                                        // Treat Ctrl+D as a normal key event when the composer
+                                        // is not empty so that it doesn't quit the application
+                                        // prematurely.
+                                        self.dispatch_key_event(key_event);
+                                    }
+                                }
+                                AppState::Login { .. } | AppState::GitWarning { .. } => {
+                                    self.app_event_tx.send(AppEvent::ExitRequest);
+                                }
+                            }
                         }
                         _ => {
                             self.dispatch_key_event(key_event);
@@ -222,6 +276,9 @@ impl<'a> App<'a> {
                 }
                 AppEvent::Scroll(scroll_delta) => {
                     self.dispatch_scroll_event(scroll_delta);
+                }
+                AppEvent::Paste(text) => {
+                    self.dispatch_paste_event(text);
                 }
                 AppEvent::CodexEvent(event) => {
                     self.dispatch_codex_event(event);
@@ -246,12 +303,7 @@ impl<'a> App<'a> {
                             Vec::new(),
                         ));
                         self.app_state = AppState::Chat { widget: new_widget };
-                        self.app_event_tx.send(AppEvent::Redraw);
-                    }
-                    SlashCommand::ToggleMouseMode => {
-                        if let Err(e) = mouse_capture.toggle() {
-                            tracing::error!("Failed to toggle mouse mode: {e}");
-                        }
+                        self.app_event_tx.send(AppEvent::RequestRedraw);
                     }
                     SlashCommand::Quit => {
                         break;
@@ -303,7 +355,18 @@ impl<'a> App<'a> {
         Ok(())
     }
 
+    pub(crate) fn token_usage(&self) -> codex_core::protocol::TokenUsage {
+        match &self.app_state {
+            AppState::Chat { widget } => widget.token_usage().clone(),
+            AppState::Login { .. } | AppState::GitWarning { .. } => {
+                codex_core::protocol::TokenUsage::default()
+            }
+        }
+    }
+
     fn draw_next_frame(&mut self, terminal: &mut tui::Tui) -> Result<()> {
+        // TODO: add a throttle to avoid redrawing too often
+
         match &mut self.app_state {
             AppState::Chat { widget } => {
                 terminal.draw(|frame| frame.render_widget_ref(&**widget, frame.area()))?;
@@ -341,7 +404,7 @@ impl<'a> App<'a> {
                         args.initial_images,
                     ));
                     self.app_state = AppState::Chat { widget };
-                    self.app_event_tx.send(AppEvent::Redraw);
+                    self.app_event_tx.send(AppEvent::RequestRedraw);
                 }
                 GitWarningOutcome::Quit => {
                     self.app_event_tx.send(AppEvent::ExitRequest);
@@ -350,6 +413,13 @@ impl<'a> App<'a> {
                     // do nothing
                 }
             },
+        }
+    }
+
+    fn dispatch_paste_event(&mut self, pasted: String) {
+        match &mut self.app_state {
+            AppState::Chat { widget } => widget.handle_paste(pasted),
+            AppState::Login { .. } | AppState::GitWarning { .. } => {}
         }
     }
 
