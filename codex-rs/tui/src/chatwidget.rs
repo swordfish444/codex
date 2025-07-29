@@ -505,7 +505,9 @@ impl ChatWidget<'_> {
         if let Ok(contents) = std::fs::read_to_string(&config_path) {
             if let Ok(cfg) = toml::from_str::<ConfigToml>(&contents) {
                 let mut config_models: Vec<String> = Vec::new();
-                if let Some(m) = cfg.model { config_models.push(m); }
+                if let Some(m) = cfg.model {
+                    config_models.push(m);
+                }
                 for (_name, profile) in cfg.profiles.into_iter() {
                     if let Some(m) = profile.model {
                         config_models.push(m);
@@ -541,7 +543,6 @@ impl ChatWidget<'_> {
         self.submit_op(op);
         self.request_redraw();
     }
-
 }
 
 impl WidgetRef for &ChatWidget<'_> {

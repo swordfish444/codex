@@ -111,7 +111,8 @@ impl Codex {
 
         let user_instructions = get_user_instructions(&config).await;
 
-        let configure_session = config.to_configure_session_op(Some(config.model.clone()), user_instructions);
+        let configure_session =
+            config.to_configure_session_op(Some(config.model.clone()), user_instructions);
 
         let config = Arc::new(config);
 

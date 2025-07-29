@@ -18,15 +18,15 @@ mod chat_composer;
 mod chat_composer_history;
 mod command_popup;
 mod file_search_popup;
-mod status_indicator_view;
 mod model_selection_view;
+mod status_indicator_view;
 
 pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
 
 use approval_modal_view::ApprovalModalView;
-use status_indicator_view::StatusIndicatorView;
 use model_selection_view::ModelSelectionView;
+use status_indicator_view::StatusIndicatorView;
 
 /// Pane displayed in the lower half of the chat UI.
 pub(crate) struct BottomPane<'a> {

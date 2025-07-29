@@ -11,10 +11,10 @@ use ratatui::widgets::Block;
 use ratatui::widgets::BorderType;
 use ratatui::widgets::Borders;
 use ratatui::widgets::Cell;
+use ratatui::widgets::Clear;
 use ratatui::widgets::Row;
 use ratatui::widgets::Table;
 use ratatui::widgets::Widget;
-use ratatui::widgets::Clear;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -136,7 +136,11 @@ impl ModelSelectionView {
         } else {
             // searching: pinned current + matches
             let mut matches = 1; // current always present
-            for name in self.options.iter().filter(|m| m.as_str() != self.current_model) {
+            for name in self
+                .options
+                .iter()
+                .filter(|m| m.as_str() != self.current_model)
+            {
                 if fuzzy_match(name, &self.query).is_some() {
                     matches += 1;
                 }
@@ -174,7 +178,6 @@ impl ModelSelectionView {
         }
         None
     }
-
 }
 
 /// Row that can be rendered in the selector.
@@ -185,7 +188,6 @@ enum DisplayRow {
         is_current: bool,
     },
 }
-
 
 /// Return indices for a simple case-insensitive subsequence match and a score.
 /// Smaller score is better.
@@ -360,8 +362,11 @@ impl<'a> BottomPaneView<'a> for ModelSelectionView {
                         let mut cell = Cell::from(Line::from(spans));
                         // Selected row style takes precedence.
                         if abs_idx == self.selected_idx {
-                            cell = cell
-                                .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+                            cell = cell.style(
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            );
                         } else if *is_current {
                             // Special color for the current model when not selected.
                             cell = cell.style(Style::default().fg(Color::Cyan));
@@ -394,14 +399,17 @@ impl<'a> BottomPaneView<'a> for ModelSelectionView {
             title.push(')');
         }
 
-        let table = Table::new(visible_rows, vec![ratatui::prelude::Constraint::Percentage(100)])
-            .block(
-                Block::default()
-                    .title(title)
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded),
-            )
-            .widths([ratatui::prelude::Constraint::Percentage(100)]);
+        let table = Table::new(
+            visible_rows,
+            vec![ratatui::prelude::Constraint::Percentage(100)],
+        )
+        .block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        )
+        .widths([ratatui::prelude::Constraint::Percentage(100)]);
 
         table.render(area, buf);
     }
@@ -423,4 +431,4 @@ impl<'a> BottomPaneView<'a> for ModelSelectionView {
         self.selected_idx = self.selected_idx.min(self.row_count().saturating_sub(1));
         true
     }
-} 
+}

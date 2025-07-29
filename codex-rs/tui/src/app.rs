@@ -366,7 +366,7 @@ impl App<'_> {
                             widget.show_model_selector();
                         }
                         // Models are populated from a curated list; no network fetch.
-                    },
+                    }
                 },
                 AppEvent::DispatchCommandWithArgs(command, args) => match command {
                     SlashCommand::Model => {
@@ -488,7 +488,6 @@ impl App<'_> {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
