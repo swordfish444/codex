@@ -60,5 +60,6 @@ pub(crate) enum AppEvent {
 
     /// Failed to generate a compact summary. Contains a human-readable error
     /// message that will be surfaced in the conversation history.
+    #[cfg_attr(feature = "fake-compact-model", allow(dead_code))]
     CompactSummaryFailed(String),
 }
