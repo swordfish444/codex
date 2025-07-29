@@ -35,6 +35,7 @@ pub mod openai_api_key;
 mod openai_model_info;
 mod openai_tools;
 mod project_doc;
+pub use project_doc::discover_project_doc_path;
 pub mod protocol;
 mod rollout;
 mod safety;
