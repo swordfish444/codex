@@ -351,7 +351,7 @@ impl App<'_> {
                     AppState::Chat { widget } => {
                         widget.show_compact_error(message);
                     }
-                    AppState::Login { .. } | AppState::GitWarning { .. } => {}
+                    AppState::GitWarning { .. } => {}
                 },
                 AppEvent::StartFileSearch(query) => {
                     self.file_search.on_user_query(query);
