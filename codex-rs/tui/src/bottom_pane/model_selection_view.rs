@@ -203,7 +203,7 @@ fn fuzzy_match(haystack: &str, needle: &str) -> Option<(Vec<usize>, i32)> {
 
     for ch in n_lower.chars() {
         let mut found = None;
-        while let Some((i, hc)) = h_iter.next() {
+        for (i, hc) in h_iter.by_ref() {
             if hc == ch {
                 found = Some(i);
                 break;

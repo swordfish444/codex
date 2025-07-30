@@ -51,9 +51,15 @@ fn strip_surrounding_quotes(s: &str) -> String {
         return trimmed.to_string();
     }
 
-    let mut chars = trimmed.chars();
-    let first = chars.next().unwrap();
-    let last = trimmed.chars().last().unwrap();
+    // Safely obtain the first and last characters without unwraps.
+    let (first, last) = {
+        let mut chs = trimmed.chars();
+        match (chs.next(), chs.next_back()) {
+            (Some(f), Some(l)) => (f, l),
+            (Some(f), None) => (f, f),
+            _ => return trimmed.to_string(),
+        }
+    };
 
     let is_valid_quote = match first {
         '"' | '\'' | '“' | '‘' => first == last,

@@ -531,7 +531,7 @@ impl ChatWidget<'_> {
         // Emit a lightweight event in the conversation log so the change is visible.
         if changed {
             self.conversation_history
-                .add_background_event(format!("Set model to {}.", model));
+                .add_background_event(format!("Set model to {model}."));
             self.emit_last_history_entry();
         }
 
