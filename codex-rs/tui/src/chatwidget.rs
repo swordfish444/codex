@@ -522,9 +522,9 @@ impl ChatWidget<'_> {
 
         // Emit a lightweight event in the conversation log so the change is visible.
         if changed {
-            self.conversation_history
-                .add_background_event(format!("Set model to {model}."));
-            self.emit_last_history_entry();
+            self.add_to_history(HistoryCell::new_background_event(format!(
+                "Set model to {model}."
+            )));
         }
 
         // Reconfigure the agent session with the same provider and policies.
