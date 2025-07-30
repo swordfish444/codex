@@ -628,7 +628,6 @@ async fn submission_loop(
                     }
                 };
 
-                // Create a session-specific Config that only overrides the model.
                 let client_config = {
                     let mut c = (*config).clone();
                     c.model = model.clone();
@@ -636,7 +635,7 @@ async fn submission_loop(
                 };
 
                 let client = ModelClient::new(
-                    config.clone(),
+                    client_config,
                     auth.clone(),
                     provider.clone(),
                     model_reasoning_effort,

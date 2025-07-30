@@ -6,6 +6,7 @@ use codex_core::codex_wrapper::CodexConversation;
 use codex_core::codex_wrapper::init_codex;
 use codex_core::config::Config;
 use codex_core::config::ConfigToml;
+use codex_core::openai_model_info::get_all_model_names;
 use codex_core::protocol::AgentMessageDeltaEvent;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::AgentReasoningDeltaEvent;
@@ -489,7 +490,7 @@ impl ChatWidget<'_> {
     pub(crate) fn show_model_selector(&mut self) {
         let current = self.config.model.clone();
 
-        let mut options = codex_core::openai_model_info::get_all_model_names()
+        let mut options = get_all_model_names()
             .into_iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>();
