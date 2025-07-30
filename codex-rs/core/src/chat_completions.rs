@@ -30,6 +30,7 @@ use crate::util::backoff;
 pub(crate) async fn stream_chat_completions(
     prompt: &Prompt,
     model: &str,
+    include_plan_tool: bool,
     client: &reqwest::Client,
     provider: &ModelProviderInfo,
 ) -> Result<ResponseStream> {
@@ -39,9 +40,13 @@ pub(crate) async fn stream_chat_completions(
     let full_instructions = prompt.get_full_instructions(model);
     messages.push(json!({"role": "system", "content": full_instructions}));
 
+    if let Some(instr) = &prompt.user_instructions {
+        messages.push(json!({"role": "user", "content": instr}));
+    }
+
     for item in &prompt.input {
         match item {
-            ResponseItem::Message { role, content } => {
+            ResponseItem::Message { role, content, .. } => {
                 let mut text = String::new();
                 for c in content {
                     match c {
@@ -58,6 +63,7 @@ pub(crate) async fn stream_chat_completions(
                 name,
                 arguments,
                 call_id,
+                ..
             } => {
                 messages.push(json!({
                     "role": "assistant",
@@ -104,7 +110,7 @@ pub(crate) async fn stream_chat_completions(
         }
     }
 
-    let tools_json = create_tools_json_for_chat_completions_api(prompt, model)?;
+    let tools_json = create_tools_json_for_chat_completions_api(prompt, model, include_plan_tool)?;
     let payload = json!({
         "model": model,
         "messages": messages,
@@ -259,6 +265,7 @@ async fn process_chat_sse<S>(
                     content: vec![ContentItem::OutputText {
                         text: content.to_string(),
                     }],
+                    id: None,
                 };
 
                 let _ = tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
@@ -300,6 +307,7 @@ async fn process_chat_sse<S>(
                     "tool_calls" if fn_call_state.active => {
                         // Build the FunctionCall response item.
                         let item = ResponseItem::FunctionCall {
+                            id: None,
                             name: fn_call_state.name.clone().unwrap_or_else(|| "".to_string()),
                             arguments: fn_call_state.arguments.clone(),
                             call_id: fn_call_state.call_id.clone().unwrap_or_else(String::new),
@@ -402,6 +410,7 @@ where
                 }))) => {
                     if !this.cumulative.is_empty() {
                         let aggregated_item = crate::models::ResponseItem::Message {
+                            id: None,
                             role: "assistant".to_string(),
                             content: vec![crate::models::ContentItem::OutputText {
                                 text: std::mem::take(&mut this.cumulative),

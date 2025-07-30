@@ -22,8 +22,6 @@ const BASE_INSTRUCTIONS: &str = include_str!("../prompt.md");
 pub struct Prompt {
     /// Conversation context input items.
     pub input: Vec<ResponseItem>,
-    /// Optional previous response ID (when storage is enabled).
-    pub prev_id: Option<String>,
     /// Optional instructions from the user to amend to the built-in agent
     /// instructions.
     pub user_instructions: Option<String>,
@@ -34,14 +32,18 @@ pub struct Prompt {
     /// the "fully qualified" tool name (i.e., prefixed with the server name),
     /// which should be reported to the model in place of Tool::name.
     pub extra_tools: HashMap<String, mcp_types::Tool>,
+
+    /// Optional override for the built-in BASE_INSTRUCTIONS.
+    pub base_instructions_override: Option<String>,
 }
 
 impl Prompt {
     pub(crate) fn get_full_instructions(&self, model: &str) -> Cow<'_, str> {
-        let mut sections: Vec<&str> = vec![BASE_INSTRUCTIONS];
-        if let Some(ref user) = self.user_instructions {
-            sections.push(user);
-        }
+        let base = self
+            .base_instructions_override
+            .as_deref()
+            .unwrap_or(BASE_INSTRUCTIONS);
+        let mut sections: Vec<&str> = vec![base];
         if model.starts_with("gpt-4.1") {
             sections.push(APPLY_PATCH_TOOL_INSTRUCTIONS);
         }
@@ -126,11 +128,10 @@ pub(crate) struct ResponsesApiRequest<'a> {
     pub(crate) tool_choice: &'static str,
     pub(crate) parallel_tool_calls: bool,
     pub(crate) reasoning: Option<Reasoning>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) previous_response_id: Option<String>,
     /// true when using the Responses API.
     pub(crate) store: bool,
     pub(crate) stream: bool,
+    pub(crate) include: Vec<String>,
 }
 
 use crate::config::Config;
@@ -182,5 +183,21 @@ impl Stream for ResponseStream {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.rx_event.poll_recv(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_full_instructions_no_user_content() {
+        let prompt = Prompt {
+            user_instructions: Some("custom instruction".to_string()),
+            ..Default::default()
+        };
+        let expected = format!("{BASE_INSTRUCTIONS}\n{APPLY_PATCH_TOOL_INSTRUCTIONS}");
+        let full = prompt.get_full_instructions("gpt-4.1");
+        assert_eq!(full, expected);
     }
 }

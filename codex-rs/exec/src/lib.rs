@@ -5,12 +5,12 @@ mod event_processor_with_json_output;
 
 use std::io::IsTerminal;
 use std::io::Read;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 pub use cli::Cli;
-use codex_core::codex_wrapper;
+use codex_core::codex_wrapper::CodexConversation;
+use codex_core::codex_wrapper::{self};
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config_types::SandboxMode;
@@ -28,6 +28,7 @@ use tracing::error;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
 
 pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
@@ -91,6 +92,20 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         ),
     };
 
+    // TODO(mbolin): Take a more thoughtful approach to logging.
+    let default_level = "error";
+    let _ = tracing_subscriber::fmt()
+        // Fallback to the `default_level` log filter if the environment
+        // variable is not set _or_ contains an invalid value
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .or_else(|_| EnvFilter::try_new(default_level))
+                .unwrap_or_else(|_| EnvFilter::new(default_level)),
+        )
+        .with_ansi(stderr_with_ansi)
+        .with_writer(std::io::stderr)
+        .try_init();
+
     let sandbox_mode = if full_auto {
         Some(SandboxMode::WorkspaceWrite)
     } else if dangerously_bypass_approvals_and_sandbox {
@@ -110,6 +125,8 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         cwd: cwd.map(|p| p.canonicalize().unwrap_or(p)),
         model_provider: None,
         codex_linux_sandbox_exe,
+        base_instructions: None,
+        include_plan_tool: None,
     };
     // Parse `-c` overrides.
     let cli_kv_overrides = match config_overrides.parse_overrides() {
@@ -122,11 +139,12 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
 
     let config = Config::load_with_cli_overrides(cli_kv_overrides, overrides)?;
     let mut event_processor: Box<dyn EventProcessor> = if json_mode {
-        Box::new(EventProcessorWithJsonOutput::new())
+        Box::new(EventProcessorWithJsonOutput::new(last_message_file.clone()))
     } else {
         Box::new(EventProcessorWithHumanOutput::create_with_ansi(
             stdout_with_ansi,
             &config,
+            last_message_file.clone(),
         ))
     };
 
@@ -139,23 +157,14 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         std::process::exit(1);
     }
 
-    // TODO(mbolin): Take a more thoughtful approach to logging.
-    let default_level = "error";
-    let _ = tracing_subscriber::fmt()
-        // Fallback to the `default_level` log filter if the environment
-        // variable is not set _or_ contains an invalid value
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .or_else(|_| EnvFilter::try_new(default_level))
-                .unwrap_or_else(|_| EnvFilter::new(default_level)),
-        )
-        .with_ansi(stderr_with_ansi)
-        .with_writer(std::io::stderr)
-        .try_init();
-
-    let (codex_wrapper, event, ctrl_c) = codex_wrapper::init_codex(config).await?;
+    let CodexConversation {
+        codex: codex_wrapper,
+        session_configured,
+        ctrl_c,
+        ..
+    } = codex_wrapper::init_codex(config).await?;
     let codex = Arc::new(codex_wrapper);
-    info!("Codex initialized with event: {event:?}");
+    info!("Codex initialized with event: {session_configured:?}");
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     {
@@ -223,40 +232,17 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
 
     // Run the loop until the task is complete.
     while let Some(event) = rx.recv().await {
-        let (is_last_event, last_assistant_message) = match &event.msg {
-            EventMsg::TaskComplete(TaskCompleteEvent { last_agent_message }) => {
-                (true, last_agent_message.clone())
+        let shutdown: CodexStatus = event_processor.process_event(event);
+        match shutdown {
+            CodexStatus::Running => continue,
+            CodexStatus::InitiateShutdown => {
+                codex.submit(Op::Shutdown).await?;
             }
-            _ => (false, None),
-        };
-        event_processor.process_event(event);
-        if is_last_event {
-            handle_last_message(last_assistant_message, last_message_file.as_deref())?;
-            break;
+            CodexStatus::Shutdown => {
+                break;
+            }
         }
     }
 
-    Ok(())
-}
-
-fn handle_last_message(
-    last_agent_message: Option<String>,
-    last_message_file: Option<&Path>,
-) -> std::io::Result<()> {
-    match (last_agent_message, last_message_file) {
-        (Some(last_agent_message), Some(last_message_file)) => {
-            // Last message and a file to write to.
-            std::fs::write(last_message_file, last_agent_message)?;
-        }
-        (None, Some(last_message_file)) => {
-            eprintln!(
-                "Warning: No last message to write to file: {}",
-                last_message_file.to_string_lossy()
-            );
-        }
-        (_, None) => {
-            // No last message and no file to write to.
-        }
-    }
     Ok(())
 }
