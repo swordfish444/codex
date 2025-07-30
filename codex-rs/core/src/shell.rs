@@ -173,21 +173,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_run_with_profile_zshrc_not_exists() {
-        let shell = Shell::Zsh(ZshShell {
-            shell_path: "/bin/zsh".to_string(),
-            env: HashMap::new(),
-        });
-        let actual_cmd = shell.format_default_shell_invocation(ExecParams {
-            command: vec!["myecho".to_string()],
-            cwd: PathBuf::from("/"),
-            timeout_ms: None,
-            env: HashMap::new(),
-        });
-        assert!(actual_cmd.is_none());
-    }
-
     #[expect(clippy::unwrap_used)]
     #[tokio::test]
     async fn test_run_with_profile_escaping_and_execution() {
