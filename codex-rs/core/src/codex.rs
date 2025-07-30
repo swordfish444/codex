@@ -1202,13 +1202,19 @@ async fn try_run_turn(
                 token_usage,
             } => {
                 if let Some(token_usage) = token_usage {
+                    // Emit token count event to the frontend/UI
                     sess.tx_event
                         .send(Event {
                             id: sub_id.to_string(),
-                            msg: EventMsg::TokenCount(token_usage),
+                            msg: EventMsg::TokenCount(token_usage.clone()),
                         })
                         .await
                         .ok();
+                    // Record usage in rollout recorder for final summary
+                    let rec_opt = sess.rollout.lock().unwrap().as_ref().cloned();
+                    if let Some(rec) = rec_opt {
+                        let _ = rec.record_usage(token_usage).await;
+                    }
                 }
 
                 return Ok(output);

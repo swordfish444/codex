@@ -23,6 +23,7 @@ use crate::config::Config;
 use crate::git_info::GitInfo;
 use crate::git_info::collect_git_info;
 use crate::models::ResponseItem;
+use crate::protocol::TokenUsage;
 
 const SESSIONS_SUBDIR: &str = "sessions";
 
@@ -43,6 +44,16 @@ struct SessionMetaWithGit {
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct SessionStateSnapshot {}
+
+/// Summary record written at end of a session rollout.
+#[derive(Serialize)]
+struct Summary {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    total_input_tokens: u64,
+    total_output_tokens: u64,
+    total_session_time: u64,
+}
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct SavedSession {
@@ -71,7 +82,11 @@ pub(crate) struct RolloutRecorder {
 enum RolloutCmd {
     AddItems(Vec<ResponseItem>),
     UpdateState(SessionStateSnapshot),
-    Shutdown { ack: oneshot::Sender<()> },
+    /// Record token usage for summary calculation.
+    RecordUsage(TokenUsage),
+    Shutdown {
+        ack: oneshot::Sender<()>,
+    },
 }
 
 impl RolloutRecorder {
@@ -86,13 +101,13 @@ impl RolloutRecorder {
         let LogFileInfo {
             file,
             session_id,
-            timestamp,
+            timestamp: start_time,
         } = create_log_file(config, uuid)?;
 
         let timestamp_format: &[FormatItem] = format_description!(
             "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"
         );
-        let timestamp = timestamp
+        let timestamp = start_time
             .format(timestamp_format)
             .map_err(|e| IoError::other(format!("failed to format timestamp: {e}")))?;
 
@@ -116,6 +131,7 @@ impl RolloutRecorder {
                 instructions,
             }),
             cwd,
+            start_time,
         ));
 
         Ok(Self { tx })
@@ -153,6 +169,14 @@ impl RolloutRecorder {
             .send(RolloutCmd::UpdateState(state))
             .await
             .map_err(|e| IoError::other(format!("failed to queue rollout state: {e}")))
+    }
+
+    /// Record per-turn token usage to include in final summary.
+    pub(crate) async fn record_usage(&self, usage: TokenUsage) -> std::io::Result<()> {
+        self.tx
+            .send(RolloutCmd::RecordUsage(usage))
+            .await
+            .map_err(|e| IoError::other(format!("failed to queue rollout usage: {e}")))
     }
 
     pub async fn resume(
@@ -216,11 +240,15 @@ impl RolloutRecorder {
             .open(path)?;
 
         let (tx, rx) = mpsc::channel::<RolloutCmd>(256);
+        // Use current time when resuming as the summary start time.
+        let resume_start = OffsetDateTime::now_local()
+            .map_err(|e| IoError::other(format!("failed to get local time: {e}")))?;
         tokio::task::spawn(rollout_writer(
             tokio::fs::File::from_std(file),
             rx,
             None,
             cwd,
+            resume_start,
         ));
         info!("Resumed rollout successfully from {path:?}");
         Ok((Self { tx }, saved))
@@ -292,9 +320,13 @@ async fn rollout_writer(
     mut rx: mpsc::Receiver<RolloutCmd>,
     mut meta: Option<SessionMeta>,
     cwd: std::path::PathBuf,
+    start_time: OffsetDateTime,
 ) -> std::io::Result<()> {
     let mut writer = JsonlWriter { file };
 
+    // Initialize counters for final summary.
+    let mut total_input_tokens = 0u64;
+    let mut total_output_tokens = 0u64;
     // If we have a meta, collect git info asynchronously and write meta first
     if let Some(session_meta) = meta.take() {
         let git_info = collect_git_info(&cwd).await;
@@ -338,7 +370,22 @@ async fn rollout_writer(
                     })
                     .await?;
             }
+            RolloutCmd::RecordUsage(usage) => {
+                total_input_tokens = total_input_tokens.saturating_add(usage.input_tokens);
+                total_output_tokens = total_output_tokens.saturating_add(usage.output_tokens);
+            }
             RolloutCmd::Shutdown { ack } => {
+                // Write a summary record at the end of the session.
+                let end_time = OffsetDateTime::now_local()
+                    .map_err(|e| IoError::other(format!("failed to get local time: {e}")))?;
+                let duration = end_time - start_time;
+                let summary = Summary {
+                    kind: "summary",
+                    total_input_tokens,
+                    total_output_tokens,
+                    total_session_time: duration.whole_milliseconds() as u64,
+                };
+                writer.write_line(&summary).await?;
                 let _ = ack.send(());
             }
         }

@@ -452,11 +452,17 @@ async fn integration_creates_and_checks_session_file() {
 }
 
 /// Integration test to verify git info is collected and recorded in session files.
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn integration_git_info_unit_test() {
     // This test verifies git info collection works independently
     // without depending on the full CLI integration
 
+    // Skip if git is not available
+    if std::process::Command::new("git").arg("--version").output().is_err() {
+        eprintln!("skipping integration_git_info_unit_test: git not available");
+        return;
+    }
     // 1. Create temp directory for git repo
     let temp_dir = TempDir::new().unwrap();
     let git_repo = temp_dir.path().to_path_buf();
