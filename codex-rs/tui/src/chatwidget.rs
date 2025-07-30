@@ -489,7 +489,6 @@ impl ChatWidget<'_> {
     pub(crate) fn show_model_selector(&mut self) {
         let current = self.config.model.clone();
 
-        // Start with curated OpenAI models.
         let mut options = codex_core::openai_model_info::get_all_model_names()
             .into_iter()
             .map(|s| s.to_string())
@@ -511,7 +510,7 @@ impl ChatWidget<'_> {
                         config_models.push(m);
                     }
                 }
-                // Keep it simple and deterministic: alphabetical ordering for config models.
+                // Alphabetical ordering for config models.
                 config_models.sort();
                 options.extend(config_models);
             }
@@ -526,7 +525,7 @@ impl ChatWidget<'_> {
         let changed = self.config.model != model;
         self.config.model = model.clone();
 
-        // Emit a lightweight event in the conversation log so the change is visible.
+        // Emit an event in the conversation log so the change is visible.
         if changed {
             self.add_to_history(HistoryCell::new_background_event(format!(
                 "Set model to {model}."

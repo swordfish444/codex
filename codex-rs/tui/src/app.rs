@@ -39,34 +39,24 @@ enum AppState<'a> {
 
 /// Strip a single pair of surrounding quotes from the provided string if present.
 /// Supports straight and common curly quotes: '…', "…", ‘…’, “…”.
-fn strip_surrounding_quotes(s: &str) -> String {
-    let trimmed = s.trim();
-    if trimmed.len() < 2 {
-        return trimmed.to_string();
+pub fn strip_surrounding_quotes(s: &str) -> &str {
+    // Opening/closing pairs (note curly quotes differ on each side)
+    const QUOTE_PAIRS: &[(char, char)] = &[('"', '"'), ('\'', '\''), ('“', '”'), ('‘', '’')];
+
+    let t = s.trim();
+    if t.len() < 2 {
+        return t;
     }
 
-    // Safely obtain the first and last characters without unwraps.
-    let (first, last) = {
-        let mut chs = trimmed.chars();
-        match (chs.next(), chs.next_back()) {
-            (Some(f), Some(l)) => (f, l),
-            (Some(f), None) => (f, f),
-            _ => return trimmed.to_string(),
+    for &(open, close) in QUOTE_PAIRS {
+        if t.starts_with(open) && t.ends_with(close) {
+            let start = open.len_utf8();
+            let end = t.len() - close.len_utf8();
+            return &t[start..end];
         }
-    };
-
-    let is_valid_quote = match first {
-        '"' | '\'' | '“' | '‘' => first == last,
-        _ => false,
-    };
-
-    if is_valid_quote {
-        let start = first.len_utf8();
-        let end = trimmed.len() - last.len_utf8();
-        trimmed[start..end].to_string()
-    } else {
-        trimmed.to_string()
     }
+
+    t
 }
 
 pub(crate) struct App<'a> {
@@ -337,7 +327,6 @@ impl App<'_> {
                         if let AppState::Chat { widget } = &mut self.app_state {
                             widget.show_model_selector();
                         }
-                        // Models are populated from a curated list; no network fetch.
                     }
                 },
                 AppEvent::DispatchCommandWithArgs(command, args) => match command {
@@ -348,7 +337,6 @@ impl App<'_> {
                             if let AppState::Chat { widget } = &mut self.app_state {
                                 widget.show_model_selector();
                             }
-                            // Models are populated from a curated list; no network fetch.
                         } else if let AppState::Chat { widget } = &mut self.app_state {
                             // Normalize commonly quoted inputs like \"o3\" or 'o3' or “o3”.
                             let normalized = strip_surrounding_quotes(arg).trim().to_string();
