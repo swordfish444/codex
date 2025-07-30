@@ -35,7 +35,6 @@ impl Shell {
 
                 Some(ExecParams {
                     command: result,
-                    // combine env fomr params and shell
                     env: {
                         let mut env = params.env.clone();
                         env.extend(zsh.env.clone());
