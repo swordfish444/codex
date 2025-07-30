@@ -16,7 +16,6 @@ pub enum SlashCommand {
     Compact,
     Diff,
     Quit,
-    ToggleMouseMode,
 }
 
 impl SlashCommand {
@@ -26,9 +25,6 @@ impl SlashCommand {
             SlashCommand::New => "Start a new chat.",
             SlashCommand::Compact => {
                 "Summarize and compact the current conversation to free up context."
-            }
-            SlashCommand::ToggleMouseMode => {
-                "Toggle mouse mode (enable for scrolling, disable for text selection)"
             }
             SlashCommand::Quit => "Exit the application.",
             SlashCommand::Diff => {

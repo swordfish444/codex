@@ -8,17 +8,16 @@ use std::time::Duration;
 use codex_core::Codex;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::Op;
-mod test_support;
+use core_test_support::load_default_config_for_test;
 use tempfile::TempDir;
-use test_support::load_default_config_for_test;
 use tokio::time::timeout;
 
 /// Helper function to set up a codex session and wait for it to be configured
 async fn setup_configured_codex_session() -> Codex {
     let codex_home = TempDir::new().unwrap();
     let config = load_default_config_for_test(&codex_home);
-    let (codex, _, _) = codex_core::codex_wrapper::init_codex(config).await.unwrap();
-    codex
+    let codex_conversation = codex_core::codex_wrapper::init_codex(config).await.unwrap();
+    codex_conversation.codex
 }
 
 #[tokio::test]

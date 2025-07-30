@@ -110,12 +110,15 @@ stream_idle_timeout_ms = 300000    # 5m idle timeout
 ```
 
 #### request_max_retries
+
 How many times Codex will retry a failed HTTP request to the model provider. Defaults to `4`.
 
 #### stream_max_retries
+
 Number of times Codex will attempt to reconnect when a streaming response is interrupted. Defaults to `10`.
 
 #### stream_idle_timeout_ms
+
 How long Codex will wait for activity on a streaming response before treating the connection as lost. Defaults to `300_000` (5 minutes).
 
 ## model_provider
@@ -498,14 +501,5 @@ Options that are specific to the TUI.
 
 ```toml
 [tui]
-# This will make it so that Codex does not try to process mouse events, which
-# means your Terminal's native drag-to-text to text selection and copy/paste
-# should work. The tradeoff is that Codex will not receive any mouse events, so
-# it will not be possible to use the mouse to scroll conversation history.
-#
-# Note that most terminals support holding down a modifier key when using the
-# mouse to support text selection. For example, even if Codex mouse capture is
-# enabled (i.e., this is set to `false`), you can still hold down alt while
-# dragging the mouse to select text.
-disable_mouse_capture = true  # defaults to `false`
+# More to come here
 ```
