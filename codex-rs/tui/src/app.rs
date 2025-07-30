@@ -469,10 +469,10 @@ mod tests {
             } else {
                 String::new()
             };
-            assert_eq!(raw, raw_expected, "raw args for '{}'", line);
+            assert_eq!(raw, raw_expected, "raw args for '{line}'");
             // Normalize as in app dispatch logic
             let normalized = strip_surrounding_quotes(&raw).trim().to_string();
-            assert_eq!(normalized, norm_expected, "normalized args for '{}'", line);
+            assert_eq!(normalized, norm_expected, "normalized args for '{line}'");
         }
     }
 }
