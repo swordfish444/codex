@@ -895,9 +895,11 @@ async fn submission_loop(
 
                 // Attempt to inject input into current task
                 if let Err(items) = sess.inject_input(summarization_prompt) {
-                    // No current task, spawn a new one
-                    let task = AgentTask::spawn(sess.clone(), sub.id, items);
-                    sess.set_task(task);
+                    run_task(sess.clone(), sub.id, items).await;
+                    // only keep the last input item and clear the rest
+                    let mut pending_input = sess.state.lock().unwrap().pending_input.clone();
+                    pending_input.truncate(1);
+                    sess.state.lock().unwrap().pending_input = pending_input;
                 }
             }
             Op::Shutdown => {
