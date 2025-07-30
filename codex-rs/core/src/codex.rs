@@ -857,6 +857,7 @@ async fn submission_loop(
                     let task = AgentTask::spawn(sess.clone(), sub.id, items);
                     sess.set_task(task);
                 }
+            }
             Op::Shutdown => {
                 info!("Shutting down Codex instance");
 
