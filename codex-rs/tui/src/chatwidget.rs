@@ -57,6 +57,7 @@ pub(crate) struct ChatWidget<'a> {
     // We wait for the final AgentMessage event and then emit the full text
     // at once into scrollback so the history contains a single message.
     answer_buffer: String,
+    new_session: bool,
 }
 
 struct UserMessage {
@@ -141,6 +142,7 @@ impl ChatWidget<'_> {
             token_usage: TokenUsage::default(),
             reasoning_buffer: String::new(),
             answer_buffer: String::new(),
+            new_session: true,
         }
     }
 
@@ -207,8 +209,12 @@ impl ChatWidget<'_> {
             EventMsg::SessionConfigured(event) => {
                 self.bottom_pane
                     .set_history_metadata(event.history_log_id, event.history_entry_count);
+
                 // Record session information at the top of the conversation.
-                self.add_to_history(HistoryCell::new_session_info(&self.config, event, true));
+                if self.new_session {
+                    self.add_to_history(HistoryCell::new_session_info(&self.config, event, true));
+                    self.new_session = false;
+                }
 
                 if let Some(user_message) = self.initial_user_message.take() {
                     // If the user provided an initial message, add it to the
