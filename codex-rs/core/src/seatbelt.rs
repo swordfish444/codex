@@ -50,16 +50,32 @@ fn create_seatbelt_command_args(
             )
         } else {
             let writable_roots = sandbox_policy.get_writable_roots_with_cwd(cwd);
-            let (writable_folder_policies, cli_args): (Vec<String>, Vec<String>) = writable_roots
-                .iter()
-                .enumerate()
-                .map(|(index, root)| {
-                    let param_name = format!("WRITABLE_ROOT_{index}");
-                    let policy: String = format!("(subpath (param \"{param_name}\"))");
-                    let cli_arg = format!("-D{param_name}={}", root.to_string_lossy());
-                    (policy, cli_arg)
-                })
-                .unzip();
+
+            let mut writable_folder_policies: Vec<String> = Vec::new();
+            let mut cli_args: Vec<String> = Vec::new();
+
+            for (index, root) in writable_roots.iter().enumerate() {
+                let param_name = format!("WRITABLE_ROOT_{index}");
+                cli_args.push(format!("-D{param_name}={}", root.to_string_lossy()));
+
+                let policy_component = if let SandboxPolicy::WorkspaceWrite { .. } = sandbox_policy
+                {
+                    let git_dir = root.join(".git");
+                    if git_dir.is_dir() {
+                        let git_param_name = format!("WRITABLE_ROOT_{index}_GIT");
+                        cli_args.push(format!("-D{git_param_name}={}", git_dir.to_string_lossy()));
+                        format!(
+                            "(require-all (subpath (param \"{param_name}\")) (require-not (subpath (param \"{git_param_name}\"))))"
+                        )
+                    } else {
+                        format!("(subpath (param \"{param_name}\"))")
+                    }
+                } else {
+                    format!("(subpath (param \"{param_name}\"))")
+                };
+                writable_folder_policies.push(policy_component);
+            }
+
             if writable_folder_policies.is_empty() {
                 ("".to_string(), Vec::<String>::new())
             } else {
