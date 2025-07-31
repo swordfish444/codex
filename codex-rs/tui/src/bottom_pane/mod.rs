@@ -18,7 +18,7 @@ mod chat_composer;
 mod chat_composer_history;
 mod command_popup;
 mod file_search_popup;
-mod model_selection_view;
+mod model_selection_popup;
 mod status_indicator_view;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +31,6 @@ pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
 
 use approval_modal_view::ApprovalModalView;
-use model_selection_view::ModelSelectionView;
 use status_indicator_view::StatusIndicatorView;
 
 /// Pane displayed in the lower half of the chat UI.
@@ -66,12 +65,9 @@ impl BottomPane<'_> {
         }
     }
 
-    /// Show the model-selection dropdown view.
+    /// Show the model-selection popup in the composer.
     pub(crate) fn show_model_selector(&mut self, current_model: &str, options: Vec<String>) {
-        let mut view = ModelSelectionView::new(current_model, self.app_event_tx.clone());
-        // Apply options so the view starts populated and not in a loading state.
-        let _ = view.set_model_options(current_model, options);
-        self.active_view = Some(Box::new(view));
+        self.composer.open_model_selector(current_model, options);
         self.request_redraw();
     }
 

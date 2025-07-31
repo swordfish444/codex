@@ -55,4 +55,7 @@ pub(crate) enum AppEvent {
 
     /// User selected a model from the model-selection dropdown.
     SelectModel(String),
+
+    /// Request the app to open the model selector (populate options and show popup).
+    OpenModelSelector,
 }

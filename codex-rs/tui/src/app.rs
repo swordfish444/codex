@@ -284,6 +284,11 @@ impl App<'_> {
                         widget.update_model_and_reconfigure(model);
                     }
                 }
+                AppEvent::OpenModelSelector => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.show_model_selector();
+                    }
+                }
                 AppEvent::CodexOp(op) => match &mut self.app_state {
                     AppState::Chat { widget } => widget.submit_op(op),
                     AppState::GitWarning { .. } => {}
@@ -340,21 +345,13 @@ impl App<'_> {
                         }));
                     }
                     SlashCommand::Model => {
-                        // No explicit args were provided; open the selector.
-                        if let AppState::Chat { widget } = &mut self.app_state {
-                            widget.show_model_selector();
-                        }
+                        // Disallow `/model` without arguments; no action.
                     }
                 },
                 AppEvent::DispatchCommandWithArgs(command, args) => match command {
                     SlashCommand::Model => {
                         let arg = args.trim();
-                        if arg.is_empty() {
-                            // Same as `/model` without args.
-                            if let AppState::Chat { widget } = &mut self.app_state {
-                                widget.show_model_selector();
-                            }
-                        } else if let AppState::Chat { widget } = &mut self.app_state {
+                        if let AppState::Chat { widget } = &mut self.app_state {
                             // Normalize commonly quoted inputs like \"o3\" or 'o3' or “o3”.
                             let normalized = strip_surrounding_quotes(arg).trim().to_string();
                             if !normalized.is_empty() {
