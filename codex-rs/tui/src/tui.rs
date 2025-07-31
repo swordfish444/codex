@@ -1,8 +1,8 @@
 use std::io::Result;
 use std::io::Stdout;
 use std::io::stdout;
-use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::sync::atomic::AtomicBool;
 
 use codex_core::config::Config;
 use crossterm::event::DisableBracketedPaste;
@@ -37,7 +37,9 @@ pub(crate) fn set_kkp_for_tests(value: bool) {
 /// enhancement query and waiting briefly for a response.
 #[cfg(unix)]
 fn detect_kitty_protocol() -> std::io::Result<bool> {
-    use std::io::{self, Read, Write};
+    use std::io::Read;
+    use std::io::Write;
+    use std::io::{self};
     use std::os::unix::io::AsRawFd;
 
     let mut stdout = io::stdout();
