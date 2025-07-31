@@ -96,7 +96,9 @@ impl App<'_> {
                         if let Ok(event) = crossterm::event::read() {
                             match event {
                                 crossterm::event::Event::Key(key_event) => {
-                                    app_event_tx.send(AppEvent::KeyEvent(key_event));
+                                    if key_event.kind == crossterm::event::KeyEventKind::Press {
+                                        app_event_tx.send(AppEvent::KeyEvent(key_event));
+                                    }
                                 }
                                 crossterm::event::Event::Resize(_, _) => {
                                     app_event_tx.send(AppEvent::RequestRedraw);
@@ -362,7 +364,7 @@ impl App<'_> {
             AppState::GitWarning { .. } => 10,
         };
         let mut area = terminal.viewport_area;
-        area.height = desired_height;
+        area.height = desired_height.min(size.height);
         area.width = size.width;
         if area.bottom() > size.height {
             terminal
