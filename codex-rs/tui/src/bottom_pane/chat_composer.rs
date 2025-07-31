@@ -712,11 +712,12 @@ impl WidgetRef for &ChatComposer<'_> {
                         Span::from(" to quit"),
                     ]
                 } else {
+                    let newline_hint = if crate::tui::is_kkp_enabled() { "Shift+⏎" } else { "Ctrl+J" };
                     vec![
                         Span::from(" "),
                         "⏎".set_style(key_hint_style),
                         Span::from(" send   "),
-                        "Shift+⏎".set_style(key_hint_style),
+                        newline_hint.set_style(key_hint_style),
                         Span::from(" newline   "),
                         "Ctrl+C".set_style(key_hint_style),
                         Span::from(" quit"),

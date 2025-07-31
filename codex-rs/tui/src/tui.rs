@@ -1,6 +1,7 @@
 use std::io::Result;
 use std::io::Stdout;
 use std::io::stdout;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use codex_core::config::Config;
 use crossterm::event::DisableBracketedPaste;
@@ -18,6 +19,53 @@ use crate::custom_terminal::Terminal;
 /// A type alias for the terminal type used in this application
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 
+// Global flag indicating whether Kitty Keyboard Protocol (KKP) appears enabled.
+static KKP_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Return whether KKP (alternate key reporting) appears enabled.
+pub(crate) fn is_kkp_enabled() -> bool {
+    KKP_ENABLED.load(Ordering::Relaxed)
+}
+
+/// Try to detect Kitty Keyboard Protocol support by issuing a progressive
+/// enhancement query and waiting briefly for a response.
+#[cfg(unix)]
+fn detect_kitty_protocol() -> std::io::Result<bool> {
+    use std::io::{self, Read, Write};
+    use std::os::unix::io::AsRawFd;
+
+    let mut stdout = io::stdout();
+    let mut stdin = io::stdin();
+
+    // Send query for progressive enhancement + DA1
+    write!(stdout, "\x1b[?u\x1b[c")?;
+    stdout.flush()?;
+
+    // Wait up to ~200ms for a response
+    let fd = stdin.as_raw_fd();
+    let mut pfd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let rc = unsafe { libc::poll(&mut pfd as *mut libc::pollfd, 1, 200) };
+    if rc > 0 && (pfd.revents & libc::POLLIN) != 0 {
+        let mut buf = [0u8; 256];
+        if let Ok(n) = stdin.read(&mut buf) {
+            let response = String::from_utf8_lossy(&buf[..n]);
+            if response.contains("[?") && response.contains('u') {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(not(unix))]
+fn detect_kitty_protocol() -> std::io::Result<bool> {
+    Ok(false)
+}
+
 /// Initialize the terminal (inline viewport; history stays in normal scrollback)
 pub fn init(_config: &Config) -> Result<Tui> {
     execute!(stdout(), EnableBracketedPaste)?;
@@ -34,6 +82,11 @@ pub fn init(_config: &Config) -> Result<Tui> {
                 | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
         )
     )?;
+
+    // Detect KKP availability; used to adjust UI hints in the composer.
+    let kkp = detect_kitty_protocol().unwrap_or(false);
+    KKP_ENABLED.store(kkp, Ordering::Relaxed);
+
     set_panic_hook();
 
     let backend = CrosstermBackend::new(stdout());
