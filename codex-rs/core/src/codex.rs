@@ -223,6 +223,7 @@ pub(crate) struct Session {
     state: Mutex<State>,
     codex_linux_sandbox_exe: Option<PathBuf>,
     user_shell: shell::Shell,
+    show_reasoning_content: bool,
 }
 
 impl Session {
@@ -722,6 +723,7 @@ async fn submission_loop(
                     codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
                     disable_response_storage,
                     user_shell: default_shell,
+                    show_reasoning_content: config.show_reasoning_content,
                 }));
 
                 // Patch restored state into the newly created session.
@@ -1286,15 +1288,18 @@ async fn handle_response_item(
                 };
                 sess.tx_event.send(event).await.ok();
             }
-            for item in content {
-                let text = match item {
-                    ReasoningItemContent::ReasoningText { text } => text,
-                };
-                let event = Event {
-                    id: sub_id.to_string(),
-                    msg: EventMsg::AgentReasoningContent(AgentReasoningContentEvent { text }),
-                };
-                sess.tx_event.send(event).await.ok();
+            if sess.show_reasoning_content && content.is_some() {
+                let content = content.unwrap();
+                for item in content {
+                    let text = match item {
+                        ReasoningItemContent::ReasoningText { text } => text,
+                    };
+                    let event = Event {
+                        id: sub_id.to_string(),
+                        msg: EventMsg::AgentReasoningContent(AgentReasoningContentEvent { text }),
+                    };
+                    sess.tx_event.send(event).await.ok();
+                }
             }
             None
         }

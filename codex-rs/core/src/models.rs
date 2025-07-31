@@ -45,8 +45,8 @@ pub enum ResponseItem {
     Reasoning {
         id: String,
         summary: Vec<ReasoningItemReasoningSummary>,
-        #[serde(default)]
-        content: Vec<ReasoningItemContent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        content: Option<Vec<ReasoningItemContent>>,
         encrypted_content: Option<String>,
     },
     LocalShellCall {
