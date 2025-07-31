@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,6 +47,12 @@ use crate::history_cell::PatchEventType;
 use crate::user_approval_widget::ApprovalRequest;
 use codex_file_search::FileMatch;
 
+struct RunningCommand {
+    command: Vec<String>,
+    #[allow(dead_code)]
+    cwd: PathBuf,
+}
+
 pub(crate) struct ChatWidget<'a> {
     app_event_tx: AppEventSender,
     codex_op_tx: UnboundedSender<Op>,
@@ -59,6 +66,7 @@ pub(crate) struct ChatWidget<'a> {
     // at once into scrollback so the history contains a single message.
     answer_buffer: String,
     new_session: bool,
+    running_commands: HashMap<String, RunningCommand>,
 }
 
 struct UserMessage {
@@ -144,7 +152,12 @@ impl ChatWidget<'_> {
             reasoning_buffer: String::new(),
             answer_buffer: String::new(),
             new_session: true,
+            running_commands: HashMap::new(),
         }
+    }
+
+    pub fn desired_height(&self, width: u16) -> u16 {
+        self.bottom_pane.desired_height(width)
     }
 
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
@@ -347,12 +360,18 @@ impl ChatWidget<'_> {
                 self.request_redraw();
             }
             EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
-                call_id: _,
+                call_id,
                 command,
-                cwd: _,
+                cwd,
             }) => {
+                self.running_commands.insert(
+                    call_id,
+                    RunningCommand {
+                        command: command.clone(),
+                        cwd: cwd.clone(),
+                    },
+                );
                 self.add_to_history(HistoryCell::new_active_exec_command(command));
-                self.request_redraw();
             }
             EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
                 call_id: _,
@@ -365,7 +384,6 @@ impl ChatWidget<'_> {
                     PatchEventType::ApplyBegin { auto_approved },
                     changes,
                 ));
-                self.request_redraw();
             }
             EventMsg::ExecCommandEnd(ExecCommandEndEvent {
                 call_id,
@@ -373,8 +391,9 @@ impl ChatWidget<'_> {
                 stdout,
                 stderr,
             }) => {
+                let cmd = self.running_commands.remove(&call_id);
                 self.add_to_history(HistoryCell::new_completed_exec_command(
-                    call_id,
+                    cmd.map(|cmd| cmd.command).unwrap_or_else(|| vec![call_id]),
                     CommandOutput {
                         exit_code,
                         stdout,
@@ -388,7 +407,6 @@ impl ChatWidget<'_> {
                 invocation,
             }) => {
                 self.add_to_history(HistoryCell::new_active_mcp_tool_call(invocation));
-                self.request_redraw();
             }
             EventMsg::McpToolCallEnd(McpToolCallEndEvent {
                 call_id: _,
@@ -423,7 +441,6 @@ impl ChatWidget<'_> {
             }
             event => {
                 self.add_to_history(HistoryCell::new_background_event(format!("{event:?}")));
-                self.request_redraw();
             }
         }
     }
@@ -440,7 +457,6 @@ impl ChatWidget<'_> {
 
     pub(crate) fn add_diff_output(&mut self, diff_output: String) {
         self.add_to_history(HistoryCell::new_diff_output(diff_output.clone()));
-        self.request_redraw();
     }
 
     /// Forward file-search results to the bottom pane.
