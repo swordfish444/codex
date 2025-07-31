@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
+use codex_core::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_core::Codex;
 use codex_core::CodexSpawnOk;
 use codex_core::ModelProviderInfo;
 use codex_core::built_in_model_providers;
-use codex_core::exec::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;

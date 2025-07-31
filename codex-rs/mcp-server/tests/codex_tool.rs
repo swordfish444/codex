@@ -3,7 +3,7 @@ use std::env;
 use std::path::Path;
 use std::path::PathBuf;
 
-use codex_core::exec::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
+use codex_core::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::ReviewDecision;
 use codex_mcp_server::CodexToolCallParam;

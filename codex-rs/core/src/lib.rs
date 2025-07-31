@@ -39,9 +39,12 @@ mod project_doc;
 pub mod protocol;
 mod rollout;
 mod safety;
+pub mod seatbelt;
 pub mod shell;
+pub mod spawn;
 mod user_notification;
 pub mod util;
 
 pub use apply_patch::CODEX_APPLY_PATCH_ARG1;
 pub use client_common::model_supports_reasoning_summaries;
+pub use spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
