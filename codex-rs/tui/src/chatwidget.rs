@@ -275,12 +275,8 @@ impl ChatWidget<'_> {
                 self.request_redraw();
             }
             EventMsg::AgentReasoningContent(AgentReasoningContentEvent { text }) => {
-                if !self.config.hide_agent_reasoning && self.config.show_reasoning_content {
-                    let text = format!("Full Reasoning Content: {text}");
-                    self.conversation_history
-                        .add_agent_reasoning(&self.config, text);
-                    self.request_redraw();
-                }
+                self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, text));
+                self.request_redraw();
             }
             EventMsg::TaskStarted => {
                 self.bottom_pane.clear_ctrl_c_quit_hint();

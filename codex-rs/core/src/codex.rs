@@ -1005,6 +1005,7 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
                                 id,
                                 summary,
                                 encrypted_content,
+                                content,
                             },
                             None,
                         ) => {
@@ -1012,6 +1013,7 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
                                 id: id.clone(),
                                 summary: summary.clone(),
                                 encrypted_content: encrypted_content.clone(),
+                                content: content.clone(),
                             });
                         }
                         _ => {
@@ -1272,12 +1274,12 @@ async fn handle_response_item(
             id: _,
             summary,
             content,
+            encrypted_content: _,
         } => {
             for item in summary {
                 let text = match item {
                     ReasoningItemReasoningSummary::SummaryText { text } => text,
                 };
-                info!("Agent reasoning: {text}");
                 let event = Event {
                     id: sub_id.to_string(),
                     msg: EventMsg::AgentReasoning(AgentReasoningEvent { text }),
@@ -1288,7 +1290,6 @@ async fn handle_response_item(
                 let text = match item {
                     ReasoningItemContent::ReasoningText { text } => text,
                 };
-                info!("Agent reasoning content: {text}");
                 let event = Event {
                     id: sub_id.to_string(),
                     msg: EventMsg::AgentReasoningContent(AgentReasoningContentEvent { text }),

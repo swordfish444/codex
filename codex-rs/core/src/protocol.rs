@@ -308,7 +308,7 @@ pub enum EventMsg {
 
     /// Agent reasoning delta event from agent.
     AgentReasoningDelta(AgentReasoningDeltaEvent),
-  
+
     /// Raw chain-of-thought from agent.
     AgentReasoningContent(AgentReasoningContentEvent),
 
@@ -417,6 +417,7 @@ pub struct AgentReasoningContentEvent {
     pub text: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentReasoningDeltaEvent {
     pub delta: String,
 }
