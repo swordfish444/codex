@@ -1,7 +1,8 @@
 use std::io::Result;
 use std::io::Stdout;
 use std::io::stdout;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use codex_core::config::Config;
 use crossterm::event::DisableBracketedPaste;
