@@ -1,9 +1,19 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::Constraint;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Cell, Row, Table, Widget, WidgetRef};
+use ratatui::style::Color;
+use ratatui::style::Modifier;
+use ratatui::style::Style;
+use ratatui::text::Line;
+use ratatui::text::Span;
+use ratatui::widgets::Block;
+use ratatui::widgets::BorderType;
+use ratatui::widgets::Borders;
+use ratatui::widgets::Cell;
+use ratatui::widgets::Row;
+use ratatui::widgets::Table;
+use ratatui::widgets::Widget;
+use ratatui::widgets::WidgetRef;
 
 /// Maximum number of options shown in the popup.
 const MAX_RESULTS: usize = 8;
