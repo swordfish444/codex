@@ -256,16 +256,6 @@ impl ChatComposer<'_> {
                         self.textarea.select_all();
                         self.textarea.cut();
                         let _ = self.textarea.insert_str(format!("/{} ", cmd.command()));
-                    } else {
-                        // Special case: if the command is `/model` and the line is exactly "/model"
-                        // (no trailing space), add a space to trigger the model dropdown.
-                        if *cmd == SlashCommand::Model {
-                            let trimmed = first_line.trim_start();
-                            let expected = format!("/{}", cmd.command());
-                            if trimmed == expected {
-                                let _ = self.textarea.insert_str(" ");
-                            }
-                        }
                     }
                 }
                 (InputResult::None, true)
@@ -285,30 +275,19 @@ impl ChatComposer<'_> {
                         .map(|s| s.as_str())
                         .unwrap_or("");
 
-                    let args = if let Some(stripped) = first_line.strip_prefix('/') {
-                        let token = stripped.trim_start();
-                        let cmd_token = token.split_whitespace().next().unwrap_or("");
-                        let rest = &token[cmd_token.len()..];
-                        rest.trim_start().to_string()
+                    let args = if let Some((_, args)) =
+                        Self::parse_slash_command_and_args_from_line(first_line)
+                    {
+                        args
                     } else {
                         String::new()
                     };
-
-                    // If `/model` has no args, autocomplete to "/model " and open the model selector.
-                    if *cmd == SlashCommand::Model && args.trim().is_empty() {
-                        self.textarea.select_all();
-                        self.textarea.cut();
-                        let _ = self.textarea.insert_str(format!("/{} ", cmd.command()));
-                        // Hide the command popup; model popup will be shown by sync_command_popup.
-                        self.active_popup = ActivePopup::None;
-                        return (InputResult::None, true);
-                    }
 
                     // Send command + args to the app layer.
                     self.app_event_tx
                         .send(AppEvent::DispatchCommandWithArgs(*cmd, args));
 
-                    // Clear textarea so no residual text remains (default behavior).
+                    // Clear textarea so no residual text remains
                     self.textarea.select_all();
                     self.textarea.cut();
 
@@ -411,12 +390,11 @@ impl ChatComposer<'_> {
                     .map(|s| s.as_str())
                     .unwrap_or("");
 
-                let args = if let Some(stripped) = first_line.strip_prefix('/') {
-                    let token = stripped.trim_start();
-                    let cmd_token = token.split_whitespace().next().unwrap_or("");
+                let args = if let Some((cmd_token, args)) =
+                    Self::parse_slash_command_and_args_from_line(first_line)
+                {
                     if cmd_token == SlashCommand::Model.command() {
-                        let rest = &token[cmd_token.len()..];
-                        rest.trim_start().to_string()
+                        args
                     } else {
                         String::new()
                     }
@@ -819,14 +797,10 @@ impl ChatComposer<'_> {
             .unwrap_or("");
 
         // Expect `/model` as the first token on the first line.
-        if let Some(stripped) = first_line.strip_prefix('/') {
-            let token = stripped.trim_start();
-            let cmd_token = token.split_whitespace().next().unwrap_or("");
+        if let Some((cmd_token, args)) = Self::parse_slash_command_and_args_from_line(first_line) {
             if cmd_token == SlashCommand::Model.command() {
-                let rest = &token[cmd_token.len()..];
-                let args = rest.trim_start();
                 if let ActivePopup::Model(popup) = &mut self.active_popup {
-                    popup.set_query(args);
+                    popup.set_query(&args);
                 }
                 return;
             }
@@ -835,6 +809,22 @@ impl ChatComposer<'_> {
         // Not a `/model` line anymore; hide the model popup if visible.
         if matches!(self.active_popup, ActivePopup::Model(_)) {
             self.active_popup = ActivePopup::None;
+        }
+    }
+
+    /// Parse a leading "/command" and return (command_token, args_trimmed_left).
+    /// Returns None if the line does not start with a slash or the command is empty.
+    fn parse_slash_command_and_args_from_line(line: &str) -> Option<(String, String)> {
+        if let Some(stripped) = line.strip_prefix('/') {
+            let token = stripped.trim_start();
+            let cmd_token = token.split_whitespace().next().unwrap_or("");
+            if cmd_token.is_empty() {
+                return None;
+            }
+            let rest = &token[cmd_token.len()..];
+            Some((cmd_token.to_string(), rest.trim_start().to_string()))
+        } else {
+            None
         }
     }
 
