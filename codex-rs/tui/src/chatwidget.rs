@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,6 +57,7 @@ pub(crate) struct ChatWidget<'a> {
     // We wait for the final AgentMessage event and then emit the full text
     // at once into scrollback so the history contains a single message.
     answer_buffer: String,
+    exec_commands: HashMap<String, String>,
 }
 
 struct UserMessage {
@@ -140,6 +142,7 @@ impl ChatWidget<'_> {
             token_usage: TokenUsage::default(),
             reasoning_buffer: String::new(),
             answer_buffer: String::new(),
+            exec_commands: HashMap::new(),
         }
     }
 
@@ -343,10 +346,13 @@ impl ChatWidget<'_> {
                 self.request_redraw();
             }
             EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
-                call_id: _,
+                call_id,
                 command,
                 cwd: _,
             }) => {
+                let pretty = strip_bash_lc_and_escape(&command);
+                self.exec_commands.insert(call_id, pretty);
+
                 self.add_to_history(HistoryCell::new_active_exec_command(command));
                 self.request_redraw();
             }
@@ -369,8 +375,13 @@ impl ChatWidget<'_> {
                 stdout,
                 stderr,
             }) => {
+                let command_for_display = self
+                    .exec_commands
+                    .remove(&call_id)
+                    .unwrap_or_else(|| format!("exec('{call_id}')"));
+
                 self.add_to_history(HistoryCell::new_completed_exec_command(
-                    call_id,
+                    command_for_display,
                     CommandOutput {
                         exit_code,
                         stdout,
