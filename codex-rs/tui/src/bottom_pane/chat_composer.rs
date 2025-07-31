@@ -712,7 +712,11 @@ impl WidgetRef for &ChatComposer<'_> {
                         Span::from(" to quit"),
                     ]
                 } else {
-                    let newline_hint = if crate::tui::is_kkp_enabled() { "Shift+⏎" } else { "Ctrl+J" };
+                    let newline_hint = if crate::tui::is_kkp_enabled() {
+                        "Shift+⏎"
+                    } else {
+                        "Ctrl+J"
+                    };
                     vec![
                         Span::from(" "),
                         "⏎".set_style(key_hint_style),
@@ -962,6 +966,9 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
+        // First, run snapshots with KKP enabled so hints show Shift+⏎.
+        crate::tui::set_kkp_for_tests(true);
+
         let (tx, _rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
         let mut terminal = match Terminal::new(TestBackend::new(100, 10)) {
@@ -1006,6 +1013,18 @@ mod tests {
 
             assert_snapshot!(name, terminal.backend());
         }
+
+        // Also add one snapshot with KKP disabled so we still see Ctrl+J.
+        crate::tui::set_kkp_for_tests(false);
+        let mut terminal_ctrlj = match Terminal::new(TestBackend::new(100, 10)) {
+            Ok(t) => t,
+            Err(e) => panic!("Failed to create terminal: {e}"),
+        };
+        let composer = ChatComposer::new(true, sender.clone());
+        terminal_ctrlj
+            .draw(|f| f.render_widget_ref(&composer, f.area()))
+            .unwrap_or_else(|e| panic!("Failed to draw empty_ctrlj composer: {e}"));
+        assert_snapshot!("empty_ctrlj", terminal_ctrlj.backend());
     }
 
     #[test]

@@ -27,6 +27,11 @@ pub(crate) fn is_kkp_enabled() -> bool {
     KKP_ENABLED.load(Ordering::Relaxed)
 }
 
+#[cfg(test)]
+pub(crate) fn set_kkp_for_tests(value: bool) {
+    KKP_ENABLED.store(value, Ordering::Relaxed);
+}
+
 /// Try to detect Kitty Keyboard Protocol support by issuing a progressive
 /// enhancement query and waiting briefly for a response.
 #[cfg(unix)]
