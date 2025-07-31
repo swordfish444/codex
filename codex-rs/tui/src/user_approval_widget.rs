@@ -55,34 +55,43 @@ struct SelectOption {
     enters_input_mode: bool,
 }
 
+// User-visible labels for approval options, exported for tests and layout.
+pub(crate) const APPROVAL_OPTION_LABELS: &[&str] = &[
+    "Yes (y)",
+    "Yes, always approve this exact command for this session (a)",
+    "Edit or give feedback (e)",
+    "No, and keep going (n)",
+    "No, and stop for now (esc)",
+];
+
 // keep in same order as in the TS implementation
 const SELECT_OPTIONS: &[SelectOption] = &[
     SelectOption {
-        label: "Yes (y)",
+        label: APPROVAL_OPTION_LABELS[0],
         decision: Some(ReviewDecision::Approved),
 
         enters_input_mode: false,
     },
     SelectOption {
-        label: "Yes, always approve this exact command for this session (a)",
+        label: APPROVAL_OPTION_LABELS[1],
         decision: Some(ReviewDecision::ApprovedForSession),
 
         enters_input_mode: false,
     },
     SelectOption {
-        label: "Edit or give feedback (e)",
+        label: APPROVAL_OPTION_LABELS[2],
         decision: None,
 
         enters_input_mode: true,
     },
     SelectOption {
-        label: "No, and keep going (n)",
+        label: APPROVAL_OPTION_LABELS[3],
         decision: Some(ReviewDecision::Denied),
 
         enters_input_mode: false,
     },
     SelectOption {
-        label: "No, and stop for now (esc)",
+        label: APPROVAL_OPTION_LABELS[4],
         decision: Some(ReviewDecision::Abort),
 
         enters_input_mode: false,

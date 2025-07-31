@@ -65,7 +65,12 @@ impl BottomPane<'_> {
     }
 
     pub fn desired_height(&self) -> u16 {
-        self.composer.desired_height()
+        let composer_height = self.composer.desired_height();
+        if let Some(view) = &self.active_view {
+            composer_height.max(view.min_desired_height())
+        } else {
+            composer_height
+        }
     }
 
     /// Forward a key event to the active view or the composer.
@@ -276,6 +281,7 @@ impl WidgetRef for &BottomPane<'_> {
 mod tests {
     use super::*;
     use crate::app_event::AppEvent;
+    use crate::user_approval_widget::APPROVAL_OPTION_LABELS;
     use std::path::PathBuf;
     use std::sync::mpsc::channel;
 
@@ -300,5 +306,24 @@ mod tests {
         assert_eq!(CancellationEvent::Handled, pane.on_ctrl_c());
         assert!(pane.ctrl_c_quit_hint_visible());
         assert_eq!(CancellationEvent::Ignored, pane.on_ctrl_c());
+    }
+
+    #[test]
+    fn approval_modal_has_min_desired_height() {
+        let (tx_raw, _rx) = channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = BottomPane::new(BottomPaneParams {
+            app_event_tx: tx,
+            has_input_focus: true,
+        });
+        // With no overlay, desired height is just the composer height (>= 3 typical).
+        let base = pane.desired_height();
+        assert!(base >= 1);
+
+        // Push an approval request – desired height should be at least enough
+        // to show all options plus the modal border.
+        pane.push_approval_request(exec_request());
+        let min_modal = (APPROVAL_OPTION_LABELS.len() as u16) + 2;
+        assert!(pane.desired_height() >= min_modal);
     }
 }

@@ -65,12 +65,22 @@ impl<'a> BottomPaneView<'a> for ApprovalModalView<'a> {
         self.enqueue_request(req);
         None
     }
+
+    fn min_desired_height(&self) -> u16 {
+        // Ensure there is enough room for all approval options (select mode)
+        // plus the surrounding border drawn by the modal.
+        (super::super::user_approval_widget::APPROVAL_OPTION_LABELS.len() as u16) + 2
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::app_event::AppEvent;
+    use crate::user_approval_widget::APPROVAL_OPTION_LABELS;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::path::PathBuf;
     use std::sync::mpsc::channel;
 
@@ -100,5 +110,27 @@ mod tests {
         assert!(view.queue.is_empty());
         assert!(view.current.is_complete());
         assert!(view.is_complete());
+    }
+
+    #[test]
+    fn renders_all_select_options_with_min_height() {
+        let (tx_raw, _rx) = channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let view = ApprovalModalView::new(make_exec_request(), tx);
+
+        // Use the view's minimum desired height to render.
+        let min_h = (APPROVAL_OPTION_LABELS.len() as u16) + 2; // options + border
+        let mut terminal = Terminal::new(TestBackend::new(80, min_h)).unwrap();
+        terminal
+            .draw(|f| {
+                view.render(f.area(), f.buffer_mut());
+            })
+            .unwrap();
+
+        // Ensure every option label is present in the buffer output.
+        let dump = format!("{:?}", terminal.backend());
+        for label in APPROVAL_OPTION_LABELS {
+            assert!(dump.contains(label), "missing option: {label}");
+        }
     }
 }

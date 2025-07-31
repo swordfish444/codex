@@ -49,4 +49,11 @@ pub(crate) trait BottomPaneView<'a> {
     ) -> Option<ApprovalRequest> {
         Some(request)
     }
+
+    /// Minimal height (in terminal rows) this view needs to be usable. The
+    /// bottom pane will ensure at least this many rows are allocated while the
+    /// view is active, even if the composer would normally request less.
+    fn min_desired_height(&self) -> u16 {
+        3
+    }
 }

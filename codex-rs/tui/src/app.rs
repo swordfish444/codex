@@ -344,10 +344,16 @@ impl App<'_> {
         }
 
         let size = terminal.size()?;
+        // Determine how tall the bottom pane should be, then clamp it so it never
+        // exceeds the terminal height and also never grows beyond 10 rows. This keeps
+        // the dynamically resizable bottom pane from taking over the screen while
+        // still respecting very small terminals.
         let desired_height = match &self.app_state {
             AppState::Chat { widget } => widget.desired_height(),
             AppState::GitWarning { .. } => 10,
         };
+        let max_allowed_height = size.height.min(10);
+        let desired_height = desired_height.min(max_allowed_height);
         let mut area = terminal.viewport_area;
         area.height = desired_height;
         area.width = size.width;
