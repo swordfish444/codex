@@ -4,16 +4,17 @@
 use std::time::Duration;
 
 use codex_core::Codex;
+use codex_core::CodexSpawnOk;
 use codex_core::ModelProviderInfo;
 use codex_core::exec::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
-mod test_support;
+use codex_login::CodexAuth;
+use core_test_support::load_default_config_for_test;
+use core_test_support::load_sse_fixture;
+use core_test_support::load_sse_fixture_with_id;
 use tempfile::TempDir;
-use test_support::load_default_config_for_test;
-use test_support::load_sse_fixture;
-use test_support::load_sse_fixture_with_id;
 use tokio::time::timeout;
 use wiremock::Mock;
 use wiremock::MockServer;
@@ -70,23 +71,12 @@ async fn retries_on_early_close() {
         .mount(&server)
         .await;
 
-    // Environment
-    //
-    // As of Rust 2024 `std::env::set_var` has been made `unsafe` because
-    // mutating the process environment is inherently racy when other threads
-    // are running.  We therefore have to wrap every call in an explicit
-    // `unsafe` block.  These are limited to the test-setup section so the
-    // scope is very small and clearly delineated.
-
-    unsafe {
-        std::env::set_var("OPENAI_REQUEST_MAX_RETRIES", "0");
-        std::env::set_var("OPENAI_STREAM_MAX_RETRIES", "1");
-        std::env::set_var("OPENAI_STREAM_IDLE_TIMEOUT_MS", "2000");
-    }
+    // Configure retry behavior explicitly to avoid mutating process-wide
+    // environment variables.
 
     let model_provider = ModelProviderInfo {
         name: "openai".into(),
-        base_url: format!("{}/v1", server.uri()),
+        base_url: Some(format!("{}/v1", server.uri())),
         // Environment variable that should exist in the test environment.
         // ModelClient will return an error if the environment variable for the
         // provider is not set.
@@ -96,13 +86,24 @@ async fn retries_on_early_close() {
         query_params: None,
         http_headers: None,
         env_http_headers: None,
+        // exercise retry path: first attempt yields incomplete stream, so allow 1 retry
+        request_max_retries: Some(0),
+        stream_max_retries: Some(1),
+        stream_idle_timeout_ms: Some(2000),
+        requires_auth: false,
     };
 
     let ctrl_c = std::sync::Arc::new(tokio::sync::Notify::new());
     let codex_home = TempDir::new().unwrap();
     let mut config = load_default_config_for_test(&codex_home);
     config.model_provider = model_provider;
-    let (codex, _init_id) = Codex::spawn(config, ctrl_c).await.unwrap();
+    let CodexSpawnOk { codex, .. } = Codex::spawn(
+        config,
+        Some(CodexAuth::from_api_key("Test API Key".to_string())),
+        ctrl_c,
+    )
+    .await
+    .unwrap();
 
     codex
         .submit(Op::UserInput {

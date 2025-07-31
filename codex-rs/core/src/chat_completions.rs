@@ -21,8 +21,6 @@ use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
 use crate::error::CodexErr;
 use crate::error::Result;
-use crate::flags::OPENAI_REQUEST_MAX_RETRIES;
-use crate::flags::OPENAI_STREAM_IDLE_TIMEOUT_MS;
 use crate::models::ContentItem;
 use crate::models::ResponseItem;
 use crate::openai_tools::create_tools_json_for_chat_completions_api;
@@ -32,6 +30,7 @@ use crate::util::backoff;
 pub(crate) async fn stream_chat_completions(
     prompt: &Prompt,
     model: &str,
+    include_plan_tool: bool,
     client: &reqwest::Client,
     provider: &ModelProviderInfo,
 ) -> Result<ResponseStream> {
@@ -41,9 +40,13 @@ pub(crate) async fn stream_chat_completions(
     let full_instructions = prompt.get_full_instructions(model);
     messages.push(json!({"role": "system", "content": full_instructions}));
 
+    if let Some(instr) = &prompt.user_instructions {
+        messages.push(json!({"role": "user", "content": instr}));
+    }
+
     for item in &prompt.input {
         match item {
-            ResponseItem::Message { role, content } => {
+            ResponseItem::Message { role, content, .. } => {
                 let mut text = String::new();
                 for c in content {
                     match c {
@@ -60,6 +63,7 @@ pub(crate) async fn stream_chat_completions(
                 name,
                 arguments,
                 call_id,
+                ..
             } => {
                 messages.push(json!({
                     "role": "assistant",
@@ -106,7 +110,7 @@ pub(crate) async fn stream_chat_completions(
         }
     }
 
-    let tools_json = create_tools_json_for_chat_completions_api(prompt, model)?;
+    let tools_json = create_tools_json_for_chat_completions_api(prompt, model, include_plan_tool)?;
     let payload = json!({
         "model": model,
         "messages": messages,
@@ -121,6 +125,7 @@ pub(crate) async fn stream_chat_completions(
     );
 
     let mut attempt = 0;
+    let max_retries = provider.request_max_retries();
     loop {
         attempt += 1;
 
@@ -134,9 +139,13 @@ pub(crate) async fn stream_chat_completions(
 
         match res {
             Ok(resp) if resp.status().is_success() => {
-                let (tx_event, rx_event) = mpsc::channel::<Result<ResponseEvent>>(16);
+                let (tx_event, rx_event) = mpsc::channel::<Result<ResponseEvent>>(1600);
                 let stream = resp.bytes_stream().map_err(CodexErr::Reqwest);
-                tokio::spawn(process_chat_sse(stream, tx_event));
+                tokio::spawn(process_chat_sse(
+                    stream,
+                    tx_event,
+                    provider.stream_idle_timeout(),
+                ));
                 return Ok(ResponseStream { rx_event });
             }
             Ok(res) => {
@@ -146,7 +155,7 @@ pub(crate) async fn stream_chat_completions(
                     return Err(CodexErr::UnexpectedStatus(status, body));
                 }
 
-                if attempt > *OPENAI_REQUEST_MAX_RETRIES {
+                if attempt > max_retries {
                     return Err(CodexErr::RetryLimit(status));
                 }
 
@@ -162,7 +171,7 @@ pub(crate) async fn stream_chat_completions(
                 tokio::time::sleep(delay).await;
             }
             Err(e) => {
-                if attempt > *OPENAI_REQUEST_MAX_RETRIES {
+                if attempt > max_retries {
                     return Err(e.into());
                 }
                 let delay = backoff(attempt);
@@ -175,13 +184,14 @@ pub(crate) async fn stream_chat_completions(
 /// Lightweight SSE processor for the Chat Completions streaming format. The
 /// output is mapped onto Codex's internal [`ResponseEvent`] so that the rest
 /// of the pipeline can stay agnostic of the underlying wire format.
-async fn process_chat_sse<S>(stream: S, tx_event: mpsc::Sender<Result<ResponseEvent>>)
-where
+async fn process_chat_sse<S>(
+    stream: S,
+    tx_event: mpsc::Sender<Result<ResponseEvent>>,
+    idle_timeout: Duration,
+) where
     S: Stream<Item = Result<Bytes>> + Unpin,
 {
     let mut stream = stream.eventsource();
-
-    let idle_timeout = *OPENAI_STREAM_IDLE_TIMEOUT_MS;
 
     // State to accumulate a function call across streaming chunks.
     // OpenAI may split the `arguments` string over multiple `delta` events
@@ -255,6 +265,7 @@ where
                     content: vec![ContentItem::OutputText {
                         text: content.to_string(),
                     }],
+                    id: None,
                 };
 
                 let _ = tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
@@ -296,6 +307,7 @@ where
                     "tool_calls" if fn_call_state.active => {
                         // Build the FunctionCall response item.
                         let item = ResponseItem::FunctionCall {
+                            id: None,
                             name: fn_call_state.name.clone().unwrap_or_else(|| "".to_string()),
                             arguments: fn_call_state.arguments.clone(),
                             call_id: fn_call_state.call_id.clone().unwrap_or_else(String::new),
@@ -398,6 +410,7 @@ where
                 }))) => {
                     if !this.cumulative.is_empty() {
                         let aggregated_item = crate::models::ResponseItem::Message {
+                            id: None,
                             role: "assistant".to_string(),
                             content: vec![crate::models::ContentItem::OutputText {
                                 text: std::mem::take(&mut this.cumulative),
@@ -424,6 +437,12 @@ where
                 Poll::Ready(Some(Ok(ResponseEvent::Created))) => {
                     // These events are exclusive to the Responses API and
                     // will never appear in a Chat Completions stream.
+                    continue;
+                }
+                Poll::Ready(Some(Ok(ResponseEvent::OutputTextDelta(_))))
+                | Poll::Ready(Some(Ok(ResponseEvent::ReasoningSummaryDelta(_)))) => {
+                    // Deltas are ignored here since aggregation waits for the
+                    // final OutputItemDone.
                     continue;
                 }
             }

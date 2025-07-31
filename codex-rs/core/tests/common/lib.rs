@@ -1,9 +1,5 @@
 #![allow(clippy::expect_used)]
 
-// Helpers shared by the integration tests.  These are located inside the
-// `tests/` tree on purpose so they never become part of the public API surface
-// of the `codex-core` crate.
-
 use tempfile::TempDir;
 
 use codex_core::config::Config;
@@ -73,4 +69,24 @@ pub fn load_sse_fixture_with_id(path: impl AsRef<std::path::Path>, id: &str) -> 
             }
         })
         .collect()
+}
+
+pub async fn wait_for_event<F>(
+    codex: &codex_core::Codex,
+    mut predicate: F,
+) -> codex_core::protocol::EventMsg
+where
+    F: FnMut(&codex_core::protocol::EventMsg) -> bool,
+{
+    use tokio::time::Duration;
+    use tokio::time::timeout;
+    loop {
+        let ev = timeout(Duration::from_secs(1), codex.next_event())
+            .await
+            .expect("timeout waiting for event")
+            .expect("stream ended unexpectedly");
+        if predicate(&ev.msg) {
+            return ev.msg;
+        }
+    }
 }
