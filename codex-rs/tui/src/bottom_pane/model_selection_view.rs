@@ -291,6 +291,14 @@ impl<'a> BottomPaneView<'a> for ModelSelectionView {
         self.is_complete
     }
 
+    fn desired_height(&self, _width: u16) -> u16 {
+        const MAX_VISIBLE_ROWS: usize = 10;
+        let list_rows = self.row_count().min(MAX_VISIBLE_ROWS) as u16;
+        let stats_rows = 1u16; // persistent status line at bottom
+        let border_rows = 2u16; // top + bottom borders
+        list_rows + stats_rows + border_rows
+    }
+
     fn render(&self, area: Rect, buf: &mut Buffer) {
         // Clear the area to prevent ghosting when the list height/width changes between frames.
         Clear.render(area, buf);
