@@ -85,7 +85,8 @@ impl ModelSelectionPopup {
     pub(crate) fn selected_model(&self) -> Option<String> {
         let rows = self.visible_rows();
         self.selected_idx.and_then(|idx| {
-            rows.get(idx).map(|DisplayRow::Model { name, .. }| name.clone())
+            rows.get(idx)
+                .map(|DisplayRow::Model { name, .. }| name.clone())
         })
     }
 
