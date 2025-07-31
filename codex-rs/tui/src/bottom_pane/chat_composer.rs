@@ -23,8 +23,8 @@ use super::model_selection_popup::ModelSelectionPopup;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
-use codex_file_search::FileMatch;
 use crate::slash_command::SlashCommand;
+use codex_file_search::FileMatch;
 
 const BASE_PLACEHOLDER_TEXT: &str = "...";
 /// If the pasted content exceeds this number of characters, replace it with a
@@ -185,7 +185,8 @@ impl ChatComposer<'_> {
                 popup.set_options(current_model, options);
             }
             _ => {
-                self.active_popup = ActivePopup::Model(ModelSelectionPopup::new(current_model, options));
+                self.active_popup =
+                    ActivePopup::Model(ModelSelectionPopup::new(current_model, options));
             }
         }
         // Initialize/update the query from the composer.
@@ -380,7 +381,8 @@ impl ChatComposer<'_> {
                 ctrl: false,
                 alt: false,
                 shift: false,
-            } => {
+            }
+            | Input { key: Key::Tab, .. } => {
                 if let Some(model) = popup.selected_model() {
                     self.app_event_tx.send(AppEvent::SelectModel(model));
                     // Clear composer input and close the popup.
@@ -705,9 +707,9 @@ impl ChatComposer<'_> {
                         // Switch away from command popup and request opening the model selector.
                         self.active_popup = ActivePopup::None;
                         self.app_event_tx.send(AppEvent::OpenModelSelector);
-                        return;
+                    } else {
+                        popup.on_composer_text_change(first_line.to_string());
                     }
-                    popup.on_composer_text_change(first_line.to_string());
                 } else {
                     self.active_popup = ActivePopup::None;
                 }
@@ -717,7 +719,6 @@ impl ChatComposer<'_> {
                     if should_open_model_selector {
                         // Request the app to open the model selector; popup will render once options arrive.
                         self.app_event_tx.send(AppEvent::OpenModelSelector);
-                        return;
                     } else {
                         let mut command_popup = CommandPopup::new();
                         command_popup.on_composer_text_change(first_line.to_string());

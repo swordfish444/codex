@@ -43,7 +43,9 @@ impl ModelSelectionPopup {
 
     /// Update the fuzzy filter query.
     pub(crate) fn set_query(&mut self, query: &str) {
-        if self.query == query { return; }
+        if self.query == query {
+            return;
+        }
         self.query.clear();
         self.query.push_str(query);
         // Reset/clamp selection based on new filtered list.
@@ -215,12 +217,10 @@ impl WidgetRef for &ModelSelectionPopup {
 
         let mut rows: Vec<Row> = Vec::new();
         if rows_all.is_empty() {
-            rows.push(Row::new(vec![Cell::from(
-                Line::from(Span::styled(
-                    "no matches",
-                    Style::default().add_modifier(Modifier::ITALIC | Modifier::DIM),
-                )),
-            )]));
+            rows.push(Row::new(vec![Cell::from(Line::from(Span::styled(
+                "no matches",
+                Style::default().add_modifier(Modifier::ITALIC | Modifier::DIM),
+            )))]));
         } else {
             for (i, row) in rows_all.into_iter().take(MAX_RESULTS).enumerate() {
                 match row {
@@ -247,7 +247,11 @@ impl WidgetRef for &ModelSelectionPopup {
 
                         let mut cell = Cell::from(Line::from(spans));
                         if Some(i) == self.selected_idx {
-                            cell = cell.style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+                            cell = cell.style(
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            );
                         } else if is_current {
                             cell = cell.style(Style::default().fg(Color::Cyan));
                         }
@@ -268,4 +272,4 @@ impl WidgetRef for &ModelSelectionPopup {
 
         table.render(area, buf);
     }
-} 
+}
