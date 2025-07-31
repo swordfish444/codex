@@ -70,7 +70,10 @@ impl ModelSelectionPopup {
     /// Move selection cursor down.
     pub(crate) fn move_down(&mut self) {
         let len = self.visible_rows().len();
-        if len == 0 { self.selected_idx = None; return; }
+        if len == 0 {
+            self.selected_idx = None;
+            return;
+        }
         match self.selected_idx {
             Some(idx) if idx + 1 < len => self.selected_idx = Some(idx + 1),
             None => self.selected_idx = Some(0),
@@ -81,9 +84,8 @@ impl ModelSelectionPopup {
     /// Currently selected model name, if any.
     pub(crate) fn selected_model(&self) -> Option<String> {
         let rows = self.visible_rows();
-        self.selected_idx.and_then(|idx| match rows.get(idx) {
-            Some(DisplayRow::Model { name, .. }) => Some(name.clone()),
-            None => None,
+        self.selected_idx.and_then(|idx| {
+            rows.get(idx).map(|DisplayRow::Model { name, .. }| name.clone())
         })
     }
 

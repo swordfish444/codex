@@ -256,6 +256,16 @@ impl ChatComposer<'_> {
                         self.textarea.select_all();
                         self.textarea.cut();
                         let _ = self.textarea.insert_str(format!("/{} ", cmd.command()));
+                    } else {
+                        // Special case: if the command is `/model` and the line is exactly "/model"
+                        // (no trailing space), add a space to trigger the model dropdown.
+                        if *cmd == SlashCommand::Model {
+                            let trimmed = first_line.trim_start();
+                            let expected = format!("/{}", cmd.command());
+                            if trimmed == expected {
+                                let _ = self.textarea.insert_str(" ");
+                            }
+                        }
                     }
                 }
                 (InputResult::None, true)
@@ -385,6 +395,39 @@ impl ChatComposer<'_> {
             | Input { key: Key::Tab, .. } => {
                 if let Some(model) = popup.selected_model() {
                     self.app_event_tx.send(AppEvent::SelectModel(model));
+                    // Clear composer input and close the popup.
+                    self.textarea.select_all();
+                    self.textarea.cut();
+                    self.pending_pastes.clear();
+                    self.active_popup = ActivePopup::None;
+                    return (InputResult::None, true);
+                }
+                // No selection in the list: treat the typed argument as the model name.
+                // Extract arguments after `/model` from the first line.
+                let first_line = self
+                    .textarea
+                    .lines()
+                    .first()
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+
+                let args = if let Some(stripped) = first_line.strip_prefix('/') {
+                    let token = stripped.trim_start();
+                    let cmd_token = token.split_whitespace().next().unwrap_or("");
+                    if cmd_token == SlashCommand::Model.command() {
+                        let rest = &token[cmd_token.len()..];
+                        rest.trim_start().to_string()
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
+
+                if !args.trim().is_empty() {
+                    // Dispatch as a command with args so normalization is applied centrally.
+                    self.app_event_tx
+                        .send(AppEvent::DispatchCommandWithArgs(SlashCommand::Model, args));
                     // Clear composer input and close the popup.
                     self.textarea.select_all();
                     self.textarea.cut();
