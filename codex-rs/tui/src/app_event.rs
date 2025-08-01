@@ -48,4 +48,9 @@ pub(crate) enum AppEvent {
     },
 
     InsertHistory(Vec<Line<'static>>),
+
+    /// Emitted by the live status widget when the current text has been fully
+    /// revealed by the typewriter animation. The app uses this signal to
+    /// commit the live cell to history and advance to the next entry.
+    LiveStatusRevealComplete,
 }

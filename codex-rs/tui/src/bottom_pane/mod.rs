@@ -4,7 +4,6 @@ use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::user_approval_widget::ApprovalRequest;
 use bottom_pane_view::BottomPaneView;
-use bottom_pane_view::ConditionalUpdate;
 use codex_core::protocol::TokenUsage;
 use codex_file_search::FileMatch;
 use crossterm::event::KeyEvent;
@@ -45,6 +44,15 @@ pub(crate) struct BottomPane<'a> {
     has_input_focus: bool,
     is_task_running: bool,
     ctrl_c_quit_hint: bool,
+
+    /// Optional live, multi‑line status/"live cell" rendered directly above
+    /// the composer while a task is running. Unlike `active_view`, this does
+    /// not replace the composer; it augments it.
+    live_status: Option<crate::status_indicator_widget::StatusIndicatorWidget>,
+
+    /// True if the active view is the StatusIndicatorView that replaces the
+    /// composer during a running task.
+    status_view_active: bool,
 }
 
 pub(crate) struct BottomPaneParams {
@@ -67,14 +75,23 @@ impl BottomPane<'_> {
             has_input_focus: params.has_input_focus,
             is_task_running: false,
             ctrl_c_quit_hint: false,
+            live_status: None,
+            status_view_active: false,
         }
     }
 
     pub fn desired_height(&self, width: u16) -> u16 {
-        self.active_view
+        let live_h = self
+            .live_status
             .as_ref()
-            .map(|v| v.desired_height(width))
-            .unwrap_or(self.composer.desired_height())
+            .map(|s| s.desired_height(width))
+            .unwrap_or(0);
+
+        if let Some(view) = self.active_view.as_ref() {
+            live_h.saturating_add(view.desired_height(width))
+        } else {
+            live_h.saturating_add(self.composer.desired_height())
+        }
     }
 
     /// Forward a key event to the active view or the composer.
@@ -83,10 +100,6 @@ impl BottomPane<'_> {
             view.handle_key_event(self, key_event);
             if !view.is_complete() {
                 self.active_view = Some(view);
-            } else if self.is_task_running {
-                self.active_view = Some(Box::new(StatusIndicatorView::new(
-                    self.app_event_tx.clone(),
-                )));
             }
             self.request_redraw();
             InputResult::None
@@ -112,10 +125,6 @@ impl BottomPane<'_> {
             CancellationEvent::Handled => {
                 if !view.is_complete() {
                     self.active_view = Some(view);
-                } else if self.is_task_running {
-                    self.active_view = Some(Box::new(StatusIndicatorView::new(
-                        self.app_event_tx.clone(),
-                    )));
                 }
                 self.show_ctrl_c_quit_hint();
             }
@@ -135,19 +144,41 @@ impl BottomPane<'_> {
         }
     }
 
-    /// Update the status indicator text (only when the `StatusIndicatorView` is
-    /// active).
+    /// Update the status indicator text.
     pub(crate) fn update_status_text(&mut self, text: String) {
-        if let Some(view) = &mut self.active_view {
-            match view.update_status_text(text) {
-                ConditionalUpdate::NeedsRedraw => {
+        // If a specialized view can handle status updates (e.g. the
+        // StatusIndicatorView that replaces the composer), prefer that.
+        if let Some(view) = self.active_view.as_mut() {
+            match view.update_status_text(text.clone()) {
+                bottom_pane_view::ConditionalUpdate::NeedsRedraw => {
                     self.request_redraw();
+                    return;
                 }
-                ConditionalUpdate::NoRedraw => {
-                    // No redraw needed.
-                }
+                bottom_pane_view::ConditionalUpdate::NoRedraw => {}
             }
+        } else {
+            // No active view – show the status indicator in place of the
+            // composer to prevent typing while waiting.
+            let mut v = StatusIndicatorView::new(self.app_event_tx.clone());
+            v.update_text(text);
+            self.active_view = Some(Box::new(v));
+            self.status_view_active = true;
+            self.request_redraw();
+            return;
         }
+
+        // Fallback: if the current active view does not consume status
+        // updates, show a live overlay above the composer so the animation
+        // continues while the view is visible (e.g. approval modal).
+        if self.live_status.is_none() {
+            self.live_status = Some(crate::status_indicator_widget::StatusIndicatorWidget::new(
+                self.app_event_tx.clone(),
+            ));
+        }
+        if let Some(status) = &mut self.live_status {
+            status.update_text(text);
+        }
+        self.request_redraw();
     }
 
     pub(crate) fn show_ctrl_c_quit_hint(&mut self) {
@@ -173,27 +204,25 @@ impl BottomPane<'_> {
     pub fn set_task_running(&mut self, running: bool) {
         self.is_task_running = running;
 
-        match (running, self.active_view.is_some()) {
-            (true, false) => {
-                // Show status indicator overlay.
+        if running {
+            if self.active_view.is_none() {
                 self.active_view = Some(Box::new(StatusIndicatorView::new(
                     self.app_event_tx.clone(),
                 )));
-                self.request_redraw();
+                self.status_view_active = true;
             }
-            (false, true) => {
-                if let Some(mut view) = self.active_view.take() {
-                    if view.should_hide_when_task_is_done() {
-                        // Leave self.active_view as None.
-                        self.request_redraw();
-                    } else {
-                        // Preserve the view.
-                        self.active_view = Some(view);
-                    }
+            self.request_redraw();
+        } else {
+            self.live_status = None;
+            // Drop the status view when a task completes, but keep other
+            // modal views (e.g. approval dialogs).
+            if let Some(mut view) = self.active_view.take() {
+                if !view.should_hide_when_task_is_done() {
+                    self.active_view = Some(view);
+                    self.status_view_active = false;
+                } else {
+                    self.status_view_active = false;
                 }
-            }
-            _ => {
-                // No change.
             }
         }
     }
@@ -235,6 +264,7 @@ impl BottomPane<'_> {
         // Otherwise create a new approval modal overlay.
         let modal = ApprovalModalView::new(request, self.app_event_tx.clone());
         self.active_view = Some(Box::new(modal));
+        self.status_view_active = false;
         self.request_redraw()
     }
 
@@ -268,15 +298,96 @@ impl BottomPane<'_> {
         self.composer.on_file_search_result(query, matches);
         self.request_redraw();
     }
+
+    /// Clear the live status cell (e.g., when the streamed text has been
+    /// inserted into history and we no longer need the inline preview).
+    pub(crate) fn clear_live_status(&mut self) {
+        self.live_status = None;
+        self.request_redraw();
+    }
+
+    /// Restart the live status animation for the next entry. Prefer taking
+    /// over the composer when possible; if another view is active (e.g. a
+    /// modal), fall back to using the overlay so animation can continue.
+    pub(crate) fn restart_live_status_with_text(&mut self, text: String) {
+        // Try to restart in the active view (if it's the status view).
+        let mut handled = false;
+        if let Some(mut view) = self.active_view.take() {
+            if view.restart_live_status_with_text(self, text.clone()) {
+                handled = true;
+            }
+            self.status_view_active = true;
+            self.active_view = Some(view);
+        } else {
+            // No view – create a fresh status view which replaces the composer.
+            let mut v = StatusIndicatorView::new(self.app_event_tx.clone());
+            v.restart_with_text(text);
+            self.active_view = Some(Box::new(v));
+            self.status_view_active = true;
+            self.request_redraw();
+            return;
+        }
+        if handled {
+            self.request_redraw();
+            return;
+        }
+
+        // Fallback: show a fresh overlay widget if another view is active.
+        self.live_status = Some(crate::status_indicator_widget::StatusIndicatorWidget::new(
+            self.app_event_tx.clone(),
+        ));
+        if let Some(status) = &mut self.live_status {
+            status.restart_with_text(text);
+        }
+        self.request_redraw();
+    }
+
+    /// Remove the active StatusIndicatorView (composer takeover) if present,
+    /// restoring the composer for user input.
+    pub(crate) fn clear_status_view(&mut self) {
+        if self.status_view_active {
+            self.active_view = None;
+            self.status_view_active = false;
+            self.request_redraw();
+        }
+    }
 }
 
 impl WidgetRef for &BottomPane<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        // Show BottomPaneView if present.
+        let mut y_offset = 0u16;
+        if let Some(status) = &self.live_status {
+            let live_h = status.desired_height(area.width).min(area.height);
+            if live_h > 0 {
+                let live_rect = Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: area.width,
+                    height: live_h,
+                };
+                status.render_ref(live_rect, buf);
+                y_offset = live_h;
+            }
+        }
+
         if let Some(ov) = &self.active_view {
-            ov.render(area, buf);
-        } else {
-            (&self.composer).render_ref(area, buf);
+            if y_offset < area.height {
+                let view_rect = Rect {
+                    x: area.x,
+                    y: area.y + y_offset,
+                    width: area.width,
+                    height: area.height - y_offset,
+                };
+                ov.render(view_rect, buf);
+            }
+        } else if y_offset < area.height {
+            let composer_rect = Rect {
+                x: area.x,
+                y: area.y + y_offset,
+                width: area.width,
+                height: area.height - y_offset,
+            };
+            (&self.composer).render_ref(composer_rect, buf);
         }
     }
 }

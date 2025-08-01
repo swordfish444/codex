@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -65,11 +66,26 @@ pub(crate) struct ChatWidget<'a> {
     // at once into scrollback so the history contains a single message.
     answer_buffer: String,
     running_commands: HashMap<String, RunningCommand>,
+    pending_commits: VecDeque<PendingHistoryCommit>,
+    queued_status_text: Option<String>,
+    defer_task_stop: bool,
 }
 
 struct UserMessage {
     text: String,
     image_paths: Vec<PathBuf>,
+}
+
+enum PendingHistoryCommit {
+    AgentMessage(String),
+    AgentReasoning(String),
+    /// Generic deferred history commit with a preview string to animate
+    /// in the live cell before committing the full `HistoryCell` to
+    /// scrollback.
+    HistoryCellWithPreview {
+        cell: HistoryCell,
+        preview: String,
+    },
 }
 
 impl From<String> for UserMessage {
@@ -152,6 +168,9 @@ impl ChatWidget<'_> {
             reasoning_buffer: String::new(),
             answer_buffer: String::new(),
             running_commands: HashMap::new(),
+            pending_commits: VecDeque::new(),
+            queued_status_text: None,
+            defer_task_stop: false,
         }
     }
 
@@ -179,6 +198,20 @@ impl ChatWidget<'_> {
     fn add_to_history(&mut self, cell: HistoryCell) {
         self.app_event_tx
             .send(AppEvent::InsertHistory(cell.plain_lines()));
+    }
+
+    /// Queue a history cell to be inserted after the current typewriter
+    /// animation completes. If no animation is active, start one now.
+    fn queue_commit_with_preview(&mut self, cell: HistoryCell, preview: String) {
+        self.pending_commits
+            .push_back(PendingHistoryCommit::HistoryCellWithPreview {
+                cell,
+                preview: preview.clone(),
+            });
+        if self.pending_commits.len() == 1 {
+            self.bottom_pane.restart_live_status_with_text(preview);
+        }
+        self.request_redraw();
     }
 
     fn submit_user_message(&mut self, user_message: UserMessage) {
@@ -247,22 +280,31 @@ impl ChatWidget<'_> {
                     message
                 };
                 if !full.is_empty() {
-                    self.add_to_history(HistoryCell::new_agent_message(&self.config, full));
+                    // Queue for commit; if this is the only pending item start
+                    // the typewriter animation now so we wait before committing.
+                    self.pending_commits
+                        .push_back(PendingHistoryCommit::AgentMessage(full.clone()));
+                    if self.pending_commits.len() == 1 {
+                        self.bottom_pane.restart_live_status_with_text(full);
+                    }
                 }
                 self.request_redraw();
             }
             EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }) => {
-                // Buffer only – do not emit partial lines. This avoids cases
-                // where long responses appear truncated if the terminal
-                // wrapped early. The full message is emitted on
-                // AgentMessage.
+                // Stream partial assistant output live: update the in‑pane
+                // status view with the growing answer so the user sees typing
+                // feedback immediately. We still insert the final message as
+                // a single history entry on AgentMessage.
                 self.answer_buffer.push_str(&delta);
+                self.update_latest_log(self.answer_buffer.clone());
             }
             EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }) => {
                 // Buffer only – disable incremental reasoning streaming so we
                 // avoid truncated intermediate lines. Full text emitted on
                 // AgentReasoning.
                 self.reasoning_buffer.push_str(&delta);
+                // Animate chain-of-thought live in the status indicator.
+                self.update_latest_log(self.reasoning_buffer.clone());
             }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
                 // Emit full reasoning text once. Some providers might send
@@ -274,7 +316,11 @@ impl ChatWidget<'_> {
                     text
                 };
                 if !full.is_empty() {
-                    self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, full));
+                    self.pending_commits
+                        .push_back(PendingHistoryCommit::AgentReasoning(full.clone()));
+                    if self.pending_commits.len() == 1 {
+                        self.bottom_pane.restart_live_status_with_text(full);
+                    }
                 }
                 self.request_redraw();
             }
@@ -286,7 +332,13 @@ impl ChatWidget<'_> {
             EventMsg::TaskComplete(TaskCompleteEvent {
                 last_agent_message: _,
             }) => {
-                self.bottom_pane.set_task_running(false);
+                if self.pending_commits.is_empty() {
+                    self.bottom_pane.set_task_running(false);
+                } else {
+                    // Defer stopping the task UI until after the final
+                    // animated commit has been written to history.
+                    self.defer_task_stop = true;
+                }
                 self.request_redraw();
             }
             EventMsg::TokenCount(token_usage) => {
@@ -299,8 +351,9 @@ impl ChatWidget<'_> {
                 self.bottom_pane.set_task_running(false);
             }
             EventMsg::PlanUpdate(update) => {
-                self.add_to_history(HistoryCell::new_plan_update(update));
-                self.request_redraw();
+                let preview = "plan updated".to_string();
+                let cell = HistoryCell::new_plan_update(update);
+                self.queue_commit_with_preview(cell, preview);
             }
             EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
                 call_id: _,
@@ -308,8 +361,8 @@ impl ChatWidget<'_> {
                 cwd,
                 reason,
             }) => {
-                // Print the command to the history so it is visible in the
-                // transcript *before* the modal asks for approval.
+                // Queue the command summary; animate it first, then commit it
+                // to history so the narrative matches the live cell.
                 let cmdline = strip_bash_lc_and_escape(&command);
                 let text = format!(
                     "command requires approval:\n$ {cmdline}{reason}",
@@ -318,7 +371,10 @@ impl ChatWidget<'_> {
                         .map(|r| format!("\n{r}"))
                         .unwrap_or_default()
                 );
-                self.add_to_history(HistoryCell::new_background_event(text));
+                self.queue_commit_with_preview(
+                    HistoryCell::new_background_event(text.clone()),
+                    text,
+                );
 
                 let request = ApprovalRequest::Exec {
                     id,
@@ -345,11 +401,17 @@ impl ChatWidget<'_> {
                 // approval dialog) and avoids surprising the user with a modal
                 // prompt before they have seen *what* is being requested.
                 // ------------------------------------------------------------------
-
-                self.add_to_history(HistoryCell::new_patch_event(
-                    PatchEventType::ApprovalRequest,
-                    changes,
-                ));
+                let file_count = changes.len();
+                let reason_suffix = reason
+                    .as_ref()
+                    .map(|r| format!(" – {r}"))
+                    .unwrap_or_default();
+                let preview =
+                    format!("patch approval requested for {file_count} file(s){reason_suffix}");
+                self.queue_commit_with_preview(
+                    HistoryCell::new_patch_event(PatchEventType::ApprovalRequest, changes),
+                    preview,
+                );
 
                 // Now surface the approval request in the BottomPane as before.
                 let request = ApprovalRequest::ApplyPatch {
@@ -365,6 +427,7 @@ impl ChatWidget<'_> {
                 command,
                 cwd,
             }) => {
+                let cmdline = strip_bash_lc_and_escape(&command);
                 self.running_commands.insert(
                     call_id,
                     RunningCommand {
@@ -372,19 +435,28 @@ impl ChatWidget<'_> {
                         cwd: cwd.clone(),
                     },
                 );
-                self.add_to_history(HistoryCell::new_active_exec_command(command));
+                self.queue_commit_with_preview(
+                    HistoryCell::new_active_exec_command(command),
+                    format!("$ {cmdline}"),
+                );
             }
             EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
                 call_id: _,
                 auto_approved,
                 changes,
             }) => {
-                // Even when a patch is auto‑approved we still display the
-                // summary so the user can follow along.
-                self.add_to_history(HistoryCell::new_patch_event(
-                    PatchEventType::ApplyBegin { auto_approved },
-                    changes,
-                ));
+                let prefix = if auto_approved {
+                    "applying patch (auto-approved)"
+                } else {
+                    "applying patch"
+                };
+                self.queue_commit_with_preview(
+                    HistoryCell::new_patch_event(
+                        PatchEventType::ApplyBegin { auto_approved },
+                        changes,
+                    ),
+                    prefix.to_string(),
+                );
             }
             EventMsg::ExecCommandEnd(ExecCommandEndEvent {
                 call_id,
@@ -392,22 +464,43 @@ impl ChatWidget<'_> {
                 stdout,
                 stderr,
             }) => {
+                // Compute summary before moving stdout into the history cell.
+                let summary = if !stdout.trim().is_empty() {
+                    stdout.lines().next().unwrap_or("").to_string()
+                } else {
+                    format!("command exited with code {exit_code}")
+                };
                 let cmd = self.running_commands.remove(&call_id);
-                self.add_to_history(HistoryCell::new_completed_exec_command(
-                    cmd.map(|cmd| cmd.command).unwrap_or_else(|| vec![call_id]),
-                    CommandOutput {
-                        exit_code,
-                        stdout,
-                        stderr,
-                        duration: Duration::from_secs(0),
-                    },
-                ));
+                self.queue_commit_with_preview(
+                    HistoryCell::new_completed_exec_command(
+                        cmd.map(|cmd| cmd.command).unwrap_or_else(|| vec![call_id]),
+                        CommandOutput {
+                            exit_code,
+                            stdout,
+                            stderr,
+                            duration: Duration::from_secs(0),
+                        },
+                    ),
+                    summary,
+                );
             }
             EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
                 call_id: _,
                 invocation,
             }) => {
-                self.add_to_history(HistoryCell::new_active_mcp_tool_call(invocation));
+                // Build brief one-line invocation summary before moving `invocation`.
+                let args_str = invocation
+                    .arguments
+                    .as_ref()
+                    .map(|v| serde_json::to_string(v).unwrap_or_else(|_| v.to_string()))
+                    .unwrap_or_default();
+                let server = invocation.server.clone();
+                let tool = invocation.tool.clone();
+                let preview = format!("MCP {server}.{tool}({args_str})");
+                self.queue_commit_with_preview(
+                    HistoryCell::new_active_mcp_tool_call(invocation),
+                    preview,
+                );
             }
             EventMsg::McpToolCallEnd(McpToolCallEndEvent {
                 call_id: _,
@@ -415,16 +508,19 @@ impl ChatWidget<'_> {
                 invocation,
                 result,
             }) => {
-                self.add_to_history(HistoryCell::new_completed_mcp_tool_call(
-                    80,
-                    invocation,
-                    duration,
-                    result
-                        .as_ref()
-                        .map(|r| r.is_error.unwrap_or(false))
-                        .unwrap_or(false),
-                    result,
-                ));
+                self.queue_commit_with_preview(
+                    HistoryCell::new_completed_mcp_tool_call(
+                        80,
+                        invocation,
+                        duration,
+                        result
+                            .as_ref()
+                            .map(|r| r.is_error.unwrap_or(false))
+                            .unwrap_or(false),
+                        result,
+                    ),
+                    "MCP call finished".to_string(),
+                );
             }
             EventMsg::GetHistoryEntryResponse(event) => {
                 let codex_core::protocol::GetHistoryEntryResponseEvent {
@@ -441,15 +537,22 @@ impl ChatWidget<'_> {
                 self.app_event_tx.send(AppEvent::ExitRequest);
             }
             event => {
-                self.add_to_history(HistoryCell::new_background_event(format!("{event:?}")));
+                let text = format!("{event:?}");
+                self.add_to_history(HistoryCell::new_background_event(text.clone()));
+                self.update_latest_log(text);
             }
         }
     }
 
     /// Update the live log preview while a task is running.
     pub(crate) fn update_latest_log(&mut self, line: String) {
-        // Forward only if we are currently showing the status indicator.
-        self.bottom_pane.update_status_text(line);
+        // If we have pending commits waiting to be flushed, hold off on
+        // updating the live cell so the current entry can finish its animation.
+        if !self.pending_commits.is_empty() {
+            self.queued_status_text = Some(line);
+        } else {
+            self.bottom_pane.update_status_text(line);
+        }
     }
 
     fn request_redraw(&mut self) {
@@ -463,6 +566,56 @@ impl ChatWidget<'_> {
     /// Forward file-search results to the bottom pane.
     pub(crate) fn apply_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
         self.bottom_pane.on_file_search_result(query, matches);
+    }
+
+    /// Called by the app when the live status widget has fully revealed its
+    /// current text. We then commit the corresponding pending entry to
+    /// history and, if another entry is waiting, start animating it next.
+    pub(crate) fn on_live_status_reveal_complete(&mut self) {
+        if let Some(pending) = self.pending_commits.pop_front() {
+            match pending {
+                PendingHistoryCommit::AgentMessage(text) => {
+                    self.add_to_history(HistoryCell::new_agent_message(&self.config, text));
+                }
+                PendingHistoryCommit::AgentReasoning(text) => {
+                    self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, text));
+                }
+                PendingHistoryCommit::HistoryCellWithPreview { cell, .. } => {
+                    self.add_to_history(cell);
+                }
+            }
+        }
+
+        // If there is another pending entry, start animating it fresh. We do
+        // not remove it from the queue yet; we will commit it on the next
+        // completion callback.
+        if let Some(next) = self.pending_commits.front() {
+            let text = match next {
+                PendingHistoryCommit::AgentMessage(t) | PendingHistoryCommit::AgentReasoning(t) => {
+                    t.clone()
+                }
+                PendingHistoryCommit::HistoryCellWithPreview { preview, .. } => preview.clone(),
+            };
+            // Restart the live status so the typewriter begins from the start
+            // for the new entry.
+            self.bottom_pane.restart_live_status_with_text(text);
+        } else if let Some(queued) = self.queued_status_text.take() {
+            // No more pending entries – show any queued status update now.
+            self.bottom_pane.update_status_text(queued);
+        } else {
+            // Nothing more to show; clear the live status and, if we deferred
+            // the TaskComplete UI update earlier, apply it now.
+            self.bottom_pane.clear_live_status();
+            // If the live status replaced the composer (input takeover),
+            // restore the composer now that there is nothing left to animate.
+            self.bottom_pane.clear_status_view();
+            if self.defer_task_stop {
+                self.bottom_pane.set_task_running(false);
+                self.defer_task_stop = false;
+            }
+        }
+
+        self.request_redraw();
     }
 
     /// Handle Ctrl-C key press.

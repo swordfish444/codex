@@ -21,12 +21,25 @@ impl StatusIndicatorView {
     pub fn update_text(&mut self, text: String) {
         self.view.update_text(text);
     }
+
+    pub fn restart_with_text(&mut self, text: String) {
+        self.view.restart_with_text(text);
+    }
 }
 
 impl BottomPaneView<'_> for StatusIndicatorView {
     fn update_status_text(&mut self, text: String) -> ConditionalUpdate {
         self.update_text(text);
         ConditionalUpdate::NeedsRedraw
+    }
+
+    fn restart_live_status_with_text(
+        &mut self,
+        _pane: &mut super::BottomPane<'_>,
+        text: String,
+    ) -> bool {
+        self.restart_with_text(text);
+        true
     }
 
     fn should_hide_when_task_is_done(&mut self) -> bool {

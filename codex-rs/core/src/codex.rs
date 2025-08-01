@@ -119,8 +119,17 @@ impl Codex {
         // experimental resume path (undocumented)
         let resume_path = config.experimental_resume.clone();
         info!("resume_path: {resume_path:?}");
+        // Use a bounded channel for submissions to retain backpressure on the
+        // producer of Ops, but avoid blocking the agent on event delivery to
+        // the UI. If the event queue fills and is not drained (e.g., if the
+        // UI forwarder task exits unexpectedly), a bounded channel here would
+        // cause the agent to block inside `send(event).await`, which in turn
+        // prevents it from handling interrupts (Ctrl-C) or any further Ops.
+        // An unbounded channel for events ensures the agent never deadlocks on
+        // UI delivery; the UI remains responsible for rendering/consuming at
+        // its own pace.
         let (tx_sub, rx_sub) = async_channel::bounded(64);
-        let (tx_event, rx_event) = async_channel::bounded(1600);
+        let (tx_event, rx_event) = async_channel::unbounded();
 
         let user_instructions = get_user_instructions(&config).await;
 
@@ -644,7 +653,7 @@ async fn submission_loop(
                 cwd,
                 resume_path,
             } => {
-                info!(
+                debug!(
                     "Configuring session: model={model}; provider={provider:?}; resume={resume_path:?}"
                 );
                 if !cwd.is_absolute() {
@@ -1276,6 +1285,13 @@ async fn try_run_turn(
                 return Ok(output);
             }
             ResponseEvent::OutputTextDelta(delta) => {
+                // Stream assistant text into in-memory conversation history so
+                // subsequent turns (e.g. tool calls) see the partial message.
+                {
+                    let mut st = sess.state.lock().unwrap();
+                    st.history.append_assistant_text(&delta);
+                }
+
                 let event = Event {
                     id: sub_id.to_string(),
                     msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }),
@@ -1714,8 +1730,19 @@ async fn handle_sandbox_error(
     // exit codes merit a retry.
 
     // For now, we categorically ask the user to retry without sandbox.
-    sess.notify_background_event(&sub_id, format!("Execution failed: {error}"))
-        .await;
+    //
+    // The raw error for a sandbox denial includes full stdout/stderr which can be very long.
+    // Emit a compressed background event to keep the transcript readable.
+    match &error {
+        SandboxErr::Denied(exit_code, stdout, stderr) => {
+            let summary = summarize_sandbox_denied_streams(*exit_code, stdout, stderr);
+            sess.notify_background_event(&sub_id, summary).await;
+        }
+        _ => {
+            sess.notify_background_event(&sub_id, format!("Execution failed: {error}"))
+                .await;
+        }
+    }
 
     let rx_approve = sess
         .request_command_approval(
@@ -1808,6 +1835,78 @@ async fn handle_sandbox_error(
             }
         }
     }
+}
+
+/// Create a compact, human-friendly summary for sandbox-denied executions.
+///
+/// This avoids dumping potentially thousands of characters of stdout/stderr in
+/// the background event stream by:
+/// - limiting the number of lines shown per stream
+/// - collapsing consecutive duplicate lines into a single line with a repeat count
+/// - truncating overly long lines
+fn summarize_sandbox_denied_streams(exit_code: i32, stdout: &str, stderr: &str) -> String {
+    const MAX_LINES_PER_STREAM: usize = 8;
+    const MAX_LINE_LEN: usize = 160;
+
+    fn summarize_stream(label: &str, s: &str) -> String {
+        if s.trim().is_empty() {
+            return format!("{label}: <empty>");
+        }
+
+        let total_lines = s.lines().count();
+        let mut lines = Vec::new();
+        let mut iter = s.lines().peekable();
+        let mut consumed_lines = 0usize;
+        while lines.len() < MAX_LINES_PER_STREAM {
+            let line = match iter.next() {
+                Some(l) => l,
+                None => break,
+            };
+            // Count consecutive duplicates so we can collapse noisy spam.
+            let mut repeat = 1usize;
+            while let Some(&next) = iter.peek() {
+                if next == line {
+                    repeat += 1;
+                    iter.next();
+                } else {
+                    break;
+                }
+            }
+            consumed_lines += repeat;
+
+            let mut display = if line.len() > MAX_LINE_LEN {
+                // Truncate long lines to keep the summary compact.
+                let mut truncated = line.chars().take(MAX_LINE_LEN).collect::<String>();
+                truncated.push('…');
+                truncated
+            } else {
+                line.to_string()
+            };
+            if repeat > 1 {
+                display.push_str(&format!("  (repeated {repeat} times)"));
+            }
+            lines.push(display);
+        }
+
+        let omitted = total_lines.saturating_sub(consumed_lines);
+        if omitted > 0 {
+            lines.push(format!("… +{omitted} more lines omitted"));
+        }
+        format!("{label}:\n{}", lines.join("\n"))
+    }
+
+    // Prefer stderr as it usually contains the failure context.
+    let mut parts = Vec::with_capacity(3);
+    parts.push(format!(
+        "Execution failed in sandbox: exit code {exit_code}"
+    ));
+    if !stderr.is_empty() {
+        parts.push(summarize_stream("stderr", stderr));
+    }
+    if !stdout.is_empty() {
+        parts.push(summarize_stream("stdout", stdout));
+    }
+    parts.join("\n")
 }
 
 /// Exec output is a pre-serialized JSON payload
