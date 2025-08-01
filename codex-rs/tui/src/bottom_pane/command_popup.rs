@@ -12,7 +12,7 @@ use ratatui::widgets::Table;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
 
-use crate::slash_command::SlashCommand;
+use crate::slash_command::Command;
 use crate::slash_command::built_in_slash_commands;
 
 pub trait CommandInfo: Copy {
@@ -20,12 +20,12 @@ pub trait CommandInfo: Copy {
     fn description(&self) -> &'static str;
 }
 
-impl CommandInfo for SlashCommand {
+impl CommandInfo for Command {
     fn command(&self) -> &'static str {
-        SlashCommand::command(*self)
+        Command::command(*self)
     }
     fn description(&self) -> &'static str {
-        SlashCommand::description(*self)
+        Command::description(*self)
     }
 }
 
@@ -144,7 +144,7 @@ impl<C: CommandInfo> CommandPopup<C> {
     }
 }
 
-impl CommandPopup<SlashCommand> {
+impl CommandPopup<Command> {
     pub(crate) fn slash() -> Self {
         CommandPopup::new('/', built_in_slash_commands())
     }

@@ -9,7 +9,7 @@ use strum_macros::IntoStaticStr;
     Debug, Clone, Copy, PartialEq, Eq, Hash, EnumString, EnumIter, AsRefStr, IntoStaticStr,
 )]
 #[strum(serialize_all = "kebab-case")]
-pub enum SlashCommand {
+pub enum Command {
     // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
     // more frequently used commands should be listed first.
     New,
@@ -20,18 +20,16 @@ pub enum SlashCommand {
     TestApproval,
 }
 
-impl SlashCommand {
+impl Command {
     /// User-visible description shown in the popup.
     pub fn description(self) -> &'static str {
         match self {
-            SlashCommand::New => "Start a new chat.",
-            SlashCommand::Compact => "Compact the chat history.",
-            SlashCommand::Quit => "Exit the application.",
-            SlashCommand::Diff => {
-                "Show git diff of the working directory (including untracked files)"
-            }
+            Command::New => "Start a new chat.",
+            Command::Compact => "Compact the chat history.",
+            Command::Quit => "Exit the application.",
+            Command::Diff => "Show git diff of the working directory (including untracked files)",
             #[cfg(debug_assertions)]
-            SlashCommand::TestApproval => "Test approval request",
+            Command::TestApproval => "Test approval request",
         }
     }
 
@@ -43,6 +41,6 @@ impl SlashCommand {
 }
 
 /// Return all built-in commands in a Vec paired with their command string.
-pub fn built_in_slash_commands() -> Vec<(&'static str, SlashCommand)> {
-    SlashCommand::iter().map(|c| (c.command(), c)).collect()
+pub fn built_in_slash_commands() -> Vec<(&'static str, Command)> {
+    Command::iter().map(|c| (c.command(), c)).collect()
 }

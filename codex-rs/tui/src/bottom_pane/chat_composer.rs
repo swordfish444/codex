@@ -19,7 +19,7 @@ use tui_textarea::TextArea;
 use super::chat_composer_history::ChatComposerHistory;
 use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
-use crate::slash_command::SlashCommand;
+use crate::slash_command::Command;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -56,7 +56,7 @@ pub(crate) struct ChatComposer<'a> {
 /// Popup state – at most one can be visible at any time.
 enum ActivePopup {
     None,
-    Slash(CommandPopup<SlashCommand>),
+    Slash(CommandPopup<Command>),
     File(FileSearchPopup),
 }
 
@@ -271,7 +271,7 @@ impl ChatComposer<'_> {
             } => {
                 if let Some(cmd) = popup.selected_command() {
                     // Send command to the app layer.
-                    self.app_event_tx.send(AppEvent::DispatchSlashCommand(*cmd));
+                    self.app_event_tx.send(AppEvent::DispatchCommand(*cmd));
 
                     // Clear textarea so no residual text remains.
                     self.textarea.select_all();

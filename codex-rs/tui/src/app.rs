@@ -5,7 +5,7 @@ use crate::file_search::FileSearchManager;
 use crate::get_git_diff::get_git_diff;
 use crate::git_warning_screen::GitWarningOutcome;
 use crate::git_warning_screen::GitWarningScreen;
-use crate::slash_command::SlashCommand;
+use crate::slash_command::Command;
 use crate::tui;
 use codex_core::config::Config;
 use codex_core::protocol::Event;
@@ -339,8 +339,8 @@ impl App<'_> {
                     AppState::Chat { widget } => widget.update_latest_log(line),
                     AppState::GitWarning { .. } => {}
                 },
-                AppEvent::DispatchSlashCommand(command) => match command {
-                    SlashCommand::New => {
+                AppEvent::DispatchCommand(command) => match command {
+                    Command::New => {
                         let new_widget = Box::new(ChatWidget::new(
                             self.config.clone(),
                             self.app_event_tx.clone(),
@@ -351,16 +351,16 @@ impl App<'_> {
                         self.app_state = AppState::Chat { widget: new_widget };
                         self.app_event_tx.send(AppEvent::RequestRedraw);
                     }
-                    SlashCommand::Compact => {
+                    Command::Compact => {
                         if let AppState::Chat { widget } = &mut self.app_state {
                             widget.clear_token_usage();
                             self.app_event_tx.send(AppEvent::CodexOp(Op::Compact));
                         }
                     }
-                    SlashCommand::Quit => {
+                    Command::Quit => {
                         break;
                     }
-                    SlashCommand::Diff => {
+                    Command::Diff => {
                         let (is_git_repo, diff_text) = match get_git_diff() {
                             Ok(v) => v,
                             Err(e) => {
@@ -382,7 +382,7 @@ impl App<'_> {
                         }
                     }
                     #[cfg(debug_assertions)]
-                    SlashCommand::TestApproval => {
+                    Command::TestApproval => {
                         use std::collections::HashMap;
 
                         use codex_core::protocol::ApplyPatchApprovalRequestEvent;
