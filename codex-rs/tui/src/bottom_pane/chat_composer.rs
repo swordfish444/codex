@@ -43,9 +43,6 @@ pub(crate) struct ChatComposer<'a> {
     ctrl_c_quit_hint: bool,
     use_shift_enter_hint: bool,
     dismissed_file_popup_token: Option<String>,
-    // When set, suppress reopening the slash-command popup while the first-line
-    // '/token' remains equal to this value. Cleared when the first line no longer
-    // starts with '/'.
     dismissed_command_popup_token: Option<String>,
     current_file_query: Option<String>,
     pending_pastes: Vec<(String, String)>,
@@ -222,8 +219,6 @@ impl ChatComposer<'_> {
                 (InputResult::None, true)
             }
             Input { key: Key::Esc, .. } => {
-                // Hide popup without modifying text. Remember current '/token' so
-                // we don't immediately reopen until the token changes.
                 let first_line = self
                     .textarea
                     .lines()
@@ -612,7 +607,6 @@ impl ChatComposer<'_> {
             .unwrap_or("");
 
         let input_starts_with_slash = first_line.starts_with('/');
-        // Determine the current '/token' on the first line (may be empty).
         let current_cmd_token: Option<String> = if input_starts_with_slash {
             if let Some(stripped) = first_line.strip_prefix('/') {
                 let token = stripped.trim_start();

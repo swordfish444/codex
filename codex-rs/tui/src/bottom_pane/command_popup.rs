@@ -124,7 +124,6 @@ impl CommandPopup {
                 self.selected_idx = Some(idx + 1);
             }
             Some(_idx_last) => {
-                // Wrap around when moving down from the last item.
                 self.selected_idx = Some(0);
             }
             None => {
