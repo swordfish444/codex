@@ -28,8 +28,6 @@ const BASE_PLACEHOLDER_TEXT: &str = "...";
 /// If the pasted content exceeds this number of characters, replace it with a
 /// placeholder in the UI.
 const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
-/// Keep at least this many rows for the composer when popups are visible.
-const MIN_TEXTAREA_HEIGHT: u16 = 3;
 
 /// Result returned when the user interacts with the text area.
 pub enum InputResult {
