@@ -43,6 +43,10 @@ pub(crate) struct ChatComposer<'a> {
     ctrl_c_quit_hint: bool,
     use_shift_enter_hint: bool,
     dismissed_file_popup_token: Option<String>,
+    // When set, suppress reopening the slash-command popup while the first-line
+    // '/token' remains equal to this value. Cleared when the first line no longer
+    // starts with '/'.
+    dismissed_command_popup_token: Option<String>,
     current_file_query: Option<String>,
     pending_pastes: Vec<(String, String)>,
 }
@@ -74,6 +78,7 @@ impl ChatComposer<'_> {
             ctrl_c_quit_hint: false,
             use_shift_enter_hint,
             dismissed_file_popup_token: None,
+            dismissed_command_popup_token: None,
             current_file_query: None,
             pending_pastes: Vec::new(),
         };
@@ -214,6 +219,23 @@ impl ChatComposer<'_> {
             }
             Input { key: Key::Down, .. } => {
                 popup.move_down();
+                (InputResult::None, true)
+            }
+            Input { key: Key::Esc, .. } => {
+                // Hide popup without modifying text. Remember current '/token' so
+                // we don't immediately reopen until the token changes.
+                let first_line = self
+                    .textarea
+                    .lines()
+                    .first()
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                if let Some(stripped) = first_line.strip_prefix('/') {
+                    let token = stripped.trim_start();
+                    let cmd_token = token.split_whitespace().next().unwrap_or("");
+                    self.dismissed_command_popup_token = Some(cmd_token.to_string());
+                }
+                self.active_popup = ActivePopup::None;
                 (InputResult::None, true)
             }
             Input { key: Key::Tab, .. } => {
@@ -590,21 +612,42 @@ impl ChatComposer<'_> {
             .unwrap_or("");
 
         let input_starts_with_slash = first_line.starts_with('/');
+        // Determine the current '/token' on the first line (may be empty).
+        let current_cmd_token: Option<String> = if input_starts_with_slash {
+            if let Some(stripped) = first_line.strip_prefix('/') {
+                let token = stripped.trim_start();
+                Some(token.split_whitespace().next().unwrap_or("").to_string())
+            } else {
+                Some(String::new())
+            }
+        } else {
+            None
+        };
         match &mut self.active_popup {
             ActivePopup::Command(popup) => {
                 if input_starts_with_slash {
                     popup.on_composer_text_change(first_line.to_string());
                 } else {
                     self.active_popup = ActivePopup::None;
+                    self.dismissed_command_popup_token = None;
                 }
             }
             _ => {
                 if input_starts_with_slash {
+                    // Avoid reopening immediately after user pressed Esc until
+                    // the '/token' changes.
+                    if self
+                        .dismissed_command_popup_token
+                        .as_ref()
+                        .is_some_and(|t| Some(t) == current_cmd_token.as_ref())
+                    {
+                        return;
+                    }
                     let mut command_popup = CommandPopup::new();
                     command_popup.on_composer_text_change(first_line.to_string());
                     self.active_popup = ActivePopup::Command(command_popup);
                 }
-            }
+                }
         }
     }
 

@@ -123,10 +123,13 @@ impl CommandPopup {
             Some(idx) if idx + 1 < matches_len => {
                 self.selected_idx = Some(idx + 1);
             }
+            Some(_idx_last) => {
+                // Wrap around when moving down from the last item.
+                self.selected_idx = Some(0);
+            }
             None => {
                 self.selected_idx = Some(0);
             }
-            _ => {}
         }
     }
 
@@ -142,10 +145,21 @@ impl WidgetRef for CommandPopup {
         let matches = self.filtered_commands();
 
         let mut rows: Vec<Row> = Vec::new();
-        let visible_matches: Vec<&SlashCommand> =
-            matches.into_iter().take(MAX_POPUP_ROWS).collect();
 
-        if visible_matches.is_empty() {
+        let start_idx = match (self.selected_idx, matches.len()) {
+            (Some(sel), len) if len > 0 => sel.saturating_sub(MAX_POPUP_ROWS.saturating_sub(1)),
+            _ => 0,
+        };
+
+        let enumerated_visible = matches
+            .iter()
+            .enumerate()
+            .skip(start_idx)
+            .take(MAX_POPUP_ROWS)
+            .map(|(i, cmd)| (i, *cmd))
+            .collect::<Vec<(usize, &SlashCommand)>>();
+
+        if enumerated_visible.is_empty() {
             rows.push(Row::new(vec![
                 Cell::from(""),
                 Cell::from("No matching commands").add_modifier(Modifier::ITALIC),
@@ -153,10 +167,10 @@ impl WidgetRef for CommandPopup {
         } else {
             let default_style = Style::default();
             let command_style = Style::default().fg(Color::LightBlue);
-            for (idx, cmd) in visible_matches.iter().enumerate() {
+            for (global_idx, cmd) in enumerated_visible.into_iter() {
                 rows.push(Row::new(vec![
                     Cell::from(Line::from(vec![
-                        if Some(idx) == self.selected_idx {
+                        if Some(global_idx) == self.selected_idx {
                             Span::styled(
                                 "›",
                                 Style::default().bg(Color::DarkGray).fg(Color::LightCyan),
