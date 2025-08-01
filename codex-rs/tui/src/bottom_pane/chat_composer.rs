@@ -291,6 +291,18 @@ impl ChatComposer<'_> {
                         String::new()
                     };
 
+                    // Special-case: for `/model` with no arguments, keep the composer as "/model "
+                    // so the model selector opens and the user can type to filter.
+                    if *cmd == SlashCommand::Model && args.trim().is_empty() {
+                        // Replace the entire input with "/model " (with a trailing space).
+                        self.textarea.select_all();
+                        self.textarea.cut();
+                        let _ = self.textarea.insert_str(format!("/{} ", cmd.command()));
+                        // Hide the slash-command popup; sync logic will open the model selector.
+                        self.active_popup = ActivePopup::None;
+                        return (InputResult::None, true);
+                    }
+
                     // Send command + args to the app layer.
                     self.app_event_tx
                         .send(AppEvent::DispatchCommandWithArgs(*cmd, args));

@@ -394,7 +394,10 @@ impl App<'_> {
                         }));
                     }
                     SlashCommand::Model => {
-                        // Disallow `/model` without arguments; no action.
+                        // Open the model selector when `/model` has no arguments.
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.show_model_selector();
+                        }
                     }
                 },
                 AppEvent::DispatchCommandWithArgs(command, args) => match command {
