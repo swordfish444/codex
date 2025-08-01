@@ -175,10 +175,6 @@ impl ChatWidget<'_> {
         }
     }
 
-    pub fn desired_height(&self, width: u16) -> u16 {
-        self.bottom_pane.desired_height(width)
-    }
-
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
         if key_event.kind == KeyEventKind::Press {
             self.bottom_pane.clear_ctrl_c_quit_hint();
@@ -378,10 +374,6 @@ impl ChatWidget<'_> {
                     }
                     self.request_redraw();
                 }
-            }
-            EventMsg::AgentReasoningContent(AgentReasoningContentEvent { text }) => {
-                self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, text));
-                self.request_redraw();
             }
             EventMsg::AgentReasoningContent(AgentReasoningContentEvent { text }) => {
                 self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, text));
@@ -702,7 +694,7 @@ fn wrapped_row_count(lines: &[Line<'_>], width: u16) -> u16 {
             .iter()
             .map(|span| span.content.width() as u32)
             .sum();
-        let line_rows = ((total_width + w - 1) / w).max(1);
+        let line_rows = total_width.div_ceil(w).max(1);
         rows = rows.saturating_add(line_rows);
     }
     rows.min(u16::MAX as u32) as u16
