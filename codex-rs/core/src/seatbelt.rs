@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use tokio::process::Child;
 
 use crate::protocol::SandboxPolicy;
+use crate::spawn::CODEX_SANDBOX_ENV_VAR;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
 
@@ -20,10 +21,11 @@ pub async fn spawn_command_under_seatbelt(
     sandbox_policy: &SandboxPolicy,
     cwd: PathBuf,
     stdio_policy: StdioPolicy,
-    env: HashMap<String, String>,
+    mut env: HashMap<String, String>,
 ) -> std::io::Result<Child> {
     let args = create_seatbelt_command_args(command, sandbox_policy, &cwd);
     let arg0 = None;
+    env.insert(CODEX_SANDBOX_ENV_VAR.to_string(), "seatbelt".to_string());
     spawn_child_async(
         PathBuf::from(MACOS_PATH_TO_SEATBELT_EXECUTABLE),
         args,
@@ -50,16 +52,45 @@ fn create_seatbelt_command_args(
             )
         } else {
             let writable_roots = sandbox_policy.get_writable_roots_with_cwd(cwd);
-            let (writable_folder_policies, cli_args): (Vec<String>, Vec<String>) = writable_roots
-                .iter()
-                .enumerate()
-                .map(|(index, root)| {
-                    let param_name = format!("WRITABLE_ROOT_{index}");
-                    let policy: String = format!("(subpath (param \"{param_name}\"))");
-                    let cli_arg = format!("-D{param_name}={}", root.to_string_lossy());
-                    (policy, cli_arg)
-                })
-                .unzip();
+
+            let mut writable_folder_policies: Vec<String> = Vec::new();
+            let mut cli_args: Vec<String> = Vec::new();
+
+            for (index, root) in writable_roots.iter().enumerate() {
+                // Canonicalize to avoid mismatches like /var vs /private/var on macOS.
+                let canonical_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+                let param_name = format!("WRITABLE_ROOT_{index}");
+                cli_args.push(format!(
+                    "-D{param_name}={}",
+                    canonical_root.to_string_lossy()
+                ));
+
+                // For WorkspaceWrite, if the writable root itself looks like a
+                // git repository (i.e., contains a top-level ".git" directory),
+                // then disallow writes specifically under that top-level ".git".
+                // Do NOT block ".git" directories under subdirectories: those
+                // are allowed when the parent of the repo is writable.
+                let policy_component = if let SandboxPolicy::WorkspaceWrite { .. } = sandbox_policy
+                {
+                    let top_level_git = canonical_root.join(".git");
+                    if top_level_git.is_dir() {
+                        let git_param_name = format!("WRITABLE_ROOT_{index}_GIT");
+                        cli_args.push(format!(
+                            "-D{git_param_name}={}",
+                            top_level_git.to_string_lossy()
+                        ));
+                        format!(
+                            "(require-all (subpath (param \"{param_name}\")) (require-not (subpath (param \"{git_param_name}\"))))"
+                        )
+                    } else {
+                        format!("(subpath (param \"{param_name}\"))")
+                    }
+                } else {
+                    format!("(subpath (param \"{param_name}\"))")
+                };
+                writable_folder_policies.push(policy_component);
+            }
+
             if writable_folder_policies.is_empty() {
                 ("".to_string(), Vec::<String>::new())
             } else {
@@ -88,6 +119,7 @@ fn create_seatbelt_command_args(
     let full_policy = format!(
         "{MACOS_SEATBELT_BASE_POLICY}\n{file_read_policy}\n{file_write_policy}\n{network_policy}"
     );
+
     let mut seatbelt_args: Vec<String> = vec!["-p".to_string(), full_policy];
     seatbelt_args.extend(extra_cli_args);
     seatbelt_args.push("--".to_string());
