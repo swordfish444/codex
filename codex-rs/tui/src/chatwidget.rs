@@ -28,8 +28,12 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Stylize;
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
+use ratatui::widgets::Wrap;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -43,6 +47,7 @@ use crate::exec_command::strip_bash_lc_and_escape;
 use crate::history_cell::CommandOutput;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PatchEventType;
+use crate::markdown::append_markdown;
 use crate::user_approval_widget::ApprovalRequest;
 use codex_file_search::FileMatch;
 
@@ -60,10 +65,14 @@ pub(crate) struct ChatWidget<'a> {
     initial_user_message: Option<UserMessage>,
     token_usage: TokenUsage,
     reasoning_buffer: String,
-    // Buffer for streaming assistant answer text; we do not surface partial
-    // We wait for the final AgentMessage event and then emit the full text
-    // at once into scrollback so the history contains a single message.
+    /// Buffer for streaming assistant answer text.
     answer_buffer: String,
+    /// Full history rendered by the widget.
+    history: Vec<Line<'static>>,
+    /// Index where the current streaming agent message begins in `history`.
+    current_answer_start: Option<usize>,
+    /// Index where the current streaming reasoning message begins in `history`.
+    current_reasoning_start: Option<usize>,
     running_commands: HashMap<String, RunningCommand>,
 }
 
@@ -151,6 +160,9 @@ impl ChatWidget<'_> {
             token_usage: TokenUsage::default(),
             reasoning_buffer: String::new(),
             answer_buffer: String::new(),
+            history: Vec::new(),
+            current_answer_start: None,
+            current_reasoning_start: None,
             running_commands: HashMap::new(),
         }
     }
@@ -177,8 +189,12 @@ impl ChatWidget<'_> {
     }
 
     fn add_to_history(&mut self, cell: HistoryCell) {
-        self.app_event_tx
-            .send(AppEvent::InsertHistory(cell.plain_lines()));
+        self.add_history_lines(cell.plain_lines());
+    }
+
+    pub(crate) fn add_history_lines(&mut self, lines: Vec<Line<'static>>) {
+        self.history.extend(lines);
+        self.request_redraw();
     }
 
     fn submit_user_message(&mut self, user_message: UserMessage) {
@@ -236,10 +252,6 @@ impl ChatWidget<'_> {
                 self.request_redraw();
             }
             EventMsg::AgentMessage(AgentMessageEvent { message }) => {
-                // Final assistant answer. Prefer the fully provided message
-                // from the event; if it is empty fall back to any accumulated
-                // delta buffer (some providers may only stream deltas and send
-                // an empty final message).
                 let full = if message.is_empty() {
                     std::mem::take(&mut self.answer_buffer)
                 } else {
@@ -247,26 +259,48 @@ impl ChatWidget<'_> {
                     message
                 };
                 if !full.is_empty() {
-                    self.add_to_history(HistoryCell::new_agent_message(&self.config, full));
+                    let lines = build_agent_message_lines(&self.config, &full, true);
+                    if let Some(start) = self.current_answer_start.take() {
+                        self.history.truncate(start);
+                        self.history.extend(lines);
+                    } else {
+                        self.history.extend(lines);
+                    }
+                    self.request_redraw();
+                }
+            }
+            EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }) => {
+                self.answer_buffer.push_str(&delta);
+                let lines = build_agent_message_lines(&self.config, &self.answer_buffer, false);
+                match self.current_answer_start {
+                    Some(start) => {
+                        self.history.truncate(start);
+                        self.history.extend(lines);
+                    }
+                    None => {
+                        self.current_answer_start = Some(self.history.len());
+                        self.history.extend(lines);
+                    }
                 }
                 self.request_redraw();
             }
-            EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }) => {
-                // Buffer only – do not emit partial lines. This avoids cases
-                // where long responses appear truncated if the terminal
-                // wrapped early. The full message is emitted on
-                // AgentMessage.
-                self.answer_buffer.push_str(&delta);
-            }
             EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }) => {
-                // Buffer only – disable incremental reasoning streaming so we
-                // avoid truncated intermediate lines. Full text emitted on
-                // AgentReasoning.
                 self.reasoning_buffer.push_str(&delta);
+                let lines =
+                    build_agent_reasoning_lines(&self.config, &self.reasoning_buffer, false);
+                match self.current_reasoning_start {
+                    Some(start) => {
+                        self.history.truncate(start);
+                        self.history.extend(lines);
+                    }
+                    None => {
+                        self.current_reasoning_start = Some(self.history.len());
+                        self.history.extend(lines);
+                    }
+                }
+                self.request_redraw();
             }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
-                // Emit full reasoning text once. Some providers might send
-                // final event with empty text if only deltas were used.
                 let full = if text.is_empty() {
                     std::mem::take(&mut self.reasoning_buffer)
                 } else {
@@ -274,9 +308,15 @@ impl ChatWidget<'_> {
                     text
                 };
                 if !full.is_empty() {
-                    self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, full));
+                    let lines = build_agent_reasoning_lines(&self.config, &full, true);
+                    if let Some(start) = self.current_reasoning_start.take() {
+                        self.history.truncate(start);
+                        self.history.extend(lines);
+                    } else {
+                        self.history.extend(lines);
+                    }
+                    self.request_redraw();
                 }
-                self.request_redraw();
             }
             EventMsg::TaskStarted => {
                 self.bottom_pane.clear_ctrl_c_quit_hint();
@@ -506,10 +546,31 @@ impl ChatWidget<'_> {
 
 impl WidgetRef for &ChatWidget<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        // In the hybrid inline viewport mode we only draw the interactive
-        // bottom pane; history entries are injected directly into scrollback
-        // via `Terminal::insert_before`.
-        (&self.bottom_pane).render(area, buf);
+        let bottom_height = self.bottom_pane.desired_height(area.width);
+        let history_height = area.height.saturating_sub(bottom_height);
+
+        if history_height > 0 {
+            let history_area = Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: history_height,
+            };
+            let total_lines = self.history.len() as u16;
+            let scroll = total_lines.saturating_sub(history_height);
+            Paragraph::new(self.history.clone())
+                .wrap(Wrap { trim: false })
+                .scroll((scroll, 0))
+                .render(history_area, buf);
+        }
+
+        let bottom_area = Rect {
+            x: area.x,
+            y: area.y + history_height,
+            width: area.width,
+            height: bottom_height,
+        };
+        (&self.bottom_pane).render(bottom_area, buf);
     }
 }
 
@@ -539,4 +600,24 @@ fn add_token_usage(current_usage: &TokenUsage, new_usage: &TokenUsage) -> TokenU
         reasoning_output_tokens,
         total_tokens: current_usage.total_tokens + new_usage.total_tokens,
     }
+}
+
+fn build_agent_message_lines(config: &Config, message: &str, finalize: bool) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    lines.push(Line::from("codex".magenta().bold()));
+    append_markdown(message, &mut lines, config);
+    if finalize {
+        lines.push(Line::from(""));
+    }
+    lines
+}
+
+fn build_agent_reasoning_lines(config: &Config, text: &str, finalize: bool) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    lines.push(Line::from("thinking".magenta().italic()));
+    append_markdown(text, &mut lines, config);
+    if finalize {
+        lines.push(Line::from(""));
+    }
+    lines
 }
