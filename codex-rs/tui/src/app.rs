@@ -28,6 +28,11 @@ use std::sync::mpsc::channel;
 use std::thread;
 use std::time::Duration;
 
+enum PendingHistoryOp {
+    Insert(Vec<Line<'static>>),
+    Overwrite(Line<'static>),
+}
+
 /// Time window for debouncing redraw requests.
 const REDRAW_DEBOUNCE: Duration = Duration::from_millis(10);
 
@@ -57,7 +62,7 @@ pub(crate) struct App<'a> {
     /// True when a redraw has been scheduled but not yet executed.
     pending_redraw: Arc<AtomicBool>,
 
-    pending_history_lines: Vec<Line<'static>>,
+    pending_history_ops: Vec<PendingHistoryOp>,
 
     /// Stored parameters needed to instantiate the ChatWidget later, e.g.,
     /// after dismissing the Git-repo warning.
@@ -163,7 +168,7 @@ impl App<'_> {
         let file_search = FileSearchManager::new(config.cwd.clone(), app_event_tx.clone());
         Self {
             app_event_tx,
-            pending_history_lines: Vec::new(),
+            pending_history_ops: Vec::new(),
             app_event_rx,
             app_state,
             config,
@@ -210,7 +215,13 @@ impl App<'_> {
         while let Ok(event) = self.app_event_rx.recv() {
             match event {
                 AppEvent::InsertHistory(lines) => {
-                    self.pending_history_lines.extend(lines);
+                    self.pending_history_ops
+                        .push(PendingHistoryOp::Insert(lines));
+                    self.app_event_tx.send(AppEvent::RequestRedraw);
+                }
+                AppEvent::OverwriteHistoryLine(line) => {
+                    self.pending_history_ops
+                        .push(PendingHistoryOp::Overwrite(line));
                     self.app_event_tx.send(AppEvent::RequestRedraw);
                 }
                 AppEvent::RequestRedraw => {
@@ -424,12 +435,17 @@ impl App<'_> {
             terminal.clear()?;
             terminal.set_viewport_area(area);
         }
-        if !self.pending_history_lines.is_empty() {
-            crate::insert_history::insert_history_lines(
-                terminal,
-                self.pending_history_lines.clone(),
-            );
-            self.pending_history_lines.clear();
+        if !self.pending_history_ops.is_empty() {
+            for op in self.pending_history_ops.drain(..) {
+                match op {
+                    PendingHistoryOp::Insert(lines) => {
+                        crate::insert_history::insert_history_lines(terminal, lines);
+                    }
+                    PendingHistoryOp::Overwrite(line) => {
+                        crate::insert_history::overwrite_last_history_line(line);
+                    }
+                }
+            }
         }
         match &mut self.app_state {
             AppState::Chat { widget } => {

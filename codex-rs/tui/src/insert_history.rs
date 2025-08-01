@@ -5,6 +5,7 @@ use std::io::Write;
 use crate::tui;
 use crossterm::Command;
 use crossterm::cursor::MoveTo;
+use crossterm::cursor::MoveToColumn;
 use crossterm::queue;
 use crossterm::style::Color as CColor;
 use crossterm::style::Colors;
@@ -13,6 +14,8 @@ use crossterm::style::SetAttribute;
 use crossterm::style::SetBackgroundColor;
 use crossterm::style::SetColors;
 use crossterm::style::SetForegroundColor;
+use crossterm::terminal::Clear;
+use crossterm::terminal::ClearType;
 use ratatui::layout::Size;
 use ratatui::prelude::Backend;
 use ratatui::style::Color;
@@ -77,6 +80,17 @@ pub(crate) fn insert_history_lines(terminal: &mut tui::Tui, lines: Vec<Line>) {
     if let Some(cursor_pos) = cursor_pos {
         queue!(std::io::stdout(), MoveTo(cursor_pos.x, cursor_pos.y)).ok();
     }
+}
+
+/// Overwrite the current line in the history area with new content.
+pub(crate) fn overwrite_last_history_line(line: Line) {
+    queue!(
+        std::io::stdout(),
+        MoveToColumn(0),
+        Clear(ClearType::CurrentLine)
+    )
+    .ok();
+    write_spans(&mut std::io::stdout(), line.iter()).ok();
 }
 
 fn wrapped_line_count(lines: &[Line], width: u16) -> u16 {

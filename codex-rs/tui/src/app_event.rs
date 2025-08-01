@@ -48,4 +48,6 @@ pub(crate) enum AppEvent {
     },
 
     InsertHistory(Vec<Line<'static>>),
+    /// Overwrite the last line in the scrollback with the provided content.
+    OverwriteHistoryLine(Line<'static>),
 }
