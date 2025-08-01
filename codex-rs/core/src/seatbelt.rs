@@ -50,16 +50,31 @@ fn create_seatbelt_command_args(
             )
         } else {
             let writable_roots = sandbox_policy.get_writable_roots_with_cwd(cwd);
-            let (writable_folder_policies, cli_args): (Vec<String>, Vec<String>) = writable_roots
-                .iter()
-                .enumerate()
-                .map(|(index, root)| {
-                    let param_name = format!("WRITABLE_ROOT_{index}");
-                    let policy: String = format!("(subpath (param \"{param_name}\"))");
-                    let cli_arg = format!("-D{param_name}={}", root.to_string_lossy());
-                    (policy, cli_arg)
-                })
-                .unzip();
+
+            let mut writable_folder_policies: Vec<String> = Vec::new();
+            let mut cli_args: Vec<String> = Vec::new();
+
+            for (index, root) in writable_roots.iter().enumerate() {
+                // Canonicalize to avoid mismatches like /var vs /private/var on macOS.
+                let canonical_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+                let param_name = format!("WRITABLE_ROOT_{index}");
+                cli_args.push(format!(
+                    "-D{param_name}={}",
+                    canonical_root.to_string_lossy()
+                ));
+
+                let policy_component = if let SandboxPolicy::WorkspaceWrite { .. } = sandbox_policy
+                {
+                    let root_str = canonical_root.to_string_lossy();
+                    format!(
+                        "(require-all (subpath (param \"{param_name}\")) (require-not (regex #\"^{root_str}/(.*/)?\\\\.git(/|$)\")))"
+                    )
+                } else {
+                    format!("(subpath (param \"{param_name}\"))")
+                };
+                writable_folder_policies.push(policy_component);
+            }
+
             if writable_folder_policies.is_empty() {
                 ("".to_string(), Vec::<String>::new())
             } else {
@@ -88,6 +103,7 @@ fn create_seatbelt_command_args(
     let full_policy = format!(
         "{MACOS_SEATBELT_BASE_POLICY}\n{file_read_policy}\n{file_write_policy}\n{network_policy}"
     );
+
     let mut seatbelt_args: Vec<String> = vec!["-p".to_string(), full_policy];
     seatbelt_args.extend(extra_cli_args);
     seatbelt_args.push("--".to_string());
