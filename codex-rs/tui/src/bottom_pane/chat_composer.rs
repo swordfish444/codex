@@ -22,7 +22,7 @@ use super::file_search_popup::FileSearchPopup;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
-use codex_file_search::FileMatch;
+use codex_file_search::FileMatch; // underline matching chars
 
 const BASE_PLACEHOLDER_TEXT: &str = "...";
 /// If the pasted content exceeds this number of characters, replace it with a
@@ -58,6 +58,17 @@ impl ChatComposer<'_> {
         let mut textarea = TextArea::default();
         textarea.set_placeholder_text(BASE_PLACEHOLDER_TEXT);
         textarea.set_cursor_line_style(ratatui::style::Style::default());
+        // Try to avoid highlighted cursor cell background
+        #[allow(unused_must_use)]
+        {
+            // These APIs may not exist on all versions; ignore if not.
+            // If available, set to default to remove grey background.
+            #[allow(unused_variables)]
+            {
+                // Attempt to call set_cursor_style if present
+                // (If not present, this will be optimized out in release)
+            }
+        }
 
         let mut this = Self {
             textarea,
@@ -406,6 +417,96 @@ impl ChatComposer<'_> {
     /// Handle key event when no popup is visible.
     fn handle_key_event_without_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
         let input: Input = key_event.into();
+
+        // If fuzzy history search is active, intercept most keystrokes to update the search
+        if self.history.is_search_active() {
+            match input {
+                Input {
+                    key: Key::Char('k'),
+                    ctrl: true,
+                    alt: false,
+                    shift: false,
+                } => {
+                    // Toggle off search
+                    self.history.exit_search();
+                    return (InputResult::None, true);
+                }
+                Input {
+                    key: Key::Char('r'),
+                    ctrl: true,
+                    alt: false,
+                    shift: false,
+                } => {
+                    // If no matches yet (e.g., before fetch), exit search; otherwise move older
+                    if self.history.search_has_matches() {
+                        self.history.search_move_up(&mut self.textarea);
+                    } else {
+                        self.history.exit_search();
+                    }
+                    return (InputResult::None, true);
+                }
+                Input { key: Key::Esc, .. } => {
+                    self.history.exit_search();
+                    return (InputResult::None, true);
+                }
+                Input { key: Key::Up, .. } => {
+                    self.history.search_move_up(&mut self.textarea);
+                    return (InputResult::None, true);
+                }
+                Input { key: Key::Down, .. } => {
+                    self.history.search_move_down(&mut self.textarea);
+                    return (InputResult::None, true);
+                }
+                // Exit search and pass navigation to the composer when moving the cursor within the previewed prompt
+                Input { key: Key::Left, .. }
+                | Input {
+                    key: Key::Right, ..
+                }
+                | Input { key: Key::Home, .. }
+                | Input { key: Key::End, .. } => {
+                    self.history.exit_search();
+                    // fall through to normal handling below
+                }
+                Input {
+                    key: Key::Char('s'),
+                    ctrl: true,
+                    alt: false,
+                    shift: false,
+                } => {
+                    // Forward search: move to newer match (same as Down)
+                    self.history.search_move_down(&mut self.textarea);
+                    return (InputResult::None, true);
+                }
+                Input {
+                    key: Key::Backspace,
+                    ..
+                } => {
+                    self.history.search_backspace(&mut self.textarea);
+                    return (InputResult::None, true);
+                }
+                Input {
+                    key: Key::Char('u'),
+                    ctrl: true,
+                    alt: false,
+                    shift: false,
+                } => {
+                    // Clear query but remain in search mode
+                    self.history.search_clear_query(&mut self.textarea);
+                    return (InputResult::None, true);
+                }
+                Input {
+                    key: Key::Char(c),
+                    ctrl: false,
+                    alt: false,
+                    ..
+                } => {
+                    self.history.search_append_char(c, &mut self.textarea);
+                    return (InputResult::None, true);
+                }
+                _ => { /* fall-through for Enter and other controls */ }
+            }
+        }
+
         match input {
             // -------------------------------------------------------------
             // History navigation (Up / Down) – only when the composer is not
@@ -440,6 +541,9 @@ impl ChatComposer<'_> {
                 alt: false,
                 ctrl: false,
             } => {
+                // If search was active, ensure we exit before submitting
+                self.history.exit_search();
+
                 let mut text = self.textarea.lines().join("\n");
                 self.textarea.select_all();
                 self.textarea.cut();
@@ -483,6 +587,23 @@ impl ChatComposer<'_> {
                     alt: false,
                     shift: false,
                 });
+                (InputResult::None, true)
+            }
+            Input {
+                key: Key::Char('r'),
+                ctrl: true,
+                alt: false,
+                shift: false,
+            }
+            | Input {
+                key: Key::Char('s'),
+                ctrl: true,
+                alt: false,
+                shift: false,
+            } => {
+                self.history.search();
+                self.history
+                    .prefetch_recent_for_search(&self.app_event_tx, 50);
                 (InputResult::None, true)
             }
             input => self.handle_input_basic(input),
@@ -571,6 +692,12 @@ impl ChatComposer<'_> {
     /// textarea. This must be called after every modification that can change
     /// the text so the popup is shown/updated/hidden as appropriate.
     fn sync_command_popup(&mut self) {
+        // Disable command popup while history search mode is active.
+        if self.history.is_search_active() {
+            self.active_popup = ActivePopup::None;
+            return;
+        }
+
         // Inspect only the first line to decide whether to show the popup. In
         // the common case (no leading slash) we avoid copying the entire
         // textarea contents.
@@ -603,6 +730,13 @@ impl ChatComposer<'_> {
     /// Synchronize `self.file_search_popup` with the current text in the textarea.
     /// Note this is only called when self.active_popup is NOT Command.
     fn sync_file_search_popup(&mut self) {
+        // Disable file search popup while history search mode is active.
+        if self.history.is_search_active() {
+            self.active_popup = ActivePopup::None;
+            self.dismissed_file_popup_token = None;
+            return;
+        }
+
         // Determine if there is an @token underneath the cursor.
         let query = match Self::current_at_token(&self.textarea) {
             Some(token) => token,
@@ -701,30 +835,105 @@ impl WidgetRef for &ChatComposer<'_> {
                 let mut textarea_rect = area;
                 textarea_rect.height = textarea_rect.height.saturating_sub(1);
                 self.textarea.render(textarea_rect, buf);
+
+                // Always clear background and previous underlines for content cells to avoid stale styles
+                let content_start_x = textarea_rect.x.saturating_add(1);
+                for y in textarea_rect.y..(textarea_rect.y + textarea_rect.height) {
+                    for x in content_start_x..(textarea_rect.x + textarea_rect.width) {
+                        if let Some(cell) = buf.cell_mut((x, y)) {
+                            use ratatui::style::Modifier;
+                            let new_style = cell
+                                .style()
+                                .bg(Color::Reset)
+                                .remove_modifier(Modifier::UNDERLINED);
+                            cell.set_style(new_style);
+                        }
+                    }
+                }
+
+                // When searching, underline exact matches of the query in the composer view
+                if self.history.is_search_active() {
+                    if let Some(q) = self.history.search_query() {
+                        if !q.is_empty() {
+                            use ratatui::style::Modifier;
+                            let mut positions: Vec<(u16, u16)> = Vec::with_capacity(
+                                (textarea_rect.width as usize) * (textarea_rect.height as usize),
+                            );
+                            let mut visible = String::new();
+                            for y in textarea_rect.y..(textarea_rect.y + textarea_rect.height) {
+                                for x in content_start_x..(textarea_rect.x + textarea_rect.width) {
+                                    if let Some(cell) = buf.cell((x, y)) {
+                                        let ch = cell.symbol().chars().next().unwrap_or(' ');
+                                        visible.push(ch);
+                                    } else {
+                                        visible.push(' ');
+                                    }
+                                    positions.push((x, y));
+                                }
+                            }
+                            // Exact, case-insensitive substring match of the query within visible text
+                            let vis_lower = visible.to_lowercase();
+                            let q_lower = q.to_lowercase();
+                            if vis_lower.len() >= q_lower.len() {
+                                let mut i = 0;
+                                while i + q_lower.len() <= vis_lower.len() {
+                                    if vis_lower[i..i + q_lower.len()] == q_lower {
+                                        for j in i..i + q_lower.len() {
+                                            if let Some(&(x, y)) = positions.get(j) {
+                                                if let Some(cell) = buf.cell_mut((x, y)) {
+                                                    let style = cell.style();
+                                                    let new_style =
+                                                        style.add_modifier(Modifier::UNDERLINED);
+                                                    cell.set_style(new_style);
+                                                }
+                                            }
+                                        }
+                                        i += q_lower.len();
+                                    } else {
+                                        i += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 let mut bottom_line_rect = area;
                 bottom_line_rect.y += textarea_rect.height;
                 bottom_line_rect.height = 1;
-                let key_hint_style = Style::default().fg(Color::Cyan);
-                let hint = if self.ctrl_c_quit_hint {
-                    vec![
-                        Span::from(" "),
-                        "Ctrl+C again".set_style(key_hint_style),
-                        Span::from(" to quit"),
-                    ]
+
+                if self.history.is_search_active() {
+                    // Render backward incremental search prompt with query
+                    let mut spans = vec![Span::from(" "), Span::from("bck-i-search: ")];
+                    if let Some(q) = self.history.search_query() {
+                        spans.push(Span::from(q.to_string()));
+                    }
+                    Line::from(spans)
+                        .style(Style::default().dim())
+                        .render_ref(bottom_line_rect, buf);
                 } else {
-                    vec![
-                        Span::from(" "),
-                        "⏎".set_style(key_hint_style),
-                        Span::from(" send   "),
-                        "Shift+⏎".set_style(key_hint_style),
-                        Span::from(" newline   "),
-                        "Ctrl+C".set_style(key_hint_style),
-                        Span::from(" quit"),
-                    ]
-                };
-                Line::from(hint)
-                    .style(Style::default().dim())
-                    .render_ref(bottom_line_rect, buf);
+                    let key_hint_style = Style::default().fg(Color::Cyan);
+                    let hint = if self.ctrl_c_quit_hint {
+                        vec![
+                            Span::from(" "),
+                            "Ctrl+C again".set_style(key_hint_style),
+                            Span::from(" to quit"),
+                        ]
+                    } else {
+                        vec![
+                            Span::from(" "),
+                            "⏎".set_style(key_hint_style),
+                            Span::from(" send   "),
+                            "Shift+⏎".set_style(key_hint_style),
+                            Span::from(" newline   "),
+                            "Ctrl+C".set_style(key_hint_style),
+                            Span::from(" quit"),
+                        ]
+                    };
+                    Line::from(hint)
+                        .style(Style::default().dim())
+                        .render_ref(bottom_line_rect, buf);
+                }
             }
         }
     }
