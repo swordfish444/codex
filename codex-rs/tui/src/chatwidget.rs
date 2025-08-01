@@ -30,6 +30,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
+use ratatui::text::Line;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -45,6 +46,8 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell::PatchEventType;
 use crate::user_approval_widget::ApprovalRequest;
 use codex_file_search::FileMatch;
+use crate::markdown::append_markdown;
+use ratatui::style::Stylize;
 
 struct RunningCommand {
     command: Vec<String>,
@@ -59,10 +62,15 @@ pub(crate) struct ChatWidget<'a> {
     config: Config,
     initial_user_message: Option<UserMessage>,
     token_usage: TokenUsage,
+    /// Buffer for streaming assistant reasoning text.
+    ///
+    /// `reasoning_streamed_lines` tracks lines already emitted for streaming.
+    reasoning_streamed_lines: Vec<Line<'static>>,
     reasoning_buffer: String,
-    // Buffer for streaming assistant answer text; we do not surface partial
-    // We wait for the final AgentMessage event and then emit the full text
-    // at once into scrollback so the history contains a single message.
+    /// Buffer for streaming assistant answer text.
+    ///
+    /// `answer_streamed_lines` tracks lines already emitted for streaming.
+    answer_streamed_lines: Vec<Line<'static>>,
     answer_buffer: String,
     running_commands: HashMap<String, RunningCommand>,
 }
@@ -149,7 +157,9 @@ impl ChatWidget<'_> {
                 initial_images,
             ),
             token_usage: TokenUsage::default(),
+            reasoning_streamed_lines: Vec::new(),
             reasoning_buffer: String::new(),
+            answer_streamed_lines: Vec::new(),
             answer_buffer: String::new(),
             running_commands: HashMap::new(),
         }
@@ -237,45 +247,109 @@ impl ChatWidget<'_> {
             }
             EventMsg::AgentMessage(AgentMessageEvent { message }) => {
                 // Final assistant answer. Prefer the fully provided message
-                // from the event; if it is empty fall back to any accumulated
-                // delta buffer (some providers may only stream deltas and send
-                // an empty final message).
                 let full = if message.is_empty() {
                     std::mem::take(&mut self.answer_buffer)
                 } else {
-                    self.answer_buffer.clear();
+                    self.answer_buffer = message.clone();
                     message
                 };
-                if !full.is_empty() {
-                    self.add_to_history(HistoryCell::new_agent_message(&self.config, full));
+                if self.answer_streamed_lines.is_empty() {
+                    if !full.is_empty() {
+                        self.add_to_history(HistoryCell::new_agent_message(&self.config, full));
+                    }
+                } else {
+                    let mut lines: Vec<Line<'static>> = Vec::new();
+                    lines.push(Line::from("codex".magenta().bold()));
+                    append_markdown(&full, &mut lines, &self.config);
+                    let old_len = self.answer_streamed_lines.len();
+                    if lines.len() > old_len {
+                        let to_insert = lines[old_len..].to_vec();
+                        self.app_event_tx.send(AppEvent::InsertHistory(to_insert));
+                    } else if let Some(last) = lines.last() {
+                        self.app_event_tx
+                            .send(AppEvent::UpdateHistoryLastLine(last.clone()));
+                    }
+                    self.app_event_tx
+                        .send(AppEvent::InsertHistory(vec![Line::from("")]))
+                        ;
+                    self.answer_streamed_lines.clear();
                 }
+                self.answer_buffer.clear();
                 self.request_redraw();
             }
             EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }) => {
-                // Buffer only – do not emit partial lines. This avoids cases
-                // where long responses appear truncated if the terminal
-                // wrapped early. The full message is emitted on
-                // AgentMessage.
                 self.answer_buffer.push_str(&delta);
+                let mut lines: Vec<Line<'static>> = Vec::new();
+                if self.answer_streamed_lines.is_empty() {
+                    lines.push(Line::from("codex".magenta().bold()));
+                }
+                append_markdown(&self.answer_buffer, &mut lines, &self.config);
+                if self.answer_streamed_lines.is_empty() {
+                    self.app_event_tx.send(AppEvent::InsertHistory(lines.clone()));
+                } else {
+                    if lines.len() > self.answer_streamed_lines.len() {
+                        let new_lines = lines[self.answer_streamed_lines.len()..].to_vec();
+                        self.app_event_tx.send(AppEvent::InsertHistory(new_lines));
+                    } else if let Some(last) = lines.last() {
+                        self.app_event_tx
+                            .send(AppEvent::UpdateHistoryLastLine(last.clone()));
+                    }
+                }
+                self.answer_streamed_lines = lines;
             }
             EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }) => {
-                // Buffer only – disable incremental reasoning streaming so we
-                // avoid truncated intermediate lines. Full text emitted on
-                // AgentReasoning.
                 self.reasoning_buffer.push_str(&delta);
+                let mut lines: Vec<Line<'static>> = Vec::new();
+                if self.reasoning_streamed_lines.is_empty() {
+                    lines.push(Line::from("thinking".magenta().italic()));
+                }
+                append_markdown(&self.reasoning_buffer, &mut lines, &self.config);
+                if self.reasoning_streamed_lines.is_empty() {
+                    self.app_event_tx.send(AppEvent::InsertHistory(lines.clone()));
+                } else {
+                    if lines.len() > self.reasoning_streamed_lines.len() {
+                        let new_lines =
+                            lines[self.reasoning_streamed_lines.len()..].to_vec();
+                        self.app_event_tx.send(AppEvent::InsertHistory(new_lines));
+                    } else if let Some(last) = lines.last() {
+                        self.app_event_tx
+                            .send(AppEvent::UpdateHistoryLastLine(last.clone()));
+                    }
+                }
+                self.reasoning_streamed_lines = lines;
             }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
-                // Emit full reasoning text once. Some providers might send
-                // final event with empty text if only deltas were used.
                 let full = if text.is_empty() {
                     std::mem::take(&mut self.reasoning_buffer)
                 } else {
-                    self.reasoning_buffer.clear();
+                    self.reasoning_buffer = text.clone();
                     text
                 };
-                if !full.is_empty() {
-                    self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, full));
+                if self.reasoning_streamed_lines.is_empty() {
+                    if !full.is_empty() {
+                        self.add_to_history(HistoryCell::new_agent_reasoning(
+                            &self.config,
+                            full,
+                        ));
+                    }
+                } else {
+                    let mut lines: Vec<Line<'static>> = Vec::new();
+                    lines.push(Line::from("thinking".magenta().italic()));
+                    append_markdown(&full, &mut lines, &self.config);
+                    let old_len = self.reasoning_streamed_lines.len();
+                    if lines.len() > old_len {
+                        let to_insert = lines[old_len..].to_vec();
+                        self.app_event_tx.send(AppEvent::InsertHistory(to_insert));
+                    } else if let Some(last) = lines.last() {
+                        self.app_event_tx
+                            .send(AppEvent::UpdateHistoryLastLine(last.clone()));
+                    }
+                    self.app_event_tx
+                        .send(AppEvent::InsertHistory(vec![Line::from("")]))
+                        ;
+                    self.reasoning_streamed_lines.clear();
                 }
+                self.reasoning_buffer.clear();
                 self.request_redraw();
             }
             EventMsg::TaskStarted => {

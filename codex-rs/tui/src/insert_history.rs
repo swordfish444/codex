@@ -13,6 +13,7 @@ use crossterm::style::SetAttribute;
 use crossterm::style::SetBackgroundColor;
 use crossterm::style::SetColors;
 use crossterm::style::SetForegroundColor;
+use crossterm::terminal::{Clear, ClearType};
 use ratatui::layout::Size;
 use ratatui::prelude::Backend;
 use ratatui::style::Color;
@@ -74,6 +75,31 @@ pub(crate) fn insert_history_lines(terminal: &mut tui::Tui, lines: Vec<Line>) {
     queue!(std::io::stdout(), ResetScrollRegion).ok();
 
     // Restore the cursor position to where it was before we started.
+    if let Some(cursor_pos) = cursor_pos {
+        queue!(std::io::stdout(), MoveTo(cursor_pos.x, cursor_pos.y)).ok();
+    }
+}
+
+/// Overwrite the most recently inserted history line with `line` without
+/// inserting a newline. Used for streaming updates where the last line is
+/// still being written.
+pub(crate) fn overwrite_last_history_line(terminal: &mut tui::Tui, line: Line) {
+    let cursor_pos = terminal.get_cursor_position().ok();
+    let mut area = terminal.get_frame().area();
+
+    // Limit the scroll region to everything above the viewport so that
+    // rewriting the last line does not affect the bottom pane.
+    queue!(std::io::stdout(), SetScrollRegion(1..area.top())).ok();
+
+    // Move to the start of the last history line, clear it, and write the new content.
+    let y = area.top().saturating_sub(1);
+    queue!(std::io::stdout(), MoveTo(0, y)).ok();
+    queue!(std::io::stdout(), Clear(ClearType::CurrentLine)).ok();
+    write_spans(&mut std::io::stdout(), line.iter()).ok();
+
+    queue!(std::io::stdout(), ResetScrollRegion).ok();
+
+    // Restore cursor position.
     if let Some(cursor_pos) = cursor_pos {
         queue!(std::io::stdout(), MoveTo(cursor_pos.x, cursor_pos.y)).ok();
     }

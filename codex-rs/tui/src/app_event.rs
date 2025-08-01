@@ -48,4 +48,7 @@ pub(crate) enum AppEvent {
     },
 
     InsertHistory(Vec<Line<'static>>),
+    /// Replace the most recently inserted history line without adding a new
+    /// newline. Used for streaming updates of the agent's response.
+    UpdateHistoryLastLine(Line<'static>),
 }

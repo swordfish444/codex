@@ -59,6 +59,9 @@ pub(crate) struct App<'a> {
 
     pending_history_lines: Vec<Line<'static>>,
 
+    /// Pending replacement for the most recently inserted history line.
+    pending_history_update: Option<Line<'static>>,
+
     /// Stored parameters needed to instantiate the ChatWidget later, e.g.,
     /// after dismissing the Git-repo warning.
     chat_args: Option<ChatWidgetArgs>,
@@ -164,6 +167,7 @@ impl App<'_> {
         Self {
             app_event_tx,
             pending_history_lines: Vec::new(),
+            pending_history_update: None,
             app_event_rx,
             app_state,
             config,
@@ -211,6 +215,10 @@ impl App<'_> {
             match event {
                 AppEvent::InsertHistory(lines) => {
                     self.pending_history_lines.extend(lines);
+                    self.app_event_tx.send(AppEvent::RequestRedraw);
+                }
+                AppEvent::UpdateHistoryLastLine(line) => {
+                    self.pending_history_update = Some(line);
                     self.app_event_tx.send(AppEvent::RequestRedraw);
                 }
                 AppEvent::RequestRedraw => {
@@ -430,6 +438,9 @@ impl App<'_> {
                 self.pending_history_lines.clone(),
             );
             self.pending_history_lines.clear();
+        }
+        if let Some(line) = self.pending_history_update.take() {
+            crate::insert_history::overwrite_last_history_line(terminal, line);
         }
         match &mut self.app_state {
             AppState::Chat { widget } => {
