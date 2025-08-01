@@ -323,6 +323,10 @@ impl ChatWidget<'_> {
                 self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, text));
                 self.request_redraw();
             }
+            EventMsg::AgentReasoningContent(AgentReasoningContentEvent { text }) => {
+                self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, text));
+                self.request_redraw();
+            }
             EventMsg::TaskStarted => {
                 self.bottom_pane.clear_ctrl_c_quit_hint();
                 self.bottom_pane.set_task_running(true);
@@ -546,6 +550,12 @@ impl ChatWidget<'_> {
 
     pub(crate) fn token_usage(&self) -> &TokenUsage {
         &self.token_usage
+    }
+
+    pub(crate) fn clear_token_usage(&mut self) {
+        self.token_usage = TokenUsage::default();
+        self.bottom_pane
+            .set_token_usage(self.token_usage.clone(), self.config.model_context_window);
     }
 }
 
