@@ -28,6 +28,8 @@ const BASE_PLACEHOLDER_TEXT: &str = "...";
 /// If the pasted content exceeds this number of characters, replace it with a
 /// placeholder in the UI.
 const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
+/// Keep at least this many rows for the composer when popups are visible.
+const MIN_TEXTAREA_HEIGHT: u16 = 3;
 
 /// Result returned when the user interacts with the text area.
 pub enum InputResult {
@@ -43,7 +45,7 @@ pub(crate) struct ChatComposer<'a> {
     ctrl_c_quit_hint: bool,
     use_shift_enter_hint: bool,
     dismissed_file_popup_token: Option<String>,
-    dismissed_command_popup_token: Option<String>,
+    dismissed_slash_token: Option<String>,
     current_file_query: Option<String>,
     pending_pastes: Vec<(String, String)>,
 }
@@ -75,7 +77,7 @@ impl ChatComposer<'_> {
             ctrl_c_quit_hint: false,
             use_shift_enter_hint,
             dismissed_file_popup_token: None,
-            dismissed_command_popup_token: None,
+            dismissed_slash_token: None,
             current_file_query: None,
             pending_pastes: Vec::new(),
         };
@@ -158,7 +160,11 @@ impl ChatComposer<'_> {
             self.textarea.insert_str(&pasted);
         }
         self.sync_command_popup();
-        self.sync_file_search_popup();
+        if matches!(self.active_popup, ActivePopup::Command(_)) {
+            self.dismissed_file_popup_token = None;
+        } else {
+            self.sync_file_search_popup();
+        }
         true
     }
 
@@ -228,7 +234,7 @@ impl ChatComposer<'_> {
                 if let Some(stripped) = first_line.strip_prefix('/') {
                     let token = stripped.trim_start();
                     let cmd_token = token.split_whitespace().next().unwrap_or("");
-                    self.dismissed_command_popup_token = Some(cmd_token.to_string());
+                    self.dismissed_slash_token = Some(cmd_token.to_string());
                 }
                 self.active_popup = ActivePopup::None;
                 (InputResult::None, true)
@@ -607,12 +613,12 @@ impl ChatComposer<'_> {
             .unwrap_or("");
 
         let input_starts_with_slash = first_line.starts_with('/');
-        let current_cmd_token: Option<String> = if input_starts_with_slash {
+        let current_cmd_token: Option<&str> = if input_starts_with_slash {
             if let Some(stripped) = first_line.strip_prefix('/') {
                 let token = stripped.trim_start();
-                Some(token.split_whitespace().next().unwrap_or("").to_string())
+                Some(token.split_whitespace().next().unwrap_or(""))
             } else {
-                Some(String::new())
+                Some("")
             }
         } else {
             None
@@ -623,25 +629,19 @@ impl ChatComposer<'_> {
                     popup.on_composer_text_change(first_line.to_string());
                 } else {
                     self.active_popup = ActivePopup::None;
-                    self.dismissed_command_popup_token = None;
+                    self.dismissed_slash_token = None;
                 }
             }
             _ => {
                 if input_starts_with_slash {
-                    // Avoid reopening immediately after user pressed Esc until
-                    // the '/token' changes.
-                    if self
-                        .dismissed_command_popup_token
-                        .as_ref()
-                        .is_some_and(|t| Some(t) == current_cmd_token.as_ref())
-                    {
+                    if self.dismissed_slash_token.as_deref() == current_cmd_token {
                         return;
                     }
                     let mut command_popup = CommandPopup::new();
                     command_popup.on_composer_text_change(first_line.to_string());
                     self.active_popup = ActivePopup::Command(command_popup);
                 }
-                }
+            }
         }
     }
 
@@ -701,11 +701,14 @@ impl WidgetRef for &ChatComposer<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         match &self.active_popup {
             ActivePopup::Command(popup) => {
-                let popup_height = popup.calculate_required_height();
+                let desired_popup = popup.calculate_required_height();
+                // Reserve exactly the number of text lines for the textarea so we
+                // don't create visual blank rows when the composer is short.
+                let text_lines = self.textarea.lines().len().max(1) as u16;
+                let popup_height = desired_popup.min(area.height.saturating_sub(text_lines));
 
                 // Split the provided rect so that the popup is rendered at the
-                // **bottom** and the textarea occupies the remaining space above.
-                let popup_height = popup_height.min(area.height);
+                // bottom and the textarea occupies the remaining space above.
                 let textarea_rect = Rect {
                     x: area.x,
                     y: area.y,
@@ -723,9 +726,9 @@ impl WidgetRef for &ChatComposer<'_> {
                 self.textarea.render(textarea_rect, buf);
             }
             ActivePopup::File(popup) => {
-                let popup_height = popup.calculate_required_height();
-
-                let popup_height = popup_height.min(area.height);
+                let desired_popup = popup.calculate_required_height();
+                let text_lines = self.textarea.lines().len().max(1) as u16;
+                let popup_height = desired_popup.min(area.height.saturating_sub(text_lines));
                 let textarea_rect = Rect {
                     x: area.x,
                     y: area.y,
@@ -1055,6 +1058,30 @@ mod tests {
 
             assert_snapshot!(name, terminal.backend());
         }
+    }
+
+    #[test]
+    fn esc_dismiss_slash_popup_reopen_on_token_change() {
+        use crate::bottom_pane::chat_composer::ActivePopup;
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, sender, false);
+
+        // Type a slash command prefix. Popup should appear.
+        composer.handle_paste("/".to_string());
+        assert!(matches!(composer.active_popup, ActivePopup::Command(_)));
+
+        // Press Esc: popup should close.
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(matches!(composer.active_popup, ActivePopup::None));
+
+        // Append to token (change '/' -> '/c'): popup should reopen.
+        composer.handle_paste("c".to_string());
+        assert!(matches!(composer.active_popup, ActivePopup::Command(_)));
     }
 
     #[test]
