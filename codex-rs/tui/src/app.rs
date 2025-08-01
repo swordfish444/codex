@@ -10,6 +10,7 @@ use crate::tui;
 use codex_core::config::Config;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
+use codex_core::protocol::Op;
 use color_eyre::eyre::Result;
 use crossterm::SynchronizedUpdate;
 use crossterm::event::KeyCode;
@@ -330,6 +331,12 @@ impl App<'_> {
                         self.app_state = AppState::Chat { widget: new_widget };
                         self.app_event_tx.send(AppEvent::RequestRedraw);
                     }
+                    SlashCommand::Compact => {
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.clear_token_usage();
+                            self.app_event_tx.send(AppEvent::CodexOp(Op::Compact));
+                        }
+                    }
                     SlashCommand::Quit => {
                         break;
                     }
@@ -416,7 +423,10 @@ impl App<'_> {
                         // Ignore args; forward to the existing no-args handler
                         self.app_event_tx.send(AppEvent::DispatchCommand(command));
                     }
-                    SlashCommand::New | SlashCommand::Quit | SlashCommand::Diff => {
+                    SlashCommand::New
+                    | SlashCommand::Quit
+                    | SlashCommand::Diff
+                    | SlashCommand::Compact => {
                         // For other commands, fall back to existing handling.
                         // We can ignore args for now.
                         self.app_event_tx.send(AppEvent::DispatchCommand(command));

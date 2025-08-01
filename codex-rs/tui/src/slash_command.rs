@@ -13,6 +13,7 @@ pub enum SlashCommand {
     // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
     // more frequently used commands should be listed first.
     New,
+    Compact,
     Diff,
     Model,
     Quit,
@@ -25,6 +26,7 @@ impl SlashCommand {
     pub fn description(self) -> &'static str {
         match self {
             SlashCommand::New => "Start a new chat.",
+            SlashCommand::Compact => "Compact the chat history.",
             SlashCommand::Quit => "Exit the application.",
             SlashCommand::Model => "Select the model to use.",
             SlashCommand::Diff => {
