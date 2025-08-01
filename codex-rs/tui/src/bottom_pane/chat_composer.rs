@@ -19,7 +19,6 @@ use tui_textarea::TextArea;
 use super::chat_composer_history::ChatComposerHistory;
 use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
-use crate::slash_command::Command;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -56,7 +55,7 @@ pub(crate) struct ChatComposer<'a> {
 /// Popup state – at most one can be visible at any time.
 enum ActivePopup {
     None,
-    Slash(CommandPopup<Command>),
+    Slash(CommandPopup),
     File(FileSearchPopup),
 }
 
