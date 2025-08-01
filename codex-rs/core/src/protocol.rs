@@ -175,6 +175,10 @@ pub enum SandboxPolicy {
         /// default.
         #[serde(default)]
         network_access: bool,
+
+        /// When set to `true`, will not include defaults like TMPDIR.
+        /// (Mainly used for testing.)
+        use_exact_writable_roots: bool,
     },
 }
 
@@ -199,6 +203,7 @@ impl SandboxPolicy {
         SandboxPolicy::WorkspaceWrite {
             writable_roots: vec![],
             network_access: false,
+            use_exact_writable_roots: false,
         }
     }
 
@@ -230,7 +235,15 @@ impl SandboxPolicy {
         match self {
             SandboxPolicy::DangerFullAccess => Vec::new(),
             SandboxPolicy::ReadOnly => Vec::new(),
-            SandboxPolicy::WorkspaceWrite { writable_roots, .. } => {
+            SandboxPolicy::WorkspaceWrite {
+                writable_roots,
+                use_exact_writable_roots,
+                ..
+            } => {
+                if *use_exact_writable_roots {
+                    return writable_roots.clone();
+                }
+
                 let mut roots = writable_roots.clone();
                 roots.push(cwd.to_path_buf());
 
