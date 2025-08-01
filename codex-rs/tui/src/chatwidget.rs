@@ -168,7 +168,7 @@ impl ChatWidget<'_> {
             InputResult::Submitted(text) => {
                 let images = self.bottom_pane.take_recent_submission_images();
                 self.submit_user_message(UserMessage {
-                    text: text.into(),
+                    text,
                     image_paths: images,
                 });
             }
@@ -532,10 +532,10 @@ impl ChatWidget<'_> {
         &self.token_usage
     }
 
-    pub(crate) fn add_background_event(&mut self, msg: String) {
-        self.add_to_history(HistoryCell::new_background_event(msg));
-        self.request_redraw();
-    }
+    // pub(crate) fn add_background_event(&mut self, msg: String) {
+    //     self.add_to_history(HistoryCell::new_background_event(msg));
+    //     self.request_redraw();
+    // }
 
     pub(crate) fn clear_token_usage(&mut self) {
         self.token_usage = TokenUsage::default();

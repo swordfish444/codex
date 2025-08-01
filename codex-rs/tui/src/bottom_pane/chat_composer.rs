@@ -337,7 +337,7 @@ impl ChatComposer<'_> {
                                 let (row, col) = self.textarea.cursor();
                                 let mut lines: Vec<String> = self.textarea.lines().to_vec();
                                 if let Some(line) = lines.get_mut(row) {
-                                    let cursor_byte_offset = cursor_byte_offset(line, col as usize);
+                                    let cursor_byte_offset = cursor_byte_offset(line, col);
                                     if let Some((start, end)) =
                                         at_token_bounds(line, cursor_byte_offset, true)
                                     {
@@ -409,36 +409,16 @@ impl ChatComposer<'_> {
     fn current_at_token(textarea: &tui_textarea::TextArea) -> Option<String> {
         let (row, col) = textarea.cursor();
         let line = textarea.lines().get(row)?.as_str();
-        let cursor_byte_offset = cursor_byte_offset(line, col as usize);
+        let cursor_byte_offset = cursor_byte_offset(line, col);
         let (start, end) = at_token_bounds(line, cursor_byte_offset, false)?;
         Some(line[start + 1..end].to_string())
-    }
-
-    /// Remove the @token under the cursor (including partial) without clearing the rest of the text.
-    /// If cursor not on an @token, no-op.
-    fn remove_current_at_token(&mut self) {
-        let (row, col) = self.textarea.cursor();
-        let mut lines: Vec<String> = self.textarea.lines().to_vec();
-        if let Some(line) = lines.get_mut(row) {
-            let cursor_byte_offset = cursor_byte_offset(line, col as usize);
-            if let Some((start, end)) = at_token_bounds(line, cursor_byte_offset, true) {
-                let mut new_line = String::with_capacity(line.len() - (end - start));
-                new_line.push_str(&line[..start]);
-                new_line.push_str(&line[end..]);
-                *line = new_line;
-                let new_text = lines.join("\n");
-                self.textarea.select_all();
-                self.textarea.cut();
-                let _ = self.textarea.insert_str(new_text);
-            }
-        }
     }
 
     /// Similar to `current_at_token` but returns Some("") if cursor is on a bare '@' token (no body yet).
     fn current_at_token_allow_empty(textarea: &tui_textarea::TextArea) -> Option<String> {
         let (row, col) = textarea.cursor();
         let line = textarea.lines().get(row)?.as_str();
-        let cursor_byte_offset = cursor_byte_offset(line, col as usize);
+        let cursor_byte_offset = cursor_byte_offset(line, col);
         let (start, end) = at_token_bounds(line, cursor_byte_offset, true)?;
         Some(line[start + 1..end].to_string()) // body may be empty
     }
@@ -449,7 +429,7 @@ impl ChatComposer<'_> {
         let (row, col) = self.textarea.cursor();
         let mut lines: Vec<String> = self.textarea.lines().to_vec();
         if let Some(line) = lines.get_mut(row) {
-            let cursor_byte_offset = cursor_byte_offset(line, col as usize);
+            let cursor_byte_offset = cursor_byte_offset(line, col);
             if let Some((start, end)) = token_bounds(line, cursor_byte_offset) {
                 let mut new_line =
                     String::with_capacity(line.len() - (end - start) + path.len() + 1);
@@ -680,7 +660,7 @@ impl ChatComposer<'_> {
         let mut global_index: usize = 0;
         for (i, line) in lines.iter().enumerate() {
             if i == cursor_row {
-                global_index += cursor_col as usize;
+                global_index += cursor_col;
                 break;
             } else {
                 global_index += line.chars().count() + 1; // +1 for the newline that will be joined
@@ -960,6 +940,7 @@ fn at_token_bounds(
 
 #[cfg(test)]
 mod tests {
+    use super::ActivePopup;
     use crate::bottom_pane::AppEventSender;
     use crate::bottom_pane::ChatComposer;
     use crate::bottom_pane::InputResult;
@@ -1485,7 +1466,7 @@ mod tests {
         // Case 1: backspace at end
         composer.textarea.move_cursor(tui_textarea::CursorMove::End);
         composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
-        assert!(composer.textarea.lines().join("\n").contains(&placeholder) == false);
+        assert!(!composer.textarea.lines().join("\n").contains(&placeholder));
         assert!(composer.attached_images.is_empty());
 
         // Re-add and test backspace in middle
@@ -1497,32 +1478,29 @@ mod tests {
             .textarea
             .move_cursor(tui_textarea::CursorMove::Jump(0, mid));
         composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
-        assert!(composer.textarea.lines().join("\n").contains(&placeholder2) == false);
+        assert!(!composer.textarea.lines().join("\n").contains(&placeholder2));
         assert!(composer.attached_images.is_empty());
     }
 
     #[test]
-    fn at_clipboard_image_command_triggers_dispatch() {
-        use crate::app_event::AppEvent;
+    fn at_symbol_opens_file_popup_and_enter_closes_it() {
         use crossterm::event::KeyCode;
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
-        use std::sync::mpsc::Receiver;
 
-        let (tx, rx): (std::sync::mpsc::Sender<AppEvent>, Receiver<AppEvent>) =
-            std::sync::mpsc::channel();
+        let (tx, _rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(true, sender, false);
-        // Type '@' to open popup
+
+        // Type '@' to open file search popup
         composer.handle_key_event(KeyEvent::new(KeyCode::Char('@'), KeyModifiers::NONE));
-        // Press Enter (should dispatch Image since only option)
+        // Popup should be the File popup, and we should be in file_search_mode
+        assert!(matches!(composer.active_popup, ActivePopup::File(_)));
+        assert!(composer.file_search_mode);
+
+        // Press Enter to select current item and close popup/session
         composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        // Expect a DispatchAtCommand(Image) or DispatchAtCommand(File); slash commands use DispatchSlashCommand
-        let ev = rx.try_recv().expect("expected an event");
-        match ev {
-            AppEvent::DispatchAtCommand(AtCommand::ClipboardImage) => {}
-            AppEvent::DispatchAtCommand(AtCommand::File) => {}
-            other => panic!("unexpected event: {:?}", other),
-        }
+        assert!(matches!(composer.active_popup, ActivePopup::None));
+        assert!(!composer.file_search_mode);
     }
 }

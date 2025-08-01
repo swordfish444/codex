@@ -583,7 +583,10 @@ mod tests {
             ))
         });
         assert!(handled, "expected ctrl+v to be handled on success");
-        match rx.recv().expect("event") {
+        match rx
+            .recv()
+            .unwrap_or_else(|e| panic!("failed to receive event: {e}"))
+        {
             AppEvent::AttachImage {
                 path,
                 width,
