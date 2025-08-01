@@ -350,6 +350,7 @@ impl ConfigToml {
                 Some(s) => SandboxPolicy::WorkspaceWrite {
                     writable_roots: s.writable_roots.clone(),
                     network_access: s.network_access,
+                    use_exact_writable_roots: false,
                 },
                 None => SandboxPolicy::new_workspace_write_policy(),
             },
@@ -720,6 +721,7 @@ writable_roots = [
             SandboxPolicy::WorkspaceWrite {
                 writable_roots: vec![PathBuf::from("/tmp")],
                 network_access: false,
+                use_exact_writable_roots: false,
             },
             sandbox_workspace_write_cfg.derive_sandbox_policy(sandbox_mode_override)
         );
