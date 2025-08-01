@@ -37,6 +37,7 @@ use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::unbounded_channel;
+use unicode_width::UnicodeWidthStr;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -72,8 +73,12 @@ pub(crate) struct ChatWidget<'a> {
     history: Vec<Line<'static>>,
     /// Index where the current streaming agent message begins in `history`.
     current_answer_start: Option<usize>,
+    /// Number of lines currently occupied by the streaming agent message in `history`.
+    current_answer_len: usize,
     /// Index where the current streaming reasoning message begins in `history`.
     current_reasoning_start: Option<usize>,
+    /// Number of lines currently occupied by the streaming reasoning block in `history`.
+    current_reasoning_len: usize,
     running_commands: HashMap<String, RunningCommand>,
 }
 
@@ -163,7 +168,9 @@ impl ChatWidget<'_> {
             answer_buffer: String::new(),
             history: Vec::new(),
             current_answer_start: None,
+            current_answer_len: 0,
             current_reasoning_start: None,
+            current_reasoning_len: 0,
             running_commands: HashMap::new(),
         }
     }
@@ -261,11 +268,26 @@ impl ChatWidget<'_> {
                 };
                 if !full.is_empty() {
                     let lines = build_agent_message_lines(&self.config, &full, true);
-                    if let Some(start) = self.current_answer_start.take() {
-                        self.history.truncate(start);
-                        self.history.extend(lines);
-                    } else {
-                        self.history.extend(lines);
+                    let new_len = lines.len();
+                    match self.current_answer_start.take() {
+                        Some(start) => {
+                            let old_len = self.current_answer_len;
+                            let end = start.saturating_add(old_len).min(self.history.len());
+                            // Replace just the answer block so we don't drop later content.
+                            self.history.splice(start..end, lines);
+                            // Adjust downstream reasoning block start if it comes after this.
+                            if let Some(rstart) = self.current_reasoning_start {
+                                if rstart > start {
+                                    let delta = new_len as isize - old_len as isize;
+                                    self.current_reasoning_start =
+                                        Some((rstart as isize + delta) as usize);
+                                }
+                            }
+                            self.current_answer_len = 0;
+                        }
+                        None => {
+                            self.history.extend(lines);
+                        }
                     }
                     self.request_redraw();
                 }
@@ -273,13 +295,25 @@ impl ChatWidget<'_> {
             EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }) => {
                 self.answer_buffer.push_str(&delta);
                 let lines = build_agent_message_lines(&self.config, &self.answer_buffer, false);
+                let new_len = lines.len();
                 match self.current_answer_start {
                     Some(start) => {
-                        self.history.truncate(start);
-                        self.history.extend(lines);
+                        let old_len = self.current_answer_len;
+                        let end = start.saturating_add(old_len).min(self.history.len());
+                        self.history.splice(start..end, lines);
+                        // Adjust downstream reasoning block start if it comes after this.
+                        if let Some(rstart) = self.current_reasoning_start {
+                            if rstart > start {
+                                let delta = new_len as isize - old_len as isize;
+                                self.current_reasoning_start =
+                                    Some((rstart as isize + delta) as usize);
+                            }
+                        }
+                        self.current_answer_len = new_len;
                     }
                     None => {
                         self.current_answer_start = Some(self.history.len());
+                        self.current_answer_len = new_len;
                         self.history.extend(lines);
                     }
                 }
@@ -289,13 +323,25 @@ impl ChatWidget<'_> {
                 self.reasoning_buffer.push_str(&delta);
                 let lines =
                     build_agent_reasoning_lines(&self.config, &self.reasoning_buffer, false);
+                let new_len = lines.len();
                 match self.current_reasoning_start {
                     Some(start) => {
-                        self.history.truncate(start);
-                        self.history.extend(lines);
+                        let old_len = self.current_reasoning_len;
+                        let end = start.saturating_add(old_len).min(self.history.len());
+                        self.history.splice(start..end, lines);
+                        // Adjust downstream answer block start if it comes after this.
+                        if let Some(astart) = self.current_answer_start {
+                            if astart > start {
+                                let delta = new_len as isize - old_len as isize;
+                                self.current_answer_start =
+                                    Some((astart as isize + delta) as usize);
+                            }
+                        }
+                        self.current_reasoning_len = new_len;
                     }
                     None => {
                         self.current_reasoning_start = Some(self.history.len());
+                        self.current_reasoning_len = new_len;
                         self.history.extend(lines);
                     }
                 }
@@ -310,11 +356,25 @@ impl ChatWidget<'_> {
                 };
                 if !full.is_empty() {
                     let lines = build_agent_reasoning_lines(&self.config, &full, true);
-                    if let Some(start) = self.current_reasoning_start.take() {
-                        self.history.truncate(start);
-                        self.history.extend(lines);
-                    } else {
-                        self.history.extend(lines);
+                    let new_len = lines.len();
+                    match self.current_reasoning_start.take() {
+                        Some(start) => {
+                            let old_len = self.current_reasoning_len;
+                            let end = start.saturating_add(old_len).min(self.history.len());
+                            self.history.splice(start..end, lines);
+                            // Adjust downstream answer block start if it comes after this.
+                            if let Some(astart) = self.current_answer_start {
+                                if astart > start {
+                                    let delta = new_len as isize - old_len as isize;
+                                    self.current_answer_start =
+                                        Some((astart as isize + delta) as usize);
+                                }
+                            }
+                            self.current_reasoning_len = 0;
+                        }
+                        None => {
+                            self.history.extend(lines);
+                        }
                     }
                     self.request_redraw();
                 }
@@ -335,6 +395,43 @@ impl ChatWidget<'_> {
             EventMsg::TaskComplete(TaskCompleteEvent {
                 last_agent_message: _,
             }) => {
+                // Finalize any in‑progress streaming blocks defensively.
+                if let Some(start) = self.current_answer_start.take() {
+                    if !self.answer_buffer.is_empty() {
+                        let lines =
+                            build_agent_message_lines(&self.config, &self.answer_buffer, true);
+                        let new_len = lines.len();
+                        let old_len = self.current_answer_len;
+                        let end = start.saturating_add(old_len).min(self.history.len());
+                        self.history.splice(start..end, lines);
+                        if let Some(rstart) = self.current_reasoning_start {
+                            if rstart > start {
+                                let delta = new_len as isize - old_len as isize;
+                                self.current_reasoning_start =
+                                    Some((rstart as isize + delta) as usize);
+                            }
+                        }
+                    }
+                    self.current_answer_len = 0;
+                }
+                if let Some(start) = self.current_reasoning_start.take() {
+                    if !self.reasoning_buffer.is_empty() {
+                        let lines =
+                            build_agent_reasoning_lines(&self.config, &self.reasoning_buffer, true);
+                        let new_len = lines.len();
+                        let old_len = self.current_reasoning_len;
+                        let end = start.saturating_add(old_len).min(self.history.len());
+                        self.history.splice(start..end, lines);
+                        if let Some(astart) = self.current_answer_start {
+                            if astart > start {
+                                let delta = new_len as isize - old_len as isize;
+                                self.current_answer_start =
+                                    Some((astart as isize + delta) as usize);
+                            }
+                        }
+                    }
+                    self.current_reasoning_len = 0;
+                }
                 self.bottom_pane.set_task_running(false);
                 self.request_redraw();
             }
@@ -527,6 +624,10 @@ impl ChatWidget<'_> {
             self.submit_op(Op::Interrupt);
             self.answer_buffer.clear();
             self.reasoning_buffer.clear();
+            self.current_answer_start = None;
+            self.current_answer_len = 0;
+            self.current_reasoning_start = None;
+            self.current_reasoning_len = 0;
             CancellationEvent::Ignored
         } else if self.bottom_pane.ctrl_c_quit_hint_visible() {
             self.submit_op(Op::Shutdown);
@@ -571,8 +672,8 @@ impl WidgetRef for &ChatWidget<'_> {
                 width: area.width,
                 height: history_height,
             };
-            let total_lines = self.history.len() as u16;
-            let scroll = total_lines.saturating_sub(history_height);
+            let total_rows = wrapped_row_count(&self.history, history_area.width);
+            let scroll = total_rows.saturating_sub(history_height);
             Paragraph::new(self.history.clone())
                 .wrap(Wrap { trim: false })
                 .scroll((scroll, 0))
@@ -587,6 +688,24 @@ impl WidgetRef for &ChatWidget<'_> {
         };
         (&self.bottom_pane).render(bottom_area, buf);
     }
+}
+
+fn wrapped_row_count(lines: &[Line<'_>], width: u16) -> u16 {
+    if width == 0 {
+        return 0;
+    }
+    let w = width as u32;
+    let mut rows: u32 = 0;
+    for line in lines {
+        let total_width: u32 = line
+            .spans
+            .iter()
+            .map(|span| span.content.width() as u32)
+            .sum();
+        let line_rows = ((total_width + w - 1) / w).max(1);
+        rows = rows.saturating_add(line_rows);
+    }
+    rows.min(u16::MAX as u32) as u16
 }
 
 fn add_token_usage(current_usage: &TokenUsage, new_usage: &TokenUsage) -> TokenUsage {
