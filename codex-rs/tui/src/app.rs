@@ -10,13 +10,15 @@ use crate::tui;
 use codex_core::config::Config;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
-use codex_core::protocol::ExecApprovalRequestEvent;
 use color_eyre::eyre::Result;
 use crossterm::SynchronizedUpdate;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
+use crossterm::event::KeyEventKind;
+use crossterm::terminal::supports_keyboard_enhancement;
 use ratatui::layout::Offset;
 use ratatui::prelude::Backend;
+use ratatui::text::Line;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -77,9 +79,13 @@ pub(crate) struct App<'a> {
     /// True when a redraw has been scheduled but not yet executed.
     pending_redraw: Arc<AtomicBool>,
 
+    pending_history_lines: Vec<Line<'static>>,
+
     /// Stored parameters needed to instantiate the ChatWidget later, e.g.,
     /// after dismissing the Git-repo warning.
     chat_args: Option<ChatWidgetArgs>,
+
+    enhanced_keys_supported: bool,
 }
 
 /// Aggregate parameters needed to create a `ChatWidget`, as creation may be
@@ -89,6 +95,7 @@ struct ChatWidgetArgs {
     config: Config,
     initial_prompt: Option<String>,
     initial_images: Vec<PathBuf>,
+    enhanced_keys_supported: bool,
 }
 
 impl App<'_> {
@@ -101,6 +108,8 @@ impl App<'_> {
         let (app_event_tx, app_event_rx) = channel();
         let app_event_tx = AppEventSender::new(app_event_tx);
         let pending_redraw = Arc::new(AtomicBool::new(false));
+
+        let enhanced_keys_supported = supports_keyboard_enhancement().unwrap_or(false);
 
         // Spawn a dedicated thread for reading the crossterm event loop and
         // re-publishing the events as AppEvents, as appropriate.
@@ -118,9 +127,7 @@ impl App<'_> {
                         if let Ok(event) = crossterm::event::read() {
                             match event {
                                 crossterm::event::Event::Key(key_event) => {
-                                    if key_event.kind == crossterm::event::KeyEventKind::Press {
-                                        app_event_tx.send(AppEvent::KeyEvent(key_event));
-                                    }
+                                    app_event_tx.send(AppEvent::KeyEvent(key_event));
                                 }
                                 crossterm::event::Event::Resize(_, _) => {
                                     app_event_tx.send(AppEvent::RequestRedraw);
@@ -156,6 +163,7 @@ impl App<'_> {
                     config: config.clone(),
                     initial_prompt,
                     initial_images,
+                    enhanced_keys_supported,
                 }),
             )
         } else {
@@ -164,6 +172,7 @@ impl App<'_> {
                 app_event_tx.clone(),
                 initial_prompt,
                 initial_images,
+                enhanced_keys_supported,
             );
             (
                 AppState::Chat {
@@ -176,12 +185,14 @@ impl App<'_> {
         let file_search = FileSearchManager::new(config.cwd.clone(), app_event_tx.clone());
         Self {
             app_event_tx,
+            pending_history_lines: Vec::new(),
             app_event_rx,
             app_state,
             config,
             file_search,
             pending_redraw,
             chat_args,
+            enhanced_keys_supported,
         }
     }
 
@@ -221,7 +232,7 @@ impl App<'_> {
         while let Ok(event) = self.app_event_rx.recv() {
             match event {
                 AppEvent::InsertHistory(lines) => {
-                    crate::insert_history::insert_history_lines(terminal, lines);
+                    self.pending_history_lines.extend(lines);
                     self.app_event_tx.send(AppEvent::RequestRedraw);
                 }
                 AppEvent::RequestRedraw => {
@@ -235,6 +246,7 @@ impl App<'_> {
                         KeyEvent {
                             code: KeyCode::Char('c'),
                             modifiers: crossterm::event::KeyModifiers::CONTROL,
+                            kind: KeyEventKind::Press,
                             ..
                         } => {
                             match &mut self.app_state {
@@ -249,6 +261,7 @@ impl App<'_> {
                         KeyEvent {
                             code: KeyCode::Char('d'),
                             modifiers: crossterm::event::KeyModifiers::CONTROL,
+                            kind: KeyEventKind::Press,
                             ..
                         } => {
                             match &mut self.app_state {
@@ -267,8 +280,14 @@ impl App<'_> {
                                 }
                             }
                         }
-                        _ => {
+                        KeyEvent {
+                            kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                            ..
+                        } => {
                             self.dispatch_key_event(key_event);
+                        }
+                        _ => {
+                            // Ignore Release key events for now.
                         }
                     };
                 }
@@ -306,6 +325,7 @@ impl App<'_> {
                             self.app_event_tx.clone(),
                             None,
                             Vec::new(),
+                            self.enhanced_keys_supported,
                         ));
                         self.app_state = AppState::Chat { widget: new_widget };
                         self.app_event_tx.send(AppEvent::RequestRedraw);
@@ -336,14 +356,41 @@ impl App<'_> {
                     }
                     #[cfg(debug_assertions)]
                     SlashCommand::TestApproval => {
+                        use std::collections::HashMap;
+
+                        use codex_core::protocol::ApplyPatchApprovalRequestEvent;
+                        use codex_core::protocol::FileChange;
+
                         self.app_event_tx.send(AppEvent::CodexEvent(Event {
                             id: "1".to_string(),
-                            msg: EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
-                                call_id: "1".to_string(),
-                                command: vec!["git".into(), "apply".into()],
-                                cwd: self.config.cwd.clone(),
-                                reason: Some("test".to_string()),
-                            }),
+                            // msg: EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
+                            //     call_id: "1".to_string(),
+                            //     command: vec!["git".into(), "apply".into()],
+                            //     cwd: self.config.cwd.clone(),
+                            //     reason: Some("test".to_string()),
+                            // }),
+                            msg: EventMsg::ApplyPatchApprovalRequest(
+                                ApplyPatchApprovalRequestEvent {
+                                    call_id: "1".to_string(),
+                                    changes: HashMap::from([
+                                        (
+                                            PathBuf::from("/tmp/test.txt"),
+                                            FileChange::Add {
+                                                content: "test".to_string(),
+                                            },
+                                        ),
+                                        (
+                                            PathBuf::from("/tmp/test2.txt"),
+                                            FileChange::Update {
+                                                unified_diff: "+test\n-test2".to_string(),
+                                                move_path: None,
+                                            },
+                                        ),
+                                    ]),
+                                    reason: None,
+                                    grant_root: Some(PathBuf::from("/tmp")),
+                                },
+                            ),
                         }));
                     }
                     SlashCommand::Model => {
@@ -420,6 +467,7 @@ impl App<'_> {
             AppState::Chat { widget } => widget.desired_height(size.width),
             AppState::GitWarning { .. } => 10,
         };
+
         let mut area = terminal.viewport_area;
         area.height = desired_height.min(size.height);
         area.width = size.width;
@@ -432,6 +480,13 @@ impl App<'_> {
         if area != terminal.viewport_area {
             terminal.clear()?;
             terminal.set_viewport_area(area);
+        }
+        if !self.pending_history_lines.is_empty() {
+            crate::insert_history::insert_history_lines(
+                terminal,
+                self.pending_history_lines.clone(),
+            );
+            self.pending_history_lines.clear();
         }
         match &mut self.app_state {
             AppState::Chat { widget } => {
@@ -464,6 +519,7 @@ impl App<'_> {
                         self.app_event_tx.clone(),
                         args.initial_prompt,
                         args.initial_images,
+                        args.enhanced_keys_supported,
                     ));
                     self.app_state = AppState::Chat { widget };
                     self.app_event_tx.send(AppEvent::RequestRedraw);

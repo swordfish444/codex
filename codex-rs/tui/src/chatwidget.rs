@@ -27,6 +27,7 @@ use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::TaskCompleteEvent;
 use codex_core::protocol::TokenUsage;
 use crossterm::event::KeyEvent;
+use crossterm::event::KeyEventKind;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
@@ -97,6 +98,7 @@ impl ChatWidget<'_> {
         app_event_tx: AppEventSender,
         initial_prompt: Option<String>,
         initial_images: Vec<PathBuf>,
+        enhanced_keys_supported: bool,
     ) -> Self {
         let (codex_op_tx, mut codex_op_rx) = unbounded_channel::<Op>();
 
@@ -142,6 +144,7 @@ impl ChatWidget<'_> {
             bottom_pane: BottomPane::new(BottomPaneParams {
                 app_event_tx,
                 has_input_focus: true,
+                enhanced_keys_supported,
             }),
             config,
             initial_user_message: create_initial_user_message(
@@ -161,7 +164,9 @@ impl ChatWidget<'_> {
     }
 
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
-        self.bottom_pane.clear_ctrl_c_quit_hint();
+        if key_event.kind == KeyEventKind::Press {
+            self.bottom_pane.clear_ctrl_c_quit_hint();
+        }
 
         match self.bottom_pane.handle_key_event(key_event) {
             InputResult::Submitted(text) => {
