@@ -195,11 +195,9 @@ impl ChatWidget<'_> {
         self.bottom_pane
             .attach_image(path.clone(), width, height, format_label);
         // Surface a quick background event so user sees confirmation.
-        self.conversation_history.add_background_event(format!(
-            "[image copied] {}x{} {}",
-            width, height, format_label
-        ));
-        self.emit_last_history_entry();
+        self.add_to_history(HistoryCell::new_background_event(format!(
+            "[image copied] {width}x{height} {format_label}"
+        )));
         self.request_redraw();
     }
 
@@ -535,8 +533,7 @@ impl ChatWidget<'_> {
     }
 
     pub(crate) fn add_background_event(&mut self, msg: String) {
-        self.conversation_history.add_background_event(msg);
-        self.emit_last_history_entry();
+        self.add_to_history(HistoryCell::new_background_event(msg));
         self.request_redraw();
     }
 

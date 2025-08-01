@@ -12,7 +12,6 @@ use ratatui::widgets::Table;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
 
-use crate::at_command::{AtCommand, built_in_at_commands};
 use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
 
@@ -27,14 +26,6 @@ impl CommandInfo for SlashCommand {
     }
     fn description(&self) -> &'static str {
         SlashCommand::description(*self)
-    }
-}
-impl CommandInfo for AtCommand {
-    fn command(&self) -> &'static str {
-        AtCommand::command(*self)
-    }
-    fn description(&self) -> &'static str {
-        AtCommand::description(*self)
     }
 }
 
@@ -159,12 +150,6 @@ impl CommandPopup<SlashCommand> {
     }
 }
 
-impl CommandPopup<AtCommand> {
-    pub(crate) fn at() -> Self {
-        CommandPopup::new('@', built_in_at_commands())
-    }
-}
-
 impl<C: CommandInfo> WidgetRef for CommandPopup<C> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let matches = self.filtered_commands();
@@ -182,10 +167,6 @@ impl<C: CommandInfo> WidgetRef for CommandPopup<C> {
             let command_style = Style::default().fg(Color::LightBlue);
             for (idx, cmd) in visible_matches.iter().enumerate() {
                 rows.push(Row::new(vec![
-<<<<<<< HEAD
-                    Cell::from(format!("{}{}", self.prefix, cmd.command())).style(cmd_style),
-                    Cell::from(cmd.description().to_string()).style(desc_style),
-=======
                     Cell::from(Line::from(vec![
                         if Some(idx) == self.selected_idx {
                             Span::styled(
@@ -195,10 +176,9 @@ impl<C: CommandInfo> WidgetRef for CommandPopup<C> {
                         } else {
                             Span::styled(QUADRANT_LEFT_HALF, Style::default().fg(Color::DarkGray))
                         },
-                        Span::styled(format!("/{}", cmd.command()), command_style),
+                        Span::styled(format!("{}{}", self.prefix, cmd.command()), command_style),
                     ])),
                     Cell::from(cmd.description().to_string()).style(default_style),
->>>>>>> main
                 ]));
             }
         }

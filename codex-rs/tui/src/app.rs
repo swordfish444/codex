@@ -44,14 +44,12 @@ where
         crate::clipboard_paste::PasteImageError,
     >,
 {
-    if key_event.code == KeyCode::Char('v')
+    if key_event.kind == KeyEventKind::Press
+        && key_event.code == KeyCode::Char('v')
         && key_event
             .modifiers
             .contains(crossterm::event::KeyModifiers::CONTROL)
     {
-        tracing::debug!(
-            "Ctrl+V detected – attempting clipboard image import (shortcut for /image)"
-        );
         match paste_fn() {
             Ok((path, info)) => {
                 tracing::info!(
@@ -421,38 +419,6 @@ impl App<'_> {
                                 },
                             ),
                         }));
-                    }
-                },
-                AppEvent::DispatchAtCommand(at_command) => match at_command {
-                    crate::at_command::AtCommand::ClipboardImage => {
-                        match crate::clipboard_paste::paste_image_to_temp_png() {
-                            Ok((path, info)) => {
-                                tracing::info!(
-                                    "at_command_image imported path={:?} width={} height={} format={}",
-                                    path,
-                                    info.width,
-                                    info.height,
-                                    info.encoded_format_label
-                                );
-                                self.app_event_tx.send(AppEvent::AttachImage {
-                                    path,
-                                    width: info.width,
-                                    height: info.height,
-                                    format_label: info.encoded_format_label,
-                                });
-                            }
-                            Err(err) => {
-                                if let AppState::Chat { widget } = &mut self.app_state {
-                                    widget.add_background_event(format!(
-                                        "image import failed: {err}"
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                    crate::at_command::AtCommand::File => {
-                        // Currently file search popup is handled entirely in the chat composer.
-                        // No-op here to keep the match exhaustive.
                     }
                 },
                 AppEvent::StartFileSearch(query) => {
