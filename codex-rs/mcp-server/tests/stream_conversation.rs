@@ -11,7 +11,7 @@ use serde_json::json;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
-const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_connect_then_send_receives_initial_state_and_notifications() {
