@@ -17,6 +17,7 @@ use codex_tui::Cli as TuiCli;
 use std::path::PathBuf;
 
 use crate::proto::ProtoCli;
+mod concurrent;
 
 /// Codex CLI
 ///
@@ -31,6 +32,17 @@ use crate::proto::ProtoCli;
 struct MultitoolCli {
     #[clap(flatten)]
     pub config_overrides: CliConfigOverrides,
+
+    /// Experimental:Launch a concurrent task in a separate Git worktree using the given prompt.
+    /// Creates worktree under $CODEX_HOME/worktrees/<repo>/codex/<slug> and runs `codex exec` in full-auto mode.
+    #[arg(long = "concurrent", value_name = "PROMPT")]
+    pub concurrent: Option<String>,
+
+    /// When using --concurrent, also attempt to auto-merge the resulting changes
+    /// back into the current working tree as unstaged modifications via
+    /// a 3-way git apply. Disable with --automerge=false.
+    #[arg(long = "automerge", default_value_t = true, action = clap::ArgAction::Set)]
+    pub automerge: bool,
 
     #[clap(flatten)]
     interactive: TuiCli,
@@ -115,6 +127,22 @@ fn main() -> anyhow::Result<()> {
 
 async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
     let cli = MultitoolCli::parse();
+
+    // Handle --concurrent at the root level.
+    if let Some(prompt) = cli.concurrent.clone() {
+        if cli.subcommand.is_some() {
+            eprintln!("--concurrent cannot be used together with a subcommand");
+            std::process::exit(2);
+        }
+        concurrent::run_concurrent_flow(
+            prompt,
+            cli.config_overrides,
+            codex_linux_sandbox_exe,
+            cli.automerge,
+        )
+        .await?;
+        return Ok(());
+    }
 
     match cli.subcommand {
         None => {
