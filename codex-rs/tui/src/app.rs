@@ -5,6 +5,8 @@ use crate::file_search::FileSearchManager;
 use crate::get_git_diff::get_git_diff;
 use crate::git_warning_screen::GitWarningOutcome;
 use crate::git_warning_screen::GitWarningScreen;
+use crate::insert_history::insert_history_lines;
+use crate::insert_history::wrapped_line_count;
 use crate::slash_command::SlashCommand;
 use crate::tui;
 use codex_core::config::Config;
@@ -18,8 +20,10 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::terminal::supports_keyboard_enhancement;
 use ratatui::layout::Offset;
+use ratatui::layout::Rect;
 use ratatui::prelude::Backend;
 use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -59,6 +63,12 @@ pub(crate) struct App<'a> {
     pending_redraw: Arc<AtomicBool>,
 
     pending_history_lines: Vec<Line<'static>>,
+
+    /// All history that has been committed to scrollback.
+    history_lines: Vec<Line<'static>>,
+
+    /// Currently streaming history cell if any.
+    live_history_lines: Option<Vec<Line<'static>>>,
 
     /// Stored parameters needed to instantiate the ChatWidget later, e.g.,
     /// after dismissing the Git-repo warning.
@@ -165,6 +175,8 @@ impl App<'_> {
         Self {
             app_event_tx,
             pending_history_lines: Vec::new(),
+            history_lines: Vec::new(),
+            live_history_lines: None,
             app_event_rx,
             app_state,
             config,
@@ -211,7 +223,16 @@ impl App<'_> {
         while let Ok(event) = self.app_event_rx.recv() {
             match event {
                 AppEvent::InsertHistory(lines) => {
+                    self.history_lines.extend(lines.clone());
                     self.pending_history_lines.extend(lines);
+                    self.app_event_tx.send(AppEvent::RequestRedraw);
+                }
+                AppEvent::SetLiveHistory(lines) => {
+                    self.live_history_lines = Some(lines);
+                    self.app_event_tx.send(AppEvent::RequestRedraw);
+                }
+                AppEvent::ClearLiveHistory => {
+                    self.live_history_lines = None;
                     self.app_event_tx.send(AppEvent::RequestRedraw);
                 }
                 AppEvent::RequestRedraw => {
@@ -289,6 +310,9 @@ impl App<'_> {
                 },
                 AppEvent::DispatchCommand(command) => match command {
                     SlashCommand::New => {
+                        self.history_lines.clear();
+                        self.pending_history_lines.clear();
+                        self.live_history_lines = None;
                         let new_widget = Box::new(ChatWidget::new(
                             self.config.clone(),
                             self.app_event_tx.clone(),
@@ -413,37 +437,92 @@ impl App<'_> {
         }
 
         let size = terminal.size()?;
-        let desired_height = match &self.app_state {
-            AppState::Chat { widget } => widget.desired_height(size.width),
+        let screen_height = size.height;
+        let width = size.width;
+        let bottom_height = match &self.app_state {
+            AppState::Chat { widget } => widget.desired_height(width),
             AppState::GitWarning { .. } => 10,
         };
+        let live_height = self
+            .live_history_lines
+            .as_ref()
+            .map(|lines| wrapped_line_count(lines, width))
+            .unwrap_or(0);
+        let total_height = bottom_height.saturating_add(live_height);
 
-        let mut area = terminal.viewport_area;
-        area.height = desired_height.min(size.height);
-        area.width = size.width;
-        if area.bottom() > size.height {
-            terminal
-                .backend_mut()
-                .scroll_region_up(0..area.top(), area.bottom() - size.height)?;
-            area.y = size.height - area.height;
-        }
-        if area != terminal.viewport_area {
+        if total_height <= screen_height {
+            let mut area = terminal.viewport_area;
+            area.height = total_height.min(screen_height);
+            area.width = width;
+            if area.bottom() > screen_height {
+                terminal
+                    .backend_mut()
+                    .scroll_region_up(0..area.top(), area.bottom() - screen_height)?;
+                area.y = screen_height - area.height;
+            }
+            if area != terminal.viewport_area {
+                terminal.clear()?;
+                terminal.set_viewport_area(area);
+            }
+            if !self.pending_history_lines.is_empty() {
+                insert_history_lines(terminal, self.pending_history_lines.clone());
+                self.pending_history_lines.clear();
+            }
+            match &mut self.app_state {
+                AppState::Chat { widget } => {
+                    let live_lines = self.live_history_lines.clone();
+                    terminal.draw(|frame| {
+                        let area = frame.area();
+                        if let Some(lines) = &live_lines {
+                            let live_h = wrapped_line_count(lines, area.width);
+                            let live_area = Rect {
+                                x: area.x,
+                                y: area.y,
+                                width: area.width,
+                                height: live_h,
+                            };
+                            let bottom_area = Rect {
+                                x: area.x,
+                                y: area.y + live_h,
+                                width: area.width,
+                                height: area.height - live_h,
+                            };
+                            frame.render_widget(Paragraph::new(lines.clone()), live_area);
+                            frame.render_widget_ref(&**widget, bottom_area);
+                        } else {
+                            frame.render_widget_ref(&**widget, area);
+                        }
+                    })?;
+                }
+                AppState::GitWarning { screen } => {
+                    terminal.draw(|frame| frame.render_widget_ref(&*screen, frame.area()))?;
+                }
+            }
+        } else {
+            let bottom_height = bottom_height.min(screen_height);
+            let area = Rect {
+                x: 0,
+                y: screen_height - bottom_height,
+                width,
+                height: bottom_height,
+            };
             terminal.clear()?;
             terminal.set_viewport_area(area);
-        }
-        if !self.pending_history_lines.is_empty() {
-            crate::insert_history::insert_history_lines(
-                terminal,
-                self.pending_history_lines.clone(),
-            );
-            self.pending_history_lines.clear();
-        }
-        match &mut self.app_state {
-            AppState::Chat { widget } => {
-                terminal.draw(|frame| frame.render_widget_ref(&**widget, frame.area()))?;
+
+            let mut all_lines = self.history_lines.clone();
+            if let Some(live) = &self.live_history_lines {
+                all_lines.extend(live.clone());
             }
-            AppState::GitWarning { screen } => {
-                terminal.draw(|frame| frame.render_widget_ref(&*screen, frame.area()))?;
+            insert_history_lines(terminal, all_lines);
+            self.pending_history_lines.clear();
+
+            match &mut self.app_state {
+                AppState::Chat { widget } => {
+                    terminal.draw(|frame| frame.render_widget_ref(&**widget, frame.area()))?;
+                }
+                AppState::GitWarning { screen } => {
+                    terminal.draw(|frame| frame.render_widget_ref(&*screen, frame.area()))?;
+                }
             }
         }
         Ok(())

@@ -79,7 +79,7 @@ pub(crate) fn insert_history_lines(terminal: &mut tui::Tui, lines: Vec<Line>) {
     }
 }
 
-fn wrapped_line_count(lines: &[Line], width: u16) -> u16 {
+pub(crate) fn wrapped_line_count(lines: &[Line], width: u16) -> u16 {
     let mut count = 0;
     for line in lines {
         count += line_height(line, width);
@@ -87,7 +87,7 @@ fn wrapped_line_count(lines: &[Line], width: u16) -> u16 {
     count
 }
 
-fn line_height(line: &Line, width: u16) -> u16 {
+pub(crate) fn line_height(line: &Line, width: u16) -> u16 {
     use unicode_width::UnicodeWidthStr;
     // get the total display width of the line, accounting for double-width chars
     let total_width = line

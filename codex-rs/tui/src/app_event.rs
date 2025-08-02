@@ -48,4 +48,10 @@ pub(crate) enum AppEvent {
     },
 
     InsertHistory(Vec<Line<'static>>),
+
+    /// Update the currently streaming history cell.
+    SetLiveHistory(Vec<Line<'static>>),
+
+    /// Clear any currently streaming history cell.
+    ClearLiveHistory,
 }

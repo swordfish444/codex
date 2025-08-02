@@ -60,9 +60,8 @@ pub(crate) struct ChatWidget<'a> {
     initial_user_message: Option<UserMessage>,
     token_usage: TokenUsage,
     reasoning_buffer: String,
-    // Buffer for streaming assistant answer text; we do not surface partial
-    // We wait for the final AgentMessage event and then emit the full text
-    // at once into scrollback so the history contains a single message.
+    // Buffer for streaming assistant answer text; partial content is rendered
+    // in a live history cell until the final message is committed.
     answer_buffer: String,
     running_commands: HashMap<String, RunningCommand>,
 }
@@ -249,20 +248,23 @@ impl ChatWidget<'_> {
                 if !full.is_empty() {
                     self.add_to_history(HistoryCell::new_agent_message(&self.config, full));
                 }
+                self.app_event_tx.send(AppEvent::ClearLiveHistory);
                 self.request_redraw();
             }
             EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }) => {
-                // Buffer only – do not emit partial lines. This avoids cases
-                // where long responses appear truncated if the terminal
-                // wrapped early. The full message is emitted on
-                // AgentMessage.
                 self.answer_buffer.push_str(&delta);
+                let cell = HistoryCell::new_agent_message(&self.config, self.answer_buffer.clone());
+                self.app_event_tx
+                    .send(AppEvent::SetLiveHistory(cell.plain_lines()));
+                self.request_redraw();
             }
             EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }) => {
-                // Buffer only – disable incremental reasoning streaming so we
-                // avoid truncated intermediate lines. Full text emitted on
-                // AgentReasoning.
                 self.reasoning_buffer.push_str(&delta);
+                let cell =
+                    HistoryCell::new_agent_reasoning(&self.config, self.reasoning_buffer.clone());
+                self.app_event_tx
+                    .send(AppEvent::SetLiveHistory(cell.plain_lines()));
+                self.request_redraw();
             }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
                 // Emit full reasoning text once. Some providers might send
@@ -276,6 +278,7 @@ impl ChatWidget<'_> {
                 if !full.is_empty() {
                     self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, full));
                 }
+                self.app_event_tx.send(AppEvent::ClearLiveHistory);
                 self.request_redraw();
             }
             EventMsg::TaskStarted => {
