@@ -23,6 +23,3 @@ mod sandbox_summary;
 
 #[cfg(feature = "sandbox_summary")]
 pub use sandbox_summary::summarize_sandbox_policy;
-
-// Expose fuzzy matching utilities
-pub mod fuzzy_match;

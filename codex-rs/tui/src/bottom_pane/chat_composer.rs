@@ -3,6 +3,7 @@ use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::style::Styled;
 use ratatui::style::Stylize;
@@ -12,6 +13,7 @@ use ratatui::widgets::BorderType;
 use ratatui::widgets::Borders;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
+
 use tui_textarea::Input;
 use tui_textarea::Key;
 use tui_textarea::TextArea;
@@ -22,7 +24,7 @@ use super::file_search_popup::FileSearchPopup;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
-use codex_file_search::FileMatch; // underline matching chars
+use codex_file_search::FileMatch;
 
 const BASE_PLACEHOLDER_TEXT: &str = "...";
 /// If the pasted content exceeds this number of characters, replace it with a
@@ -58,17 +60,6 @@ impl ChatComposer<'_> {
         let mut textarea = TextArea::default();
         textarea.set_placeholder_text(BASE_PLACEHOLDER_TEXT);
         textarea.set_cursor_line_style(ratatui::style::Style::default());
-        // Try to avoid highlighted cursor cell background
-        #[allow(unused_must_use)]
-        {
-            // These APIs may not exist on all versions; ignore if not.
-            // If available, set to default to remove grey background.
-            #[allow(unused_variables)]
-            {
-                // Attempt to call set_cursor_style if present
-                // (If not present, this will be optimized out in release)
-            }
-        }
 
         let mut this = Self {
             textarea,
@@ -418,7 +409,7 @@ impl ChatComposer<'_> {
     fn handle_key_event_without_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
         let input: Input = key_event.into();
 
-        // If fuzzy history search is active, intercept most keystrokes to update the search
+        // If history search is active, intercept most keystrokes to update the search
         if self.history.is_search_active() {
             match input {
                 Input {
@@ -482,6 +473,10 @@ impl ChatComposer<'_> {
                     ..
                 } => {
                     self.history.search_backspace(&mut self.textarea);
+                    if !self.history.search_has_matches() {
+                        // Pull in more older entries to widen the search scope.
+                        self.history.fetch_more_for_search(&self.app_event_tx, 100);
+                    }
                     return (InputResult::None, true);
                 }
                 Input {
@@ -492,6 +487,9 @@ impl ChatComposer<'_> {
                 } => {
                     // Clear query but remain in search mode
                     self.history.search_clear_query(&mut self.textarea);
+                    if !self.history.search_has_matches() {
+                        self.history.fetch_more_for_search(&self.app_event_tx, 100);
+                    }
                     return (InputResult::None, true);
                 }
                 Input {
@@ -501,6 +499,9 @@ impl ChatComposer<'_> {
                     ..
                 } => {
                     self.history.search_append_char(c, &mut self.textarea);
+                    if !self.history.search_has_matches() {
+                        self.history.fetch_more_for_search(&self.app_event_tx, 100);
+                    }
                     return (InputResult::None, true);
                 }
                 _ => { /* fall-through for Enter and other controls */ }
@@ -836,12 +837,12 @@ impl WidgetRef for &ChatComposer<'_> {
                 textarea_rect.height = textarea_rect.height.saturating_sub(1);
                 self.textarea.render(textarea_rect, buf);
 
-                // Always clear background and previous underlines for content cells to avoid stale styles
+                // Always clear background and previous underlines for content cells to avoid
+                // stale styles cleaning previous search results
                 let content_start_x = textarea_rect.x.saturating_add(1);
                 for y in textarea_rect.y..(textarea_rect.y + textarea_rect.height) {
                     for x in content_start_x..(textarea_rect.x + textarea_rect.width) {
                         if let Some(cell) = buf.cell_mut((x, y)) {
-                            use ratatui::style::Modifier;
                             let new_style = cell
                                 .style()
                                 .bg(Color::Reset)
@@ -855,7 +856,6 @@ impl WidgetRef for &ChatComposer<'_> {
                 if self.history.is_search_active() {
                     if let Some(q) = self.history.search_query() {
                         if !q.is_empty() {
-                            use ratatui::style::Modifier;
                             let mut positions: Vec<(u16, u16)> = Vec::with_capacity(
                                 (textarea_rect.width as usize) * (textarea_rect.height as usize),
                             );
@@ -882,8 +882,7 @@ impl WidgetRef for &ChatComposer<'_> {
                             if vis_lower.len() >= q_lower_chars.len() {
                                 let mut i = 0;
                                 while i + q_lower_chars.len() <= vis_lower.len() {
-                                    if &vis_lower[i..i + q_lower_chars.len()] == &q_lower_chars[..]
-                                    {
+                                    if vis_lower[i..i + q_lower_chars.len()] == q_lower_chars[..] {
                                         for j in i..i + q_lower_chars.len() {
                                             if let Some(&(x, y)) = positions.get(j) {
                                                 if let Some(cell) = buf.cell_mut((x, y)) {
@@ -1119,6 +1118,36 @@ mod tests {
             _ => panic!("expected Submitted"),
         }
     }
+
+    // #[test]
+    // fn desired_height_accounts_for_wrapping_long_lines() {
+    //     use crossterm::event::KeyCode;
+    //     use crossterm::event::KeyEvent;
+    //     use crossterm::event::KeyModifiers;
+
+    //     let (tx, _rx) = std::sync::mpsc::channel();
+    //     let sender = AppEventSender::new(tx);
+    //     let mut composer = ChatComposer::new(true, sender);
+
+    //     // Long single-line history entry, typical of a pasted prompt.
+    //     let long_line = "a".repeat(100);
+    //     // Simulate submitting once so it exists in local history and Ctrl+R can preview it.
+    //     composer.textarea.insert_str(&long_line);
+    //     let (result, _) = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    //     match result {
+    //         InputResult::Submitted(text) => assert_eq!(text, long_line),
+    //         _ => panic!("expected Submitted"),
+    //     }
+
+    //     // Activate search and type a minimal query to select it.
+    //     let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+    //     let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+
+    //     // With a small width, desired height should wrap the single logical line into multiple rows.
+    //     let width: u16 = 20; // leaves ~19 chars of content width due to left border
+    //     let h = composer.desired_height(width);
+    //     assert!(h > 2, "expected more than one content row plus status line, got {h}");
+    // }
 
     #[test]
     fn handle_paste_large_uses_placeholder_and_replaces_on_submit() {
