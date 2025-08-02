@@ -47,9 +47,9 @@ pub(crate) struct MessageProcessor {
     session_map: Arc<Mutex<HashMap<Uuid, Arc<Codex>>>>,
     running_requests_id_to_codex_uuid: Arc<Mutex<HashMap<RequestId, Uuid>>>,
     running_session_ids: Arc<Mutex<HashSet<Uuid>>>,
-    // Per-session streaming state signal (true when client connected via ConversationStream)
+    /// Per-session streaming state signal (true when client connected via ConversationStream)
     streaming_session_senders: Arc<Mutex<HashMap<Uuid, watch::Sender<bool>>>>,
-    // Track request IDs to the original ToolCallRequestParams for cancellation handling
+    /// Track request IDs to the original ToolCallRequestParams for cancellation handling
     tool_request_map: Arc<Mutex<HashMap<RequestId, ToolCallRequestParams>>>,
 }
 
