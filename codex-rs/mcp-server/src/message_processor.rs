@@ -609,7 +609,7 @@ impl MessageProcessor {
     // ---------------------------------------------------------------------
     // Notification handlers
     // ---------------------------------------------------------------------
-
+    #[allow(clippy::collapsible_match)]
     async fn handle_cancelled_notification(
         &self,
         params: <mcp_types::CancelledNotification as mcp_types::ModelContextProtocolNotification>::Params,
