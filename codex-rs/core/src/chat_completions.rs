@@ -13,7 +13,6 @@ use std::task::Poll;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::debug;
-use tracing::trace;
 use tracing::warn;
 
 use crate::ModelProviderInfo;
@@ -448,7 +447,11 @@ where
                     response_id,
                     token_usage,
                 }))) => {
-                    if !this.streaming_mode && !this.cumulative.is_empty() {
+                    // Always emit a final OutputItemDone with the cumulative assistant text
+                    // so downstream consumers see a completed item, even when streaming mode
+                    // is enabled (which forwards deltas). This mirrors the Responses API
+                    // behaviour where `response.output_item.done` is emitted alongside deltas.
+                    if !this.cumulative.is_empty() {
                         let aggregated_item = crate::models::ResponseItem::Message {
                             id: None,
                             role: "assistant".to_string(),
@@ -480,11 +483,12 @@ where
                     continue;
                 }
                 Poll::Ready(Some(Ok(ResponseEvent::OutputTextDelta(delta)))) => {
+                    // Always accumulate deltas so we can emit a final OutputItemDone at Completed.
+                    this.cumulative.push_str(&delta);
                     if this.streaming_mode {
+                        // In streaming mode, also forward the delta immediately.
                         return Poll::Ready(Some(Ok(ResponseEvent::OutputTextDelta(delta))));
                     } else {
-                        // Accumulate incremental assistant text deltas.
-                        this.cumulative.push_str(&delta);
                         continue;
                     }
                 }
@@ -544,4 +548,3 @@ impl<S> AggregatedChatStream<S> {
         }
     }
 }
-
