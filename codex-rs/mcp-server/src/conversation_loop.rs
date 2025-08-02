@@ -2,7 +2,18 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use codex_core::Codex;
+use codex_core::protocol::AgentMessageEvent;
+use codex_core::protocol::ApplyPatchApprovalRequestEvent;
+use codex_core::protocol::EventMsg;
+use codex_core::protocol::ExecApprovalRequestEvent;
+use codex_core::protocol::FileChange;
+use mcp_types::RequestId;
 use tokio::sync::Mutex;
+use tokio::sync::watch::Receiver as WatchReceiver;
+use tracing::error;
+use uuid::Uuid;
 
 use crate::exec_approval::handle_exec_approval_request;
 use crate::mcp_protocol::CodexEventNotificationParams;
@@ -12,16 +23,6 @@ use crate::mcp_protocol::InitialStatePayload;
 use crate::mcp_protocol::NotificationMeta;
 use crate::outgoing_message::OutgoingMessageSender;
 use crate::patch_approval::handle_patch_approval_request;
-use codex_core::Codex;
-use codex_core::protocol::AgentMessageEvent;
-use codex_core::protocol::ApplyPatchApprovalRequestEvent;
-use codex_core::protocol::EventMsg;
-use codex_core::protocol::ExecApprovalRequestEvent;
-use codex_core::protocol::FileChange;
-use mcp_types::RequestId;
-use tokio::sync::watch::Receiver as WatchReceiver;
-use tracing::error;
-use uuid::Uuid;
 
 /// Conversation event loop bridging Codex events to MCP notifications.
 ///
@@ -149,6 +150,8 @@ pub async fn run_conversation_loop(
                         &ctx,
                     )
                     .await;
+                } else {
+                    error!("stream_rx change error; streaming control channel closed");
                 }
             }
         }

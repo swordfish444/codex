@@ -6,6 +6,8 @@ use crate::mcp_protocol::ToolCallResponseResult;
 use crate::message_processor::MessageProcessor;
 use crate::tool_handlers::send_message::get_session;
 
+/// Handles the ConversationStream tool call: verifies the session and
+/// enables streaming for the session, replying with an OK result.
 pub(crate) async fn handle_stream_conversation(
     message_processor: &MessageProcessor,
     id: RequestId,
@@ -34,17 +36,14 @@ pub(crate) async fn handle_stream_conversation(
         let guard = senders_map.lock().await;
         guard.get(&session_id).cloned()
     };
-    match tx {
-        Some(tx) => {
-            let _ = tx.send(true);
-        }
-        None => {
-            // No channel found for the session; treat as error
-            message_processor
-                .send_response_with_optional_error(id, None, Some(true))
-                .await;
-            return;
-        }
+    if let Some(tx) = tx {
+        let _ = tx.send(true);
+    } else {
+        // No channel found for the session; treat as error
+        message_processor
+            .send_response_with_optional_error(id, None, Some(true))
+            .await;
+        return;
     }
 
     // Acknowledge the stream request
@@ -59,6 +58,7 @@ pub(crate) async fn handle_stream_conversation(
         .await;
 }
 
+/// Handles cancellation for ConversationStream by disabling streaming for the session.
 pub(crate) async fn handle_cancel(
     message_processor: &MessageProcessor,
     args: &ConversationStreamArgs,
