@@ -141,7 +141,8 @@ impl ModelClient {
 
         let token = auth.get_token().await?;
 
-        let full_instructions = prompt.get_full_instructions(&self.config.model);
+        let full_instructions =
+            prompt.get_full_instructions(&self.config.model, self.config.include_plan_tool);
         let tools_json = create_tools_json_for_responses_api(
             prompt,
             &self.config.model,

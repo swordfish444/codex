@@ -342,6 +342,9 @@ pub struct ConfigToml {
 
     /// The value for the `originator` header included with Responses API requests.
     pub internal_originator: Option<String>,
+
+    /// Include an experimental plan tool that the model can use to update its current plan and status of each step.
+    pub include_plan_tool: Option<bool>,
 }
 
 impl ConfigToml {
@@ -535,7 +538,7 @@ impl Config {
                 .unwrap_or("https://chatgpt.com/backend-api/".to_string()),
 
             experimental_resume,
-            include_plan_tool: include_plan_tool.unwrap_or(false),
+            include_plan_tool: include_plan_tool.or(cfg.include_plan_tool).unwrap_or(false),
             internal_originator: cfg.internal_originator,
         };
         Ok(config)

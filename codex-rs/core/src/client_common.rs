@@ -38,12 +38,41 @@ pub struct Prompt {
 }
 
 impl Prompt {
-    pub(crate) fn get_full_instructions(&self, model: &str) -> Cow<'_, str> {
-        let base = self
+    pub(crate) fn get_full_instructions(
+        &self,
+        model: &str,
+        include_plan_tool: bool,
+    ) -> Cow<'_, str> {
+        let mut base = self
             .base_instructions_override
             .as_deref()
-            .unwrap_or(BASE_INSTRUCTIONS);
-        let mut sections: Vec<&str> = vec![base];
+            .unwrap_or(BASE_INSTRUCTIONS)
+            .to_string();
+
+        if !include_plan_tool {
+            // Remove the plan-tool section if present. Prefer explicit markers
+            // for robustness, but fall back to trimming from the "Plan updates"
+            // heading if markers are missing.
+            let start_marker = "<!-- PLAN_TOOL:START -->";
+            let end_marker = "<!-- PLAN_TOOL:END -->";
+            if let (Some(start), Some(end)) = (base.find(start_marker), base.find(end_marker)) {
+                if end > start {
+                    let mut edited = String::with_capacity(base.len());
+                    edited.push_str(&base[..start]);
+                    edited.push_str(&base[end + end_marker.len()..]);
+                    base = edited;
+                }
+            } else if let Some(idx) = base
+                .find("\n\nPlan updates")
+                .or_else(|| base.find("\nPlan updates"))
+                .or_else(|| base.find("Plan updates"))
+            {
+                base.truncate(idx);
+            }
+            base = base.trim_end().to_string();
+        }
+
+        let mut sections: Vec<&str> = vec![&base];
         if model.starts_with("gpt-4.1") {
             sections.push(APPLY_PATCH_TOOL_INSTRUCTIONS);
         }
@@ -197,7 +226,7 @@ mod tests {
             ..Default::default()
         };
         let expected = format!("{BASE_INSTRUCTIONS}\n{APPLY_PATCH_TOOL_INSTRUCTIONS}");
-        let full = prompt.get_full_instructions("gpt-4.1");
+        let full = prompt.get_full_instructions("gpt-4.1", true);
         assert_eq!(full, expected);
     }
 }
