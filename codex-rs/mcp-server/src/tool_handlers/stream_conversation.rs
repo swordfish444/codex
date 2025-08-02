@@ -5,7 +5,6 @@ use crate::mcp_protocol::ConversationStreamResult;
 use crate::mcp_protocol::ToolCallResponseResult;
 use crate::message_processor::MessageProcessor;
 use crate::tool_handlers::send_message::get_session;
-use uuid::Uuid;
 
 pub(crate) async fn handle_stream_conversation(
     message_processor: &MessageProcessor,
@@ -64,10 +63,7 @@ pub(crate) async fn handle_cancel(
     message_processor: &MessageProcessor,
     args: &ConversationStreamArgs,
 ) {
-    disable_stream_for_session(message_processor, args.conversation_id.0).await;
-}
-
-async fn disable_stream_for_session(message_processor: &MessageProcessor, session_id: Uuid) {
+    let session_id = args.conversation_id.0;
     let sender_opt: Option<tokio::sync::watch::Sender<bool>> = {
         let senders = message_processor.streaming_session_senders();
         let guard = senders.lock().await;
