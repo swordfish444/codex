@@ -370,7 +370,7 @@ impl MessageProcessor {
         // Track the request to allow graceful cancellation routing later.
         {
             let mut guard = self.tool_request_map.lock().await;
-            guard.insert(request_id.clone(), params);
+            guard.insert(request_id.clone(), params.clone());
         }
         match params {
             ToolCallRequestParams::ConversationCreate(args) => {
