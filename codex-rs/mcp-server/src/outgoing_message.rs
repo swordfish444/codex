@@ -109,7 +109,7 @@ impl OutgoingMessageSender {
 
     // should be backwards compatible.
     // it will replace send_event_as_notification eventually.
-    async fn send_event_as_notification_new_schema(
+    pub(crate) async fn send_event_as_notification_new_schema(
         &self,
         event: &Event,
         params: Option<serde_json::Value>,

@@ -9,7 +9,6 @@ use crate::mcp_protocol::InitialStateNotificationParams;
 use crate::mcp_protocol::InitialStatePayload;
 use crate::mcp_protocol::NotificationMeta;
 use crate::outgoing_message::OutgoingMessageSender;
-use crate::outgoing_message::OutgoingNotificationMeta;
 use crate::patch_approval::handle_patch_approval_request;
 use codex_core::Codex;
 use codex_core::protocol::AgentMessageEvent;
@@ -47,12 +46,15 @@ pub async fn run_conversation_loop(
                         buffered_events.push(CodexEventNotificationParams { meta: None, msg: event.msg.clone() });
 
                         if streaming_enabled {
-                            outgoing
-                                .send_event_as_notification(
-                                    &event,
-                                    Some(OutgoingNotificationMeta::new(Some(request_id.clone()))),
-                                )
-                                .await;
+                            let method = event.msg.to_string();
+                            let params = CodexEventNotificationParams { meta: None, msg: event.msg.clone() };
+                            if let Ok(params_val) = serde_json::to_value(&params) {
+                                outgoing
+                                    .send_custom_notification(&method, params_val)
+                                    .await;
+                            } else {
+                                error!("Failed to serialize event params");
+                            }
                         }
 
                         match event.msg {
@@ -154,7 +156,7 @@ pub async fn run_conversation_loop(
                         streaming_enabled = true;
                         // Emit InitialState with all buffered events
                         let params = InitialStateNotificationParams {
-                            meta: Some(NotificationMeta { conversation_id: Some(ConversationId(session_id)), request_id: Some(request_id.clone()) }),
+                            meta: Some(NotificationMeta { conversation_id: Some(ConversationId(session_id)), request_id: None }),
                             initial_state: InitialStatePayload { events: buffered_events.clone() },
                         };
                         if let Ok(params_val) = serde_json::to_value(&params) {
