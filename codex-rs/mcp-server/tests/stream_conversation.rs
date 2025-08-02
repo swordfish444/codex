@@ -38,7 +38,7 @@ async fn test_connect_then_send_receives_initial_state_and_notifications() {
         .expect("create conversation");
 
     // Connect the stream
-    let (stream_req, params) = mcp
+    let (_stream_req, params) = mcp
         .connect_stream_and_expect_initial_state(&conv_id)
         .await
         .expect("initial_state params");
