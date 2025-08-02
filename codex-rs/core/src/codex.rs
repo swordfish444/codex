@@ -48,6 +48,7 @@ use crate::error::SandboxErr;
 use crate::exec::ExecParams;
 use crate::exec::ExecToolCallOutput;
 use crate::exec::SandboxType;
+use crate::exec::StdoutStream;
 use crate::exec::process_exec_tool_call;
 use crate::exec_env::create_env;
 use crate::mcp_connection_manager::McpConnectionManager;
@@ -1366,7 +1367,7 @@ async fn run_compact_task(
     let mut retries = 0;
 
     loop {
-        let attempt_result = drain_to_completed(&sess, &prompt).await;
+        let attempt_result = drain_to_completed(&sess, &sub_id, &prompt).await;
 
         match attempt_result {
             Ok(()) => break,
@@ -1753,6 +1754,11 @@ async fn handle_container_exec_with_params(
         sess.ctrl_c.clone(),
         &sess.sandbox_policy,
         &sess.codex_linux_sandbox_exe,
+        Some(StdoutStream {
+            sub_id: sub_id.clone(),
+            call_id: call_id.clone(),
+            tx_event: sess.tx_event.clone(),
+        }),
     )
     .await;
 
@@ -1873,6 +1879,11 @@ async fn handle_sandbox_error(
                 sess.ctrl_c.clone(),
                 &sess.sandbox_policy,
                 &sess.codex_linux_sandbox_exe,
+                Some(StdoutStream {
+                    sub_id: sub_id.clone(),
+                    call_id: call_id.clone(),
+                    tx_event: sess.tx_event.clone(),
+                }),
             )
             .await;
 
@@ -1984,7 +1995,7 @@ fn get_last_assistant_message_from_turn(responses: &[ResponseItem]) -> Option<St
     })
 }
 
-async fn drain_to_completed(sess: &Session, prompt: &Prompt) -> CodexResult<()> {
+async fn drain_to_completed(sess: &Session, sub_id: &str, prompt: &Prompt) -> CodexResult<()> {
     let mut stream = sess.client.clone().stream(prompt).await?;
     loop {
         let maybe_event = stream.next().await;
@@ -1994,7 +2005,32 @@ async fn drain_to_completed(sess: &Session, prompt: &Prompt) -> CodexResult<()> 
             ));
         };
         match event {
-            Ok(ResponseEvent::Completed { .. }) => return Ok(()),
+            Ok(ResponseEvent::OutputItemDone(item)) => {
+                // Record only to in-memory conversation history; avoid state snapshot.
+                let mut state = sess.state.lock().unwrap();
+                state.history.record_items(std::slice::from_ref(&item));
+            }
+            Ok(ResponseEvent::Completed {
+                response_id: _,
+                token_usage,
+            }) => {
+                let token_usage = match token_usage {
+                    Some(usage) => usage,
+                    None => {
+                        return Err(CodexErr::Stream(
+                            "token_usage was None in ResponseEvent::Completed".into(),
+                        ));
+                    }
+                };
+                sess.tx_event
+                    .send(Event {
+                        id: sub_id.to_string(),
+                        msg: EventMsg::TokenCount(token_usage),
+                    })
+                    .await
+                    .ok();
+                return Ok(());
+            }
             Ok(_) => continue,
             Err(e) => return Err(e),
         }
