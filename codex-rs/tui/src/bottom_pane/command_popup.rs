@@ -19,14 +19,13 @@ const MAX_POPUP_ROWS: usize = 5;
 /// Ideally this is enough to show the longest command name.
 const FIRST_COLUMN_WIDTH: u16 = 20;
 
+use super::scroll_state::ScrollState;
 use ratatui::style::Modifier;
 
 pub(crate) struct CommandPopup {
     command_filter: String,
     all_commands: Vec<(&'static str, SlashCommand)>,
-    selected_idx: Option<usize>,
-    // Index of the first visible row in the filtered list.
-    scroll_top: usize,
+    state: ScrollState,
 }
 
 impl CommandPopup {
@@ -34,8 +33,7 @@ impl CommandPopup {
         Self {
             command_filter: String::new(),
             all_commands: built_in_slash_commands(),
-            selected_idx: None,
-            scroll_top: 0,
+            state: ScrollState::new(),
         }
     }
 
@@ -65,12 +63,9 @@ impl CommandPopup {
 
         // Reset or clamp selected index based on new filtered list.
         let matches_len = self.filtered_commands().len();
-        self.selected_idx = match matches_len {
-            0 => None,
-            _ => Some(self.selected_idx.unwrap_or(0).min(matches_len - 1)),
-        };
-
-        self.adjust_scroll(matches_len);
+        self.state.clamp_selection(matches_len);
+        self.state
+            .ensure_visible(matches_len, MAX_POPUP_ROWS.min(matches_len));
     }
 
     /// Determine the preferred height of the popup. This is the number of
@@ -103,70 +98,25 @@ impl CommandPopup {
     pub(crate) fn move_up(&mut self) {
         let matches = self.filtered_commands();
         let len = matches.len();
-        if len == 0 {
-            self.selected_idx = None;
-            self.scroll_top = 0;
-            return;
-        }
-
-        match self.selected_idx {
-            Some(idx) if idx > 0 => self.selected_idx = Some(idx - 1),
-            Some(_) => self.selected_idx = Some(len - 1), // wrap to last
-            None => self.selected_idx = Some(0),
-        }
-
-        self.adjust_scroll(len);
+        self.state.move_up_wrap(len);
+        self.state.ensure_visible(len, MAX_POPUP_ROWS.min(len));
     }
 
     /// Move the selection cursor one step down.
     pub(crate) fn move_down(&mut self) {
         let matches = self.filtered_commands();
         let matches_len = matches.len();
-        if matches_len == 0 {
-            self.selected_idx = None;
-            self.scroll_top = 0;
-            return;
-        }
-
-        match self.selected_idx {
-            Some(idx) if idx + 1 < matches_len => {
-                self.selected_idx = Some(idx + 1);
-            }
-            Some(_idx_last) => {
-                self.selected_idx = Some(0);
-            }
-            None => {
-                self.selected_idx = Some(0);
-            }
-        }
-
-        self.adjust_scroll(matches_len);
+        self.state.move_down_wrap(matches_len);
+        self.state
+            .ensure_visible(matches_len, MAX_POPUP_ROWS.min(matches_len));
     }
 
     /// Return currently selected command, if any.
     pub(crate) fn selected_command(&self) -> Option<&SlashCommand> {
         let matches = self.filtered_commands();
-        self.selected_idx.and_then(|idx| matches.get(idx).copied())
-    }
-
-    fn adjust_scroll(&mut self, matches_len: usize) {
-        if matches_len == 0 {
-            self.scroll_top = 0;
-            return;
-        }
-        let visible_rows = MAX_POPUP_ROWS.min(matches_len);
-        if let Some(sel) = self.selected_idx {
-            if sel < self.scroll_top {
-                self.scroll_top = sel;
-            } else {
-                let bottom = self.scroll_top + visible_rows - 1;
-                if sel > bottom {
-                    self.scroll_top = sel + 1 - visible_rows;
-                }
-            }
-        } else {
-            self.scroll_top = 0;
-        }
+        self.state
+            .selected_idx
+            .and_then(|idx| matches.get(idx).copied())
     }
 }
 
@@ -188,9 +138,9 @@ impl WidgetRef for CommandPopup {
             let visible_rows = MAX_POPUP_ROWS
                 .min(matches.len())
                 .min(max_rows_from_area.max(1));
-
-            let mut start_idx = self.scroll_top.min(matches.len().saturating_sub(1));
-            if let Some(sel) = self.selected_idx {
+            // Ensure the window is consistent with current area and selection
+            let mut start_idx = self.state.scroll_top.min(matches.len().saturating_sub(1));
+            if let Some(sel) = self.state.selected_idx {
                 if sel < start_idx {
                     start_idx = sel;
                 } else if visible_rows > 0 {
@@ -209,7 +159,7 @@ impl WidgetRef for CommandPopup {
             {
                 rows.push(Row::new(vec![
                     Cell::from(Line::from(vec![
-                        if Some(global_idx) == self.selected_idx {
+                        if Some(global_idx) == self.state.selected_idx {
                             Span::styled(
                                 "›",
                                 Style::default().bg(Color::DarkGray).fg(Color::LightCyan),
@@ -262,7 +212,7 @@ mod tests {
         }
         // Next move_down should wrap to index 0.
         popup.move_down();
-        assert_eq!(popup.selected_idx, Some(0));
+        assert_eq!(popup.state.selected_idx, Some(0));
     }
 
     #[test]
@@ -274,7 +224,7 @@ mod tests {
 
         // Initial selection is 0; moving up should wrap to last.
         popup.move_up();
-        assert_eq!(popup.selected_idx, Some(len - 1));
+        assert_eq!(popup.state.selected_idx, Some(len - 1));
     }
 
     #[test]
