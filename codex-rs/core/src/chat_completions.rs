@@ -37,10 +37,7 @@ pub(crate) async fn stream_chat_completions(
     // Build messages array
     let mut messages = Vec::<serde_json::Value>::new();
 
-    let instr_cfg = crate::client_common::InstructionsConfig::for_model(
-        model,
-        include_plan_tool,
-    );
+    let instr_cfg = crate::client_common::InstructionsConfig::for_model(model, include_plan_tool);
     let full_instructions = prompt.get_full_instructions(&instr_cfg);
     messages.push(json!({"role": "system", "content": full_instructions}));
 

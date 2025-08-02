@@ -671,8 +671,14 @@ mod tests {
             unknown_gpt_overrides,
             fixture.codex_home(),
         )?;
-        assert!(unknown_gpt_cfg.include_plan_tool, "plan tool should default to ON for unknown GPT-like models");
-        assert!(unknown_gpt_cfg.model_supports_reasoning_summaries, "reasoning summaries should default to ON for unknown GPT-like models");
+        assert!(
+            unknown_gpt_cfg.include_plan_tool,
+            "plan tool should default to ON for unknown GPT-like models"
+        );
+        assert!(
+            unknown_gpt_cfg.model_supports_reasoning_summaries,
+            "reasoning summaries should default to ON for unknown GPT-like models"
+        );
 
         // Unknown non-GPT model -> defaults OFF for both.
         let unknown_non_gpt_overrides = ConfigOverrides {
@@ -705,7 +711,10 @@ mod tests {
             known_overrides,
             fixture.codex_home(),
         )?;
-        assert!(!known_cfg.include_plan_tool, "plan tool should default to OFF for known models");
+        assert!(
+            !known_cfg.include_plan_tool,
+            "plan tool should default to OFF for known models"
+        );
         assert!(
             !known_cfg.model_supports_reasoning_summaries,
             "reasoning summaries override should default to OFF for known models"
