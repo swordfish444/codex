@@ -276,8 +276,27 @@ impl ChatComposer<'_> {
                     self.active_popup = ActivePopup::None;
                     return (InputResult::None, true);
                 }
-                // Fallback to default newline handling if no command selected.
-                self.handle_key_event_without_popup(key_event)
+                let first_line = self
+                    .textarea
+                    .lines()
+                    .first()
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                if let Some(stripped) = first_line.strip_prefix('/') {
+                    let token = stripped.trim_start();
+                    let cmd_token = token.split_whitespace().next().unwrap_or("");
+                    let attempted = if cmd_token.is_empty() {
+                        "/".to_string()
+                    } else {
+                        format!("/{}", cmd_token)
+                    };
+                    let msg = format!("{attempted} not a recognized command");
+                    self.app_event_tx
+                        .send(AppEvent::InsertHistory(vec![Line::from(msg)]));
+                    self.dismissed_slash_token = Some(cmd_token.to_string());
+                }
+                self.active_popup = ActivePopup::None;
+                (InputResult::None, true)
             }
             input => self.handle_input_basic(input),
         }
@@ -611,6 +630,9 @@ impl ChatComposer<'_> {
             .unwrap_or("");
 
         let input_starts_with_slash = first_line.starts_with('/');
+        if !input_starts_with_slash {
+            self.dismissed_slash_token = None;
+        }
         let current_cmd_token: Option<&str> = if input_starts_with_slash {
             if let Some(stripped) = first_line.strip_prefix('/') {
                 let token = stripped.trim_start();
@@ -783,6 +805,7 @@ impl WidgetRef for &ChatComposer<'_> {
 
 #[cfg(test)]
 mod tests {
+    use crate::app_event::AppEvent;
     use crate::bottom_pane::AppEventSender;
     use crate::bottom_pane::ChatComposer;
     use crate::bottom_pane::InputResult;
@@ -1069,16 +1092,80 @@ mod tests {
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(true, sender, false);
 
-        // Type a slash command prefix. Popup should appear.
         composer.handle_paste("/".to_string());
         assert!(matches!(composer.active_popup, ActivePopup::Command(_)));
 
-        // Press Esc: popup should close.
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(matches!(composer.active_popup, ActivePopup::None));
 
-        // Append to token (change '/' -> '/c'): popup should reopen.
         composer.handle_paste("c".to_string());
+        assert!(matches!(composer.active_popup, ActivePopup::Command(_)));
+    }
+
+    #[test]
+    fn enter_with_unrecognized_slash_command_closes_popup_and_emits_error() {
+        use crate::bottom_pane::chat_composer::ActivePopup;
+        use crate::app_event::AppEvent;
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+        use std::sync::mpsc::TryRecvError;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, sender, false);
+
+        composer.handle_paste("/ notacommand args".to_string());
+        assert!(matches!(composer.active_popup, ActivePopup::Command(_)));
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(matches!(composer.active_popup, ActivePopup::None));
+
+        let mut saw_error = false;
+        loop {
+            match rx.try_recv() {
+                Ok(AppEvent::InsertHistory(lines)) => {
+                    let text = lines
+                        .into_iter()
+                        .map(|l| l.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if text.contains("/notacommand not a recognized command") {
+                        saw_error = true;
+                        break;
+                    }
+                }
+                Ok(_) => continue,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => break,
+            }
+        }
+
+        assert!(saw_error, "expected InsertHistory error for unrecognized command");
+    }
+
+    #[test]
+    fn esc_dismiss_then_delete_and_retype_slash_reopens_popup() {
+        use crate::bottom_pane::chat_composer::ActivePopup;
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, sender, false);
+
+        composer.handle_paste("/".to_string());
+        assert!(matches!(composer.active_popup, ActivePopup::Command(_)));
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(matches!(composer.active_popup, ActivePopup::None));
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert!(matches!(composer.active_popup, ActivePopup::None));
+
+        composer.handle_paste("/".to_string());
         assert!(matches!(composer.active_popup, ActivePopup::Command(_)));
     }
 
@@ -1092,18 +1179,17 @@ mod tests {
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(true, sender, false);
 
-        // Define test cases: (paste content, is_large)
         let test_cases = [
             ("x".repeat(LARGE_PASTE_CHAR_THRESHOLD + 3), true),
             (" and ".to_string(), false),
             ("y".repeat(LARGE_PASTE_CHAR_THRESHOLD + 7), true),
         ];
 
-        // Expected states after each paste
+        
         let mut expected_text = String::new();
         let mut expected_pending_count = 0;
 
-        // Apply all pastes and build expected state
+        
         let states: Vec<_> = test_cases
             .iter()
             .map(|(content, is_large)| {
@@ -1119,7 +1205,6 @@ mod tests {
             })
             .collect();
 
-        // Verify all intermediate states were correct
         assert_eq!(
             states,
             vec![
@@ -1145,7 +1230,6 @@ mod tests {
             ]
         );
 
-        // Submit and verify final expansion
         let (result, _) =
             composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         if let InputResult::Submitted(text) = result {
@@ -1165,14 +1249,13 @@ mod tests {
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(true, sender, false);
 
-        // Define test cases: (content, is_large)
         let test_cases = [
             ("a".repeat(LARGE_PASTE_CHAR_THRESHOLD + 5), true),
             (" and ".to_string(), false),
             ("b".repeat(LARGE_PASTE_CHAR_THRESHOLD + 6), true),
         ];
 
-        // Apply all pastes
+        
         let mut current_pos = 0;
         let states: Vec<_> = test_cases
             .iter()
@@ -1192,10 +1275,9 @@ mod tests {
             })
             .collect();
 
-        // Delete placeholders one by one and collect states
         let mut deletion_states = vec![];
 
-        // First deletion
+        
         composer
             .textarea
             .move_cursor(tui_textarea::CursorMove::Jump(0, states[0].2 as u16));
@@ -1205,7 +1287,7 @@ mod tests {
             composer.pending_pastes.len(),
         ));
 
-        // Second deletion
+        
         composer
             .textarea
             .move_cursor(tui_textarea::CursorMove::Jump(
@@ -1218,7 +1300,7 @@ mod tests {
             composer.pending_pastes.len(),
         ));
 
-        // Verify all states
+        
         assert_eq!(
             deletion_states,
             vec![
@@ -1238,7 +1320,6 @@ mod tests {
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(true, sender, false);
 
-        // Define test cases: (cursor_position_from_end, expected_pending_count)
         let test_cases = [
             5, // Delete from middle - should clear tracking
             0, // Delete from end - should clear tracking

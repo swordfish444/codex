@@ -184,8 +184,23 @@ impl WidgetRef for CommandPopup {
         } else {
             let default_style = Style::default();
             let command_style = Style::default().fg(Color::LightBlue);
-            let visible_rows = MAX_POPUP_ROWS.min(matches.len());
-            let start_idx = self.scroll_top.min(matches.len().saturating_sub(1));
+            let max_rows_from_area = area.height as usize;
+            let visible_rows = MAX_POPUP_ROWS
+                .min(matches.len())
+                .min(max_rows_from_area.max(1));
+
+            let mut start_idx = self.scroll_top.min(matches.len().saturating_sub(1));
+            if let Some(sel) = self.selected_idx {
+                if sel < start_idx {
+                    start_idx = sel;
+                } else if visible_rows > 0 {
+                    let bottom = start_idx + visible_rows - 1;
+                    if sel > bottom {
+                        start_idx = sel + 1 - visible_rows;
+                    }
+                }
+            }
+
             for (global_idx, cmd) in matches
                 .iter()
                 .enumerate()
@@ -230,6 +245,8 @@ impl WidgetRef for CommandPopup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
 
     #[test]
     fn move_down_wraps_to_top() {
@@ -258,5 +275,33 @@ mod tests {
         // Initial selection is 0; moving up should wrap to last.
         popup.move_up();
         assert_eq!(popup.selected_idx, Some(len - 1));
+    }
+
+    #[test]
+    fn respects_tiny_terminal_height_when_rendering() {
+        let mut popup = CommandPopup::new();
+        popup.on_composer_text_change("/".to_string());
+        assert!(popup.filtered_commands().len() >= 3);
+
+        let area = Rect::new(0, 0, 50, 2);
+        let mut buf = Buffer::empty(area);
+        popup.render(area, &mut buf);
+
+        let mut non_empty_rows = 0u16;
+        for y in 0..area.height {
+            let mut row_has_content = false;
+            for x in 0..area.width {
+                let c = buf.get(x, y).symbol();
+                if !c.trim().is_empty() {
+                    row_has_content = true;
+                    break;
+                }
+            }
+            if row_has_content {
+                non_empty_rows += 1;
+            }
+        }
+
+        assert_eq!(non_empty_rows, 2);
     }
 }
