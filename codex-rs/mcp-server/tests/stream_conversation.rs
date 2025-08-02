@@ -46,13 +46,7 @@ async fn test_connect_then_send_receives_initial_state_and_notifications() {
         params["_meta"]["conversationId"].as_str(),
         Some(conv_id.as_str())
     );
-    assert!(params["initial_state"]["events"].is_array());
-    assert!(
-        params["initial_state"]["events"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
+    assert_eq!(params["initial_state"], json!({ "events": [] }));
 
     // Send a message and expect a subsequent notification (non-initial_state)
     mcp.send_user_message_and_wait_ok("Hello there", &conv_id)
@@ -61,7 +55,10 @@ async fn test_connect_then_send_receives_initial_state_and_notifications() {
 
     // Read until we see an event notification (new schema example: agent_message)
     let params = mcp.wait_for_agent_message().await.expect("agent message");
-    assert_eq!(params["msg"]["type"].as_str(), Some("agent_message"));
+    assert_eq!(
+        params["msg"],
+        json!({ "type": "agent_message", "message": "Done" })
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -101,29 +98,28 @@ async fn test_send_then_connect_receives_initial_state_with_message() {
     let events = params["initial_state"]["events"]
         .as_array()
         .expect("events array");
-    if !events.iter().any(|ev| {
-        ev.get("msg")
-            .and_then(|m| m.get("type"))
-            .and_then(|t| t.as_str())
-            == Some("agent_message")
-            && ev
-                .get("msg")
-                .and_then(|m| m.get("message"))
-                .and_then(|t| t.as_str())
-                == Some("Done")
-    }) {
-        // Fallback to live notification if not present in initial state
+    let mut agent_events: Vec<_> = events
+        .iter()
+        .filter(|ev| ev["msg"]["type"].as_str() == Some("agent_message"))
+        .cloned()
+        .collect();
+    if agent_events.is_empty() {
+        // Fallback to live notification if not present in initial state, then assert the full event list
         let note: JSONRPCNotification = timeout(
             DEFAULT_READ_TIMEOUT,
             mcp.read_stream_until_notification_method("agent_message"),
         )
         .await
-        .expect("event note timeout")
-        .expect("event note err");
-        let params = note.params.expect("params");
-        assert_eq!(params["msg"]["type"].as_str(), Some("agent_message"));
-        assert_eq!(params["msg"]["message"].as_str(), Some("Done"));
+        .expect("agent_message note timeout")
+        .expect("agent_message note err");
+        let p = note.params.expect("params");
+        agent_events.push(json!({ "msg": { "type": "agent_message", "message": p["msg"]["message"].as_str().expect("message str") } }));
     }
+    let expected = vec![json!({ "msg": { "type": "agent_message", "message": "Done" } })];
+    assert_eq!(
+        agent_events, expected,
+        "initial_state agent_message events should match exactly"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -193,28 +189,19 @@ async fn test_cancel_stream_then_reconnect_catches_up_initial_state() {
     let events = params["initial_state"]["events"]
         .as_array()
         .expect("events array");
-    assert!(events.iter().any(|ev| {
-        ev.get("msg")
-            .and_then(|m| m.get("type"))
-            .and_then(|t| t.as_str())
-            == Some("agent_message")
-            && ev
-                .get("msg")
-                .and_then(|m| m.get("message"))
-                .and_then(|t| t.as_str())
-                == Some("Done 1")
-    }));
-    assert!(events.iter().any(|ev| {
-        ev.get("msg")
-            .and_then(|m| m.get("type"))
-            .and_then(|t| t.as_str())
-            == Some("agent_message")
-            && ev
-                .get("msg")
-                .and_then(|m| m.get("message"))
-                .and_then(|t| t.as_str())
-                == Some("Done 2")
-    }));
+    let agent_events: Vec<_> = events
+        .iter()
+        .filter(|ev| ev["msg"]["type"].as_str() == Some("agent_message"))
+        .cloned()
+        .collect();
+    let expected = vec![
+        json!({ "msg": { "type": "agent_message", "message": "Done 1" } }),
+        json!({ "msg": { "type": "agent_message", "message": "Done 2" } }),
+    ];
+    assert_eq!(
+        agent_events, expected,
+        "initial_state agent_message events should match exactly"
+    );
     drop(server);
 }
 
