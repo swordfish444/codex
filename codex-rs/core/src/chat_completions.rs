@@ -391,6 +391,9 @@ pub(crate) struct AggregatedChatStream<S> {
     inner: S,
     cumulative: String,
     pending_completed: Option<ResponseEvent>,
+    // When true, do not emit a cumulative assistant message at Completed.
+    streaming_mode: bool,
+    // When true, forward reasoning deltas instead of ignoring them.
 }
 
 impl<S> Stream for AggregatedChatStream<S>
@@ -445,7 +448,7 @@ where
                     response_id,
                     token_usage,
                 }))) => {
-                    if !this.cumulative.is_empty() {
+                    if !this.streaming_mode && !this.cumulative.is_empty() {
                         let aggregated_item = crate::models::ResponseItem::Message {
                             id: None,
                             role: "assistant".to_string(),
@@ -477,14 +480,21 @@ where
                     continue;
                 }
                 Poll::Ready(Some(Ok(ResponseEvent::OutputTextDelta(delta)))) => {
-                    // Accumulate incremental assistant text deltas.
-                    this.cumulative.push_str(&delta);
-                    continue;
+                    if this.streaming_mode {
+                        return Poll::Ready(Some(Ok(ResponseEvent::OutputTextDelta(delta))));
+                    } else {
+                        // Accumulate incremental assistant text deltas.
+                        this.cumulative.push_str(&delta);
+                        continue;
+                    }
                 }
-                Poll::Ready(Some(Ok(ResponseEvent::ReasoningSummaryDelta(_)))) => {
-                    // Reasoning deltas are intentionally ignored by this
-                    // adapter; they are handled by the UI directly.
-                    continue;
+                Poll::Ready(Some(Ok(ResponseEvent::ReasoningSummaryDelta(delta)))) => {
+                    if this.streaming_mode {
+                        return Poll::Ready(Some(Ok(ResponseEvent::ReasoningSummaryDelta(delta))));
+                    } else {
+                        // Reasoning deltas are intentionally ignored in aggregated mode.
+                        continue;
+                    }
                 }
             }
         }
@@ -517,8 +527,21 @@ pub(crate) trait AggregateStreamExt: Stream<Item = Result<ResponseEvent>> + Size
             inner: self,
             cumulative: String::new(),
             pending_completed: None,
+            streaming_mode: false,
         }
     }
 }
 
 impl<T> AggregateStreamExt for T where T: Stream<Item = Result<ResponseEvent>> + Sized {}
+
+impl<S> AggregatedChatStream<S> {
+    pub(crate) fn streaming_mode(inner: S) -> Self {
+        AggregatedChatStream {
+            inner,
+            cumulative: String::new(),
+            pending_completed: None,
+            streaming_mode: true,
+        }
+    }
+}
+
