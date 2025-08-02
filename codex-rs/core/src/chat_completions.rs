@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::debug;
 use tracing::trace;
+use tracing::warn;
 
 use crate::ModelProviderInfo;
 use crate::client_common::Prompt;
@@ -250,7 +251,7 @@ async fn process_chat_sse<S>(
             Ok(v) => v,
             Err(_) => continue,
         };
-        trace!("chat_completions received SSE chunk: {chunk:?}");
+        warn!("chat_completions received SSE chunk: {chunk:?}");
 
         let choice_opt = chunk.get("choices").and_then(|c| c.get(0));
 
