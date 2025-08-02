@@ -859,26 +859,32 @@ impl WidgetRef for &ChatComposer<'_> {
                             let mut positions: Vec<(u16, u16)> = Vec::with_capacity(
                                 (textarea_rect.width as usize) * (textarea_rect.height as usize),
                             );
-                            let mut visible = String::new();
+                            let mut visible_chars: Vec<char> = Vec::with_capacity(
+                                (textarea_rect.width as usize) * (textarea_rect.height as usize),
+                            );
                             for y in textarea_rect.y..(textarea_rect.y + textarea_rect.height) {
                                 for x in content_start_x..(textarea_rect.x + textarea_rect.width) {
                                     if let Some(cell) = buf.cell((x, y)) {
                                         let ch = cell.symbol().chars().next().unwrap_or(' ');
-                                        visible.push(ch);
+                                        visible_chars.push(ch);
                                     } else {
-                                        visible.push(' ');
+                                        visible_chars.push(' ');
                                     }
                                     positions.push((x, y));
                                 }
                             }
                             // Exact, case-insensitive substring match of the query within visible text
-                            let vis_lower = visible.to_lowercase();
-                            let q_lower = q.to_lowercase();
-                            if vis_lower.len() >= q_lower.len() {
+                            let vis_lower: Vec<char> = visible_chars
+                                .iter()
+                                .map(|c| c.to_lowercase().next().unwrap_or(*c))
+                                .collect();
+                            let q_lower_chars: Vec<char> = q.to_lowercase().chars().collect();
+                            if vis_lower.len() >= q_lower_chars.len() {
                                 let mut i = 0;
-                                while i + q_lower.len() <= vis_lower.len() {
-                                    if vis_lower[i..i + q_lower.len()] == q_lower {
-                                        for j in i..i + q_lower.len() {
+                                while i + q_lower_chars.len() <= vis_lower.len() {
+                                    if &vis_lower[i..i + q_lower_chars.len()] == &q_lower_chars[..]
+                                    {
+                                        for j in i..i + q_lower_chars.len() {
                                             if let Some(&(x, y)) = positions.get(j) {
                                                 if let Some(cell) = buf.cell_mut((x, y)) {
                                                     let style = cell.style();
@@ -888,7 +894,7 @@ impl WidgetRef for &ChatComposer<'_> {
                                                 }
                                             }
                                         }
-                                        i += q_lower.len();
+                                        i += q_lower_chars.len();
                                     } else {
                                         i += 1;
                                     }
