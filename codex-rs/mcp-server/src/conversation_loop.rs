@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::exec_approval::handle_exec_approval_request;
 use crate::mcp_protocol::CodexEventNotificationParams;
@@ -25,6 +27,7 @@ pub async fn run_conversation_loop(
     request_id: RequestId,
     mut stream_rx: WatchReceiver<bool>,
     session_id: Uuid,
+    running_sessions: Arc<Mutex<HashSet<Uuid>>>,
 ) {
     let request_id_str = match &request_id {
         RequestId::String(s) => s.clone(),
@@ -99,7 +102,11 @@ pub async fn run_conversation_loop(
                             }
                         continue;
                     }
-                    EventMsg::TaskComplete(_) => {}
+                    EventMsg::TaskComplete(_) => {
+                        // remove running session id
+                        let mut running_sessions = running_sessions.lock().await;
+                        running_sessions.remove(&session_id);
+                    }
                     EventMsg::SessionConfigured(_) => {
                         tracing::error!("unexpected SessionConfigured event");
                     }

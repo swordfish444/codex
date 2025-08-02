@@ -130,7 +130,10 @@ async fn test_send_then_connect_receives_initial_state_with_message() {
 async fn test_cancel_stream_then_reconnect_catches_up_initial_state() {
     // One response is sufficient for the assertions in this test
     let responses = vec![
-        create_final_assistant_message_sse_response("Done").expect("build mock assistant message"),
+        create_final_assistant_message_sse_response("Done 1")
+            .expect("build mock assistant message"),
+        create_final_assistant_message_sse_response("Done 2")
+            .expect("build mock assistant message"),
     ];
     let server = create_mock_chat_completions_server(responses).await;
 
@@ -199,8 +202,20 @@ async fn test_cancel_stream_then_reconnect_catches_up_initial_state() {
                 .get("msg")
                 .and_then(|m| m.get("message"))
                 .and_then(|t| t.as_str())
-                == Some("Done")
+                == Some("Done 1")
     }));
+    assert!(events.iter().any(|ev| {
+        ev.get("msg")
+            .and_then(|m| m.get("type"))
+            .and_then(|t| t.as_str())
+            == Some("agent_message")
+            && ev
+                .get("msg")
+                .and_then(|m| m.get("message"))
+                .and_then(|t| t.as_str())
+                == Some("Done 2")
+    }));
+    drop(server);
 }
 
 // Helper to create a config.toml pointing at the mock model server.
