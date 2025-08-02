@@ -1,6 +1,11 @@
 use std::sync::Arc;
 
 use crate::exec_approval::handle_exec_approval_request;
+use crate::mcp_protocol::CodexEventNotificationParams;
+use crate::mcp_protocol::ConversationId;
+use crate::mcp_protocol::InitialStateNotificationParams;
+use crate::mcp_protocol::InitialStatePayload;
+use crate::mcp_protocol::NotificationMeta;
 use crate::outgoing_message::OutgoingMessageSender;
 use crate::outgoing_message::OutgoingNotificationMeta;
 use crate::patch_approval::handle_patch_approval_request;
@@ -10,48 +15,63 @@ use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::ExecApprovalRequestEvent;
 use mcp_types::RequestId;
+use tokio::sync::watch::Receiver as WatchReceiver;
 use tracing::error;
+use uuid::Uuid;
 
 pub async fn run_conversation_loop(
     codex: Arc<Codex>,
     outgoing: Arc<OutgoingMessageSender>,
     request_id: RequestId,
+    mut stream_rx: WatchReceiver<bool>,
+    session_id: Uuid,
 ) {
     let request_id_str = match &request_id {
         RequestId::String(s) => s.clone(),
         RequestId::Integer(n) => n.to_string(),
     };
 
-    // Stream events until the task needs to pause for user interaction or
-    // completes.
-    loop {
-        match codex.next_event().await {
-            Ok(event) => {
-                outgoing
-                    .send_event_as_notification(
-                        &event,
-                        Some(OutgoingNotificationMeta::new(Some(request_id.clone()))),
-                    )
-                    .await;
+    // Buffer all events for InitialState
+    let mut buffered_events: Vec<CodexEventNotificationParams> = Vec::new();
+    let mut streaming_enabled = *stream_rx.borrow();
 
-                match event.msg {
+    loop {
+        tokio::select! {
+            res = codex.next_event() => {
+                match res {
+                    Ok(event) => {
+                        // Always buffer the event
+                        buffered_events.push(CodexEventNotificationParams { meta: None, msg: event.msg.clone() });
+
+                        if streaming_enabled {
+                            outgoing
+                                .send_event_as_notification(
+                                    &event,
+                                    Some(OutgoingNotificationMeta::new(Some(request_id.clone()))),
+                                )
+                                .await;
+                        }
+
+                        match event.msg {
                     EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
                         command,
                         cwd,
                         call_id,
                         reason: _,
                     }) => {
-                        handle_exec_approval_request(
-                            command,
-                            cwd,
-                            outgoing.clone(),
-                            codex.clone(),
-                            request_id.clone(),
-                            request_id_str.clone(),
-                            event.id.clone(),
-                            call_id,
-                        )
-                        .await;
+                                if streaming_enabled {
+                                    handle_exec_approval_request(
+                                        command,
+                                        cwd,
+                                        outgoing.clone(),
+                                        codex.clone(),
+                                        request_id.clone(),
+                                        request_id_str.clone(),
+                                        event.id.clone(),
+                                        call_id,
+                                    )
+                                    .await;
+                                }
                         continue;
                     }
                     EventMsg::Error(_) => {
@@ -63,18 +83,20 @@ pub async fn run_conversation_loop(
                         grant_root,
                         changes,
                     }) => {
-                        handle_patch_approval_request(
-                            call_id,
-                            reason,
-                            grant_root,
-                            changes,
-                            outgoing.clone(),
-                            codex.clone(),
-                            request_id.clone(),
-                            request_id_str.clone(),
-                            event.id.clone(),
-                        )
-                        .await;
+                            if streaming_enabled {
+                                handle_patch_approval_request(
+                                    call_id,
+                                    reason,
+                                    grant_root,
+                                    changes,
+                                    outgoing.clone(),
+                                    codex.clone(),
+                                    request_id.clone(),
+                                    request_id_str.clone(),
+                                    event.id.clone(),
+                                )
+                                .await;
+                            }
                         continue;
                     }
                     EventMsg::TaskComplete(_) => {}
@@ -111,10 +133,35 @@ pub async fn run_conversation_loop(
                         // though we may want to do give different treatment to
                         // individual events in the future.
                     }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Codex runtime error: {e}");
+                    }
                 }
-            }
-            Err(e) => {
-                error!("Codex runtime error: {e}");
+            },
+            changed = stream_rx.changed() => {
+                if changed.is_ok() {
+                    let now = *stream_rx.borrow();
+                    if now && !streaming_enabled {
+                        streaming_enabled = true;
+                        // Emit InitialState with all buffered events
+                        let params = InitialStateNotificationParams {
+                            meta: Some(NotificationMeta { conversation_id: Some(ConversationId(session_id)), request_id: Some(request_id.clone()) }),
+                            initial_state: InitialStatePayload { events: buffered_events.clone() },
+                        };
+                        if let Ok(params_val) = serde_json::to_value(&params) {
+                            outgoing
+                                .send_custom_notification("notifications/initial_state", params_val)
+                                .await;
+                        } else {
+                            error!("Failed to serialize InitialState params");
+                        }
+                    } else if !now && streaming_enabled {
+                        // streaming disabled
+                        streaming_enabled = false;
+                    }
+                }
             }
         }
     }

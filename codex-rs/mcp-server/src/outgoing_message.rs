@@ -124,6 +124,15 @@ impl OutgoingMessageSender {
         let outgoing_message = OutgoingMessage::Error(OutgoingError { id, error });
         let _ = self.sender.send(outgoing_message).await;
     }
+
+    /// Send a custom notification with an explicit method name and params object.
+    pub(crate) async fn send_custom_notification(&self, method: &str, params: serde_json::Value) {
+        let outgoing_message = OutgoingMessage::Notification(OutgoingNotification {
+            method: method.to_string(),
+            params: Some(params),
+        });
+        let _ = self.sender.send(outgoing_message).await;
+    }
 }
 
 /// Outgoing message from the server to the client.
