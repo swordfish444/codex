@@ -306,9 +306,19 @@ impl App<'_> {
                         widget.update_model_and_reconfigure(model);
                     }
                 }
+                AppEvent::SelectApprovalPolicy(mode) => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.update_approval_policy_and_reconfigure(mode);
+                    }
+                }
                 AppEvent::OpenModelSelector => {
                     if let AppState::Chat { widget } = &mut self.app_state {
                         widget.show_model_selector();
+                    }
+                }
+                AppEvent::OpenApprovalSelector => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.show_approval_selector();
                     }
                 }
                 AppEvent::CodexOp(op) => match &mut self.app_state {
@@ -403,6 +413,9 @@ impl App<'_> {
                     SlashCommand::Model => {
                         // Disallow `/model` without arguments; no action.
                     }
+                    SlashCommand::Approvals => {
+                        // Disallow `/approvals` without arguments; no action.
+                    }
                 },
                 AppEvent::DispatchCommandWithArgs(command, args) => match command {
                     SlashCommand::Model => {
@@ -412,6 +425,22 @@ impl App<'_> {
                             let normalized = strip_surrounding_quotes(arg).trim().to_string();
                             if !normalized.is_empty() {
                                 widget.update_model_and_reconfigure(normalized);
+                            }
+                        }
+                    }
+                    SlashCommand::Approvals => {
+                        let arg = args.trim();
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            let normalized = strip_surrounding_quotes(arg).trim().to_string();
+                            if !normalized.is_empty() {
+                                use crate::bottom_pane::selection_popup::parse_approval_mode_token;
+                                if let Some(mode) = parse_approval_mode_token(&normalized) {
+                                    widget.update_approval_policy_and_reconfigure(mode);
+                                } else {
+                                    widget.add_diff_output(format!(
+                                        "`/approvals {normalized}` — unrecognized approval mode"
+                                    ));
+                                }
                             }
                         }
                     }
@@ -567,8 +596,10 @@ mod tests {
     fn strip_surrounding_quotes_cases() {
         let cases = vec![
             ("o3", "o3"),
-            ("\"codex-mini-latest\"", "codex-mini-latest"),
+            (" \"codex-mini-latest\" ", "codex-mini-latest"),
             ("another_model", "another_model"),
+            ("‘quoted’", "quoted"),
+            ("“smart”", "smart"),
         ];
         for (input, expected) in cases {
             assert_eq!(strip_surrounding_quotes(input), expected.to_string());

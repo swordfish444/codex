@@ -18,8 +18,10 @@ mod chat_composer;
 mod chat_composer_history;
 mod command_popup;
 mod file_search_popup;
-mod model_selection_popup;
 mod scroll_state;
+mod selection_list;
+pub(crate) mod selection_popup;
+mod selection_popup_common;
 mod status_indicator_view;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +34,7 @@ pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
 
 use approval_modal_view::ApprovalModalView;
+use codex_core::protocol::AskForApproval;
 use status_indicator_view::StatusIndicatorView;
 
 /// Pane displayed in the lower half of the chat UI.
@@ -75,6 +78,16 @@ impl BottomPane<'_> {
     /// Show the model-selection popup in the composer.
     pub(crate) fn show_model_selector(&mut self, current_model: &str, options: Vec<String>) {
         self.composer.open_model_selector(current_model, options);
+        self.request_redraw();
+    }
+
+    /// Show the approval-mode selection popup in the composer.
+    pub(crate) fn show_approval_selector(
+        &mut self,
+        current: AskForApproval,
+        options: Vec<AskForApproval>,
+    ) {
+        self.composer.open_approval_selector(current, options);
         self.request_redraw();
     }
 

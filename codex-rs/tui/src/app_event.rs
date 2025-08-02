@@ -4,6 +4,7 @@ use crossterm::event::KeyEvent;
 use ratatui::text::Line;
 
 use crate::slash_command::SlashCommand;
+use codex_core::protocol::AskForApproval;
 
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum AppEvent {
@@ -58,4 +59,10 @@ pub(crate) enum AppEvent {
 
     /// Request the app to open the model selector (populate options and show popup).
     OpenModelSelector,
+
+    /// User selected an approval policy from the approvals dropdown.
+    SelectApprovalPolicy(AskForApproval),
+
+    /// Request the app to open the approval selector (populate options and show popup).
+    OpenApprovalSelector,
 }

@@ -19,7 +19,10 @@ use tui_textarea::TextArea;
 use super::chat_composer_history::ChatComposerHistory;
 use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
-use super::model_selection_popup::ModelSelectionPopup;
+use super::selection_popup::SelectionKind;
+use super::selection_popup::SelectionPopup;
+use super::selection_popup::SelectionValue;
+use super::selection_popup::parse_approval_mode_token;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -55,7 +58,7 @@ enum ActivePopup {
     None,
     Command(CommandPopup),
     File(FileSearchPopup),
-    Model(ModelSelectionPopup),
+    Selection(SelectionPopup),
 }
 
 impl ChatComposer<'_> {
@@ -181,7 +184,7 @@ impl ChatComposer<'_> {
                 ActivePopup::None => 1u16,
                 ActivePopup::Command(c) => c.calculate_required_height(),
                 ActivePopup::File(c) => c.calculate_required_height(),
-                ActivePopup::Model(c) => c.calculate_required_height(),
+                ActivePopup::Selection(c) => c.calculate_required_height(),
             }
     }
 
@@ -279,12 +282,12 @@ impl ChatComposer<'_> {
     /// Open or update the model-selection popup with the provided options.
     pub(crate) fn open_model_selector(&mut self, current_model: &str, options: Vec<String>) {
         match &mut self.active_popup {
-            ActivePopup::Model(popup) => {
-                popup.set_options(current_model, options);
+            ActivePopup::Selection(popup) if popup.kind() == SelectionKind::Model => {
+                *popup = SelectionPopup::new_model(current_model, options);
             }
             _ => {
                 self.active_popup =
-                    ActivePopup::Model(ModelSelectionPopup::new(current_model, options));
+                    ActivePopup::Selection(SelectionPopup::new_model(current_model, options));
             }
         }
         // If the composer currently contains a `/model` command, initialize the
@@ -298,7 +301,38 @@ impl ChatComposer<'_> {
             .unwrap_or("");
         if let Some((cmd_token, args)) = Self::parse_slash_command_and_args_from_line(first_line) {
             if cmd_token == SlashCommand::Model.command() {
-                if let ActivePopup::Model(popup) = &mut self.active_popup {
+                if let ActivePopup::Selection(popup) = &mut self.active_popup {
+                    popup.set_query(&args);
+                }
+            }
+        }
+    }
+
+    /// Open or update the approval-mode selection popup with the provided options.
+    pub(crate) fn open_approval_selector(
+        &mut self,
+        current: codex_core::protocol::AskForApproval,
+        options: Vec<codex_core::protocol::AskForApproval>,
+    ) {
+        match &mut self.active_popup {
+            ActivePopup::Selection(popup) if popup.kind() == SelectionKind::Approval => {
+                *popup = SelectionPopup::new_approvals(current, options);
+            }
+            _ => {
+                self.active_popup =
+                    ActivePopup::Selection(SelectionPopup::new_approvals(current, options));
+            }
+        }
+        // Initialize the popup's query from the arguments to `/approvals`, if present.
+        let first_line = self
+            .textarea
+            .lines()
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("");
+        if let Some((cmd_token, args)) = Self::parse_slash_command_and_args_from_line(first_line) {
+            if cmd_token == SlashCommand::Approvals.command() {
+                if let ActivePopup::Selection(popup) = &mut self.active_popup {
                     popup.set_query(&args);
                 }
             }
@@ -310,15 +344,14 @@ impl ChatComposer<'_> {
         let result = match &mut self.active_popup {
             ActivePopup::Command(_) => self.handle_key_event_with_slash_popup(key_event),
             ActivePopup::File(_) => self.handle_key_event_with_file_popup(key_event),
-            ActivePopup::Model(_) => self.handle_key_event_with_model_popup(key_event),
+            ActivePopup::Selection(_) => self.handle_key_event_with_selection_popup(key_event),
             ActivePopup::None => self.handle_key_event_without_popup(key_event),
         };
 
         // Update (or hide/show) popup after processing the key.
         match &self.active_popup {
-            ActivePopup::Model(_) => {
-                // Only keep model popup in sync when active; do not interfere with other popups.
-                self.sync_model_popup();
+            ActivePopup::Selection(_) => {
+                self.sync_selection_popup();
             }
             ActivePopup::Command(_) => {
                 self.sync_command_popup();
@@ -396,9 +429,11 @@ impl ChatComposer<'_> {
                         String::new()
                     };
 
-                    // Special case: selecting `/model` without args should open the model selector.
+                    // Special cases: selecting `/model` or `/approvals` without args opens a submenu.
                     if *cmd == SlashCommand::Model && args.trim().is_empty() {
                         self.app_event_tx.send(AppEvent::OpenModelSelector);
+                    } else if *cmd == SlashCommand::Approvals && args.trim().is_empty() {
+                        self.app_event_tx.send(AppEvent::OpenApprovalSelector);
                     } else {
                         // Send command + args to the app layer.
                         self.app_event_tx
@@ -465,8 +500,11 @@ impl ChatComposer<'_> {
     }
 
     /// Handle key events when model selection popup is visible.
-    fn handle_key_event_with_model_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
-        let ActivePopup::Model(popup) = &mut self.active_popup else {
+    fn handle_key_event_with_selection_popup(
+        &mut self,
+        key_event: KeyEvent,
+    ) -> (InputResult, bool) {
+        let ActivePopup::Selection(popup) = &mut self.active_popup else {
             unreachable!();
         };
 
@@ -480,7 +518,7 @@ impl ChatComposer<'_> {
                 (InputResult::None, true)
             }
             Input { key: Key::Esc, .. } => {
-                // Hide model popup; keep composer content unchanged.
+                // Hide selection popup; keep composer content unchanged.
                 self.active_popup = ActivePopup::None;
                 (InputResult::None, true)
             }
@@ -491,8 +529,15 @@ impl ChatComposer<'_> {
                 shift: false,
             }
             | Input { key: Key::Tab, .. } => {
-                if let Some(model) = popup.selected_model() {
-                    self.app_event_tx.send(AppEvent::SelectModel(model));
+                if let Some(value) = popup.selected_value() {
+                    match value {
+                        SelectionValue::Model(m) => {
+                            self.app_event_tx.send(AppEvent::SelectModel(m))
+                        }
+                        SelectionValue::Approval(mode) => {
+                            self.app_event_tx.send(AppEvent::SelectApprovalPolicy(mode))
+                        }
+                    }
                     // Clear composer input and close the popup.
                     self.textarea.select_all();
                     self.textarea.cut();
@@ -500,8 +545,7 @@ impl ChatComposer<'_> {
                     self.active_popup = ActivePopup::None;
                     return (InputResult::None, true);
                 }
-                // No selection in the list: treat the typed argument as the model name.
-                // Extract arguments after `/model` from the first line.
+                // No selection in the list: attempt to parse typed arguments for the appropriate kind.
                 let first_line = self
                     .textarea
                     .lines()
@@ -509,34 +553,46 @@ impl ChatComposer<'_> {
                     .map(|s| s.as_str())
                     .unwrap_or("");
 
-                let args = if let Some((cmd_token, args)) =
+                if let Some((cmd_token, args)) =
                     Self::parse_slash_command_and_args_from_line(first_line)
                 {
-                    if cmd_token == SlashCommand::Model.command() {
-                        args
-                    } else {
-                        String::new()
+                    let args = args.trim().to_string();
+                    if !args.is_empty() {
+                        match popup.kind() {
+                            SelectionKind::Model if cmd_token == SlashCommand::Model.command() => {
+                                self.app_event_tx.send(AppEvent::DispatchCommandWithArgs(
+                                    SlashCommand::Model,
+                                    args,
+                                ));
+                                self.textarea.select_all();
+                                self.textarea.cut();
+                                self.pending_pastes.clear();
+                                self.active_popup = ActivePopup::None;
+                                return (InputResult::None, true);
+                            }
+                            SelectionKind::Approval
+                                if cmd_token == SlashCommand::Approvals.command() =>
+                            {
+                                if let Some(mode) = parse_approval_mode_token(&args) {
+                                    self.app_event_tx.send(AppEvent::SelectApprovalPolicy(mode));
+                                    self.textarea.select_all();
+                                    self.textarea.cut();
+                                    self.pending_pastes.clear();
+                                    self.active_popup = ActivePopup::None;
+                                    return (InputResult::None, true);
+                                }
+                            }
+                            _ => {}
+                        }
                     }
-                } else {
-                    String::new()
-                };
-
-                if !args.trim().is_empty() {
-                    // Dispatch as a command with args so normalization is applied centrally.
-                    self.app_event_tx
-                        .send(AppEvent::DispatchCommandWithArgs(SlashCommand::Model, args));
-                    // Clear composer input and close the popup.
-                    self.textarea.select_all();
-                    self.textarea.cut();
-                    self.pending_pastes.clear();
-                    self.active_popup = ActivePopup::None;
-                    return (InputResult::None, true);
                 }
                 (InputResult::None, false)
             }
             input => self.handle_input_basic(input),
         }
     }
+
+    // Approval-specific handler removed; unified selection handler is used.
 
     /// Extract the `@token` that the cursor is currently positioned on, if any.
     ///
@@ -781,6 +837,20 @@ impl ChatComposer<'_> {
             false
         };
 
+        // And similarly for `/approvals `.
+        let should_open_approval_selector = if let Some(stripped) = first_line.strip_prefix('/') {
+            let token = stripped.trim_start();
+            let cmd_token = token.split_whitespace().next().unwrap_or("");
+            if cmd_token == SlashCommand::Approvals.command() {
+                let rest = &token[cmd_token.len()..];
+                rest.chars().next().is_some_and(|c| c.is_whitespace())
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
         match &mut self.active_popup {
             ActivePopup::Command(popup) => {
                 if input_starts_with_slash {
@@ -788,6 +858,9 @@ impl ChatComposer<'_> {
                         // Switch away from command popup and request opening the model selector.
                         self.active_popup = ActivePopup::None;
                         self.app_event_tx.send(AppEvent::OpenModelSelector);
+                    } else if should_open_approval_selector {
+                        self.active_popup = ActivePopup::None;
+                        self.app_event_tx.send(AppEvent::OpenApprovalSelector);
                     } else {
                         popup.on_composer_text_change(first_line.clone());
                     }
@@ -802,6 +875,8 @@ impl ChatComposer<'_> {
                         // Always allow opening the model selector even if the user previously
                         // dismissed the slash popup for this token.
                         self.app_event_tx.send(AppEvent::OpenModelSelector);
+                    } else if should_open_approval_selector {
+                        self.app_event_tx.send(AppEvent::OpenApprovalSelector);
                     } else {
                         // Avoid immediate reopen of the slash popup if it was just dismissed for
                         // this exact command token.
@@ -853,9 +928,8 @@ impl ChatComposer<'_> {
         self.dismissed_file_popup_token = None;
     }
 
-    /// Synchronize the model-selection popup filter with the current composer text.
-    /// When the first line starts with `/model`, everything after the command becomes the query.
-    fn sync_model_popup(&mut self) {
+    /// Synchronize the selection popup filter with the current composer text.
+    fn sync_selection_popup(&mut self) {
         let first_line = self
             .textarea
             .lines()
@@ -863,17 +937,21 @@ impl ChatComposer<'_> {
             .map(|s| s.as_str())
             .unwrap_or("");
 
-        // Expect `/model` as the first token on the first line.
         if let Some((cmd_token, args)) = Self::parse_slash_command_and_args_from_line(first_line) {
-            if cmd_token == SlashCommand::Model.command() {
-                if let ActivePopup::Model(popup) = &mut self.active_popup {
-                    popup.set_query(&args);
+            match &mut self.active_popup {
+                ActivePopup::Selection(popup) if popup.kind() == SelectionKind::Model => {
+                    if cmd_token == SlashCommand::Model.command() {
+                        popup.set_query(&args);
+                    }
                 }
-                return;
+                ActivePopup::Selection(popup) if popup.kind() == SelectionKind::Approval => {
+                    if cmd_token == SlashCommand::Approvals.command() {
+                        popup.set_query(&args);
+                    }
+                }
+                _ => {}
             }
         }
-        // If the line is not `/model`, do nothing – keep the model popup open
-        // when it was opened programmatically via the slash menu.
     }
 
     /// Parse a leading "/command" and return (command_token, args_trimmed_left).
@@ -925,7 +1003,7 @@ impl WidgetRef for &ChatComposer<'_> {
                 popup.render(popup_rect, buf);
                 self.textarea.render(textarea_rect, buf);
             }
-            ActivePopup::Model(popup) => {
+            ActivePopup::Selection(popup) => {
                 let popup_height = popup.calculate_required_height();
 
                 let popup_height = popup_height.min(area.height);
@@ -1409,7 +1487,9 @@ mod tests {
         composer.handle_paste("/mo".to_string());
 
         // Press Enter to select the command (no args)
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
         // We should emit OpenModelSelector
@@ -1425,14 +1505,19 @@ mod tests {
                 Err(TryRecvError::Disconnected) => break,
             }
         }
-        assert!(saw_open, "pressing Enter on /model should open model selector");
+        assert!(
+            saw_open,
+            "pressing Enter on /model should open model selector"
+        );
     }
 
     #[test]
     fn enter_on_model_selector_selects_current_row() {
         use crate::app_event::AppEvent;
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
         use std::sync::mpsc::TryRecvError;
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
         let (tx, rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
@@ -1462,13 +1547,18 @@ mod tests {
                 Err(TryRecvError::Disconnected) => break,
             }
         }
-        assert!(saw_select, "Enter on model selector should emit SelectModel");
+        assert!(
+            saw_select,
+            "Enter on model selector should emit SelectModel"
+        );
     }
 
     #[test]
     fn model_selector_stays_open_on_up_down() {
         use crate::bottom_pane::chat_composer::ActivePopup;
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
 
         let (tx, _rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
@@ -1483,11 +1573,11 @@ mod tests {
 
         // Press Down; popup should remain visible
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert!(matches!(composer.active_popup, ActivePopup::Model(_)));
+        assert!(matches!(composer.active_popup, ActivePopup::Selection(_)));
 
         // Press Up; popup should remain visible
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert!(matches!(composer.active_popup, ActivePopup::Model(_)));
+        assert!(matches!(composer.active_popup, ActivePopup::Selection(_)));
     }
 
     #[test]
@@ -1670,6 +1760,86 @@ mod tests {
                 (false, 0), // After deleting from middle
                 (false, 0), // After deleting from end
             ]
+        );
+    }
+
+    #[test]
+    fn selecting_approvals_in_slash_menu_opens_selector() {
+        use crate::app_event::AppEvent;
+        use std::sync::mpsc::TryRecvError;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, sender, false);
+
+        // Type a prefix that uniquely selects the approvals command in slash popup
+        composer.handle_paste("/appr".to_string());
+
+        // Press Enter to select the command (no args)
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // We should emit OpenApprovalSelector
+        let mut saw_open = false;
+        loop {
+            match rx.try_recv() {
+                Ok(AppEvent::OpenApprovalSelector) => {
+                    saw_open = true;
+                    break;
+                }
+                Ok(_) => continue,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => break,
+            }
+        }
+        assert!(
+            saw_open,
+            "pressing Enter on /approvals should open selector"
+        );
+    }
+
+    #[test]
+    fn enter_on_approvals_selector_selects_current_row() {
+        use crate::app_event::AppEvent;
+        use codex_core::protocol::AskForApproval;
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+        use std::sync::mpsc::TryRecvError;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, sender, false);
+
+        // Open the approvals selector directly
+        let options = vec![
+            AskForApproval::UnlessTrusted,
+            AskForApproval::OnFailure,
+            AskForApproval::Never,
+        ];
+        composer.open_approval_selector(AskForApproval::Never, options);
+
+        // Press Enter to select the currently highlighted row (first visible)
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // We should receive a SelectApprovalPolicy event.
+        let mut saw_select = false;
+        loop {
+            match rx.try_recv() {
+                Ok(AppEvent::SelectApprovalPolicy(_)) => {
+                    saw_select = true;
+                    break;
+                }
+                Ok(_) => continue,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => break,
+            }
+        }
+        assert!(
+            saw_select,
+            "Enter on approvals selector should emit SelectApprovalPolicy"
         );
     }
 }

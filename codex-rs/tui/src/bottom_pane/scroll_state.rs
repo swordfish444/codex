@@ -103,7 +103,10 @@ mod tests {
         s.move_up_wrap(len);
         s.ensure_visible(len, vis);
         assert_eq!(s.selected_idx, Some(len - 1));
-        assert!(s.scroll_top <= s.selected_idx.unwrap());
+        match s.selected_idx {
+            Some(sel) => assert!(s.scroll_top <= sel),
+            None => panic!("expected Some(selected_idx) after wrap"),
+        }
 
         // Move down wraps to start
         s.move_down_wrap(len);

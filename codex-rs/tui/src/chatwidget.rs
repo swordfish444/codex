@@ -13,6 +13,7 @@ use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::AgentReasoningDeltaEvent;
 use codex_core::protocol::AgentReasoningEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
+use codex_core::protocol::AskForApproval;
 use codex_core::protocol::ErrorEvent;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
@@ -567,6 +568,40 @@ impl ChatWidget<'_> {
 
         // Reconfigure the agent session with the same provider and policies.
         // Build the op from the config to avoid drift when fields are added.
+        let op = self
+            .config
+            .to_configure_session_op(None, self.config.user_instructions.clone());
+        self.submit_op(op);
+        self.request_redraw();
+    }
+
+    /// Open the approval selection view in the bottom pane.
+    pub(crate) fn show_approval_selector(&mut self) {
+        let current = self.config.approval_policy;
+        let options = vec![
+            AskForApproval::UnlessTrusted,
+            AskForApproval::OnFailure,
+            AskForApproval::Never,
+        ];
+        self.bottom_pane.show_approval_selector(current, options);
+    }
+
+    /// Update the approval policy and reconfigure the running Codex session.
+    pub(crate) fn update_approval_policy_and_reconfigure(&mut self, mode: AskForApproval) {
+        let changed = self.config.approval_policy != mode;
+        self.config.approval_policy = mode;
+
+        if changed {
+            let mode_str = match mode {
+                AskForApproval::UnlessTrusted => "Prompt on Writes",
+                AskForApproval::OnFailure => "Auto",
+                AskForApproval::Never => "Deny all",
+            };
+            self.add_to_history(HistoryCell::new_background_event(format!(
+                "Set approval mode to {mode_str}."
+            )));
+        }
+
         let op = self
             .config
             .to_configure_session_op(None, self.config.user_instructions.clone());
