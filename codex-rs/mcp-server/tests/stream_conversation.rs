@@ -173,6 +173,13 @@ async fn test_cancel_stream_then_reconnect_catches_up_initial_state() {
         .expect("send M1");
     let _params = mcp.wait_for_agent_message().await.expect("agent M1");
 
+    // Ensure the first task has fully completed before cancelling the stream
+    // so that the session is no longer marked as running.
+    let _ = mcp
+        .read_stream_until_notification_method("task_complete")
+        .await
+        .expect("task complete");
+
     // Cancel stream A
     mcp.send_notification(
         "notifications/cancelled",
