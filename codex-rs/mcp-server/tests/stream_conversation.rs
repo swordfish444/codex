@@ -38,7 +38,7 @@ async fn test_connect_then_send_receives_initial_state_and_notifications() {
         .expect("create conversation");
 
     // Connect the stream
-    let params = mcp
+    let (_stream_req, params) = mcp
         .connect_stream_and_expect_initial_state(&conv_id)
         .await
         .expect("initial_state params");
@@ -94,7 +94,7 @@ async fn test_send_then_connect_receives_initial_state_with_message() {
         .expect("send message ok");
 
     // Now connect stream and expect InitialState with the prior message included
-    let params = mcp
+    let (_stream_req, params) = mcp
         .connect_stream_and_expect_initial_state(&conv_id)
         .await
         .expect("initial_state params");
@@ -151,7 +151,7 @@ async fn test_cancel_stream_then_reconnect_catches_up_initial_state() {
         .await
         .expect("create");
     let (stream_a_id, _params) = mcp
-        .connect_stream_get_req_and_initial_state(&conv_id)
+        .connect_stream_and_expect_initial_state(&conv_id)
         .await
         .expect("stream A initial_state");
 
@@ -183,7 +183,7 @@ async fn test_cancel_stream_then_reconnect_catches_up_initial_state() {
     );
 
     // Connect stream B and expect initial_state that includes the response
-    let params = mcp
+    let (_stream_req, params) = mcp
         .connect_stream_and_expect_initial_state(&conv_id)
         .await
         .expect("stream B initial_state");

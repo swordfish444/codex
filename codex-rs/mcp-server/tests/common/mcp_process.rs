@@ -272,33 +272,17 @@ impl McpProcess {
     }
 
     /// Connect stream for a conversation and wait for the initial_state notification.
-    /// Returns the params of the initial_state notification for further inspection.
+    /// Returns (requestId, params) where params are the initial_state notification params.
     pub async fn connect_stream_and_expect_initial_state(
         &mut self,
         session_id: &str,
-    ) -> anyhow::Result<serde_json::Value> {
+    ) -> anyhow::Result<(i64, serde_json::Value)> {
         let req_id = self.send_conversation_stream_tool_call(session_id).await?;
         // Wait for stream() tool-call response first
         let _ = self
             .read_stream_until_response_message(RequestId::Integer(req_id))
             .await?;
         // Then the initial_state notification
-        let note = self
-            .read_stream_until_notification_method("notifications/initial_state")
-            .await?;
-        note.params
-            .ok_or_else(|| anyhow::format_err!("initial_state must have params"))
-    }
-
-    /// Connect stream and also return the request id for later cancellation.
-    pub async fn connect_stream_get_req_and_initial_state(
-        &mut self,
-        session_id: &str,
-    ) -> anyhow::Result<(i64, serde_json::Value)> {
-        let req_id = self.send_conversation_stream_tool_call(session_id).await?;
-        let _ = self
-            .read_stream_until_response_message(RequestId::Integer(req_id))
-            .await?;
         let note = self
             .read_stream_until_notification_method("notifications/initial_state")
             .await?;
