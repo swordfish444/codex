@@ -249,7 +249,7 @@ Controls whether to expose the experimental plan tool (named `update_plan`) to t
 
 Default behavior:
 - For known models (anything hardcoded in the models list), this is disabled by default.
-- For unknown models (not in the known list), this is enabled by default so new models get the feature without a CLI update.
+- For unknown models whose name starts with "gpt-", this is enabled by default so new GPT-family models get the feature without a CLI update.
 
 When enabled, the model can call `update_plan` to keep an up-to-date, step-by-step plan for the task and Codex will render plan updates in the UI. When disabled, the tool is not advertised to the model and the “Plan updates” section is omitted from the prompt; any unsolicited `update_plan` calls will be treated as unsupported.
 
