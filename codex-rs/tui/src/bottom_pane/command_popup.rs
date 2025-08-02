@@ -291,7 +291,7 @@ mod tests {
         for y in 0..area.height {
             let mut row_has_content = false;
             for x in 0..area.width {
-                let c = buf.get(x, y).symbol();
+                let c = buf[(x, y)].symbol();
                 if !c.trim().is_empty() {
                     row_has_content = true;
                     break;

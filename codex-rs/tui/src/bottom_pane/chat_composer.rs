@@ -56,6 +56,95 @@ enum ActivePopup {
 }
 
 impl ChatComposer<'_> {
+    #[inline]
+    fn first_line(&self) -> &str {
+        self.textarea
+            .lines()
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("")
+    }
+
+    #[inline]
+    fn slash_token_from_first_line(first_line: &str) -> Option<&str> {
+        if !first_line.starts_with('/') {
+            return None;
+        }
+        let stripped = first_line.strip_prefix('/').unwrap_or("");
+        let token = stripped.trim_start();
+        Some(token.split_whitespace().next().unwrap_or(""))
+    }
+
+    #[inline]
+    fn emit_unrecognized_slash_command(&mut self, cmd_token: &str) {
+        let attempted = if cmd_token.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{cmd_token}")
+        };
+        let msg = format!("{attempted} not a recognized command");
+        self.app_event_tx
+            .send(AppEvent::InsertHistory(vec![Line::from(msg)]));
+        self.dismissed_slash_token = Some(cmd_token.to_string());
+        self.active_popup = ActivePopup::None;
+    }
+
+    #[inline]
+    fn sync_popups(&mut self) {
+        self.sync_command_popup();
+        if matches!(self.active_popup, ActivePopup::Command(_)) {
+            self.dismissed_file_popup_token = None;
+        } else {
+            self.sync_file_search_popup();
+        }
+    }
+
+    #[inline]
+    fn compute_textarea_and_popup_rect(&self, area: Rect, desired_popup: u16) -> (Rect, Rect) {
+        let text_lines = self.textarea.lines().len().max(1) as u16;
+        let popup_height = desired_popup.min(area.height.saturating_sub(text_lines));
+        let textarea_rect = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: area.height.saturating_sub(popup_height),
+        };
+        let popup_rect = Rect {
+            x: area.x,
+            y: area.y + textarea_rect.height,
+            width: area.width,
+            height: popup_height,
+        };
+        (textarea_rect, popup_rect)
+    }
+
+    /// Convert a cursor column (in chars) to a byte offset within `line`.
+    #[inline]
+    fn cursor_byte_offset_for_col(line: &str, col_chars: usize) -> usize {
+        line.chars().take(col_chars).map(|c| c.len_utf8()).sum()
+    }
+
+    /// Determine token boundaries around a cursor position expressed as a byte offset.
+    /// A token is delimited by any Unicode whitespace on either side.
+    #[inline]
+    fn token_bounds(line: &str, cursor_byte_offset: usize) -> Option<(usize, usize)> {
+        let (before_cursor, after_cursor) = line.split_at(cursor_byte_offset.min(line.len()));
+
+        let start_idx = before_cursor
+            .char_indices()
+            .rfind(|(_, c)| c.is_whitespace())
+            .map(|(idx, c)| idx + c.len_utf8())
+            .unwrap_or(0);
+
+        let end_rel_idx = after_cursor
+            .char_indices()
+            .find(|(_, c)| c.is_whitespace())
+            .map(|(idx, _)| idx)
+            .unwrap_or(after_cursor.len());
+        let end_idx = cursor_byte_offset + end_rel_idx;
+
+        (start_idx < end_idx).then_some((start_idx, end_idx))
+    }
     pub fn new(
         has_input_focus: bool,
         app_event_tx: AppEventSender,
@@ -157,12 +246,7 @@ impl ChatComposer<'_> {
         } else {
             self.textarea.insert_str(&pasted);
         }
-        self.sync_command_popup();
-        if matches!(self.active_popup, ActivePopup::Command(_)) {
-            self.dismissed_file_popup_token = None;
-        } else {
-            self.sync_file_search_popup();
-        }
+        self.sync_popups();
         true
     }
 
@@ -196,19 +280,14 @@ impl ChatComposer<'_> {
             ActivePopup::None => self.handle_key_event_without_popup(key_event),
         };
 
-        // Update (or hide/show) popup after processing the key.
-        self.sync_command_popup();
-        if matches!(self.active_popup, ActivePopup::Command(_)) {
-            self.dismissed_file_popup_token = None;
-        } else {
-            self.sync_file_search_popup();
-        }
+        self.sync_popups();
 
         result
     }
 
     /// Handle key event when the slash-command popup is visible.
     fn handle_key_event_with_slash_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        let first_line_owned = self.first_line().to_string();
         let ActivePopup::Command(popup) = &mut self.active_popup else {
             unreachable!();
         };
@@ -223,15 +302,7 @@ impl ChatComposer<'_> {
                 (InputResult::None, true)
             }
             Input { key: Key::Esc, .. } => {
-                let first_line = self
-                    .textarea
-                    .lines()
-                    .first()
-                    .map(|s| s.as_str())
-                    .unwrap_or("");
-                if let Some(stripped) = first_line.strip_prefix('/') {
-                    let token = stripped.trim_start();
-                    let cmd_token = token.split_whitespace().next().unwrap_or("");
+                if let Some(cmd_token) = Self::slash_token_from_first_line(&first_line_owned) {
                     self.dismissed_slash_token = Some(cmd_token.to_string());
                 }
                 self.active_popup = ActivePopup::None;
@@ -239,14 +310,7 @@ impl ChatComposer<'_> {
             }
             Input { key: Key::Tab, .. } => {
                 if let Some(cmd) = popup.selected_command() {
-                    let first_line = self
-                        .textarea
-                        .lines()
-                        .first()
-                        .map(|s| s.as_str())
-                        .unwrap_or("");
-
-                    let starts_with_cmd = first_line
+                    let starts_with_cmd = first_line_owned
                         .trim_start()
                         .starts_with(&format!("/{}", cmd.command()));
 
@@ -265,38 +329,17 @@ impl ChatComposer<'_> {
                 ctrl: false,
             } => {
                 if let Some(cmd) = popup.selected_command() {
-                    // Send command to the app layer.
                     self.app_event_tx.send(AppEvent::DispatchCommand(*cmd));
-
-                    // Clear textarea so no residual text remains.
                     self.textarea.select_all();
                     self.textarea.cut();
-
-                    // Hide popup since the command has been dispatched.
                     self.active_popup = ActivePopup::None;
                     return (InputResult::None, true);
                 }
-                let first_line = self
-                    .textarea
-                    .lines()
-                    .first()
-                    .map(|s| s.as_str())
-                    .unwrap_or("");
-                if let Some(stripped) = first_line.strip_prefix('/') {
-                    let token = stripped.trim_start();
-                    let cmd_token = token.split_whitespace().next().unwrap_or("");
-                    let attempted = if cmd_token.is_empty() {
-                        "/".to_string()
-                    } else {
-                        format!("/{}", cmd_token)
-                    };
-                    let msg = format!("{attempted} not a recognized command");
-                    self.app_event_tx
-                        .send(AppEvent::InsertHistory(vec![Line::from(msg)]));
-                    self.dismissed_slash_token = Some(cmd_token.to_string());
+                if let Some(cmd_token) = Self::slash_token_from_first_line(&first_line_owned) {
+                    self.emit_unrecognized_slash_command(cmd_token);
+                    return (InputResult::None, true);
                 }
-                self.active_popup = ActivePopup::None;
-                (InputResult::None, true)
+                (InputResult::None, false)
             }
             input => self.handle_input_basic(input),
         }
@@ -357,37 +400,9 @@ impl ChatComposer<'_> {
     ///   one additional character, that token (without `@`) is returned.
     fn current_at_token(textarea: &tui_textarea::TextArea) -> Option<String> {
         let (row, col) = textarea.cursor();
-
-        // Guard against out-of-bounds rows.
         let line = textarea.lines().get(row)?.as_str();
-
-        // Calculate byte offset for cursor position
-        let cursor_byte_offset = line.chars().take(col).map(|c| c.len_utf8()).sum::<usize>();
-
-        // Split the line at the cursor position so we can search for word
-        // boundaries on both sides.
-        let before_cursor = &line[..cursor_byte_offset];
-        let after_cursor = &line[cursor_byte_offset..];
-
-        // Find start index (first character **after** the previous multi-byte whitespace).
-        let start_idx = before_cursor
-            .char_indices()
-            .rfind(|(_, c)| c.is_whitespace())
-            .map(|(idx, c)| idx + c.len_utf8())
-            .unwrap_or(0);
-
-        // Find end index (first multi-byte whitespace **after** the cursor position).
-        let end_rel_idx = after_cursor
-            .char_indices()
-            .find(|(_, c)| c.is_whitespace())
-            .map(|(idx, _)| idx)
-            .unwrap_or(after_cursor.len());
-        let end_idx = cursor_byte_offset + end_rel_idx;
-
-        if start_idx >= end_idx {
-            return None;
-        }
-
+        let cursor_byte_offset = Self::cursor_byte_offset_for_col(line, col);
+        let (start_idx, end_idx) = Self::token_bounds(line, cursor_byte_offset)?;
         let token = &line[start_idx..end_idx];
 
         if token.starts_with('@') && token.len() > 1 {
@@ -404,50 +419,24 @@ impl ChatComposer<'_> {
     /// `@tokens` exist in the line.
     fn insert_selected_path(&mut self, path: &str) {
         let (row, col) = self.textarea.cursor();
-
-        // Materialize the textarea lines so we can mutate them easily.
         let mut lines: Vec<String> = self.textarea.lines().to_vec();
 
         if let Some(line) = lines.get_mut(row) {
-            // Calculate byte offset for cursor position
-            let cursor_byte_offset = line.chars().take(col).map(|c| c.len_utf8()).sum::<usize>();
+            let cursor_byte_offset = Self::cursor_byte_offset_for_col(line, col);
+            if let Some((start_idx, end_idx)) = Self::token_bounds(line, cursor_byte_offset) {
+                let mut new_line =
+                    String::with_capacity(line.len() - (end_idx - start_idx) + path.len() + 1);
+                new_line.push_str(&line[..start_idx]);
+                new_line.push_str(path);
+                new_line.push(' ');
+                new_line.push_str(&line[end_idx..]);
+                *line = new_line;
 
-            let before_cursor = &line[..cursor_byte_offset];
-            let after_cursor = &line[cursor_byte_offset..];
-
-            // Determine token boundaries.
-            let start_idx = before_cursor
-                .char_indices()
-                .rfind(|(_, c)| c.is_whitespace())
-                .map(|(idx, c)| idx + c.len_utf8())
-                .unwrap_or(0);
-
-            let end_rel_idx = after_cursor
-                .char_indices()
-                .find(|(_, c)| c.is_whitespace())
-                .map(|(idx, _)| idx)
-                .unwrap_or(after_cursor.len());
-            let end_idx = cursor_byte_offset + end_rel_idx;
-
-            // Replace the slice `[start_idx, end_idx)` with the chosen path and a trailing space.
-            let mut new_line =
-                String::with_capacity(line.len() - (end_idx - start_idx) + path.len() + 1);
-            new_line.push_str(&line[..start_idx]);
-            new_line.push_str(path);
-            new_line.push(' ');
-            new_line.push_str(&line[end_idx..]);
-
-            *line = new_line;
-
-            // Re-populate the textarea.
-            let new_text = lines.join("\n");
-            self.textarea.select_all();
-            self.textarea.cut();
-            let _ = self.textarea.insert_str(new_text);
-
-            // Note: tui-textarea currently exposes only relative cursor
-            // movements. Leaving the cursor position unchanged is acceptable
-            // as subsequent typing will move the cursor naturally.
+                let new_text = lines.join("\n");
+                self.textarea.select_all();
+                self.textarea.cut();
+                let _ = self.textarea.insert_str(new_text);
+            }
         }
     }
 
@@ -619,34 +608,16 @@ impl ChatComposer<'_> {
     /// textarea. This must be called after every modification that can change
     /// the text so the popup is shown/updated/hidden as appropriate.
     fn sync_command_popup(&mut self) {
-        // Inspect only the first line to decide whether to show the popup. In
-        // the common case (no leading slash) we avoid copying the entire
-        // textarea contents.
-        let first_line = self
-            .textarea
-            .lines()
-            .first()
-            .map(|s| s.as_str())
-            .unwrap_or("");
-
+        let first_line = self.first_line().to_string();
         let input_starts_with_slash = first_line.starts_with('/');
         if !input_starts_with_slash {
             self.dismissed_slash_token = None;
         }
-        let current_cmd_token: Option<&str> = if input_starts_with_slash {
-            if let Some(stripped) = first_line.strip_prefix('/') {
-                let token = stripped.trim_start();
-                Some(token.split_whitespace().next().unwrap_or(""))
-            } else {
-                Some("")
-            }
-        } else {
-            None
-        };
+        let current_cmd_token: Option<&str> = Self::slash_token_from_first_line(&first_line);
         match &mut self.active_popup {
             ActivePopup::Command(popup) => {
                 if input_starts_with_slash {
-                    popup.on_composer_text_change(first_line.to_string());
+                    popup.on_composer_text_change(first_line.clone());
                 } else {
                     self.active_popup = ActivePopup::None;
                     self.dismissed_slash_token = None;
@@ -658,7 +629,7 @@ impl ChatComposer<'_> {
                         return;
                     }
                     let mut command_popup = CommandPopup::new();
-                    command_popup.on_composer_text_change(first_line.to_string());
+                    command_popup.on_composer_text_change(first_line);
                     self.active_popup = ActivePopup::Command(command_popup);
                 }
             }
@@ -722,46 +693,15 @@ impl WidgetRef for &ChatComposer<'_> {
         match &self.active_popup {
             ActivePopup::Command(popup) => {
                 let desired_popup = popup.calculate_required_height();
-                // Reserve exactly the number of text lines for the textarea so we
-                // don't create visual blank rows when the composer is short.
-                let text_lines = self.textarea.lines().len().max(1) as u16;
-                let popup_height = desired_popup.min(area.height.saturating_sub(text_lines));
-
-                // Split the provided rect so that the popup is rendered at the
-                // bottom and the textarea occupies the remaining space above.
-                let textarea_rect = Rect {
-                    x: area.x,
-                    y: area.y,
-                    width: area.width,
-                    height: area.height.saturating_sub(popup_height),
-                };
-                let popup_rect = Rect {
-                    x: area.x,
-                    y: area.y + textarea_rect.height,
-                    width: area.width,
-                    height: popup_height,
-                };
-
+                let (textarea_rect, popup_rect) =
+                    self.compute_textarea_and_popup_rect(area, desired_popup);
                 popup.render(popup_rect, buf);
                 self.textarea.render(textarea_rect, buf);
             }
             ActivePopup::File(popup) => {
                 let desired_popup = popup.calculate_required_height();
-                let text_lines = self.textarea.lines().len().max(1) as u16;
-                let popup_height = desired_popup.min(area.height.saturating_sub(text_lines));
-                let textarea_rect = Rect {
-                    x: area.x,
-                    y: area.y,
-                    width: area.width,
-                    height: area.height.saturating_sub(popup_height),
-                };
-                let popup_rect = Rect {
-                    x: area.x,
-                    y: area.y + textarea_rect.height,
-                    width: area.width,
-                    height: popup_height,
-                };
-
+                let (textarea_rect, popup_rect) =
+                    self.compute_textarea_and_popup_rect(area, desired_popup);
                 popup.render(popup_rect, buf);
                 self.textarea.render(textarea_rect, buf);
             }
@@ -805,7 +745,7 @@ impl WidgetRef for &ChatComposer<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::app_event::AppEvent;
+
     use crate::bottom_pane::AppEventSender;
     use crate::bottom_pane::ChatComposer;
     use crate::bottom_pane::InputResult;
@@ -1104,8 +1044,8 @@ mod tests {
 
     #[test]
     fn enter_with_unrecognized_slash_command_closes_popup_and_emits_error() {
-        use crate::bottom_pane::chat_composer::ActivePopup;
         use crate::app_event::AppEvent;
+        use crate::bottom_pane::chat_composer::ActivePopup;
         use crossterm::event::KeyCode;
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
@@ -1142,7 +1082,10 @@ mod tests {
             }
         }
 
-        assert!(saw_error, "expected InsertHistory error for unrecognized command");
+        assert!(
+            saw_error,
+            "expected InsertHistory error for unrecognized command"
+        );
     }
 
     #[test]
@@ -1185,11 +1128,9 @@ mod tests {
             ("y".repeat(LARGE_PASTE_CHAR_THRESHOLD + 7), true),
         ];
 
-        
         let mut expected_text = String::new();
         let mut expected_pending_count = 0;
 
-        
         let states: Vec<_> = test_cases
             .iter()
             .map(|(content, is_large)| {
@@ -1255,7 +1196,6 @@ mod tests {
             ("b".repeat(LARGE_PASTE_CHAR_THRESHOLD + 6), true),
         ];
 
-        
         let mut current_pos = 0;
         let states: Vec<_> = test_cases
             .iter()
@@ -1277,7 +1217,6 @@ mod tests {
 
         let mut deletion_states = vec![];
 
-        
         composer
             .textarea
             .move_cursor(tui_textarea::CursorMove::Jump(0, states[0].2 as u16));
@@ -1287,7 +1226,6 @@ mod tests {
             composer.pending_pastes.len(),
         ));
 
-        
         composer
             .textarea
             .move_cursor(tui_textarea::CursorMove::Jump(
@@ -1300,7 +1238,6 @@ mod tests {
             composer.pending_pastes.len(),
         ));
 
-        
         assert_eq!(
             deletion_states,
             vec![
