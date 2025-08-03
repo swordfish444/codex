@@ -44,4 +44,4 @@ codegen-units = 1
 
 [patch.crates-io]
 # ratatui = { path = "../../ratatui" }
-ratatui = { git = "https://github.com/nornagon/ratatui", branch = "nornagon-v0.29.0-patch" }
+ratatui = { git = "https://github.com/easong-openai/ratatui", branch = "nornagon-v0.29.0-patch" }

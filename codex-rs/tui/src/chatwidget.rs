@@ -440,6 +440,7 @@ impl ChatWidget<'_> {
                     format!("$ {cmdline}"),
                 );
             }
+            EventMsg::ExecCommandOutputDelta(_) => {}
             EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
                 call_id: _,
                 auto_approved,
@@ -654,6 +655,12 @@ impl ChatWidget<'_> {
 
     pub(crate) fn token_usage(&self) -> &TokenUsage {
         &self.token_usage
+    }
+
+    pub(crate) fn clear_token_usage(&mut self) {
+        self.token_usage = TokenUsage::default();
+        self.bottom_pane
+            .set_token_usage(self.token_usage.clone(), self.config.model_context_window);
     }
 }
 
