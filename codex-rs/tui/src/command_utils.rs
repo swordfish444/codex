@@ -44,6 +44,7 @@ impl ExecutionPreset {
     }
 
     /// Canonical CLI flags string for the preset.
+    #[allow(dead_code)]
     pub fn cli_flags(self) -> &'static str {
         match self {
             ExecutionPreset::ReadOnly => "--ask-for-approval never --sandbox read-only",
@@ -140,6 +141,7 @@ pub fn execution_mode_label(approval: AskForApproval, sandbox: &SandboxPolicy) -
 }
 
 /// Describe the current execution preset including CLI flag equivalents.
+#[allow(dead_code)]
 pub fn execution_mode_description(
     approval: AskForApproval,
     sandbox: &SandboxPolicy,
@@ -174,11 +176,11 @@ mod tests {
         use codex_core::protocol::SandboxPolicy;
         let parse = parse_execution_mode_token;
         assert!(matches!(
-            parse("auto").unwrap(),
-            (
+            parse("auto"),
+            Some((
                 AskForApproval::OnFailure,
                 SandboxPolicy::WorkspaceWrite { .. }
-            )
+            ))
         ));
         assert_eq!(
             parse("untrusted"),

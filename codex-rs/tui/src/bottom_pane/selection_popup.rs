@@ -74,7 +74,13 @@ impl SelectionPopup {
                 },
                 name,
             )
-            .with_description(desc);
+            .with_description(desc)
+            .with_aliases(match p {
+                ExecutionPreset::ReadOnly => vec!["read-only".to_string(), "readonly".to_string()],
+                ExecutionPreset::Untrusted => vec!["untrusted".to_string()],
+                ExecutionPreset::Auto => vec!["auto".to_string()],
+                ExecutionPreset::FullYolo => vec!["full-yolo".to_string(), "full yolo".to_string()],
+            });
             if ExecutionPreset::from_policies(current_approval, current_sandbox) == Some(p) {
                 item = item.mark_current(true);
             }
@@ -132,11 +138,11 @@ mod tests {
     fn parse_approval_mode_aliases() {
         // Only accept the three canonical tokens
         assert!(matches!(
-            parse("auto").unwrap(),
-            (
+            parse("auto"),
+            Some((
                 AskForApproval::OnFailure,
                 SandboxPolicy::WorkspaceWrite { .. }
-            )
+            ))
         ));
         assert_eq!(
             parse("untrusted"),

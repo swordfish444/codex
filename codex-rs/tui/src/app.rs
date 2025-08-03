@@ -1,7 +1,6 @@
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::chatwidget::ChatWidget;
-use crate::command_utils::strip_surrounding_quotes;
 use crate::danger_warning_screen::DangerWarningOutcome;
 use crate::danger_warning_screen::DangerWarningScreen;
 use crate::file_search::FileSearchManager;
@@ -23,9 +22,9 @@ use crossterm::execute as ct_execute;
 use crossterm::terminal::EnterAlternateScreen;
 use crossterm::terminal::LeaveAlternateScreen;
 use crossterm::terminal::supports_keyboard_enhancement;
+use ratatui::backend::Backend;
 use ratatui::layout::Offset;
 use ratatui::layout::Rect;
-use ratatui::prelude::Backend;
 use ratatui::text::Line;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -62,8 +61,6 @@ enum AppState<'a> {
 
 /// Strip a single pair of surrounding quotes from the provided string if present.
 /// Supports straight and common curly quotes: '…', "…", ‘…’, “…”.
-// strip_surrounding_quotes moved to command_utils.rs
-
 pub(crate) struct App<'a> {
     app_event_tx: AppEventSender,
     app_event_rx: Receiver<AppEvent>,
@@ -89,7 +86,10 @@ pub(crate) struct App<'a> {
     fixup_viewport_after_danger: bool,
     /// If set, defer opening the DangerWarning screen until after the next
     /// redraw so any selection popups are cleared from the normal screen.
-    pending_show_danger: Option<(codex_core::protocol::AskForApproval, codex_core::protocol::SandboxPolicy)>,
+    pending_show_danger: Option<(
+        codex_core::protocol::AskForApproval,
+        codex_core::protocol::SandboxPolicy,
+    )>,
     last_bottom_pane_area: Option<Rect>,
 }
 
@@ -110,22 +110,30 @@ impl App<'_> {
     fn handle_model_command(&mut self, args: &str) {
         let arg = args.trim();
         if let AppState::Chat { widget } = &mut self.app_state {
-            let normalized = strip_surrounding_quotes(arg).trim().to_string();
+            let normalized = crate::command_utils::normalize_token(arg);
             if !normalized.is_empty() {
                 widget.update_model_and_reconfigure(normalized);
             }
         }
     }
 
-    /// Handle `/approvals <preset>` from the slash command dispatcher.
     fn handle_approvals_command(&mut self, args: &str) {
         let arg = args.trim();
         if let AppState::Chat { widget } = &mut self.app_state {
-            let normalized = strip_surrounding_quotes(arg).trim().to_string();
+            let normalized = crate::command_utils::normalize_token(arg);
             if !normalized.is_empty() {
                 use crate::command_utils::parse_execution_mode_token;
                 if let Some((approval, sandbox)) = parse_execution_mode_token(&normalized) {
-                    widget.update_execution_mode_and_reconfigure(approval, sandbox);
+                    if crate::command_utils::ExecutionPreset::from_policies(approval, &sandbox)
+                        == Some(crate::command_utils::ExecutionPreset::FullYolo)
+                    {
+                        // Defer opening the danger screen until after the next redraw so any
+                        // selection UI is cleared.
+                        self.pending_show_danger = Some((approval, sandbox));
+                        self.app_event_tx.send(AppEvent::RequestRedraw);
+                    } else {
+                        widget.update_execution_mode_and_reconfigure(approval, sandbox);
+                    }
                 } else {
                     widget.add_diff_output(format!(
                         "`/approvals {normalized}` — unrecognized execution mode"
@@ -287,17 +295,24 @@ impl App<'_> {
                     if let Some((approval, sandbox)) = self.pending_show_danger.take() {
                         if let Some(area) = self.last_bottom_pane_area {
                             use crossterm::cursor::MoveTo;
-                            use crossterm::terminal::{Clear, ClearType};
                             use crossterm::queue;
+                            use crossterm::terminal::Clear;
+                            use crossterm::terminal::ClearType;
                             use std::io::Write;
                             for y in area.y..area.bottom() {
-                                let _ = queue!(std::io::stdout(), MoveTo(0, y), Clear(ClearType::CurrentLine));
+                                let _ = queue!(
+                                    std::io::stdout(),
+                                    MoveTo(0, y),
+                                    Clear(ClearType::CurrentLine)
+                                );
                             }
                             let _ = std::io::stdout().flush();
                         }
                         if let AppState::Chat { widget } = std::mem::replace(
                             &mut self.app_state,
-                            AppState::GitWarning { screen: GitWarningScreen::new() },
+                            AppState::GitWarning {
+                                screen: GitWarningScreen::new(),
+                            },
                         ) {
                             let _ = ct_execute!(std::io::stdout(), EnterAlternateScreen);
                             self.app_state = AppState::DangerWarning {
@@ -317,19 +332,13 @@ impl App<'_> {
                             modifiers: crossterm::event::KeyModifiers::CONTROL,
                             kind: KeyEventKind::Press,
                             ..
-                        } => {
-                            match &mut self.app_state {
-                                AppState::Chat { widget } => {
-                                    widget.on_ctrl_c();
-                                }
-                                AppState::GitWarning { .. } => {
-                                    // No-op.
-                                }
-                                AppState::DangerWarning { .. } => {
-                                    // No-op on Ctrl+C in danger screen
-                                }
+                        } => match &mut self.app_state {
+                            AppState::Chat { widget } => {
+                                widget.on_ctrl_c();
                             }
-                        }
+                            AppState::GitWarning { .. } => {}
+                            AppState::DangerWarning { .. } => {}
+                        },
                         KeyEvent {
                             code: KeyCode::Char('d'),
                             modifiers: crossterm::event::KeyModifiers::CONTROL,
@@ -350,9 +359,7 @@ impl App<'_> {
                                 AppState::GitWarning { .. } => {
                                     self.app_event_tx.send(AppEvent::ExitRequest);
                                 }
-                                AppState::DangerWarning { .. } => {
-                                    // Ignore Ctrl+D while danger screen is visible.
-                                }
+                                AppState::DangerWarning { .. } => {}
                             }
                         }
                         KeyEvent {
@@ -361,9 +368,7 @@ impl App<'_> {
                         } => {
                             self.dispatch_key_event(key_event);
                         }
-                        _ => {
-                            // Ignore Release key events for now.
-                        }
+                        _ => {}
                     };
                 }
                 AppEvent::Paste(text) => {
@@ -392,7 +397,9 @@ impl App<'_> {
                             self.app_event_tx.send(AppEvent::RequestRedraw);
                         } else if let AppState::Chat { widget } = std::mem::replace(
                             &mut self.app_state,
-                            AppState::GitWarning { screen: GitWarningScreen::new() },
+                            AppState::GitWarning {
+                                screen: GitWarningScreen::new(),
+                            },
                         ) {
                             // Restore chat state and apply immediately for safe presets.
                             let mut w = widget;
@@ -579,11 +586,7 @@ impl App<'_> {
             AppState::DangerWarning { .. } => size.height,
         };
 
-        // If we just left the alternate-screen danger modal, refresh our internal
-        // cursor position and anchor the viewport to the bottom so the input bar
-        // isn't pushed to the top. Additionally, scroll the region above the new
-        // viewport down to eliminate any stale bottom-pane artifacts without
-        // clearing the chat history.
+        // After leaving the danger modal, resync cursor and bottom‑anchor the viewport.
         if self.fixup_viewport_after_danger {
             self.fixup_viewport_after_danger = false;
             let pos = terminal.get_cursor_position()?;
@@ -735,7 +738,7 @@ impl App<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_surrounding_quotes;
+    use crate::command_utils::strip_surrounding_quotes;
 
     #[test]
     fn strip_surrounding_quotes_cases() {

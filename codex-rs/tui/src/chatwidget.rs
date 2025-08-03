@@ -617,9 +617,7 @@ impl ChatWidget<'_> {
         self.config.sandbox_policy = sandbox.clone();
 
         if approval_changed || sandbox_changed {
-            let label = crate::command_utils::ExecutionPreset::from_policies(approval, &sandbox)
-                .map(|p| p.label())
-                .unwrap_or("Custom");
+            let label = crate::command_utils::execution_mode_label(approval, &sandbox);
             self.add_to_history(HistoryCell::new_background_event(format!(
                 "Set execution mode to {label}."
             )));
