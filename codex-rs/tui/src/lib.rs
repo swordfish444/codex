@@ -38,11 +38,11 @@ mod history_cell;
 pub mod insert_history;
 #[cfg(not(feature = "vt100-tests"))]
 mod insert_history;
+pub mod live_wrap;
 mod log_layer;
 mod markdown;
 mod slash_command;
 mod status_indicator_widget;
-pub mod live_wrap;
 mod text_block;
 mod text_formatting;
 mod tui;

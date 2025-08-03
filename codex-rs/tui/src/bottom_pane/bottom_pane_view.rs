@@ -39,13 +39,6 @@ pub(crate) trait BottomPaneView<'a> {
         ConditionalUpdate::NoRedraw
     }
 
-    /// Restart the live status animation with fresh text. Returns true if the
-    /// view handled the restart itself (e.g. status indicator view), false if
-    /// the caller should fall back to another mechanism (e.g. overlay).
-    fn restart_live_status_with_text(&mut self, _pane: &mut BottomPane<'a>, _text: String) -> bool {
-        false
-    }
-
     /// Called when task completes to check if the view should be hidden.
     fn should_hide_when_task_is_done(&mut self) -> bool {
         false

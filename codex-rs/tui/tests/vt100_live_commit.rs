@@ -7,7 +7,10 @@ use ratatui::text::Line;
 #[test]
 fn live_001_commit_on_overflow() {
     let backend = TestBackend::new(20, 6);
-    let mut term = codex_tui::custom_terminal::Terminal::with_options(backend).unwrap();
+    let mut term = match codex_tui::custom_terminal::Terminal::with_options(backend) {
+        Ok(t) => t,
+        Err(e) => panic!("failed to construct terminal: {e}"),
+    };
     let area = Rect::new(0, 5, 20, 1);
     term.set_viewport_area(area);
 
@@ -47,15 +50,24 @@ fn live_001_commit_on_overflow() {
         }
         joined.push('\n');
     }
-    assert!(joined.contains("one"), "expected committed 'one' to be visible\n{joined}");
-    assert!(joined.contains("two"), "expected committed 'two' to be visible\n{joined}");
+    assert!(
+        joined.contains("one"),
+        "expected committed 'one' to be visible\n{joined}"
+    );
+    assert!(
+        joined.contains("two"),
+        "expected committed 'two' to be visible\n{joined}"
+    );
     // The last three (three,four,five) remain in the live ring, not committed here.
 }
 
 #[test]
 fn live_002_pre_scroll_and_commit() {
     let backend = TestBackend::new(20, 6);
-    let mut term = codex_tui::custom_terminal::Terminal::with_options(backend).unwrap();
+    let mut term = match codex_tui::custom_terminal::Terminal::with_options(backend) {
+        Ok(t) => t,
+        Err(e) => panic!("failed to construct terminal: {e}"),
+    };
     // Viewport not at bottom: y=3
     let area = Rect::new(0, 3, 20, 1);
     term.set_viewport_area(area);
@@ -78,7 +90,12 @@ fn live_002_pre_scroll_and_commit() {
     let s = String::from_utf8_lossy(&buf);
 
     // Expect a SetScrollRegion to [area.top()+1 .. screen_height] and a cursor move to top of that region.
-    assert!(s.contains("\u{1b}[4;6r"), "expected pre-scroll region 4..6, got: {s:?}");
-    assert!(s.contains("\u{1b}[4;1H"), "expected cursor CUP 4;1H, got: {s:?}");
+    assert!(
+        s.contains("\u{1b}[4;6r"),
+        "expected pre-scroll region 4..6, got: {s:?}"
+    );
+    assert!(
+        s.contains("\u{1b}[4;1H"),
+        "expected cursor CUP 4;1H, got: {s:?}"
+    );
 }
-

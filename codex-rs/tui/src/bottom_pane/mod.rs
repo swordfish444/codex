@@ -17,8 +17,8 @@ mod chat_composer;
 mod chat_composer_history;
 mod command_popup;
 mod file_search_popup;
-mod status_indicator_view;
 mod live_ring_widget;
+mod status_indicator_view;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CancellationEvent {
@@ -101,7 +101,11 @@ impl BottomPane<'_> {
 
         if let Some(view) = self.active_view.as_ref() {
             // Add a single blank spacer line between live ring and status view when active.
-            let spacer = if self.live_ring.is_some() && self.status_view_active { 1 } else { 0 };
+            let spacer = if self.live_ring.is_some() && self.status_view_active {
+                1
+            } else {
+                0
+            };
             overlay_status_h
                 .saturating_add(ring_h)
                 .saturating_add(spacer)
@@ -198,7 +202,6 @@ impl BottomPane<'_> {
         }
         self.request_redraw();
     }
-
 
     pub(crate) fn show_ctrl_c_quit_hint(&mut self) {
         self.ctrl_c_quit_hint = true;
@@ -319,7 +322,11 @@ impl BottomPane<'_> {
     }
 
     /// Set the rows and cap for the transient live ring overlay.
-    pub(crate) fn set_live_ring_rows(&mut self, max_rows: u16, rows: Vec<ratatui::text::Line<'static>>) {
+    pub(crate) fn set_live_ring_rows(
+        &mut self,
+        max_rows: u16,
+        rows: Vec<ratatui::text::Line<'static>>,
+    ) {
         let mut w = live_ring_widget::LiveRingWidget::new();
         w.set_max_rows(max_rows);
         w.set_rows(rows);
@@ -330,59 +337,7 @@ impl BottomPane<'_> {
         self.live_ring = None;
     }
 
-    /// Clear the live status cell (e.g., when the streamed text has been
-    /// inserted into history and we no longer need the inline preview).
-    pub(crate) fn clear_live_status(&mut self) {
-        self.live_status = None;
-        self.request_redraw();
-    }
-
-    /// Restart the live status animation for the next entry. Prefer taking
-    /// over the composer when possible; if another view is active (e.g. a
-    /// modal), fall back to using the overlay so animation can continue.
-    pub(crate) fn restart_live_status_with_text(&mut self, text: String) {
-        // Try to restart in the active view (if it's the status view).
-        let mut handled = false;
-        if let Some(mut view) = self.active_view.take() {
-            if view.restart_live_status_with_text(self, text.clone()) {
-                handled = true;
-            }
-            self.status_view_active = true;
-            self.active_view = Some(view);
-        } else {
-            // No view – create a fresh status view which replaces the composer.
-            let mut v = StatusIndicatorView::new(self.app_event_tx.clone());
-            v.restart_with_text(text);
-            self.active_view = Some(Box::new(v));
-            self.status_view_active = true;
-            self.request_redraw();
-            return;
-        }
-        if handled {
-            self.request_redraw();
-            return;
-        }
-
-        // Fallback: show a fresh overlay widget if another view is active.
-        self.live_status = Some(crate::status_indicator_widget::StatusIndicatorWidget::new(
-            self.app_event_tx.clone(),
-        ));
-        if let Some(status) = &mut self.live_status {
-            status.restart_with_text(text);
-        }
-        self.request_redraw();
-    }
-
-
-    /// Remove the active StatusIndicatorView (composer takeover) if present,
-    /// restoring the composer for user input.
-    pub(crate) fn clear_status_view(&mut self) {
-        if self.status_view_active {
-            self.active_view = None;
-            self.status_view_active = false;
-            self.request_redraw();
-        }
-    }
+    // Removed restart_live_status_with_text – no longer used by the current streaming UI.
 }
 
 impl WidgetRef for &BottomPane<'_> {
@@ -391,7 +346,12 @@ impl WidgetRef for &BottomPane<'_> {
         if let Some(ring) = &self.live_ring {
             let live_h = ring.desired_height(area.width).min(area.height);
             if live_h > 0 {
-                let live_rect = Rect { x: area.x, y: area.y, width: area.width, height: live_h };
+                let live_rect = Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: area.width,
+                    height: live_h,
+                };
                 ring.render_ref(live_rect, buf);
                 y_offset = live_h;
             }
@@ -435,8 +395,7 @@ impl WidgetRef for &BottomPane<'_> {
                 width: area.width,
                 // Reserve bottom padding
                 height: (area.height - y_offset)
-                    - BottomPane::BOTTOM_PAD_LINES
-                        .min((area.height - y_offset).saturating_sub(1)),
+                    - BottomPane::BOTTOM_PAD_LINES.min((area.height - y_offset).saturating_sub(1)),
             };
             (&self.composer).render_ref(composer_rect, buf);
         }
@@ -447,7 +406,9 @@ impl WidgetRef for &BottomPane<'_> {
 mod tests {
     use super::*;
     use crate::app_event::AppEvent;
-    use ratatui::{buffer::Buffer, layout::Rect, text::Line};
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::text::Line;
     use std::path::PathBuf;
     use std::sync::mpsc::channel;
 
@@ -504,12 +465,23 @@ mod tests {
         let mut lines: Vec<String> = Vec::new();
         for y in 0..3 {
             let mut s = String::new();
-            for x in 0..area.width { s.push(buf.get(x, y).symbol().chars().next().unwrap_or(' ')); }
+            for x in 0..area.width {
+                s.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
+            }
             lines.push(s.trim_end().to_string());
         }
-        assert!(lines[0].contains("two"), "top row should be 'two': {lines:?}");
-        assert!(lines[1].contains("three"), "middle row should be 'three': {lines:?}");
-        assert!(lines[2].contains("four"), "bottom row should be 'four': {lines:?}");
+        assert!(
+            lines[0].contains("two"),
+            "top row should be 'two': {lines:?}"
+        );
+        assert!(
+            lines[1].contains("three"),
+            "middle row should be 'three': {lines:?}"
+        );
+        assert!(
+            lines[2].contains("four"),
+            "bottom row should be 'four': {lines:?}"
+        );
     }
 
     #[test]
@@ -530,7 +502,10 @@ mod tests {
         // status indicator remains visible below them.
         pane.set_live_ring_rows(
             2,
-            vec![Line::from("cot1".to_string()), Line::from("cot2".to_string())],
+            vec![
+                Line::from("cot1".to_string()),
+                Line::from("cot2".to_string()),
+            ],
         );
 
         // Allow some frames so the dot animation is present.
@@ -553,7 +528,9 @@ mod tests {
 
         // Row 2 is the spacer (blank)
         let mut r2 = String::new();
-        for x in 0..area.width { r2.push(buf[(x, 2)].symbol().chars().next().unwrap_or(' ')); }
+        for x in 0..area.width {
+            r2.push(buf[(x, 2)].symbol().chars().next().unwrap_or(' '));
+        }
         assert!(r2.trim().is_empty(), "expected blank spacer line: {r2:?}");
 
         // Bottom row is the status line; it should contain the left bar and "Working [".
@@ -562,7 +539,10 @@ mod tests {
             r3.push(buf[(x, 3)].symbol().chars().next().unwrap_or(' '));
         }
         assert_eq!(buf[(0, 3)].symbol().chars().next().unwrap_or(' '), '▌');
-        assert!(r3.contains("Working ["), "expected spinner prefix in status line: {r3:?}");
+        assert!(
+            r3.contains("Working ["),
+            "expected spinner prefix in status line: {r3:?}"
+        );
     }
 
     #[test]
@@ -581,16 +561,24 @@ mod tests {
 
         // Use height == desired_height; expect 1 status row at top and 2 bottom padding rows.
         let height = pane.desired_height(30);
-        assert!(height >= 3, "expected at least 3 rows with bottom padding; got {height}");
+        assert!(
+            height >= 3,
+            "expected at least 3 rows with bottom padding; got {height}"
+        );
         let area = Rect::new(0, 0, 30, height);
         let mut buf = Buffer::empty(area);
         (&pane).render_ref(area, &mut buf);
 
         // Top row contains the spinner
         let mut top = String::new();
-        for x in 0..area.width { top.push(buf[(x, 0)].symbol().chars().next().unwrap_or(' ')); }
+        for x in 0..area.width {
+            top.push(buf[(x, 0)].symbol().chars().next().unwrap_or(' '));
+        }
         assert_eq!(buf[(0, 0)].symbol().chars().next().unwrap_or(' '), '▌');
-        assert!(top.contains("Working ["), "expected spinner on top row: {top:?}");
+        assert!(
+            top.contains("Working ["),
+            "expected spinner on top row: {top:?}"
+        );
 
         // Bottom two rows are blank padding
         let mut r_last = String::new();
@@ -599,8 +587,14 @@ mod tests {
             r_last.push(buf[(x, height - 1)].symbol().chars().next().unwrap_or(' '));
             r_last2.push(buf[(x, height - 2)].symbol().chars().next().unwrap_or(' '));
         }
-        assert!(r_last.trim().is_empty(), "expected last row blank: {r_last:?}");
-        assert!(r_last2.trim().is_empty(), "expected second-to-last row blank: {r_last2:?}");
+        assert!(
+            r_last.trim().is_empty(),
+            "expected last row blank: {r_last:?}"
+        );
+        assert!(
+            r_last2.trim().is_empty(),
+            "expected second-to-last row blank: {r_last2:?}"
+        );
     }
 
     #[test]
@@ -626,15 +620,26 @@ mod tests {
             row0.push(buf2[(x, 0)].symbol().chars().next().unwrap_or(' '));
             row1.push(buf2[(x, 1)].symbol().chars().next().unwrap_or(' '));
         }
-        assert!(row0.contains("Working ["), "expected spinner on row 0: {row0:?}");
-        assert!(row1.trim().is_empty(), "expected bottom padding on row 1: {row1:?}");
+        assert!(
+            row0.contains("Working ["),
+            "expected spinner on row 0: {row0:?}"
+        );
+        assert!(
+            row1.trim().is_empty(),
+            "expected bottom padding on row 1: {row1:?}"
+        );
 
         // Height=1 → no padding; single row is the spinner.
         let area1 = Rect::new(0, 0, 20, 1);
         let mut buf1 = Buffer::empty(area1);
         (&pane).render_ref(area1, &mut buf1);
         let mut only = String::new();
-        for x in 0..area1.width { only.push(buf1[(x, 0)].symbol().chars().next().unwrap_or(' ')); }
-        assert!(only.contains("Working ["), "expected spinner only with no padding: {only:?}");
+        for x in 0..area1.width {
+            only.push(buf1[(x, 0)].symbol().chars().next().unwrap_or(' '));
+        }
+        assert!(
+            only.contains("Working ["),
+            "expected spinner only with no padding: {only:?}"
+        );
     }
 }

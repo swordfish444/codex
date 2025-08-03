@@ -12,16 +12,10 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::style::Style;
-use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
-use ratatui::widgets::Block;
-use ratatui::widgets::BorderType;
-use ratatui::widgets::Borders;
-use ratatui::widgets::Padding;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
-use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app_event::AppEvent;
@@ -91,7 +85,9 @@ impl StatusIndicatorWidget {
         }
     }
 
-    pub fn desired_height(&self, _width: u16) -> u16 { 1 }
+    pub fn desired_height(&self, _width: u16) -> u16 {
+        1
+    }
 
     /// Update the line that is displayed in the widget.
     pub(crate) fn update_text(&mut self, text: String) {
@@ -125,6 +121,7 @@ impl StatusIndicatorWidget {
     }
 
     /// Reset the animation and start revealing `text` from the beginning.
+    #[cfg(test)]
     pub(crate) fn restart_with_text(&mut self, text: String) {
         let sanitized = text.replace(['\n', '\r'], " ");
         let stripped = {
@@ -170,7 +167,9 @@ impl Drop for StatusIndicatorWidget {
 impl WidgetRef for StatusIndicatorWidget {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         // Ensure minimal height
-        if area.height == 0 || area.width == 0 { return; }
+        if area.height == 0 || area.width == 0 {
+            return;
+        }
         // Plain rendering: no borders or padding so the live cell is visually
         // indistinguishable from terminal scrollback. No left bar.
         let inner_width = area.width as usize;
@@ -198,7 +197,12 @@ impl WidgetRef for StatusIndicatorWidget {
         let mut used = 0usize;
         for s in spans {
             let w = s.content.width();
-            if used + w <= inner_width { acc.push(s); used += w; } else { break; }
+            if used + w <= inner_width {
+                acc.push(s);
+                used += w;
+            } else {
+                break;
+            }
         }
         let lines = vec![Line::from(acc)];
 
@@ -221,69 +225,6 @@ impl WidgetRef for StatusIndicatorWidget {
     }
 }
 
-/// Strip ANSI escapes from a multi-line string.
-fn strip_ansi_all(s: &str) -> String {
-    s.split('\n')
-        .map(|line| {
-            let l = ansi_escape_line(line);
-            l.spans
-                .iter()
-                .map(|sp| sp.content.as_ref())
-                .collect::<Vec<_>>()
-                .join("")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// Hard-wrap plain text to a given terminal width using display cells.
-fn wrap_plain_text_to_width(s: &str, width: usize) -> Vec<Line<'static>> {
-    let w = width.max(1);
-    let mut out: Vec<Line<'static>> = Vec::new();
-    for raw_line in s.split('\n') {
-        if raw_line.is_empty() {
-            out.push(Line::from(String::new()));
-            continue;
-        }
-        let mut remaining = raw_line;
-        while !remaining.is_empty() {
-            let (prefix, suffix, taken_w) = take_prefix_by_width(remaining, w);
-            out.push(Line::from(Span::raw(prefix)));
-            if taken_w >= remaining.width() {
-                break;
-            }
-            remaining = suffix;
-        }
-    }
-    if out.is_empty() {
-        out.push(Line::from(String::new()));
-    }
-    out
-}
-
-/// Take a prefix of `s` whose display width is at most `max_cols` terminal cells.
-/// Returns (prefix, suffix, prefix_width).
-fn take_prefix_by_width(s: &str, max_cols: usize) -> (String, &str, usize) {
-    if max_cols == 0 || s.is_empty() {
-        return (String::new(), s, 0);
-    }
-
-    let mut cols = 0usize;
-    let mut end_idx = 0usize;
-    for (i, ch) in s.char_indices() {
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if cols.saturating_add(ch_width) > max_cols {
-            break;
-        }
-        cols += ch_width;
-        end_idx = i + ch.len_utf8();
-    }
-
-    let prefix = s[..end_idx].to_string();
-    let suffix = &s[end_idx..];
-    (prefix, suffix, cols)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,7 +245,7 @@ mod tests {
         let mut buf = ratatui::buffer::Buffer::empty(area);
         w.render_ref(area, &mut buf);
 
-        // Leftmost column has the left bar 
+        // Leftmost column has the left bar
         let ch0 = buf[(0, 0)].symbol().chars().next().unwrap_or(' ');
         assert_eq!(ch0, '▌', "expected left bar at col 0: {ch0:?}");
     }
@@ -324,9 +265,14 @@ mod tests {
 
         // Single line; it should contain "Working [" and closing "]" and the provided text.
         let mut row = String::new();
-        for x in 0..area.width { row.push(buf[(x, 0)].symbol().chars().next().unwrap_or(' ')); }
+        for x in 0..area.width {
+            row.push(buf[(x, 0)].symbol().chars().next().unwrap_or(' '));
+        }
         assert!(row.contains("Working ["), "expected status prefix: {row:?}");
         assert!(row.contains("]"), "expected bracket: {row:?}");
-        assert!(row.contains("Hi"), "expected provided text in status: {row:?}");
+        assert!(
+            row.contains("Hi"),
+            "expected provided text in status: {row:?}"
+        );
     }
 }

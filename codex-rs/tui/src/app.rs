@@ -220,11 +220,7 @@ impl App<'_> {
                 AppEvent::Redraw => {
                     std::io::stdout().sync_update(|_| self.draw_next_frame(terminal))??;
                 }
-                AppEvent::LiveStatusRevealComplete => {
-                    if let AppState::Chat { widget } = &mut self.app_state {
-                        widget.on_live_status_reveal_complete();
-                    }
-                }
+                AppEvent::LiveStatusRevealComplete => {}
                 AppEvent::KeyEvent(key_event) => {
                     match key_event {
                         KeyEvent {

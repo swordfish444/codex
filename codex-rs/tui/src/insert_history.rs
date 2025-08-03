@@ -126,7 +126,9 @@ fn line_height(line: &Line, width: u16) -> u16 {
     while !remaining.is_empty() {
         let (_prefix, suffix, taken) = crate::live_wrap::take_prefix_by_width(&remaining, w);
         rows = rows.saturating_add(1);
-        if taken >= remaining.len() { break; }
+        if taken >= remaining.len() {
+            break;
+        }
         remaining = suffix.to_string();
     }
     rows.max(1)

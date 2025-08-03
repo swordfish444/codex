@@ -1,4 +1,5 @@
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthChar;
+use unicode_width::UnicodeWidthStr;
 
 /// A single visual row produced by RowBuilder.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,7 +95,10 @@ impl RowBuilder {
     pub fn display_rows(&self) -> Vec<Row> {
         let mut out = self.rows.clone();
         if !self.current_line.is_empty() {
-            out.push(Row { text: self.current_line.clone(), explicit_break: false });
+            out.push(Row {
+                text: self.current_line.clone(),
+                explicit_break: false,
+            });
         }
         out
     }
@@ -103,7 +107,9 @@ impl RowBuilder {
     /// current partial line, if any). Returns the drained rows in order.
     pub fn drain_commit_ready(&mut self, max_keep: usize) -> Vec<Row> {
         let display_count = self.rows.len() + if self.current_line.is_empty() { 0 } else { 1 };
-        if display_count <= max_keep { return Vec::new(); }
+        if display_count <= max_keep {
+            return Vec::new();
+        }
         let to_commit = display_count - max_keep;
         let commit_count = to_commit.min(self.rows.len());
         let mut drained = Vec::with_capacity(commit_count);
@@ -121,12 +127,18 @@ impl RowBuilder {
         if explicit_break {
             if self.current_line.is_empty() {
                 // We ended on a boundary previously; add an empty explicit row.
-                self.rows.push(Row { text: String::new(), explicit_break: true });
+                self.rows.push(Row {
+                    text: String::new(),
+                    explicit_break: true,
+                });
             } else {
                 // There is leftover content that did not wrap yet; push it now with the explicit flag.
                 let mut s = String::new();
                 std::mem::swap(&mut s, &mut self.current_line);
-                self.rows.push(Row { text: s, explicit_break: true });
+                self.rows.push(Row {
+                    text: s,
+                    explicit_break: true,
+                });
             }
         }
         // Reset current line buffer for next logical line.
@@ -139,13 +151,17 @@ impl RowBuilder {
             if self.current_line.is_empty() {
                 break;
             }
-            let (prefix, suffix, taken) = take_prefix_by_width(&self.current_line, self.target_width);
+            let (prefix, suffix, taken) =
+                take_prefix_by_width(&self.current_line, self.target_width);
             if taken == 0 {
                 // Avoid infinite loop on pathological inputs; take one scalar and continue.
                 if let Some((i, ch)) = self.current_line.char_indices().next() {
                     let len = i + ch.len_utf8();
                     let p = self.current_line[..len].to_string();
-                    self.rows.push(Row { text: p, explicit_break: false });
+                    self.rows.push(Row {
+                        text: p,
+                        explicit_break: false,
+                    });
                     self.current_line = self.current_line[len..].to_string();
                     continue;
                 }
@@ -156,7 +172,10 @@ impl RowBuilder {
                 break;
             } else {
                 // Emit wrapped prefix as a non-explicit row and continue with the remainder.
-                self.rows.push(Row { text: prefix, explicit_break: false });
+                self.rows.push(Row {
+                    text: prefix,
+                    explicit_break: false,
+                });
                 self.current_line = suffix.to_string();
             }
         }
@@ -198,7 +217,7 @@ mod tests {
         let rows = rb.rows();
         assert!(!rows.is_empty());
         for r in rows {
-            assert!(r.width() <= 10, "row exceeds width: {:?}", r);
+            assert!(r.width() <= 10, "row exceeds width: {r:?}");
         }
     }
 
@@ -208,7 +227,7 @@ mod tests {
         let mut rb = RowBuilder::new(6);
         rb.push_fragment("😀😀 你好");
         for r in rb.rows() {
-            assert!(r.width() <= 6, "row exceeds width: {:?}", r);
+            assert!(r.width() <= 6, "row exceeds width: {r:?}");
         }
     }
 
@@ -220,8 +239,9 @@ mod tests {
         let all_rows = rb_all.rows().to_vec();
 
         let mut rb_chunks = RowBuilder::new(7);
-        for chunk in s.as_bytes().chunks(3) {
-            rb_chunks.push_fragment(std::str::from_utf8(chunk).unwrap());
+        for i in (0..s.len()).step_by(3) {
+            let end = (i + 3).min(s.len());
+            rb_chunks.push_fragment(&s[i..end]);
         }
         let chunk_rows = rb_chunks.rows().to_vec();
 
@@ -243,7 +263,7 @@ mod tests {
     fn rewrap_on_width_change() {
         let mut rb = RowBuilder::new(10);
         rb.push_fragment("abcdefghijK");
-        assert!(rb.rows().len() >= 1);
+        assert!(!rb.rows().is_empty());
         rb.set_width(5);
         for r in rb.rows() {
             assert!(r.width() <= 5);

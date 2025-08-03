@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -44,9 +43,9 @@ use crate::exec_command::strip_bash_lc_and_escape;
 use crate::history_cell::CommandOutput;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PatchEventType;
+use crate::live_wrap::RowBuilder;
 use crate::user_approval_widget::ApprovalRequest;
 use codex_file_search::FileMatch;
-use crate::live_wrap::RowBuilder;
 use ratatui::style::Stylize;
 
 struct RunningCommand {
@@ -68,9 +67,6 @@ pub(crate) struct ChatWidget<'a> {
     // at once into scrollback so the history contains a single message.
     answer_buffer: String,
     running_commands: HashMap<String, RunningCommand>,
-    pending_commits: VecDeque<PendingHistoryCommit>,
-    queued_status_text: Option<String>,
-    defer_task_stop: bool,
     live_builder: RowBuilder,
     current_stream: Option<StreamKind>,
     stream_header_emitted: bool,
@@ -80,18 +76,6 @@ pub(crate) struct ChatWidget<'a> {
 struct UserMessage {
     text: String,
     image_paths: Vec<PathBuf>,
-}
-
-enum PendingHistoryCommit {
-    AgentMessage(String),
-    AgentReasoning(String),
-    /// Generic deferred history commit with a preview string to animate
-    /// in the live cell before committing the full `HistoryCell` to
-    /// scrollback.
-    HistoryCellWithPreview {
-        cell: HistoryCell,
-        preview: String,
-    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,9 +164,6 @@ impl ChatWidget<'_> {
             reasoning_buffer: String::new(),
             answer_buffer: String::new(),
             running_commands: HashMap::new(),
-            pending_commits: VecDeque::new(),
-            queued_status_text: None,
-            defer_task_stop: false,
             live_builder: RowBuilder::new(80),
             current_stream: None,
             stream_header_emitted: false,
@@ -214,20 +195,6 @@ impl ChatWidget<'_> {
     fn add_to_history(&mut self, cell: HistoryCell) {
         self.app_event_tx
             .send(AppEvent::InsertHistory(cell.plain_lines()));
-    }
-
-    /// Queue a history cell to be inserted after the current typewriter
-    /// animation completes. If no animation is active, start one now.
-    fn queue_commit_with_preview(&mut self, cell: HistoryCell, preview: String) {
-        self.pending_commits
-            .push_back(PendingHistoryCommit::HistoryCellWithPreview {
-                cell,
-                preview: preview.clone(),
-            });
-        if self.pending_commits.len() == 1 {
-            self.bottom_pane.restart_live_status_with_text(preview);
-        }
-        self.request_redraw();
     }
 
     fn submit_user_message(&mut self, user_message: UserMessage) {
@@ -323,14 +290,8 @@ impl ChatWidget<'_> {
             EventMsg::TaskComplete(TaskCompleteEvent {
                 last_agent_message: _,
             }) => {
-                if self.pending_commits.is_empty() {
-                    self.bottom_pane.set_task_running(false);
-                    self.bottom_pane.clear_live_ring();
-                } else {
-                    // Defer stopping the task UI until after the final
-                    // animated commit has been written to history.
-                    self.defer_task_stop = true;
-                }
+                self.bottom_pane.set_task_running(false);
+                self.bottom_pane.clear_live_ring();
                 self.request_redraw();
             }
             EventMsg::TokenCount(token_usage) => {
@@ -388,13 +349,6 @@ impl ChatWidget<'_> {
                 // approval dialog) and avoids surprising the user with a modal
                 // prompt before they have seen *what* is being requested.
                 // ------------------------------------------------------------------
-                let file_count = changes.len();
-                let reason_suffix = reason
-                    .as_ref()
-                    .map(|r| format!(" – {r}"))
-                    .unwrap_or_default();
-                let preview =
-                    format!("patch approval requested for {file_count} file(s){reason_suffix}");
                 self.add_to_history(HistoryCell::new_patch_event(
                     PatchEventType::ApprovalRequest,
                     changes,
@@ -414,7 +368,6 @@ impl ChatWidget<'_> {
                 command,
                 cwd,
             }) => {
-                let cmdline = strip_bash_lc_and_escape(&command);
                 self.running_commands.insert(
                     call_id,
                     RunningCommand {
@@ -430,11 +383,6 @@ impl ChatWidget<'_> {
                 auto_approved,
                 changes,
             }) => {
-                let prefix = if auto_approved {
-                    "applying patch (auto-approved)"
-                } else {
-                    "applying patch"
-                };
                 self.add_to_history(HistoryCell::new_patch_event(
                     PatchEventType::ApplyBegin { auto_approved },
                     changes,
@@ -462,15 +410,6 @@ impl ChatWidget<'_> {
                 call_id: _,
                 invocation,
             }) => {
-                // Build brief one-line invocation summary before moving `invocation`.
-                let args_str = invocation
-                    .arguments
-                    .as_ref()
-                    .map(|v| serde_json::to_string(v).unwrap_or_else(|_| v.to_string()))
-                    .unwrap_or_default();
-                let server = invocation.server.clone();
-                let tool = invocation.tool.clone();
-                let preview = format!("MCP {server}.{tool}({args_str})");
                 self.add_to_history(HistoryCell::new_active_mcp_tool_call(invocation));
             }
             EventMsg::McpToolCallEnd(McpToolCallEndEvent {
@@ -514,13 +453,7 @@ impl ChatWidget<'_> {
 
     /// Update the live log preview while a task is running.
     pub(crate) fn update_latest_log(&mut self, line: String) {
-        // If we have pending commits waiting to be flushed, hold off on
-        // updating the live cell so the current entry can finish its animation.
-        if !self.pending_commits.is_empty() {
-            self.queued_status_text = Some(line);
-        } else {
-            self.bottom_pane.update_status_text(line);
-        }
+        self.bottom_pane.update_status_text(line);
     }
 
     fn request_redraw(&mut self) {
@@ -534,51 +467,6 @@ impl ChatWidget<'_> {
     /// Forward file-search results to the bottom pane.
     pub(crate) fn apply_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
         self.bottom_pane.on_file_search_result(query, matches);
-    }
-
-    /// Called by the app when the live status widget has fully revealed its
-    /// current text. We then commit the corresponding pending entry to
-    /// history and, if another entry is waiting, start animating it next.
-    pub(crate) fn on_live_status_reveal_complete(&mut self) {
-        // If there are no pending commits, we are simply showing the waiting
-        // spinner; keep it visible and do nothing.
-        let Some(pending) = self.pending_commits.pop_front() else { return };
-
-        match pending {
-            PendingHistoryCommit::AgentMessage(text) => {
-                self.add_to_history(HistoryCell::new_agent_message(&self.config, text));
-            }
-            PendingHistoryCommit::AgentReasoning(text) => {
-                self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, text));
-            }
-            PendingHistoryCommit::HistoryCellWithPreview { cell, .. } => {
-                self.add_to_history(cell);
-            }
-        }
-
-        // If there is another pending entry, start animating it fresh. We do
-        // not remove it from the queue yet; we will commit it on the next
-        // completion callback.
-        if let Some(next) = self.pending_commits.front() {
-            let text = match next {
-                PendingHistoryCommit::AgentMessage(t) | PendingHistoryCommit::AgentReasoning(t) => {
-                    t.clone()
-                }
-                PendingHistoryCommit::HistoryCellWithPreview { preview, .. } => preview.clone(),
-            };
-            self.bottom_pane.restart_live_status_with_text(text);
-        } else if let Some(queued) = self.queued_status_text.take() {
-            self.bottom_pane.update_status_text(queued);
-        } else {
-            // No more animated entries; leave the waiting spinner in place until
-            // TaskComplete arrives. If TaskComplete was deferred, clear it now.
-            if self.defer_task_stop {
-                self.bottom_pane.set_task_running(false);
-                self.defer_task_stop = false;
-            }
-        }
-
-        self.request_redraw();
     }
 
     /// Handle Ctrl-C key press.
@@ -651,9 +539,7 @@ impl ChatWidget<'_> {
             if !self.stream_header_emitted {
                 match self.current_stream {
                     Some(StreamKind::Reasoning) => {
-                        lines.push(ratatui::text::Line::from(
-                            "thinking".magenta().italic(),
-                        ));
+                        lines.push(ratatui::text::Line::from("thinking".magenta().italic()));
                     }
                     Some(StreamKind::Answer) => {
                         lines.push(ratatui::text::Line::from("codex".magenta().bold()));
@@ -675,7 +561,8 @@ impl ChatWidget<'_> {
             .into_iter()
             .map(|r| ratatui::text::Line::from(r.text))
             .collect::<Vec<_>>();
-        self.bottom_pane.set_live_ring_rows(self.live_max_rows, rows);
+        self.bottom_pane
+            .set_live_ring_rows(self.live_max_rows, rows);
     }
 
     fn finalize_stream(&mut self, kind: StreamKind) {
@@ -686,14 +573,15 @@ impl ChatWidget<'_> {
         // Flush any partial line as a full row, then drain all remaining rows.
         self.live_builder.end_line();
         let remaining = self.live_builder.drain_rows();
+        // TODO: Re-add markdown rendering for assistant answers and reasoning.
+        // When finalizing, pass the accumulated text through `markdown::append_markdown`
+        // to build styled `Line<'static>` entries instead of raw plain text lines.
         if !remaining.is_empty() || !self.stream_header_emitted {
             let mut lines: Vec<ratatui::text::Line<'static>> = Vec::new();
             if !self.stream_header_emitted {
                 match kind {
                     StreamKind::Reasoning => {
-                        lines.push(ratatui::text::Line::from(
-                            "thinking".magenta().italic(),
-                        ));
+                        lines.push(ratatui::text::Line::from("thinking".magenta().italic()));
                     }
                     StreamKind::Answer => {
                         lines.push(ratatui::text::Line::from("codex".magenta().bold()));
