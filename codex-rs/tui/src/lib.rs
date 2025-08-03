@@ -42,6 +42,7 @@ mod log_layer;
 mod markdown;
 mod slash_command;
 mod status_indicator_widget;
+pub mod live_wrap;
 mod text_block;
 mod text_formatting;
 mod tui;

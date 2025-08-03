@@ -80,7 +80,7 @@ impl StatusIndicatorWidget {
         }
 
         Self {
-            text: String::from("waiting for logs…"),
+            text: String::from("waiting for model"),
             last_target_len: 0,
             base_frame: 0,
             reveal_len_at_base: 0,
@@ -91,45 +91,7 @@ impl StatusIndicatorWidget {
         }
     }
 
-    pub fn desired_height(&self, width: u16) -> u16 {
-        // Compute wrapped height for the currently revealed text at the given width.
-        let current_frame = self.frame_idx.load(std::sync::atomic::Ordering::Relaxed);
-        let mut text = self.text.clone();
-        // Only count what is currently revealed.
-        let shown = self.current_shown_len(current_frame);
-        if text.chars().count() > shown {
-            let mut count = 0usize;
-            let mut idx = text.len();
-            for (i, _) in text.char_indices() {
-                if count == shown {
-                    idx = i;
-                    break;
-                }
-                count += 1;
-            }
-            text.truncate(idx);
-        }
-
-        if width == 0 {
-            return 1;
-        }
-
-        // Strip ANSI and hard-wrap to width (plain text).
-        let sanitized = strip_ansi_all(&text);
-        let wrapped = wrap_plain_text_to_width(&sanitized, width as usize);
-        let mut h = wrapped.len() as u16;
-        // Account for the blinking cursor potentially pushing the last line to the next row
-        // when it's already at full width.
-        if let Some(last) = wrapped.last() {
-            let last_w: usize = last.spans.iter().map(|s| s.content.width()).sum();
-            if last_w >= width as usize {
-                h = h.saturating_add(1);
-            }
-        }
-        // Reserve one extra row for the dot animation indicator.
-        h = h.saturating_add(1);
-        h.max(1)
-    }
+    pub fn desired_height(&self, _width: u16) -> u16 { 1 }
 
     /// Update the line that is displayed in the widget.
     pub(crate) fn update_text(&mut self, text: String) {
@@ -188,7 +150,8 @@ impl StatusIndicatorWidget {
     /// Calculate how many characters should currently be visible given the
     /// animation baseline and frame counter.
     fn current_shown_len(&self, current_frame: usize) -> usize {
-        const TYPING_CHARS_PER_FRAME: usize = 1;
+        // Increase typewriter speed (~5x): reveal more characters per frame.
+        const TYPING_CHARS_PER_FRAME: usize = 7;
         let frames = current_frame.saturating_sub(self.base_frame);
         let advanced = self
             .reveal_len_at_base
@@ -206,56 +169,18 @@ impl Drop for StatusIndicatorWidget {
 
 impl WidgetRef for StatusIndicatorWidget {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        let widget_style = Style::default();
-        // A subtle left border aligning visually with the input area.
-        let block = Block::default()
-            .padding(Padding::new(1, 0, 0, 0))
-            .borders(Borders::LEFT)
-            .border_type(BorderType::QuadrantOutside)
-            .border_style(widget_style.dim());
+        // Ensure minimal height
+        if area.height == 0 || area.width == 0 { return; }
+        // Plain rendering: no borders or padding so the live cell is visually
+        // indistinguishable from terminal scrollback. No left bar.
+        let inner_width = area.width as usize;
 
-        // Ensure we do not overflow width.
-        let inner = block.inner(area);
-        let inner_width = inner.width as usize;
+        // Compose a single status line like: "▌ Working [·] waiting for model"
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        spans.push(Span::styled("▌ ", Style::default().fg(Color::Cyan)));
+        spans.push(Span::raw("Working "));
 
-        // Determine how many characters to reveal for the current frame and take
-        // the corresponding prefix so we can render markdown for it.
-        let shown =
-            self.current_shown_len(self.frame_idx.load(std::sync::atomic::Ordering::Relaxed));
-        let mut shown_text = self.text.clone();
-        if shown_text.chars().count() > shown {
-            let mut count = 0usize;
-            let mut idx = shown_text.len();
-            for (i, _) in shown_text.char_indices() {
-                if count == shown {
-                    idx = i;
-                    break;
-                }
-                count += 1;
-            }
-            shown_text.truncate(idx);
-        }
-
-        // Strip ANSI and hard-wrap to width.
-        let sanitized = strip_ansi_all(&shown_text);
-        let mut lines: Vec<Line<'static>> = wrap_plain_text_to_width(&sanitized, inner_width);
-
-        // Optional blinking cursor at the end of the last visual line.
-        if let Some(last) = lines.last_mut() {
-            let blink_on = self.frame_idx.load(std::sync::atomic::Ordering::Relaxed) % 30 < 15;
-            if blink_on {
-                last.spans
-                    .push(Span::styled("▋", Style::default().fg(Color::Cyan)));
-            } else {
-                last.spans.push(Span::raw(" "));
-            }
-        } else {
-            lines.push(Line::from(Span::raw(" ")));
-        }
-
-        // Append a single-line dot animation below the text that grows and shrinks
-        // in place according to the pattern (0,1,2,3,4,3,2,1,0). We map sizes to
-        // increasingly bold/large dot glyphs so the dot appears to "breathe".
+        // Append animated dot in brackets.
         const ANIM: [usize; 9] = [0, 1, 2, 3, 4, 3, 2, 1, 0];
         const DOTS: [&str; 5] = ["·", "•", "●", "◉", "⬤"]; // small → large
         const DOT_SLOWDOWN: usize = 6; // slow down animation relative to frame tick
@@ -263,7 +188,19 @@ impl WidgetRef for StatusIndicatorWidget {
         let idx = (frame / DOT_SLOWDOWN) % ANIM.len();
         let size = ANIM[idx];
         let glyph = DOTS[size];
-        lines.push(Line::from(Span::styled(glyph, Style::default().fg(Color::Gray))));
+        spans.push(Span::raw("["));
+        spans.push(Span::styled(glyph, Style::default().fg(Color::Gray)));
+        spans.push(Span::raw("] "));
+        spans.push(Span::raw(self.text.clone()));
+
+        // Truncate spans to fit the width.
+        let mut acc: Vec<Span<'static>> = Vec::new();
+        let mut used = 0usize;
+        for s in spans {
+            let w = s.content.width();
+            if used + w <= inner_width { acc.push(s); used += w; } else { break; }
+        }
+        let lines = vec![Line::from(acc)];
 
         // If the animation for the current target has just finished, notify the app
         // so it can commit the cell to history and advance.
@@ -279,7 +216,7 @@ impl WidgetRef for StatusIndicatorWidget {
             }
         }
 
-        let paragraph = Paragraph::new(lines).block(block);
+        let paragraph = Paragraph::new(lines);
         paragraph.render_ref(area, buf);
     }
 }
@@ -345,4 +282,51 @@ fn take_prefix_by_width(s: &str, max_cols: usize) -> (String, &str, usize) {
     let prefix = s[..end_idx].to_string();
     let suffix = &s[end_idx..];
     (prefix, suffix, cols)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_event::AppEvent;
+    use crate::app_event_sender::AppEventSender;
+    use std::sync::mpsc::channel;
+
+    #[test]
+    fn renders_without_left_border_or_padding() {
+        let (tx_raw, _rx) = channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut w = StatusIndicatorWidget::new(tx);
+        w.restart_with_text("Hello".to_string());
+
+        let area = ratatui::layout::Rect::new(0, 0, 30, 1);
+        // Allow a short delay so the typewriter reveals the first character.
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        w.render_ref(area, &mut buf);
+
+        // Leftmost column has the left bar 
+        let ch0 = buf[(0, 0)].symbol().chars().next().unwrap_or(' ');
+        assert_eq!(ch0, '▌', "expected left bar at col 0: {ch0:?}");
+    }
+
+    #[test]
+    fn bracket_dot_animation_is_present_on_last_line() {
+        let (tx_raw, _rx) = channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut w = StatusIndicatorWidget::new(tx);
+        w.restart_with_text("Hi".to_string());
+        // Ensure some frames elapse so we get a stable state.
+        std::thread::sleep(std::time::Duration::from_millis(120));
+
+        let area = ratatui::layout::Rect::new(0, 0, 30, 1);
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        w.render_ref(area, &mut buf);
+
+        // Single line; it should contain "Working [" and closing "]" and the provided text.
+        let mut row = String::new();
+        for x in 0..area.width { row.push(buf[(x, 0)].symbol().chars().next().unwrap_or(' ')); }
+        assert!(row.contains("Working ["), "expected status prefix: {row:?}");
+        assert!(row.contains("]"), "expected bracket: {row:?}");
+        assert!(row.contains("Hi"), "expected provided text in status: {row:?}");
+    }
 }

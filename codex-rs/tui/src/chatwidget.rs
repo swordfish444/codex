@@ -46,6 +46,8 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell::PatchEventType;
 use crate::user_approval_widget::ApprovalRequest;
 use codex_file_search::FileMatch;
+use crate::live_wrap::RowBuilder;
+use ratatui::style::Stylize;
 
 struct RunningCommand {
     command: Vec<String>,
@@ -69,6 +71,10 @@ pub(crate) struct ChatWidget<'a> {
     pending_commits: VecDeque<PendingHistoryCommit>,
     queued_status_text: Option<String>,
     defer_task_stop: bool,
+    live_builder: RowBuilder,
+    current_stream: Option<StreamKind>,
+    stream_header_emitted: bool,
+    live_max_rows: u16,
 }
 
 struct UserMessage {
@@ -86,6 +92,12 @@ enum PendingHistoryCommit {
         cell: HistoryCell,
         preview: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamKind {
+    Answer,
+    Reasoning,
 }
 
 impl From<String> for UserMessage {
@@ -171,6 +183,10 @@ impl ChatWidget<'_> {
             pending_commits: VecDeque::new(),
             queued_status_text: None,
             defer_task_stop: false,
+            live_builder: RowBuilder::new(80),
+            current_stream: None,
+            stream_header_emitted: false,
+            live_max_rows: 3,
         }
     }
 
@@ -269,64 +285,39 @@ impl ChatWidget<'_> {
                 self.request_redraw();
             }
             EventMsg::AgentMessage(AgentMessageEvent { message }) => {
-                // Final assistant answer. Prefer the fully provided message
-                // from the event; if it is empty fall back to any accumulated
-                // delta buffer (some providers may only stream deltas and send
-                // an empty final message).
-                let full = if message.is_empty() {
-                    std::mem::take(&mut self.answer_buffer)
-                } else {
-                    self.answer_buffer.clear();
-                    message
-                };
-                if !full.is_empty() {
-                    // Queue for commit; if this is the only pending item start
-                    // the typewriter animation now so we wait before committing.
-                    self.pending_commits
-                        .push_back(PendingHistoryCommit::AgentMessage(full.clone()));
-                    if self.pending_commits.len() == 1 {
-                        self.bottom_pane.restart_live_status_with_text(full);
-                    }
-                }
+                // Final assistant answer: commit all remaining rows and close with
+                // a blank line. Use the final text if provided, otherwise rely on
+                // streamed deltas already in the builder.
+                let _ = message; // Already streamed via deltas in most providers.
+                self.finalize_stream(StreamKind::Answer);
                 self.request_redraw();
             }
             EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }) => {
-                // Stream partial assistant output live: update the in‑pane
-                // status view with the growing answer so the user sees typing
-                // feedback immediately. We still insert the final message as
-                // a single history entry on AgentMessage.
+                self.begin_stream(StreamKind::Answer);
                 self.answer_buffer.push_str(&delta);
-                self.update_latest_log(self.answer_buffer.clone());
+                self.stream_push_and_maybe_commit(&delta);
+                self.request_redraw();
             }
             EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }) => {
-                // Buffer only – disable incremental reasoning streaming so we
-                // avoid truncated intermediate lines. Full text emitted on
-                // AgentReasoning.
+                // Stream CoT into the live pane; keep input visible and commit
+                // overflow rows incrementally to scrollback.
+                self.begin_stream(StreamKind::Reasoning);
                 self.reasoning_buffer.push_str(&delta);
-                // Animate chain-of-thought live in the status indicator.
-                self.update_latest_log(self.reasoning_buffer.clone());
+                self.stream_push_and_maybe_commit(&delta);
+                self.request_redraw();
             }
             EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
-                // Emit full reasoning text once. Some providers might send
-                // final event with empty text if only deltas were used.
-                let full = if text.is_empty() {
-                    std::mem::take(&mut self.reasoning_buffer)
-                } else {
-                    self.reasoning_buffer.clear();
-                    text
-                };
-                if !full.is_empty() {
-                    self.pending_commits
-                        .push_back(PendingHistoryCommit::AgentReasoning(full.clone()));
-                    if self.pending_commits.len() == 1 {
-                        self.bottom_pane.restart_live_status_with_text(full);
-                    }
-                }
+                // Final reasoning: commit remaining rows and close with a blank.
+                let _ = text; // Deltas carried the content; finalize below.
+                self.finalize_stream(StreamKind::Reasoning);
                 self.request_redraw();
             }
             EventMsg::TaskStarted => {
                 self.bottom_pane.clear_ctrl_c_quit_hint();
                 self.bottom_pane.set_task_running(true);
+                // Replace composer with single-line spinner while waiting.
+                self.bottom_pane
+                    .update_status_text("waiting for model".to_string());
                 self.request_redraw();
             }
             EventMsg::TaskComplete(TaskCompleteEvent {
@@ -334,6 +325,7 @@ impl ChatWidget<'_> {
             }) => {
                 if self.pending_commits.is_empty() {
                     self.bottom_pane.set_task_running(false);
+                    self.bottom_pane.clear_live_ring();
                 } else {
                     // Defer stopping the task UI until after the final
                     // animated commit has been written to history.
@@ -351,9 +343,8 @@ impl ChatWidget<'_> {
                 self.bottom_pane.set_task_running(false);
             }
             EventMsg::PlanUpdate(update) => {
-                let preview = "plan updated".to_string();
-                let cell = HistoryCell::new_plan_update(update);
-                self.queue_commit_with_preview(cell, preview);
+                // Commit plan updates directly to history (no status-line preview).
+                self.add_to_history(HistoryCell::new_plan_update(update));
             }
             EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
                 call_id: _,
@@ -361,8 +352,7 @@ impl ChatWidget<'_> {
                 cwd,
                 reason,
             }) => {
-                // Queue the command summary; animate it first, then commit it
-                // to history so the narrative matches the live cell.
+                // Log a background summary immediately so the history is chronological.
                 let cmdline = strip_bash_lc_and_escape(&command);
                 let text = format!(
                     "command requires approval:\n$ {cmdline}{reason}",
@@ -371,10 +361,7 @@ impl ChatWidget<'_> {
                         .map(|r| format!("\n{r}"))
                         .unwrap_or_default()
                 );
-                self.queue_commit_with_preview(
-                    HistoryCell::new_background_event(text.clone()),
-                    text,
-                );
+                self.add_to_history(HistoryCell::new_background_event(text));
 
                 let request = ApprovalRequest::Exec {
                     id,
@@ -408,10 +395,10 @@ impl ChatWidget<'_> {
                     .unwrap_or_default();
                 let preview =
                     format!("patch approval requested for {file_count} file(s){reason_suffix}");
-                self.queue_commit_with_preview(
-                    HistoryCell::new_patch_event(PatchEventType::ApprovalRequest, changes),
-                    preview,
-                );
+                self.add_to_history(HistoryCell::new_patch_event(
+                    PatchEventType::ApprovalRequest,
+                    changes,
+                ));
 
                 // Now surface the approval request in the BottomPane as before.
                 let request = ApprovalRequest::ApplyPatch {
@@ -435,10 +422,7 @@ impl ChatWidget<'_> {
                         cwd: cwd.clone(),
                     },
                 );
-                self.queue_commit_with_preview(
-                    HistoryCell::new_active_exec_command(command),
-                    format!("$ {cmdline}"),
-                );
+                self.add_to_history(HistoryCell::new_active_exec_command(command));
             }
             EventMsg::ExecCommandOutputDelta(_) => {}
             EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
@@ -451,13 +435,10 @@ impl ChatWidget<'_> {
                 } else {
                     "applying patch"
                 };
-                self.queue_commit_with_preview(
-                    HistoryCell::new_patch_event(
-                        PatchEventType::ApplyBegin { auto_approved },
-                        changes,
-                    ),
-                    prefix.to_string(),
-                );
+                self.add_to_history(HistoryCell::new_patch_event(
+                    PatchEventType::ApplyBegin { auto_approved },
+                    changes,
+                ));
             }
             EventMsg::ExecCommandEnd(ExecCommandEndEvent {
                 call_id,
@@ -466,24 +447,16 @@ impl ChatWidget<'_> {
                 stderr,
             }) => {
                 // Compute summary before moving stdout into the history cell.
-                let summary = if !stdout.trim().is_empty() {
-                    stdout.lines().next().unwrap_or("").to_string()
-                } else {
-                    format!("command exited with code {exit_code}")
-                };
                 let cmd = self.running_commands.remove(&call_id);
-                self.queue_commit_with_preview(
-                    HistoryCell::new_completed_exec_command(
-                        cmd.map(|cmd| cmd.command).unwrap_or_else(|| vec![call_id]),
-                        CommandOutput {
-                            exit_code,
-                            stdout,
-                            stderr,
-                            duration: Duration::from_secs(0),
-                        },
-                    ),
-                    summary,
-                );
+                self.add_to_history(HistoryCell::new_completed_exec_command(
+                    cmd.map(|cmd| cmd.command).unwrap_or_else(|| vec![call_id]),
+                    CommandOutput {
+                        exit_code,
+                        stdout,
+                        stderr,
+                        duration: Duration::from_secs(0),
+                    },
+                ));
             }
             EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
                 call_id: _,
@@ -498,10 +471,7 @@ impl ChatWidget<'_> {
                 let server = invocation.server.clone();
                 let tool = invocation.tool.clone();
                 let preview = format!("MCP {server}.{tool}({args_str})");
-                self.queue_commit_with_preview(
-                    HistoryCell::new_active_mcp_tool_call(invocation),
-                    preview,
-                );
+                self.add_to_history(HistoryCell::new_active_mcp_tool_call(invocation));
             }
             EventMsg::McpToolCallEnd(McpToolCallEndEvent {
                 call_id: _,
@@ -509,19 +479,16 @@ impl ChatWidget<'_> {
                 invocation,
                 result,
             }) => {
-                self.queue_commit_with_preview(
-                    HistoryCell::new_completed_mcp_tool_call(
-                        80,
-                        invocation,
-                        duration,
-                        result
-                            .as_ref()
-                            .map(|r| r.is_error.unwrap_or(false))
-                            .unwrap_or(false),
-                        result,
-                    ),
-                    "MCP call finished".to_string(),
-                );
+                self.add_to_history(HistoryCell::new_completed_mcp_tool_call(
+                    80,
+                    invocation,
+                    duration,
+                    result
+                        .as_ref()
+                        .map(|r| r.is_error.unwrap_or(false))
+                        .unwrap_or(false),
+                    result,
+                ));
             }
             EventMsg::GetHistoryEntryResponse(event) => {
                 let codex_core::protocol::GetHistoryEntryResponseEvent {
@@ -573,17 +540,19 @@ impl ChatWidget<'_> {
     /// current text. We then commit the corresponding pending entry to
     /// history and, if another entry is waiting, start animating it next.
     pub(crate) fn on_live_status_reveal_complete(&mut self) {
-        if let Some(pending) = self.pending_commits.pop_front() {
-            match pending {
-                PendingHistoryCommit::AgentMessage(text) => {
-                    self.add_to_history(HistoryCell::new_agent_message(&self.config, text));
-                }
-                PendingHistoryCommit::AgentReasoning(text) => {
-                    self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, text));
-                }
-                PendingHistoryCommit::HistoryCellWithPreview { cell, .. } => {
-                    self.add_to_history(cell);
-                }
+        // If there are no pending commits, we are simply showing the waiting
+        // spinner; keep it visible and do nothing.
+        let Some(pending) = self.pending_commits.pop_front() else { return };
+
+        match pending {
+            PendingHistoryCommit::AgentMessage(text) => {
+                self.add_to_history(HistoryCell::new_agent_message(&self.config, text));
+            }
+            PendingHistoryCommit::AgentReasoning(text) => {
+                self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, text));
+            }
+            PendingHistoryCommit::HistoryCellWithPreview { cell, .. } => {
+                self.add_to_history(cell);
             }
         }
 
@@ -597,19 +566,12 @@ impl ChatWidget<'_> {
                 }
                 PendingHistoryCommit::HistoryCellWithPreview { preview, .. } => preview.clone(),
             };
-            // Restart the live status so the typewriter begins from the start
-            // for the new entry.
             self.bottom_pane.restart_live_status_with_text(text);
         } else if let Some(queued) = self.queued_status_text.take() {
-            // No more pending entries – show any queued status update now.
             self.bottom_pane.update_status_text(queued);
         } else {
-            // Nothing more to show; clear the live status and, if we deferred
-            // the TaskComplete UI update earlier, apply it now.
-            self.bottom_pane.clear_live_status();
-            // If the live status replaced the composer (input takeover),
-            // restore the composer now that there is nothing left to animate.
-            self.bottom_pane.clear_status_view();
+            // No more animated entries; leave the waiting spinner in place until
+            // TaskComplete arrives. If TaskComplete was deferred, clear it now.
             if self.defer_task_stop {
                 self.bottom_pane.set_task_running(false);
                 self.defer_task_stop = false;
@@ -661,6 +623,97 @@ impl ChatWidget<'_> {
         self.token_usage = TokenUsage::default();
         self.bottom_pane
             .set_token_usage(self.token_usage.clone(), self.config.model_context_window);
+    }
+}
+
+impl ChatWidget<'_> {
+    fn begin_stream(&mut self, kind: StreamKind) {
+        if self.current_stream != Some(kind) {
+            self.current_stream = Some(kind);
+            self.stream_header_emitted = false;
+            // Clear any previous live content; we're starting a new stream.
+            self.live_builder = RowBuilder::new(self.live_builder.width());
+            // Ensure the waiting status is visible (composer replaced).
+            self.bottom_pane
+                .update_status_text("waiting for model".to_string());
+        }
+    }
+
+    fn stream_push_and_maybe_commit(&mut self, delta: &str) {
+        self.live_builder.push_fragment(delta);
+
+        // Commit overflow rows (small batches) while keeping the last N rows visible.
+        let drained = self
+            .live_builder
+            .drain_commit_ready(self.live_max_rows as usize);
+        if !drained.is_empty() {
+            let mut lines: Vec<ratatui::text::Line<'static>> = Vec::new();
+            if !self.stream_header_emitted {
+                match self.current_stream {
+                    Some(StreamKind::Reasoning) => {
+                        lines.push(ratatui::text::Line::from(
+                            "thinking".magenta().italic(),
+                        ));
+                    }
+                    Some(StreamKind::Answer) => {
+                        lines.push(ratatui::text::Line::from("codex".magenta().bold()));
+                    }
+                    None => {}
+                }
+                self.stream_header_emitted = true;
+            }
+            for r in drained {
+                lines.push(ratatui::text::Line::from(r.text));
+            }
+            self.app_event_tx.send(AppEvent::InsertHistory(lines));
+        }
+
+        // Update the live ring overlay lines (text-only, newest at bottom).
+        let rows = self
+            .live_builder
+            .display_rows()
+            .into_iter()
+            .map(|r| ratatui::text::Line::from(r.text))
+            .collect::<Vec<_>>();
+        self.bottom_pane.set_live_ring_rows(self.live_max_rows, rows);
+    }
+
+    fn finalize_stream(&mut self, kind: StreamKind) {
+        if self.current_stream != Some(kind) {
+            // Nothing to do; either already finalized or not the active stream.
+            return;
+        }
+        // Flush any partial line as a full row, then drain all remaining rows.
+        self.live_builder.end_line();
+        let remaining = self.live_builder.drain_rows();
+        if !remaining.is_empty() || !self.stream_header_emitted {
+            let mut lines: Vec<ratatui::text::Line<'static>> = Vec::new();
+            if !self.stream_header_emitted {
+                match kind {
+                    StreamKind::Reasoning => {
+                        lines.push(ratatui::text::Line::from(
+                            "thinking".magenta().italic(),
+                        ));
+                    }
+                    StreamKind::Answer => {
+                        lines.push(ratatui::text::Line::from("codex".magenta().bold()));
+                    }
+                }
+                self.stream_header_emitted = true;
+            }
+            for r in remaining {
+                lines.push(ratatui::text::Line::from(r.text));
+            }
+            // Close the block with a blank line for readability.
+            lines.push(ratatui::text::Line::from(String::new()));
+            self.app_event_tx.send(AppEvent::InsertHistory(lines));
+        }
+
+        // Clear the live overlay and reset state for the next stream.
+        self.live_builder = RowBuilder::new(self.live_builder.width());
+        self.bottom_pane.clear_live_ring();
+        self.current_stream = None;
+        self.stream_header_emitted = false;
     }
 }
 

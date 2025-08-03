@@ -113,19 +113,23 @@ fn wrapped_line_count(lines: &[Line], width: u16) -> u16 {
 }
 
 fn line_height(line: &Line, width: u16) -> u16 {
-    use unicode_width::UnicodeWidthStr;
-    // get the total display width of the line, accounting for double-width chars
-    let total_width = line
+    // Use the same visible-width slicing semantics as the live row builder so
+    // our pre-scroll estimation matches how rows will actually wrap.
+    let w = width.max(1) as usize;
+    let mut rows = 0u16;
+    let mut remaining = line
         .spans
         .iter()
-        .map(|span| span.content.width())
-        .sum::<usize>();
-    // divide by width to get the number of lines, rounding up
-    if width == 0 {
-        1
-    } else {
-        (total_width as u16).div_ceil(width).max(1)
+        .map(|s| s.content.as_ref())
+        .collect::<Vec<_>>()
+        .join("");
+    while !remaining.is_empty() {
+        let (_prefix, suffix, taken) = crate::live_wrap::take_prefix_by_width(&remaining, w);
+        rows = rows.saturating_add(1);
+        if taken >= remaining.len() { break; }
+        remaining = suffix.to_string();
     }
+    rows.max(1)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -307,5 +311,13 @@ mod tests {
             String::from_utf8(actual).unwrap(),
             String::from_utf8(expected).unwrap()
         );
+    }
+
+    #[test]
+    fn line_height_counts_double_width_emoji() {
+        let line = Line::from("😀😀😀"); // each emoji ~ width 2
+        assert_eq!(line_height(&line, 4), 2);
+        assert_eq!(line_height(&line, 2), 3);
+        assert_eq!(line_height(&line, 6), 1);
     }
 }
