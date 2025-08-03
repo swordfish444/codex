@@ -37,6 +37,7 @@ mod openai_tools;
 pub mod plan_tool;
 mod project_doc;
 pub mod protocol;
+pub mod providers;
 mod rollout;
 pub(crate) mod safety;
 pub mod seatbelt;
@@ -45,7 +46,6 @@ pub mod spawn;
 pub mod turn_diff_tracker;
 mod user_notification;
 pub mod util;
-pub mod providers;
 
 pub use apply_patch::CODEX_APPLY_PATCH_ARG1;
 pub use client_common::model_supports_reasoning_summaries;

@@ -58,8 +58,11 @@ pub use cli::Cli;
 // Centralized Ollama helpers from core
 use codex_core::providers::ollama::OllamaClient;
 use codex_core::providers::ollama::TuiProgressReporter;
-use codex_core::providers::ollama::{ensure_configured_and_running, ensure_model_available};
-use codex_core::providers::ollama::{read_config_models, read_provider_state, write_config_models};
+use codex_core::providers::ollama::ensure_configured_and_running;
+use codex_core::providers::ollama::ensure_model_available;
+use codex_core::providers::ollama::read_config_models;
+use codex_core::providers::ollama::read_provider_state;
+use codex_core::providers::ollama::write_config_models;
 
 fn print_inline_message_no_models(
     host_root: &str,

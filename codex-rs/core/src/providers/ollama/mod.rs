@@ -9,6 +9,11 @@ use std::collections::VecDeque;
 use std::io;
 use std::io::Write;
 use std::path::Path;
+use std::str::FromStr;
+use toml_edit::DocumentMut as Document;
+use toml_edit::Item;
+use toml_edit::Table;
+use toml_edit::Value as TomlValueEdit;
 
 pub const DEFAULT_BASE_URL: &str = "http://localhost:11434/v1";
 pub const DEFAULT_WIRE_API: WireApi = WireApi::Chat;
@@ -33,6 +38,12 @@ pub fn base_url_to_host_root(base_url: &str) -> String {
     }
 }
 
+/// Variant that considers an explicit WireApi value; provided to centralize
+/// host root computation in one place for future extension.
+pub fn base_url_to_host_root_with_wire(base_url: &str, _wire_api: WireApi) -> String {
+    base_url_to_host_root(base_url)
+}
+
 /// Compute the probe URL to verify if an Ollama server is reachable.
 /// If the configured base is OpenAI-compatible (/v1), probe "models", otherwise
 /// fall back to the native "/api/tags" endpoint.
@@ -46,9 +57,9 @@ pub fn probe_url_for_base(base_url: &str) -> String {
 
 /// Convenience helper to probe an Ollama server given a provider style base URL.
 pub async fn probe_ollama_server(base_url: &str) -> io::Result<bool> {
-    let host_root = base_url_to_host_root(base_url);
-    let client = OllamaClient::from_host_root(host_root);
-    client.probe_server().await
+    let url = probe_url_for_base(base_url);
+    let resp = reqwest::Client::new().get(url).send().await;
+    Ok(matches!(resp, Ok(r) if r.status().is_success()))
 }
 /// Coordinator wrapper used by frontends when responding to `--ollama`.
 ///
@@ -423,58 +434,18 @@ pub fn read_config_models(config_path: &Path) -> io::Result<Vec<String>> {
     Ok(read_ollama_models_list(config_path))
 }
 
-/// Overwrite the recorded models list under [model_providers.ollama].models.
+/// Overwrite the recorded models list under [model_providers.ollama].models using toml_edit.
 pub fn write_ollama_models_list(config_path: &Path, models: &[String]) -> io::Result<()> {
-    use toml::value::Table as TomlTable;
-    let mut root_value = if let Ok(contents) = std::fs::read_to_string(config_path) {
-        toml::from_str::<toml::Value>(&contents).unwrap_or(toml::Value::Table(TomlTable::new()))
-    } else {
-        toml::Value::Table(TomlTable::new())
-    };
-
-    if !matches!(root_value, toml::Value::Table(_)) {
-        root_value = toml::Value::Table(TomlTable::new());
+    let mut doc = read_document(config_path)?;
+    {
+        let tbl = upsert_provider_ollama(&mut doc);
+        let mut arr = toml_edit::Array::new();
+        for m in models {
+            arr.push(TomlValueEdit::from(m.clone()));
+        }
+        tbl["models"] = Item::Value(TomlValueEdit::Array(arr));
     }
-    let root_tbl = match root_value.as_table_mut() {
-        Some(t) => t,
-        None => return Err(io::Error::other("invalid TOML root value")),
-    };
-
-    let mp_val = root_tbl
-        .entry("model_providers".to_string())
-        .or_insert_with(|| toml::Value::Table(TomlTable::new()));
-    if !mp_val.is_table() {
-        *mp_val = toml::Value::Table(TomlTable::new());
-    }
-    let mp_tbl = match mp_val.as_table_mut() {
-        Some(t) => t,
-        None => return Err(io::Error::other("invalid model_providers table")),
-    };
-
-    let ollama_val = mp_tbl
-        .entry("ollama".to_string())
-        .or_insert_with(|| toml::Value::Table(TomlTable::new()));
-    if !ollama_val.is_table() {
-        *ollama_val = toml::Value::Table(TomlTable::new());
-    }
-    let ollama_tbl = match ollama_val.as_table_mut() {
-        Some(t) => t,
-        None => return Err(io::Error::other("invalid ollama table")),
-    };
-    let arr = toml::Value::Array(
-        models
-            .iter()
-            .map(|m| toml::Value::String(m.clone()))
-            .collect(),
-    );
-    ollama_tbl.insert("models".to_string(), arr);
-
-    let updated =
-        toml::to_string_pretty(&root_value).map_err(|e| io::Error::other(e.to_string()))?;
-    if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(config_path, updated)
+    write_document(config_path, &doc)
 }
 
 /// Write models list via a uniform name expected by higher layers.
@@ -485,74 +456,17 @@ pub fn write_config_models(config_path: &Path, models: &[String]) -> io::Result<
 /// Ensure `[model_providers.ollama]` exists with sensible defaults on disk.
 /// Returns true if it created/updated the entry.
 pub fn ensure_ollama_provider_entry(codex_home: &Path) -> io::Result<bool> {
-    use toml::value::Table as TomlTable;
     let config_path = codex_home.join("config.toml");
-    let mut root_value = if let Ok(contents) = std::fs::read_to_string(&config_path) {
-        toml::from_str::<toml::Value>(&contents).unwrap_or(toml::Value::Table(TomlTable::new()))
+    let mut doc = read_document(&config_path)?;
+    let before = doc.to_string();
+    let _tbl = upsert_provider_ollama(&mut doc);
+    let after = doc.to_string();
+    if before != after {
+        write_document(&config_path, &doc)?;
+        Ok(true)
     } else {
-        toml::Value::Table(TomlTable::new())
-    };
-
-    if !matches!(root_value, toml::Value::Table(_)) {
-        root_value = toml::Value::Table(TomlTable::new());
+        Ok(false)
     }
-    let root_tbl = match root_value.as_table_mut() {
-        Some(t) => t,
-        None => return Err(io::Error::other("invalid TOML root")),
-    };
-
-    let mp_val = root_tbl
-        .entry("model_providers".to_string())
-        .or_insert_with(|| toml::Value::Table(TomlTable::new()));
-    if !mp_val.is_table() {
-        *mp_val = toml::Value::Table(TomlTable::new());
-    }
-    let mp_tbl = match mp_val.as_table_mut() {
-        Some(t) => t,
-        None => return Err(io::Error::other("invalid model_providers table")),
-    };
-
-    let mut changed = false;
-    let ollama_val = mp_tbl.entry("ollama".to_string()).or_insert_with(|| {
-        changed = true;
-        toml::Value::Table(TomlTable::new())
-    });
-    if !ollama_val.is_table() {
-        *ollama_val = toml::Value::Table(TomlTable::new());
-        changed = true;
-    }
-    if let Some(tbl) = ollama_val.as_table_mut() {
-        if !tbl.contains_key("name") {
-            tbl.insert(
-                "name".to_string(),
-                toml::Value::String("Ollama".to_string()),
-            );
-            changed = true;
-        }
-        if !tbl.contains_key("base_url") {
-            tbl.insert(
-                "base_url".to_string(),
-                toml::Value::String(DEFAULT_BASE_URL.to_string()),
-            );
-            changed = true;
-        }
-        if !tbl.contains_key("wire_api") {
-            tbl.insert(
-                "wire_api".to_string(),
-                toml::Value::String("chat".to_string()),
-            );
-            changed = true;
-        }
-    }
-
-    if changed {
-        if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let updated = toml::to_string_pretty(&root_value).map_err(io::Error::other)?;
-        std::fs::write(config_path, updated)?;
-    }
-    Ok(changed)
 }
 
 /// Alias name mirroring the refactor plan wording.
@@ -634,4 +548,62 @@ pub async fn ensure_model_available(
     listed.dedup();
     let _ = write_ollama_models_list(config_path, &listed);
     Ok(())
+}
+
+// ---------- toml_edit helpers ----------
+
+fn read_document(path: &Path) -> io::Result<Document> {
+    match std::fs::read_to_string(path) {
+        Ok(s) => Document::from_str(&s).map_err(io::Error::other),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Document::new()),
+        Err(e) => Err(e),
+    }
+}
+
+fn write_document(path: &Path, doc: &Document) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, doc.to_string())
+}
+
+pub fn upsert_provider_ollama(doc: &mut Document) -> &mut Table {
+    // Ensure the provider tables exist first, then take a single mutable borrow.
+    if !doc["model_providers"].is_table() {
+        doc["model_providers"] = Item::Table(Table::new());
+    }
+    {
+        // Narrow scope: mutate/create the nested `ollama` table without keeping a borrow alive.
+        let providers = match doc["model_providers"].as_table_mut() {
+            Some(table) => table,
+            None => return Box::leak(Box::new(Table::default())),
+        };
+        if !providers.contains_key("ollama") || !providers["ollama"].is_table() {
+            providers["ollama"] = Item::Table(Table::new());
+        }
+    }
+    // Now, safely borrow the `ollama` table mutably once and return it.
+    let tbl = match doc["model_providers"]["ollama"].as_table_mut() {
+        Some(table) => table,
+        None => return Box::leak(Box::new(Table::default())),
+    };
+    if !tbl.contains_key("name") {
+        tbl["name"] = Item::Value(TomlValueEdit::from("Ollama"));
+    }
+    if !tbl.contains_key("base_url") {
+        tbl["base_url"] = Item::Value(TomlValueEdit::from(DEFAULT_BASE_URL));
+    }
+    if !tbl.contains_key("wire_api") {
+        tbl["wire_api"] = Item::Value(TomlValueEdit::from("chat"));
+    }
+    tbl
+}
+
+pub fn set_ollama_models(doc: &mut Document, models: &[String]) {
+    let tbl = upsert_provider_ollama(doc);
+    let mut arr = toml_edit::Array::new();
+    for m in models {
+        arr.push(TomlValueEdit::from(m.clone()));
+    }
+    tbl["models"] = Item::Value(TomlValueEdit::Array(arr));
 }
