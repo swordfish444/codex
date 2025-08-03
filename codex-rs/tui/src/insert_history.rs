@@ -1,6 +1,20 @@
 use std::fmt;
+use std::io;
+use std::io::Write;
 
 use crossterm::Command;
+use crossterm::queue;
+use crossterm::style::Attribute as CAttribute;
+use crossterm::style::Color as CColor;
+use crossterm::style::Colors;
+use crossterm::style::Print;
+use crossterm::style::SetAttribute;
+use crossterm::style::SetBackgroundColor;
+use crossterm::style::SetColors;
+use crossterm::style::SetForegroundColor;
+use ratatui::style::Color;
+use ratatui::style::Modifier;
+use ratatui::text::Span;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetScrollRegion(pub std::ops::Range<u16>);
