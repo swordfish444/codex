@@ -1,6 +1,9 @@
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::chatwidget::ChatWidget;
+use crate::command_utils::strip_surrounding_quotes;
+use crate::danger_warning_screen::DangerWarningOutcome;
+use crate::danger_warning_screen::DangerWarningScreen;
 use crate::file_search::FileSearchManager;
 use crate::get_git_diff::get_git_diff;
 use crate::git_warning_screen::GitWarningOutcome;
@@ -16,8 +19,12 @@ use crossterm::SynchronizedUpdate;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
+use crossterm::execute as ct_execute;
+use crossterm::terminal::EnterAlternateScreen;
+use crossterm::terminal::LeaveAlternateScreen;
 use crossterm::terminal::supports_keyboard_enhancement;
 use ratatui::layout::Offset;
+use ratatui::layout::Rect;
 use ratatui::prelude::Backend;
 use ratatui::text::Line;
 use std::path::PathBuf;
@@ -43,29 +50,19 @@ enum AppState<'a> {
     },
     /// The start-up warning that recommends running codex inside a Git repo.
     GitWarning { screen: GitWarningScreen },
+    /// Full‑screen warning when switching to the fully‑unsafe execution mode.
+    DangerWarning {
+        screen: DangerWarningScreen,
+        /// Retain the chat widget so background events can still be processed.
+        widget: Box<ChatWidget<'a>>,
+        pending_approval: codex_core::protocol::AskForApproval,
+        pending_sandbox: codex_core::protocol::SandboxPolicy,
+    },
 }
 
 /// Strip a single pair of surrounding quotes from the provided string if present.
 /// Supports straight and common curly quotes: '…', "…", ‘…’, “…”.
-pub fn strip_surrounding_quotes(s: &str) -> &str {
-    // Opening/closing pairs (note curly quotes differ on each side)
-    const QUOTE_PAIRS: &[(char, char)] = &[('"', '"'), ('\'', '\''), ('“', '”'), ('‘', '’')];
-
-    let t = s.trim();
-    if t.len() < 2 {
-        return t;
-    }
-
-    for &(open, close) in QUOTE_PAIRS {
-        if t.starts_with(open) && t.ends_with(close) {
-            let start = open.len_utf8();
-            let end = t.len() - close.len_utf8();
-            return &t[start..end];
-        }
-    }
-
-    t
-}
+// strip_surrounding_quotes moved to command_utils.rs
 
 pub(crate) struct App<'a> {
     app_event_tx: AppEventSender,
@@ -87,6 +84,13 @@ pub(crate) struct App<'a> {
     chat_args: Option<ChatWidgetArgs>,
 
     enhanced_keys_supported: bool,
+    /// One-shot flag to resync viewport and cursor after leaving the
+    /// alternate-screen Danger warning so the composer stays at the bottom.
+    fixup_viewport_after_danger: bool,
+    /// If set, defer opening the DangerWarning screen until after the next
+    /// redraw so any selection popups are cleared from the normal screen.
+    pending_show_danger: Option<(codex_core::protocol::AskForApproval, codex_core::protocol::SandboxPolicy)>,
+    last_bottom_pane_area: Option<Rect>,
 }
 
 /// Aggregate parameters needed to create a `ChatWidget`, as creation may be
@@ -102,6 +106,34 @@ struct ChatWidgetArgs {
 }
 
 impl App<'_> {
+    /// Handle `/model <arg>` from the slash command dispatcher.
+    fn handle_model_command(&mut self, args: &str) {
+        let arg = args.trim();
+        if let AppState::Chat { widget } = &mut self.app_state {
+            let normalized = strip_surrounding_quotes(arg).trim().to_string();
+            if !normalized.is_empty() {
+                widget.update_model_and_reconfigure(normalized);
+            }
+        }
+    }
+
+    /// Handle `/approvals <preset>` from the slash command dispatcher.
+    fn handle_approvals_command(&mut self, args: &str) {
+        let arg = args.trim();
+        if let AppState::Chat { widget } = &mut self.app_state {
+            let normalized = strip_surrounding_quotes(arg).trim().to_string();
+            if !normalized.is_empty() {
+                use crate::command_utils::parse_execution_mode_token;
+                if let Some((approval, sandbox)) = parse_execution_mode_token(&normalized) {
+                    widget.update_execution_mode_and_reconfigure(approval, sandbox);
+                } else {
+                    widget.add_diff_output(format!(
+                        "`/approvals {normalized}` — unrecognized execution mode"
+                    ));
+                }
+            }
+        }
+    }
     pub(crate) fn new(
         config: Config,
         initial_prompt: Option<String>,
@@ -202,6 +234,9 @@ impl App<'_> {
             pending_redraw,
             chat_args,
             enhanced_keys_supported,
+            fixup_viewport_after_danger: false,
+            pending_show_danger: None,
+            last_bottom_pane_area: None,
         }
     }
 
@@ -249,6 +284,31 @@ impl App<'_> {
                 }
                 AppEvent::Redraw => {
                     std::io::stdout().sync_update(|_| self.draw_next_frame(terminal))??;
+                    if let Some((approval, sandbox)) = self.pending_show_danger.take() {
+                        if let Some(area) = self.last_bottom_pane_area {
+                            use crossterm::cursor::MoveTo;
+                            use crossterm::terminal::{Clear, ClearType};
+                            use crossterm::queue;
+                            use std::io::Write;
+                            for y in area.y..area.bottom() {
+                                let _ = queue!(std::io::stdout(), MoveTo(0, y), Clear(ClearType::CurrentLine));
+                            }
+                            let _ = std::io::stdout().flush();
+                        }
+                        if let AppState::Chat { widget } = std::mem::replace(
+                            &mut self.app_state,
+                            AppState::GitWarning { screen: GitWarningScreen::new() },
+                        ) {
+                            let _ = ct_execute!(std::io::stdout(), EnterAlternateScreen);
+                            self.app_state = AppState::DangerWarning {
+                                screen: DangerWarningScreen::new(),
+                                widget,
+                                pending_approval: approval,
+                                pending_sandbox: sandbox,
+                            };
+                            self.app_event_tx.send(AppEvent::RequestRedraw);
+                        }
+                    }
                 }
                 AppEvent::KeyEvent(key_event) => {
                     match key_event {
@@ -264,6 +324,9 @@ impl App<'_> {
                                 }
                                 AppState::GitWarning { .. } => {
                                     // No-op.
+                                }
+                                AppState::DangerWarning { .. } => {
+                                    // No-op on Ctrl+C in danger screen
                                 }
                             }
                         }
@@ -286,6 +349,9 @@ impl App<'_> {
                                 }
                                 AppState::GitWarning { .. } => {
                                     self.app_event_tx.send(AppEvent::ExitRequest);
+                                }
+                                AppState::DangerWarning { .. } => {
+                                    // Ignore Ctrl+D while danger screen is visible.
                                 }
                             }
                         }
@@ -315,8 +381,24 @@ impl App<'_> {
                     }
                 }
                 AppEvent::SelectExecutionMode { approval, sandbox } => {
-                    if let AppState::Chat { widget } = &mut self.app_state {
-                        widget.update_execution_mode_and_reconfigure(approval, sandbox);
+                    // Intercept the dangerous preset with a full‑screen warning.
+                    if let AppState::Chat { widget: _ } = &self.app_state {
+                        if crate::command_utils::ExecutionPreset::from_policies(approval, &sandbox)
+                            == Some(crate::command_utils::ExecutionPreset::FullYolo)
+                        {
+                            // Defer opening the danger screen until after the next redraw so the
+                            // selection popup is closed and the normal screen is clean.
+                            self.pending_show_danger = Some((approval, sandbox));
+                            self.app_event_tx.send(AppEvent::RequestRedraw);
+                        } else if let AppState::Chat { widget } = std::mem::replace(
+                            &mut self.app_state,
+                            AppState::GitWarning { screen: GitWarningScreen::new() },
+                        ) {
+                            // Restore chat state and apply immediately for safe presets.
+                            let mut w = widget;
+                            w.update_execution_mode_and_reconfigure(approval, sandbox);
+                            self.app_state = AppState::Chat { widget: w };
+                        }
                     }
                 }
                 AppEvent::OpenModelSelector => {
@@ -332,10 +414,12 @@ impl App<'_> {
                 AppEvent::CodexOp(op) => match &mut self.app_state {
                     AppState::Chat { widget } => widget.submit_op(op),
                     AppState::GitWarning { .. } => {}
+                    AppState::DangerWarning { widget, .. } => widget.submit_op(op),
                 },
                 AppEvent::LatestLog(line) => match &mut self.app_state {
                     AppState::Chat { widget } => widget.update_latest_log(line),
                     AppState::GitWarning { .. } => {}
+                    AppState::DangerWarning { widget, .. } => widget.update_latest_log(line),
                 },
                 AppEvent::DispatchCommand(command) => match command {
                     SlashCommand::New => {
@@ -345,15 +429,11 @@ impl App<'_> {
                             None,
                             Vec::new(),
                             self.enhanced_keys_supported,
-                            self
-                                .chat_args
+                            self.chat_args
                                 .as_ref()
                                 .map(|a| a.cli_flags_used.clone())
                                 .unwrap_or_default(),
-                            self
-                                .chat_args
-                                .as_ref()
-                                .and_then(|a| a.cli_model.clone()),
+                            self.chat_args.as_ref().and_then(|a| a.cli_model.clone()),
                         ));
                         self.app_state = AppState::Chat { widget: new_widget };
                         self.app_event_tx.send(AppEvent::RequestRedraw);
@@ -435,45 +515,16 @@ impl App<'_> {
                     }
                 },
                 AppEvent::DispatchCommandWithArgs(command, args) => match command {
-                    SlashCommand::Model => {
-                        let arg = args.trim();
-                        if let AppState::Chat { widget } = &mut self.app_state {
-                            // Normalize commonly quoted inputs like \"o3\" or 'o3' or “o3”.
-                            let normalized = strip_surrounding_quotes(arg).trim().to_string();
-                            if !normalized.is_empty() {
-                                widget.update_model_and_reconfigure(normalized);
-                            }
-                        }
-                    }
-                    SlashCommand::Approvals => {
-                        let arg = args.trim();
-                        if let AppState::Chat { widget } = &mut self.app_state {
-                            let normalized = strip_surrounding_quotes(arg).trim().to_string();
-                            if !normalized.is_empty() {
-                                use crate::bottom_pane::selection_popup::parse_execution_mode_token;
-                                if let Some((approval, sandbox)) =
-                                    parse_execution_mode_token(&normalized)
-                                {
-                                    widget.update_execution_mode_and_reconfigure(approval, sandbox);
-                                } else {
-                                    widget.add_diff_output(format!(
-                                        "`/approvals {normalized}` — unrecognized execution mode"
-                                    ));
-                                }
-                            }
-                        }
-                    }
+                    SlashCommand::Model => self.handle_model_command(&args),
+                    SlashCommand::Approvals => self.handle_approvals_command(&args),
                     #[cfg(debug_assertions)]
                     SlashCommand::TestApproval => {
-                        // Ignore args; forward to the existing no-args handler
                         self.app_event_tx.send(AppEvent::DispatchCommand(command));
                     }
                     SlashCommand::New
                     | SlashCommand::Quit
                     | SlashCommand::Diff
                     | SlashCommand::Compact => {
-                        // For other commands, fall back to existing handling.
-                        // We can ignore args for now.
                         self.app_event_tx.send(AppEvent::DispatchCommand(command));
                     }
                 },
@@ -496,13 +547,14 @@ impl App<'_> {
         match &self.app_state {
             AppState::Chat { widget } => widget.token_usage().clone(),
             AppState::GitWarning { .. } => codex_core::protocol::TokenUsage::default(),
+            AppState::DangerWarning { widget, .. } => widget.token_usage().clone(),
         }
     }
 
     fn draw_next_frame(&mut self, terminal: &mut tui::Tui) -> Result<()> {
         let screen_size = terminal.size()?;
         let last_known_screen_size = terminal.last_known_screen_size;
-        if screen_size != last_known_screen_size {
+        if screen_size != last_known_screen_size && !self.fixup_viewport_after_danger {
             let cursor_pos = terminal.get_cursor_position()?;
             let last_known_cursor_pos = terminal.last_known_cursor_pos;
             if cursor_pos.y != last_known_cursor_pos.y {
@@ -524,7 +576,27 @@ impl App<'_> {
         let desired_height = match &self.app_state {
             AppState::Chat { widget } => widget.desired_height(size.width),
             AppState::GitWarning { .. } => 10,
+            AppState::DangerWarning { .. } => size.height,
         };
+
+        // If we just left the alternate-screen danger modal, refresh our internal
+        // cursor position and anchor the viewport to the bottom so the input bar
+        // isn't pushed to the top. Additionally, scroll the region above the new
+        // viewport down to eliminate any stale bottom-pane artifacts without
+        // clearing the chat history.
+        if self.fixup_viewport_after_danger {
+            self.fixup_viewport_after_danger = false;
+            let pos = terminal.get_cursor_position()?;
+            terminal.last_known_cursor_pos = pos;
+            let old_area = terminal.viewport_area;
+            let mut new_area = old_area;
+            new_area.height = desired_height.min(size.height);
+            new_area.width = size.width;
+            new_area.y = size.height.saturating_sub(new_area.height);
+            if new_area != old_area {
+                terminal.set_viewport_area(new_area);
+            }
+        }
 
         let mut area = terminal.viewport_area;
         area.height = desired_height.min(size.height);
@@ -549,9 +621,15 @@ impl App<'_> {
         match &mut self.app_state {
             AppState::Chat { widget } => {
                 terminal.draw(|frame| frame.render_widget_ref(&**widget, frame.area()))?;
+                self.last_bottom_pane_area = Some(area);
             }
             AppState::GitWarning { screen } => {
                 terminal.draw(|frame| frame.render_widget_ref(&*screen, frame.area()))?;
+                self.last_bottom_pane_area = None;
+            }
+            AppState::DangerWarning { screen, .. } => {
+                terminal.draw(|frame| frame.render_widget_ref(&*screen, frame.area()))?;
+                self.last_bottom_pane_area = None;
             }
         }
         Ok(())
@@ -591,6 +669,50 @@ impl App<'_> {
                     // do nothing
                 }
             },
+            AppState::DangerWarning { screen, .. } => match screen.handle_key_event(key_event) {
+                DangerWarningOutcome::Continue => {
+                    let taken = std::mem::replace(
+                        &mut self.app_state,
+                        AppState::GitWarning {
+                            screen: GitWarningScreen::new(),
+                        },
+                    );
+                    let _ = ct_execute!(std::io::stdout(), LeaveAlternateScreen);
+                    // After leaving the alternate screen, resync our viewport/cursor
+                    // so the chat composer stays anchored at the bottom.
+                    self.fixup_viewport_after_danger = true;
+                    if let AppState::DangerWarning {
+                        mut widget,
+                        pending_approval,
+                        pending_sandbox,
+                        ..
+                    } = taken
+                    {
+                        let approval = pending_approval;
+                        let sandbox = pending_sandbox;
+                        widget.update_execution_mode_and_reconfigure(approval, sandbox);
+                        self.app_state = AppState::Chat { widget };
+                        self.app_event_tx.send(AppEvent::RequestRedraw);
+                    }
+                }
+                DangerWarningOutcome::Cancel => {
+                    let taken = std::mem::replace(
+                        &mut self.app_state,
+                        AppState::GitWarning {
+                            screen: GitWarningScreen::new(),
+                        },
+                    );
+                    let _ = ct_execute!(std::io::stdout(), LeaveAlternateScreen);
+                    // After leaving the alternate screen, resync our viewport/cursor
+                    // so the chat composer stays anchored at the bottom.
+                    self.fixup_viewport_after_danger = true;
+                    if let AppState::DangerWarning { widget, .. } = taken {
+                        self.app_state = AppState::Chat { widget };
+                        self.app_event_tx.send(AppEvent::RequestRedraw);
+                    }
+                }
+                DangerWarningOutcome::None => {}
+            },
         }
     }
 
@@ -598,6 +720,7 @@ impl App<'_> {
         match &mut self.app_state {
             AppState::Chat { widget } => widget.handle_paste(pasted),
             AppState::GitWarning { .. } => {}
+            AppState::DangerWarning { .. } => {}
         }
     }
 
@@ -605,6 +728,7 @@ impl App<'_> {
         match &mut self.app_state {
             AppState::Chat { widget } => widget.handle_codex_event(event),
             AppState::GitWarning { .. } => {}
+            AppState::DangerWarning { widget, .. } => widget.handle_codex_event(event),
         }
     }
 }

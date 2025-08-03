@@ -62,7 +62,10 @@ pub(crate) enum AppEvent {
     OpenModelSelector,
 
     /// User selected an execution mode (approval + sandbox) from the dropdown or via /approvals.
-    SelectExecutionMode { approval: AskForApproval, sandbox: SandboxPolicy },
+    SelectExecutionMode {
+        approval: AskForApproval,
+        sandbox: SandboxPolicy,
+    },
 
     /// Request the app to open the approval selector (populate options and show popup).
     OpenApprovalSelector,

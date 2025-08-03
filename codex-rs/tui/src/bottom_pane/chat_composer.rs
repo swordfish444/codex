@@ -22,7 +22,7 @@ use super::file_search_popup::FileSearchPopup;
 use super::selection_popup::SelectionKind;
 use super::selection_popup::SelectionPopup;
 use super::selection_popup::SelectionValue;
-use super::selection_popup::parse_execution_mode_token;
+use crate::command_utils::parse_execution_mode_token;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -316,8 +316,7 @@ impl ChatComposer<'_> {
     ) {
         match &mut self.active_popup {
             ActivePopup::Selection(popup) if popup.kind() == SelectionKind::Execution => {
-                *popup =
-                    SelectionPopup::new_execution_modes(current_approval, current_sandbox);
+                *popup = SelectionPopup::new_execution_modes(current_approval, current_sandbox);
             }
             _ => {
                 self.active_popup = ActivePopup::Selection(SelectionPopup::new_execution_modes(
@@ -576,13 +575,10 @@ impl ChatComposer<'_> {
                             SelectionKind::Execution
                                 if cmd_token == SlashCommand::Approvals.command() =>
                             {
-                                if let Some((approval, sandbox)) =
-                                    parse_execution_mode_token(&args)
+                                if let Some((approval, sandbox)) = parse_execution_mode_token(&args)
                                 {
-                                    self.app_event_tx.send(AppEvent::SelectExecutionMode {
-                                        approval,
-                                        sandbox,
-                                    });
+                                    self.app_event_tx
+                                        .send(AppEvent::SelectExecutionMode { approval, sandbox });
                                     self.textarea.select_all();
                                     self.textarea.cut();
                                     self.pending_pastes.clear();
@@ -1654,6 +1650,54 @@ mod tests {
         } else {
             panic!("expected Submitted");
         }
+    }
+
+    // Note: slash command with args is usually handled via the selection popup.
+
+    #[test]
+    fn approvals_selection_full_yolo_emits_select_execution_mode() {
+        use crate::app_event::AppEvent;
+        use codex_core::protocol::AskForApproval;
+        use codex_core::protocol::SandboxPolicy;
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+        use std::sync::mpsc::TryRecvError;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, sender, false);
+
+        // Open the execution selector popup with a benign current mode.
+        composer.open_execution_selector(
+            AskForApproval::OnFailure,
+            &SandboxPolicy::WorkspaceWrite {
+                writable_roots: vec![],
+                network_access: false,
+                include_default_writable_roots: true,
+            },
+        );
+
+        // Immediately move selection up once to wrap to the last item (Full yolo), then Enter.
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // Expect a SelectExecutionMode with DangerFullAccess.
+        let mut saw = false;
+        loop {
+            match rx.try_recv() {
+                Ok(AppEvent::SelectExecutionMode { approval, sandbox }) => {
+                    assert_eq!(approval, AskForApproval::Never);
+                    assert!(matches!(sandbox, SandboxPolicy::DangerFullAccess));
+                    saw = true;
+                    break;
+                }
+                Ok(_) => continue,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => break,
+            }
+        }
+        assert!(saw, "expected SelectExecutionMode for Full yolo");
     }
 
     #[test]

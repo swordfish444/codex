@@ -25,7 +25,9 @@ mod bottom_pane;
 mod chatwidget;
 mod citation_regex;
 mod cli;
+mod command_utils;
 mod custom_terminal;
+mod danger_warning_screen;
 mod exec_command;
 mod file_search;
 mod get_git_diff;
@@ -229,11 +231,14 @@ fn run_ratatui_app(
     let mut cli_flags_used: Vec<String> = Vec::new();
     if let Some(ap) = cli.approval_policy {
         // kebab-case variants via clap ValueEnum Debug formatting is fine here.
-        cli_flags_used.push(format!("--ask-for-approval {}", match ap {
-            codex_common::ApprovalModeCliArg::Untrusted => "untrusted",
-            codex_common::ApprovalModeCliArg::OnFailure => "on-failure",
-            codex_common::ApprovalModeCliArg::Never => "never",
-        }));
+        cli_flags_used.push(format!(
+            "--ask-for-approval {}",
+            match ap {
+                codex_common::ApprovalModeCliArg::Untrusted => "untrusted",
+                codex_common::ApprovalModeCliArg::OnFailure => "on-failure",
+                codex_common::ApprovalModeCliArg::Never => "never",
+            }
+        ));
     }
     if let Some(sm) = cli.sandbox_mode {
         let mode = match sm {
@@ -241,7 +246,7 @@ fn run_ratatui_app(
             codex_common::SandboxModeCliArg::WorkspaceWrite => "workspace-write",
             codex_common::SandboxModeCliArg::DangerFullAccess => "danger-full-access",
         };
-        cli_flags_used.push(format!("--sandbox {}", mode));
+        cli_flags_used.push(format!("--sandbox {mode}"));
     }
     if cli.full_auto {
         cli_flags_used.push("--full-auto".to_string());

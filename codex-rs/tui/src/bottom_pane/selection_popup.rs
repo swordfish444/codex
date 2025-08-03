@@ -8,14 +8,21 @@ use super::selection_list::SelectionItem;
 use super::selection_list::SelectionList;
 use super::selection_popup_common::GenericDisplayRow;
 use super::selection_popup_common::render_rows;
+use crate::command_utils::ExecutionPreset;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SelectionKind { Model, Execution }
+pub(crate) enum SelectionKind {
+    Model,
+    Execution,
+}
 
 #[derive(Clone)]
 pub(crate) enum SelectionValue {
     Model(String),
-    Execution { approval: AskForApproval, sandbox: SandboxPolicy },
+    Execution {
+        approval: AskForApproval,
+        sandbox: SandboxPolicy,
+    },
 }
 
 pub(crate) struct SelectionPopup {
@@ -48,43 +55,18 @@ impl SelectionPopup {
         current_approval: AskForApproval,
         current_sandbox: &SandboxPolicy,
     ) -> Self {
-        fn display_name(approval: AskForApproval, sandbox: &SandboxPolicy) -> &'static str {
-            match (approval, sandbox) {
-                (AskForApproval::Never, SandboxPolicy::ReadOnly) => "Read only",
-                (AskForApproval::OnFailure, SandboxPolicy::ReadOnly) => "Untrusted",
-                (AskForApproval::OnFailure, SandboxPolicy::WorkspaceWrite { .. }) => "Auto",
-                _ => "Custom",
-            }
-        }
-        fn description_for(approval: AskForApproval, sandbox: &SandboxPolicy) -> &'static str {
-            match (approval, sandbox) {
-                (AskForApproval::Never, SandboxPolicy::ReadOnly) =>
-                    "never prompt; read-only filesystem (flags: --ask-for-approval never --sandbox read-only)",
-                (AskForApproval::OnFailure, SandboxPolicy::ReadOnly) =>
-                    "ask to retry outside sandbox only on sandbox breach; read-only (flags: --ask-for-approval on-failure --sandbox read-only)",
-                (AskForApproval::OnFailure, SandboxPolicy::WorkspaceWrite { .. }) =>
-                    "auto in workspace sandbox; ask to retry outside sandbox on breach (flags: --ask-for-approval on-failure --sandbox workspace-write)",
-                _ => "custom combination",
-            }
-        }
-
-        let presets: Vec<(AskForApproval, SandboxPolicy)> = vec![
-            (AskForApproval::Never, SandboxPolicy::ReadOnly),
-            (AskForApproval::OnFailure, SandboxPolicy::ReadOnly),
-            (
-                AskForApproval::OnFailure,
-                SandboxPolicy::WorkspaceWrite {
-                    writable_roots: vec![],
-                    network_access: false,
-                    include_default_writable_roots: true,
-                },
-            ),
+        let presets: Vec<ExecutionPreset> = vec![
+            ExecutionPreset::ReadOnly,
+            ExecutionPreset::Untrusted,
+            ExecutionPreset::Auto,
+            ExecutionPreset::FullYolo,
         ];
 
         let mut items: Vec<SelectionItem<SelectionValue>> = Vec::new();
-        for (a, s) in presets.into_iter() {
-            let name = display_name(a, &s).to_string();
-            let desc = Some(description_for(a, &s).to_string());
+        for p in presets.into_iter() {
+            let (a, s) = p.to_policies();
+            let name = p.label().to_string();
+            let desc = Some(p.description().to_string());
             let mut item = SelectionItem::new(
                 SelectionValue::Execution {
                     approval: a,
@@ -93,18 +75,15 @@ impl SelectionPopup {
                 name,
             )
             .with_description(desc);
-            if a == current_approval
-                && matches!(
-                    (&s, current_sandbox),
-                    (SandboxPolicy::ReadOnly, SandboxPolicy::ReadOnly)
-                        | (SandboxPolicy::WorkspaceWrite { .. }, SandboxPolicy::WorkspaceWrite { .. })
-                )
-            {
+            if ExecutionPreset::from_policies(current_approval, current_sandbox) == Some(p) {
                 item = item.mark_current(true);
             }
             items.push(item);
         }
-        Self { kind: SelectionKind::Execution, list: SelectionList::new(items) }
+        Self {
+            kind: SelectionKind::Execution,
+            list: SelectionList::new(items),
+        }
     }
 
     pub(crate) fn kind(&self) -> SelectionKind {
@@ -143,40 +122,55 @@ impl WidgetRef for &SelectionPopup {
     }
 }
 
-/// Parse a free-form token to an execution preset (approval+sandbox).
-pub(crate) fn parse_execution_mode_token(
-    s: &str,
-) -> Option<(AskForApproval, SandboxPolicy)> {
-    let t = s.trim().to_ascii_lowercase();
-    match t.as_str() {
-        "read-only" => Some((AskForApproval::Never, SandboxPolicy::ReadOnly)),
-        "untrusted" => Some((AskForApproval::OnFailure, SandboxPolicy::ReadOnly)),
-        "auto" => Some((
-            AskForApproval::OnFailure,
-            SandboxPolicy::WorkspaceWrite {
-                writable_roots: vec![],
-                network_access: false,
-                include_default_writable_roots: true,
-            },
-        )),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::parse_execution_mode_token as parse;
+    use crate::command_utils::parse_execution_mode_token as parse;
     use codex_core::protocol::AskForApproval;
     use codex_core::protocol::SandboxPolicy;
 
     #[test]
     fn parse_approval_mode_aliases() {
         // Only accept the three canonical tokens
-        assert!(matches!(parse("auto").unwrap(), (AskForApproval::OnFailure, SandboxPolicy::WorkspaceWrite { .. })));
-        assert_eq!(parse("untrusted"), Some((AskForApproval::OnFailure, SandboxPolicy::ReadOnly)));
-        assert_eq!(parse("read-only"), Some((AskForApproval::Never, SandboxPolicy::ReadOnly)));
+        assert!(matches!(
+            parse("auto").unwrap(),
+            (
+                AskForApproval::OnFailure,
+                SandboxPolicy::WorkspaceWrite { .. }
+            )
+        ));
+        assert_eq!(
+            parse("untrusted"),
+            Some((AskForApproval::OnFailure, SandboxPolicy::ReadOnly))
+        );
+        assert_eq!(
+            parse("read-only"),
+            Some((AskForApproval::Never, SandboxPolicy::ReadOnly))
+        );
         // Unknown and case/whitespace handling
         assert_eq!(parse("unknown"), None);
-        assert_eq!(parse("  AUTO  ").is_some(), true);
+        assert!(parse("  AUTO  ").is_some());
+        assert_eq!(
+            parse("full-yolo"),
+            Some((AskForApproval::Never, SandboxPolicy::DangerFullAccess))
+        );
+    }
+
+    #[test]
+    fn execution_selector_includes_full_yolo() {
+        // Set a benign current mode; we only care about rows.
+        let popup = super::SelectionPopup::new_execution_modes(
+            AskForApproval::OnFailure,
+            &SandboxPolicy::WorkspaceWrite {
+                writable_roots: vec![],
+                network_access: false,
+                include_default_writable_roots: true,
+            },
+        );
+        let rows = popup.visible_rows();
+        let labels: Vec<String> = rows.into_iter().map(|r| r.name).collect();
+        assert!(
+            labels.iter().any(|l| l.contains("Full yolo")),
+            "selector should include 'Full yolo'"
+        );
     }
 }

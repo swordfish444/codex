@@ -168,12 +168,9 @@ mod tests {
     fn selection_list_query_and_navigation() {
         // Build a small list with aliases similar to execution-mode popup.
         let items = vec![
-            SelectionItem::new("a", "Auto".to_string())
-                .with_aliases(vec!["auto".into()]),
-            SelectionItem::new("u", "Untrusted".to_string())
-                .with_aliases(vec!["untrusted".into()]),
-            SelectionItem::new("r", "Read only".to_string())
-                .with_aliases(vec!["read-only".into()]),
+            SelectionItem::new("a", "Auto".to_string()).with_aliases(vec!["auto".into()]),
+            SelectionItem::new("u", "Untrusted".to_string()).with_aliases(vec!["untrusted".into()]),
+            SelectionItem::new("r", "Read only".to_string()).with_aliases(vec!["read-only".into()]),
         ];
 
         let mut list = SelectionList::new(items);

@@ -617,12 +617,9 @@ impl ChatWidget<'_> {
         self.config.sandbox_policy = sandbox.clone();
 
         if approval_changed || sandbox_changed {
-            let label = match (approval, &sandbox) {
-                (AskForApproval::Never, SandboxPolicy::ReadOnly) => "Read only",
-                (AskForApproval::OnFailure, SandboxPolicy::ReadOnly) => "Untrusted",
-                (AskForApproval::OnFailure, SandboxPolicy::WorkspaceWrite { .. }) => "Auto",
-                _ => "Custom",
-            };
+            let label = crate::command_utils::ExecutionPreset::from_policies(approval, &sandbox)
+                .map(|p| p.label())
+                .unwrap_or("Custom");
             self.add_to_history(HistoryCell::new_background_event(format!(
                 "Set execution mode to {label}."
             )));
