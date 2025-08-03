@@ -150,6 +150,9 @@ pub struct Config {
 
     /// Include an experimental plan tool that the model can use to update its current plan and status of each step.
     pub include_plan_tool: bool,
+
+    /// The value for the `originator` header included with Responses API requests.
+    pub internal_originator: Option<String>,
 }
 
 impl Config {
@@ -344,6 +347,9 @@ pub struct ConfigToml {
 
     /// Experimental path to a file whose contents replace the built-in BASE_INSTRUCTIONS.
     pub experimental_instructions_file: Option<PathBuf>,
+
+    /// The value for the `originator` header included with Responses API requests.
+    pub internal_originator: Option<String>,
 }
 
 impl ConfigToml {
@@ -358,6 +364,7 @@ impl ConfigToml {
                 Some(s) => SandboxPolicy::WorkspaceWrite {
                     writable_roots: s.writable_roots.clone(),
                     network_access: s.network_access,
+                    include_default_writable_roots: true,
                 },
                 None => SandboxPolicy::new_workspace_write_policy(),
             },
@@ -538,6 +545,7 @@ impl Config {
 
             experimental_resume,
             include_plan_tool: include_plan_tool.unwrap_or(false),
+            internal_originator: cfg.internal_originator,
         };
         Ok(config)
     }
@@ -729,6 +737,7 @@ writable_roots = [
             SandboxPolicy::WorkspaceWrite {
                 writable_roots: vec![PathBuf::from("/tmp")],
                 network_access: false,
+                include_default_writable_roots: true,
             },
             sandbox_workspace_write_cfg.derive_sandbox_policy(sandbox_mode_override)
         );
@@ -897,6 +906,7 @@ disable_response_storage = true
                 experimental_resume: None,
                 base_instructions: None,
                 include_plan_tool: false,
+                internal_originator: None,
             },
             o3_profile_config
         );
@@ -947,6 +957,7 @@ disable_response_storage = true
             experimental_resume: None,
             base_instructions: None,
             include_plan_tool: false,
+            internal_originator: None,
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -1012,6 +1023,7 @@ disable_response_storage = true
             experimental_resume: None,
             base_instructions: None,
             include_plan_tool: false,
+            internal_originator: None,
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);
