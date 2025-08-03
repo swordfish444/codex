@@ -538,39 +538,42 @@ impl ChatWidget<'_> {
 
     /// Open the model selection view in the bottom pane.
     pub(crate) fn show_model_selector(&mut self) {
+        use std::collections::HashSet;
+
         let current = self.config.model.clone();
 
-        let mut options = get_all_model_names()
+        // Collect unique options from built-ins, current config, CLI, and config.toml.
+        let mut set: HashSet<String> = get_all_model_names()
             .into_iter()
             .map(|s| s.to_string())
-            .collect::<Vec<_>>();
+            .collect();
 
         // Always include the currently configured model (covers custom values).
-        options.push(current.clone());
+        set.insert(current.clone());
+
+        // Include model specified via --model if present.
+        if let Some(m) = &self.cli_model {
+            set.insert(m.clone());
+        }
 
         // Append any models found in config.toml profiles and top-level model.
         let config_path = self.config.codex_home.join("config.toml");
         if let Ok(contents) = std::fs::read_to_string(&config_path) {
             if let Ok(cfg) = toml::from_str::<ConfigToml>(&contents) {
-                let mut config_models: Vec<String> = Vec::new();
                 if let Some(m) = cfg.model {
-                    config_models.push(m);
+                    set.insert(m);
                 }
                 for (_name, profile) in cfg.profiles.into_iter() {
                     if let Some(m) = profile.model {
-                        config_models.push(m);
+                        set.insert(m);
                     }
                 }
-                // Alphabetical ordering for config models.
-                config_models.sort();
-                options.extend(config_models);
             }
         }
 
-        // Include model specified via --model if present.
-        if let Some(m) = &self.cli_model {
-            options.push(m.clone());
-        }
+        // Present options in a stable order for the UI.
+        let mut options: Vec<String> = set.into_iter().collect();
+        options.sort();
 
         self.bottom_pane.show_model_selector(&current, options);
     }

@@ -1,5 +1,13 @@
+//! Generic selection-list abstraction shared by model/execution selectors and other popups.
+//!
+//! This module provides `SelectionItem` (a value with name/description/aliases),
+//! and `SelectionList` which maintains filtering and scroll/selection state.
+//! The UI layer can convert items to `GenericDisplayRow` for rendering via
+//! `selection_popup_common::render_rows`.
+
 use codex_common::fuzzy_match::fuzzy_match;
 
+use super::popup_consts::MAX_POPUP_ROWS;
 use super::scroll_state::ScrollState;
 use super::selection_popup_common::GenericDisplayRow;
 
@@ -56,7 +64,8 @@ impl<T: Clone> SelectionList<T> {
         };
         let visible_len = this.visible_rows().len();
         this.state.clamp_selection(visible_len);
-        this.state.ensure_visible(visible_len, visible_len.min(8));
+        this.state
+            .ensure_visible(visible_len, visible_len.min(MAX_POPUP_ROWS));
         this
     }
 
@@ -71,20 +80,21 @@ impl<T: Clone> SelectionList<T> {
             self.state.reset();
         } else {
             self.state.selected_idx = Some(0);
-            self.state.ensure_visible(visible_len, visible_len.min(8));
+            self.state
+                .ensure_visible(visible_len, visible_len.min(MAX_POPUP_ROWS));
         }
     }
 
     pub fn move_up(&mut self) {
         let len = self.visible_rows().len();
         self.state.move_up_wrap(len);
-        self.state.ensure_visible(len, len.min(8));
+        self.state.ensure_visible(len, len.min(MAX_POPUP_ROWS));
     }
 
     pub fn move_down(&mut self) {
         let len = self.visible_rows().len();
         self.state.move_down_wrap(len);
-        self.state.ensure_visible(len, len.min(8));
+        self.state.ensure_visible(len, len.min(MAX_POPUP_ROWS));
     }
 
     pub fn selected_value(&self) -> Option<T> {

@@ -1,9 +1,15 @@
+//! Generic selection popup for multiple use-cases (models, execution modes, etc.).
+//!
+//! Construct with `new_model` or `new_execution_modes`, pass key events to move
+//! selection and update the query via `set_query`, then render with
+//! `selection_popup_common::render_rows`.
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::SandboxPolicy;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::WidgetRef;
 
+use super::popup_consts::MAX_POPUP_ROWS;
 use super::selection_list::SelectionItem;
 use super::selection_list::SelectionList;
 use super::selection_popup_common::GenericDisplayRow;
@@ -29,8 +35,6 @@ pub(crate) struct SelectionPopup {
     kind: SelectionKind,
     list: SelectionList<SelectionValue>,
 }
-
-const MAX_RESULTS: usize = 8;
 
 impl SelectionPopup {
     pub(crate) fn new_model(current_model: &str, options: Vec<String>) -> Self {
@@ -106,7 +110,7 @@ impl SelectionPopup {
         self.list.move_down();
     }
     pub(crate) fn calculate_required_height(&self) -> u16 {
-        self.list.visible_rows().len().clamp(1, MAX_RESULTS) as u16
+        self.list.visible_rows().len().clamp(1, MAX_POPUP_ROWS) as u16
     }
     pub(crate) fn selected_value(&self) -> Option<SelectionValue> {
         self.list.selected_value()
@@ -124,7 +128,7 @@ impl SelectionPopup {
 impl WidgetRef for &SelectionPopup {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let rows_all = self.visible_rows();
-        render_rows(area, buf, &rows_all, &self.list.state, MAX_RESULTS);
+        render_rows(area, buf, &rows_all, &self.list.state, MAX_POPUP_ROWS);
     }
 }
 

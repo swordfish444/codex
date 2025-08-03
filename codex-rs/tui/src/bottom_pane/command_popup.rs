@@ -1,26 +1,16 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
-use ratatui::style::Style;
-use ratatui::style::Stylize;
-use ratatui::symbols::border::QUADRANT_LEFT_HALF;
-use ratatui::text::Line;
-use ratatui::text::Span;
-use ratatui::widgets::Cell;
-use ratatui::widgets::Row;
-use ratatui::widgets::Table;
-use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
 
 use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
 
-const MAX_POPUP_ROWS: usize = 5;
-/// Ideally this is enough to show the longest command name.
-const FIRST_COLUMN_WIDTH: u16 = 20;
+use super::popup_consts::MAX_POPUP_ROWS;
+use super::selection_popup_common::GenericDisplayRow;
+use super::selection_popup_common::render_rows;
 
 use super::scroll_state::ScrollState;
-use ratatui::style::Modifier;
+use codex_common::fuzzy_match::fuzzy_match;
 
 pub(crate) struct CommandPopup {
     command_filter: String,
@@ -74,24 +64,29 @@ impl CommandPopup {
         self.filtered_commands().len().clamp(1, MAX_POPUP_ROWS) as u16
     }
 
-    /// Return the list of commands that match the current filter. Matching is
-    /// performed using a case-insensitive prefix comparison on the command name.
+    /// Compute fuzzy-filtered matches paired with optional highlight indices and score.
+    /// Sorted by ascending score, then by command name for stability.
+    fn filtered(&self) -> Vec<(&SlashCommand, Option<Vec<usize>>, i32)> {
+        let filter = self.command_filter.trim();
+        let mut out: Vec<(&SlashCommand, Option<Vec<usize>>, i32)> = Vec::new();
+        if filter.is_empty() {
+            for (_, cmd) in self.all_commands.iter() {
+                out.push((cmd, None, 0));
+            }
+        } else {
+            for (_, cmd) in self.all_commands.iter() {
+                if let Some((indices, score)) = fuzzy_match(cmd.command(), filter) {
+                    out.push((cmd, Some(indices), score));
+                }
+            }
+        }
+        out.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.0.command().cmp(b.0.command())));
+        out
+    }
+
+    /// Backwards-compatible helper used by tests.
     fn filtered_commands(&self) -> Vec<&SlashCommand> {
-        let filter = self.command_filter.as_str();
-        self.all_commands
-            .iter()
-            .filter_map(|(_name, cmd)| {
-                if filter.is_empty() {
-                    return Some(cmd);
-                }
-                let name = cmd.command();
-                if name.len() >= filter.len() && name[..filter.len()].eq_ignore_ascii_case(filter) {
-                    Some(cmd)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<&SlashCommand>>()
+        self.filtered().into_iter().map(|(c, _, _)| c).collect()
     }
 
     /// Move the selection cursor one step up.
@@ -122,73 +117,24 @@ impl CommandPopup {
 
 impl WidgetRef for CommandPopup {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        let matches = self.filtered_commands();
-
-        let mut rows: Vec<Row> = Vec::new();
-
-        if matches.is_empty() {
-            rows.push(Row::new(vec![
-                Cell::from(""),
-                Cell::from("No matching commands").add_modifier(Modifier::ITALIC),
-            ]));
+        let matches = self.filtered();
+        let rows_all: Vec<GenericDisplayRow> = if matches.is_empty() {
+            Vec::new()
         } else {
-            let default_style = Style::default();
-            let command_style = Style::default().fg(Color::LightBlue);
-            let max_rows_from_area = area.height as usize;
-            let visible_rows = MAX_POPUP_ROWS
-                .min(matches.len())
-                .min(max_rows_from_area.max(1));
-            // Ensure the window is consistent with current area and selection
-            let mut start_idx = self.state.scroll_top.min(matches.len().saturating_sub(1));
-            if let Some(sel) = self.state.selected_idx {
-                if sel < start_idx {
-                    start_idx = sel;
-                } else if visible_rows > 0 {
-                    let bottom = start_idx + visible_rows - 1;
-                    if sel > bottom {
-                        start_idx = sel + 1 - visible_rows;
-                    }
-                }
-            }
-
-            for (global_idx, cmd) in matches
-                .iter()
-                .enumerate()
-                .skip(start_idx)
-                .take(visible_rows)
-            {
-                rows.push(Row::new(vec![
-                    Cell::from(Line::from(vec![
-                        if Some(global_idx) == self.state.selected_idx {
-                            Span::styled(
-                                "›",
-                                Style::default().bg(Color::DarkGray).fg(Color::LightCyan),
-                            )
-                        } else {
-                            Span::styled(QUADRANT_LEFT_HALF, Style::default().fg(Color::DarkGray))
-                        },
-                        Span::styled(format!("/{}", cmd.command()), command_style),
-                    ])),
-                    Cell::from(cmd.description().to_string()).style(default_style),
-                ]));
-            }
-        }
-
-        use ratatui::layout::Constraint;
-
-        let table = Table::new(
-            rows,
-            [Constraint::Length(FIRST_COLUMN_WIDTH), Constraint::Min(10)],
-        )
-        .column_spacing(0);
-        // .block(
-        //     Block::default()
-        //         .borders(Borders::LEFT)
-        //         .border_type(BorderType::QuadrantOutside)
-        //         .border_style(Style::default().fg(Color::DarkGray)),
-        // );
-
-        table.render(area, buf);
+            matches
+                .into_iter()
+                .map(|(cmd, indices, _)| GenericDisplayRow {
+                    name: format!("/{}", cmd.command()),
+                    match_indices: indices.map(|v| {
+                        // Shift highlight indices by one to account for the leading '/'
+                        v.into_iter().map(|i| i + 1).collect()
+                    }),
+                    is_current: false,
+                    description: Some(cmd.description().to_string()),
+                })
+                .collect()
+        };
+        render_rows(area, buf, &rows_all, &self.state, MAX_POPUP_ROWS);
     }
 }
 
@@ -197,6 +143,7 @@ mod tests {
     use super::*;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
+    use ratatui::widgets::Widget;
 
     #[test]
     fn move_down_wraps_to_top() {

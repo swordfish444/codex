@@ -413,7 +413,7 @@ impl App<'_> {
                         widget.show_model_selector();
                     }
                 }
-                AppEvent::OpenApprovalSelector => {
+                AppEvent::OpenExecutionSelector => {
                     if let AppState::Chat { widget } = &mut self.app_state {
                         widget.show_execution_selector();
                     }
@@ -428,8 +428,8 @@ impl App<'_> {
                     AppState::GitWarning { .. } => {}
                     AppState::DangerWarning { widget, .. } => widget.update_latest_log(line),
                 },
-                AppEvent::DispatchCommand(command) => match command {
-                    SlashCommand::New => {
+                AppEvent::DispatchCommand { cmd, args } => match (cmd, args.as_deref()) {
+                    (SlashCommand::New, _) => {
                         let new_widget = Box::new(ChatWidget::new(
                             self.config.clone(),
                             self.app_event_tx.clone(),
@@ -445,16 +445,16 @@ impl App<'_> {
                         self.app_state = AppState::Chat { widget: new_widget };
                         self.app_event_tx.send(AppEvent::RequestRedraw);
                     }
-                    SlashCommand::Compact => {
+                    (SlashCommand::Compact, _) => {
                         if let AppState::Chat { widget } = &mut self.app_state {
                             widget.clear_token_usage();
                             self.app_event_tx.send(AppEvent::CodexOp(Op::Compact));
                         }
                     }
-                    SlashCommand::Quit => {
+                    (SlashCommand::Quit, _) => {
                         break;
                     }
-                    SlashCommand::Diff => {
+                    (SlashCommand::Diff, _) => {
                         let (is_git_repo, diff_text) = match get_git_diff() {
                             Ok(v) => v,
                             Err(e) => {
@@ -476,7 +476,7 @@ impl App<'_> {
                         }
                     }
                     #[cfg(debug_assertions)]
-                    SlashCommand::TestApproval => {
+                    (SlashCommand::TestApproval, _) => {
                         use std::collections::HashMap;
 
                         use codex_core::protocol::ApplyPatchApprovalRequestEvent;
@@ -484,12 +484,6 @@ impl App<'_> {
 
                         self.app_event_tx.send(AppEvent::CodexEvent(Event {
                             id: "1".to_string(),
-                            // msg: EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
-                            //     call_id: "1".to_string(),
-                            //     command: vec!["git".into(), "apply".into()],
-                            //     cwd: self.config.cwd.clone(),
-                            //     reason: Some("test".to_string()),
-                            // }),
                             msg: EventMsg::ApplyPatchApprovalRequest(
                                 ApplyPatchApprovalRequestEvent {
                                     call_id: "1".to_string(),
@@ -514,26 +508,10 @@ impl App<'_> {
                             ),
                         }));
                     }
-                    SlashCommand::Model => {
-                        // Disallow `/model` without arguments; no action.
-                    }
-                    SlashCommand::Approvals => {
-                        // Disallow `/approvals` without arguments; no action.
-                    }
-                },
-                AppEvent::DispatchCommandWithArgs(command, args) => match command {
-                    SlashCommand::Model => self.handle_model_command(&args),
-                    SlashCommand::Approvals => self.handle_approvals_command(&args),
-                    #[cfg(debug_assertions)]
-                    SlashCommand::TestApproval => {
-                        self.app_event_tx.send(AppEvent::DispatchCommand(command));
-                    }
-                    SlashCommand::New
-                    | SlashCommand::Quit
-                    | SlashCommand::Diff
-                    | SlashCommand::Compact => {
-                        self.app_event_tx.send(AppEvent::DispatchCommand(command));
-                    }
+                    (SlashCommand::Model, Some(args)) => self.handle_model_command(args),
+                    (SlashCommand::Approvals, Some(args)) => self.handle_approvals_command(args),
+                    // Disallow `/model` and `/approvals` without args: no action.
+                    (SlashCommand::Model, None) | (SlashCommand::Approvals, None) => {}
                 },
                 AppEvent::StartFileSearch(query) => {
                     self.file_search.on_user_query(query);
@@ -561,7 +539,7 @@ impl App<'_> {
     fn draw_next_frame(&mut self, terminal: &mut tui::Tui) -> Result<()> {
         let screen_size = terminal.size()?;
         let last_known_screen_size = terminal.last_known_screen_size;
-        if screen_size != last_known_screen_size && !self.fixup_viewport_after_danger {
+        if screen_size != last_known_screen_size {
             let cursor_pos = terminal.get_cursor_position()?;
             let last_known_cursor_pos = terminal.last_known_cursor_pos;
             if cursor_pos.y != last_known_cursor_pos.y {

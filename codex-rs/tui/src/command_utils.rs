@@ -201,4 +201,33 @@ mod tests {
         assert_eq!(parse("unknown"), None);
         assert!(parse("  AUTO  ").is_some());
     }
+
+    #[test]
+    fn execution_preset_round_trip() {
+        // For each preset, ensure to_policies -> from_policies -> label/description are consistent
+        let presets = [
+            ExecutionPreset::ReadOnly,
+            ExecutionPreset::Untrusted,
+            ExecutionPreset::Auto,
+            ExecutionPreset::FullYolo,
+        ];
+
+        for p in presets {
+            let (a, s) = p.to_policies();
+            // Back to preset
+            assert_eq!(ExecutionPreset::from_policies(a, &s), Some(p));
+            // Labels and descriptions are non-empty and stable
+            assert!(!p.label().is_empty());
+            assert!(!p.description().is_empty());
+
+            // Parsing the canonical token yields the same preset
+            let token = match p {
+                ExecutionPreset::ReadOnly => "read-only",
+                ExecutionPreset::Untrusted => "untrusted",
+                ExecutionPreset::Auto => "auto",
+                ExecutionPreset::FullYolo => "full-yolo",
+            };
+            assert_eq!(ExecutionPreset::parse_token(token), Some(p));
+        }
+    }
 }

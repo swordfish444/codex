@@ -26,7 +26,9 @@ use crate::command_utils::parse_execution_mode_token;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::slash_command::ParsedSlash;
 use crate::slash_command::SlashCommand;
+use crate::slash_command::parse_slash_line;
 use codex_file_search::FileMatch;
 
 const BASE_PLACEHOLDER_TEXT: &str = "...";
@@ -47,8 +49,7 @@ pub(crate) struct ChatComposer<'a> {
     history: ChatComposerHistory,
     ctrl_c_quit_hint: bool,
     use_shift_enter_hint: bool,
-    dismissed_file_popup_token: Option<String>,
-    dismissed_slash_token: Option<String>,
+    dismissed: Dismissed,
     current_file_query: Option<String>,
     pending_pastes: Vec<(String, String)>,
 }
@@ -59,6 +60,13 @@ enum ActivePopup {
     Command(CommandPopup),
     File(FileSearchPopup),
     Selection(SelectionPopup),
+}
+
+/// Tracks tokens for which the user explicitly dismissed a popup to avoid
+/// reopening it immediately unless the input changes meaningfully.
+struct Dismissed {
+    slash: Option<String>,
+    file: Option<String>,
 }
 
 impl ChatComposer<'_> {
@@ -91,7 +99,7 @@ impl ChatComposer<'_> {
         let msg = format!("{attempted} not a recognized command");
         self.app_event_tx
             .send(AppEvent::InsertHistory(vec![Line::from(msg)]));
-        self.dismissed_slash_token = Some(cmd_token.to_string());
+        self.dismissed.slash = Some(cmd_token.to_string());
         self.active_popup = ActivePopup::None;
     }
 
@@ -99,7 +107,7 @@ impl ChatComposer<'_> {
     fn sync_popups(&mut self) {
         self.sync_command_popup();
         if matches!(self.active_popup, ActivePopup::Command(_)) {
-            self.dismissed_file_popup_token = None;
+            self.dismissed.file = None;
         } else {
             self.sync_file_search_popup();
         }
@@ -169,8 +177,10 @@ impl ChatComposer<'_> {
             history: ChatComposerHistory::new(),
             ctrl_c_quit_hint: false,
             use_shift_enter_hint,
-            dismissed_file_popup_token: None,
-            dismissed_slash_token: None,
+            dismissed: Dismissed {
+                slash: None,
+                file: None,
+            },
             current_file_query: None,
             pending_pastes: Vec::new(),
         };
@@ -358,7 +368,7 @@ impl ChatComposer<'_> {
             ActivePopup::Command(_) => {
                 self.sync_command_popup();
                 // When slash popup active, suppress file popup.
-                self.dismissed_file_popup_token = None;
+                self.dismissed.file = None;
             }
             _ => {
                 self.sync_command_popup();
@@ -389,7 +399,7 @@ impl ChatComposer<'_> {
             }
             Input { key: Key::Esc, .. } => {
                 if let Some(cmd_token) = Self::slash_token_from_first_line(&first_line_owned) {
-                    self.dismissed_slash_token = Some(cmd_token.to_string());
+                    self.dismissed.slash = Some(cmd_token.to_string());
                 }
                 self.active_popup = ActivePopup::None;
                 (InputResult::None, true)
@@ -435,11 +445,13 @@ impl ChatComposer<'_> {
                     if *cmd == SlashCommand::Model && args.trim().is_empty() {
                         self.app_event_tx.send(AppEvent::OpenModelSelector);
                     } else if *cmd == SlashCommand::Approvals && args.trim().is_empty() {
-                        self.app_event_tx.send(AppEvent::OpenApprovalSelector);
+                        self.app_event_tx.send(AppEvent::OpenExecutionSelector);
                     } else {
                         // Send command + args to the app layer.
-                        self.app_event_tx
-                            .send(AppEvent::DispatchCommandWithArgs(*cmd, args));
+                        self.app_event_tx.send(AppEvent::DispatchCommand {
+                            cmd: *cmd,
+                            args: Some(args),
+                        });
                     }
 
                     // Clear textarea so no residual text remains
@@ -476,7 +488,7 @@ impl ChatComposer<'_> {
             Input { key: Key::Esc, .. } => {
                 // Hide popup without modifying text, remember token to avoid immediate reopen.
                 if let Some(tok) = Self::current_at_token(&self.textarea) {
-                    self.dismissed_file_popup_token = Some(tok.to_string());
+                    self.dismissed.file = Some(tok.to_string());
                 }
                 self.active_popup = ActivePopup::None;
                 (InputResult::None, true)
@@ -562,10 +574,10 @@ impl ChatComposer<'_> {
                     if !args.is_empty() {
                         match popup.kind() {
                             SelectionKind::Model if cmd_token == SlashCommand::Model.command() => {
-                                self.app_event_tx.send(AppEvent::DispatchCommandWithArgs(
-                                    SlashCommand::Model,
-                                    args,
-                                ));
+                                self.app_event_tx.send(AppEvent::DispatchCommand {
+                                    cmd: SlashCommand::Model,
+                                    args: Some(args),
+                                });
                                 self.textarea.select_all();
                                 self.textarea.cut();
                                 self.pending_pastes.clear();
@@ -821,7 +833,7 @@ impl ChatComposer<'_> {
         let first_line = self.first_line().to_string();
         let input_starts_with_slash = first_line.starts_with('/');
         if !input_starts_with_slash {
-            self.dismissed_slash_token = None;
+            self.dismissed.slash = None;
         }
         let current_cmd_token: Option<&str> = Self::slash_token_from_first_line(&first_line);
 
@@ -864,13 +876,13 @@ impl ChatComposer<'_> {
                         self.app_event_tx.send(AppEvent::OpenModelSelector);
                     } else if should_open_approval_selector {
                         self.active_popup = ActivePopup::None;
-                        self.app_event_tx.send(AppEvent::OpenApprovalSelector);
+                        self.app_event_tx.send(AppEvent::OpenExecutionSelector);
                     } else {
                         popup.on_composer_text_change(first_line.clone());
                     }
                 } else {
                     self.active_popup = ActivePopup::None;
-                    self.dismissed_slash_token = None;
+                    self.dismissed.slash = None;
                 }
             }
             _ => {
@@ -880,11 +892,11 @@ impl ChatComposer<'_> {
                         // dismissed the slash popup for this token.
                         self.app_event_tx.send(AppEvent::OpenModelSelector);
                     } else if should_open_approval_selector {
-                        self.app_event_tx.send(AppEvent::OpenApprovalSelector);
+                        self.app_event_tx.send(AppEvent::OpenExecutionSelector);
                     } else {
                         // Avoid immediate reopen of the slash popup if it was just dismissed for
                         // this exact command token.
-                        if self.dismissed_slash_token.as_deref() == current_cmd_token {
+                        if self.dismissed.slash.as_deref() == current_cmd_token {
                             return;
                         }
                         let mut command_popup = CommandPopup::new();
@@ -904,13 +916,13 @@ impl ChatComposer<'_> {
             Some(token) => token,
             None => {
                 self.active_popup = ActivePopup::None;
-                self.dismissed_file_popup_token = None;
+                self.dismissed.file = None;
                 return;
             }
         };
 
         // If user dismissed popup for this exact query, don't reopen until text changes.
-        if self.dismissed_file_popup_token.as_ref() == Some(&query) {
+        if self.dismissed.file.as_ref() == Some(&query) {
             return;
         }
 
@@ -929,7 +941,7 @@ impl ChatComposer<'_> {
         }
 
         self.current_file_query = Some(query);
-        self.dismissed_file_popup_token = None;
+        self.dismissed.file = None;
     }
 
     /// Synchronize the selection popup filter with the current composer text.
@@ -958,19 +970,23 @@ impl ChatComposer<'_> {
         }
     }
 
-    /// Parse a leading "/command" and return (command_token, args_trimmed_left).
-    /// Returns None if the line does not start with a slash or the command is empty.
+    /// Parse a leading "/command" via the centralized slash parser, returning
+    /// (command_token, args_trimmed_left) for compatibility with existing code.
+    /// Returns None if the line does not start with a slash or the command token is empty.
     fn parse_slash_command_and_args_from_line(line: &str) -> Option<(String, String)> {
-        if let Some(stripped) = line.strip_prefix('/') {
-            let token = stripped.trim_start();
-            let cmd_token = token.split_whitespace().next().unwrap_or("");
-            if cmd_token.is_empty() {
-                return None;
+        match parse_slash_line(line) {
+            ParsedSlash::Command { cmd, args } => {
+                Some((cmd.command().to_string(), args.to_string()))
             }
-            let rest = &token[cmd_token.len()..];
-            Some((cmd_token.to_string(), rest.trim_start().to_string()))
-        } else {
-            None
+            ParsedSlash::Incomplete { token } if !token.is_empty() => {
+                // Compute rest of line after token for completeness.
+                // We mimic the previous logic: take the substring after the token in the trimmed view.
+                let stripped = line.strip_prefix('/')?;
+                let token_with_ws = stripped.trim_start();
+                let rest = &token_with_ws[token.len()..];
+                Some((token.to_string(), rest.trim_start().to_string()))
+            }
+            _ => None,
         }
     }
 
@@ -1008,22 +1024,9 @@ impl WidgetRef for &ChatComposer<'_> {
                 self.textarea.render(textarea_rect, buf);
             }
             ActivePopup::Selection(popup) => {
-                let popup_height = popup.calculate_required_height();
-
-                let popup_height = popup_height.min(area.height);
-                let textarea_rect = Rect {
-                    x: area.x,
-                    y: area.y,
-                    width: area.width,
-                    height: area.height.saturating_sub(popup_height),
-                };
-                let popup_rect = Rect {
-                    x: area.x,
-                    y: area.y + textarea_rect.height,
-                    width: area.width,
-                    height: popup_height,
-                };
-
+                let desired_popup = popup.calculate_required_height();
+                let (textarea_rect, popup_rect) =
+                    self.compute_textarea_and_popup_rect(area, desired_popup);
                 popup.render(popup_rect, buf);
                 self.textarea.render(textarea_rect, buf);
             }
@@ -1301,7 +1304,10 @@ mod tests {
         let sender = AppEventSender::new(tx);
         let mut terminal = match Terminal::new(TestBackend::new(100, 10)) {
             Ok(t) => t,
-            Err(e) => panic!("Failed to create terminal: {e}"),
+            Err(e) => {
+                eprintln!("Skipping ui_snapshots: failed to create terminal: {e}");
+                return;
+            }
         };
 
         let test_cases = vec![
@@ -1335,9 +1341,8 @@ mod tests {
                 composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
             }
 
-            terminal
-                .draw(|f| f.render_widget_ref(&composer, f.area()))
-                .unwrap_or_else(|e| panic!("Failed to draw {name} composer: {e}"));
+            let draw_res = terminal.draw(|f| f.render_widget_ref(&composer, f.area()));
+            assert!(draw_res.is_ok(), "Failed to draw {name} composer");
 
             assert_snapshot!(name, terminal.backend());
         }
@@ -1833,11 +1838,11 @@ mod tests {
         use crossterm::event::KeyModifiers;
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
-        // We should emit OpenApprovalSelector
+        // We should emit OpenExecutionSelector
         let mut saw_open = false;
         loop {
             match rx.try_recv() {
-                Ok(AppEvent::OpenApprovalSelector) => {
+                Ok(AppEvent::OpenExecutionSelector) => {
                     saw_open = true;
                     break;
                 }

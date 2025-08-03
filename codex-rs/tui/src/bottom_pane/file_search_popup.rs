@@ -16,8 +16,7 @@ use ratatui::widgets::Table;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
 
-/// Maximum number of suggestions shown in the popup.
-const MAX_RESULTS: usize = 8;
+use super::popup_consts::MAX_POPUP_ROWS;
 
 /// Visual state for the file-search popup.
 pub(crate) struct FileSearchPopup {
@@ -115,7 +114,7 @@ impl FileSearchPopup {
         // up to MAX_RESULTS regardless of the waiting flag so the list
         // remains stable while a newer search is in-flight.
 
-        self.matches.len().clamp(1, MAX_RESULTS) as u16
+        self.matches.len().clamp(1, MAX_POPUP_ROWS) as u16
     }
 }
 
@@ -134,26 +133,24 @@ impl WidgetRef for &FileSearchPopup {
         } else {
             self.matches
                 .iter()
-                .take(MAX_RESULTS)
+                .take(MAX_POPUP_ROWS)
                 .enumerate()
                 .map(|(i, file_match)| {
                     let FileMatch { path, indices, .. } = file_match;
                     let path = path.as_str();
-                    #[allow(clippy::expect_used)]
-                    let indices = indices.as_ref().expect("indices should be present");
+                    let indices_opt = indices.as_ref();
 
-                    // Build spans with bold on matching indices.
-                    let mut idx_iter = indices.iter().peekable();
+                    // Build spans with bold on matching indices when provided by the searcher.
+                    let mut idx_iter = indices_opt.map(|v| v.iter().peekable());
                     let mut spans: Vec<Span> = Vec::with_capacity(path.len());
 
                     for (char_idx, ch) in path.chars().enumerate() {
                         let mut style = Style::default();
-                        if idx_iter
-                            .peek()
-                            .is_some_and(|next| **next == char_idx as u32)
-                        {
-                            idx_iter.next();
-                            style = style.add_modifier(Modifier::BOLD);
+                        if let Some(iter) = idx_iter.as_mut() {
+                            if iter.peek().is_some_and(|next| **next == char_idx as u32) {
+                                iter.next();
+                                style = style.add_modifier(Modifier::BOLD);
+                            }
                         }
                         spans.push(Span::styled(ch.to_string(), style));
                     }

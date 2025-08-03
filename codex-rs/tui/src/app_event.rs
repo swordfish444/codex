@@ -33,12 +33,12 @@ pub(crate) enum AppEvent {
     LatestLog(String),
 
     /// Dispatch a recognized slash command from the UI (composer) to the app
-    /// layer so it can be handled centrally.
-    DispatchCommand(SlashCommand),
-
-    /// Dispatch a recognized slash command along with the raw argument string
-    /// following the command on the first line.
-    DispatchCommandWithArgs(SlashCommand, String),
+    /// layer so it can be handled centrally. Optional `args` contains the
+    /// left-trimmed raw argument string following the command, if any.
+    DispatchCommand {
+        cmd: SlashCommand,
+        args: Option<String>,
+    },
 
     /// Kick off an asynchronous file search for the given query (text after
     /// the `@`). Previous searches may be cancelled by the app layer so there
@@ -67,6 +67,6 @@ pub(crate) enum AppEvent {
         sandbox: SandboxPolicy,
     },
 
-    /// Request the app to open the approval selector (populate options and show popup).
-    OpenApprovalSelector,
+    /// Request the app to open the execution-mode selector (populate options and show popup).
+    OpenExecutionSelector,
 }
