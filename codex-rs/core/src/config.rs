@@ -11,7 +11,6 @@ use crate::config_types::Tui;
 use crate::config_types::UriBasedFileOpener;
 use crate::flags::OPENAI_DEFAULT_MODEL;
 use crate::model_provider_info::ModelProviderInfo;
-use crate::model_provider_info::WireApi;
 use crate::model_provider_info::built_in_model_providers;
 use crate::openai_model_info::get_model_info;
 use crate::protocol::AskForApproval;
@@ -553,28 +552,11 @@ impl Config {
             .or(config_profile.model_provider)
             .or(cfg.model_provider)
             .unwrap_or_else(|| "openai".to_string());
-        // If the user explicitly selected the `ollama` provider but it is not
-        // defined in `config.toml`, inject a sensible default so the flag works
-        // out of the box without requiring manual configuration.
-        if model_provider_id == "ollama" && !model_providers.contains_key("ollama") {
-            model_providers.insert(
-                "ollama".to_string(),
-                ModelProviderInfo {
-                    name: "Ollama".to_string(),
-                    base_url: Some("http://localhost:11434/v1".to_string()),
-                    env_key: None,
-                    env_key_instructions: None,
-                    wire_api: WireApi::Chat,
-                    query_params: None,
-                    http_headers: None,
-                    env_http_headers: None,
-                    request_max_retries: None,
-                    stream_max_retries: None,
-                    stream_idle_timeout_ms: None,
-                    requires_auth: false,
-                },
-            );
-        }
+        // Do not implicitly inject an Ollama provider when selected via
+        // `-c model_provider=ollama`. Only the `--ollama` flag path sets up the
+        // provider entry and performs discovery. This ensures parity with
+        // other providers: if a provider is not defined in config.toml, we
+        // return a clear error below.
         let model_provider = model_providers
             .get(&model_provider_id)
             .ok_or_else(|| {

@@ -12,6 +12,7 @@ use codex_login::load_auth;
 use crossterm::event::Event as CEvent;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
+use crossterm::event::KeyModifiers;
 use crossterm::event::{self};
 use crossterm::terminal::disable_raw_mode;
 use crossterm::terminal::enable_raw_mode;
@@ -80,7 +81,7 @@ async fn pull_model_with_progress_tui(host_root: &str, model: &str) -> std::io::
     use futures_util::StreamExt;
     let url = format!("{host_root}/api/pull");
     let client = reqwest::Client::new();
-    let mut resp = client
+    let resp = client
         .post(&url)
         .json(&serde_json::json!({"model": model, "stream": true}))
         .send()
@@ -111,93 +112,99 @@ async fn pull_model_with_progress_tui(host_root: &str, model: &str) -> std::io::
         let chunk = chunk.map_err(|e| std::io::Error::other(e.to_string()))?;
         buf.extend_from_slice(&chunk);
         // split by newlines
-        loop {
-            if let Some(pos) = buf.iter().position(|b| *b == b'\n') {
-                let line = buf.split_to(pos + 1);
-                if let Ok(text) = std::str::from_utf8(&line) {
-                    let text = text.trim();
-                    if text.is_empty() {
-                        continue;
+        while let Some(pos) = buf.iter().position(|b| *b == b'\n') {
+            let line = buf.split_to(pos + 1);
+            if let Ok(text) = std::str::from_utf8(&line) {
+                let text = text.trim();
+                if text.is_empty() {
+                    continue;
+                }
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
+                    if let Some(err_msg) = value.get("error").and_then(|e| e.as_str()) {
+                        let _ = out.write_all(b"\n");
+                        let _ = out.flush();
+                        if err_msg.contains("file does not exist") {
+                            return Err(std::io::Error::other("model not found"));
+                        } else {
+                            return Err(std::io::Error::other(format!(
+                                "ollama pull error: {err_msg}"
+                            )));
+                        }
                     }
-                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
-                        let status = value.get("status").and_then(|s| s.as_str()).unwrap_or("");
-                        let digest = value
-                            .get("digest")
-                            .and_then(|d| d.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let total = value.get("total").and_then(|t| t.as_u64());
-                        let completed = value.get("completed").and_then(|t| t.as_u64());
-                        if let Some(t) = total {
-                            let entry = totals.entry(digest.clone()).or_insert((t, 0));
-                            entry.0 = t;
-                        }
-                        if let Some(c) = completed {
-                            let entry = totals.entry(digest.clone()).or_insert((0, 0));
-                            entry.1 = c;
-                        }
+                    let status = value.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                    let digest = value
+                        .get("digest")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let total = value.get("total").and_then(|t| t.as_u64());
+                    let completed = value.get("completed").and_then(|t| t.as_u64());
+                    if let Some(t) = total {
+                        let entry = totals.entry(digest.clone()).or_insert((t, 0));
+                        entry.0 = t;
+                    }
+                    if let Some(c) = completed {
+                        let entry = totals.entry(digest.clone()).or_insert((0, 0));
+                        entry.1 = c;
+                    }
 
-                        let (sum_total, sum_completed) = totals
-                            .values()
-                            .fold((0u64, 0u64), |acc, v| (acc.0 + v.0, acc.1 + v.1));
+                    let (sum_total, sum_completed) = totals
+                        .values()
+                        .fold((0u64, 0u64), |acc, v| (acc.0 + v.0, acc.1 + v.1));
 
-                        if sum_total > 0 && !printed_header {
-                            let gb = (sum_total as f64) / (1024.0 * 1024.0 * 1024.0);
-                            let header = format!("Downloading {model}: total {gb:.2} GB\n");
-                            let _ = out.write_all(header.as_bytes());
-                            printed_header = true;
-                        }
+                    if sum_total > 0 && !printed_header {
+                        let gb = (sum_total as f64) / (1024.0 * 1024.0 * 1024.0);
+                        let header = format!("Downloading {model}: total {gb:.2} GB\n");
+                        // Clear any prior inline status text before printing header.
+                        let _ = out.write_all(b"\r\x1b[2K");
+                        let _ = out.write_all(header.as_bytes());
+                        printed_header = true;
+                    }
 
-                        if sum_total > 0 {
-                            let now = std::time::Instant::now();
-                            let dt = now.duration_since(last_instant).as_secs_f64().max(0.001);
-                            let dbytes = sum_completed.saturating_sub(last_completed) as f64;
-                            let speed_mb_s = dbytes / (1024.0 * 1024.0) / dt;
-                            last_completed = sum_completed;
-                            last_instant = now;
-                            let done_gb = (sum_completed as f64) / (1024.0 * 1024.0 * 1024.0);
-                            let total_gb = (sum_total as f64) / (1024.0 * 1024.0 * 1024.0);
-                            let pct = (sum_completed as f64) * 100.0 / (sum_total as f64);
-                            let line_text = format!(
-                                "{done:.2}/{total:.2} GB ({pct:.1}%) {speed:.1} MB/s",
-                                done = done_gb,
-                                total = total_gb,
-                                pct = pct,
-                                speed = speed_mb_s
-                            );
-                            let pad = last_line_len.saturating_sub(line_text.len());
-                            let line = format!(
-                                "\r{text}{spaces}",
-                                text = line_text,
-                                spaces = " ".repeat(pad)
-                            );
-                            last_line_len = line_text.len();
-                            let _ = out.write_all(line.as_bytes());
-                            let _ = out.flush();
-                        } else if !status.is_empty() {
-                            // Print status lines like verifying/writing only once.
-                            let line_text = status.to_string();
-                            let pad = last_line_len.saturating_sub(line_text.len());
-                            let line = format!(
-                                "\r{text}{spaces}",
-                                text = line_text,
-                                spaces = " ".repeat(pad)
-                            );
-                            last_line_len = line_text.len();
-                            let _ = out.write_all(line.as_bytes());
-                            let _ = out.flush();
-                        }
+                    if sum_total > 0 {
+                        let now = std::time::Instant::now();
+                        let dt = now.duration_since(last_instant).as_secs_f64().max(0.001);
+                        let dbytes = sum_completed.saturating_sub(last_completed) as f64;
+                        let speed_mb_s = dbytes / (1024.0 * 1024.0) / dt;
+                        last_completed = sum_completed;
+                        last_instant = now;
+                        let done_gb = (sum_completed as f64) / (1024.0 * 1024.0 * 1024.0);
+                        let total_gb = (sum_total as f64) / (1024.0 * 1024.0 * 1024.0);
+                        let pct = (sum_completed as f64) * 100.0 / (sum_total as f64);
+                        let line_text = format!(
+                            "{done_gb:.2}/{total_gb:.2} GB ({pct:.1}%) {speed_mb_s:.1} MB/s"
+                        );
+                        let pad = last_line_len.saturating_sub(line_text.len());
+                        let line = format!(
+                            "\r{text}{spaces}",
+                            text = line_text,
+                            spaces = " ".repeat(pad)
+                        );
+                        last_line_len = line_text.len();
+                        let _ = out.write_all(line.as_bytes());
+                        let _ = out.flush();
+                    } else if !status.is_empty() && !status.eq_ignore_ascii_case("pulling manifest")
+                    {
+                        // Print status lines like verifying/writing only once.
+                        let line_text = status.to_string();
+                        let pad = last_line_len.saturating_sub(line_text.len());
+                        let line = format!(
+                            "\r{text}{spaces}",
+                            text = line_text,
+                            spaces = " ".repeat(pad)
+                        );
+                        last_line_len = line_text.len();
+                        let _ = out.write_all(line.as_bytes());
+                        let _ = out.flush();
+                    }
 
-                        if status == "success" {
-                            let _ = out.write_all(b"\n");
-                            let _ = out.flush();
-                            saw_success = true;
-                            break;
-                        }
+                    if status == "success" {
+                        let _ = out.write_all(b"\n");
+                        let _ = out.flush();
+                        saw_success = true;
+                        break;
                     }
                 }
-            } else {
-                break;
             }
         }
         if saw_success {
@@ -234,11 +241,10 @@ async fn ensure_ollama_model_available_tui(
     }
 
     // 2) Pull if allowlisted.
-    const ALLOWLIST: &[&str] = &["llama3.2:3b"];
-    if !ALLOWLIST.iter().any(|&m| m == model) {
+    const ALLOWLIST: &[&str] = &["llama3.2:3b", "llama3.2:3b-instruct"];
+    if !ALLOWLIST.contains(&model) {
         return Err(std::io::Error::other(format!(
-            "Model `{}` not found locally and not in allowlist for automatic download.",
-            model
+            "Model `{model}` not found locally and not in allowlist for automatic download."
         )));
     }
     // Pull with progress; if the streaming connection ends before success, keep
@@ -246,7 +252,11 @@ async fn ensure_ollama_model_available_tui(
     loop {
         match pull_model_with_progress_tui(host_root, model).await {
             Ok(()) => break,
-            Err(_) => {
+            Err(e) => {
+                // If Ollama reports the model manifest does not exist, surface a clear error.
+                if e.to_string().contains("model not found") {
+                    return Err(std::io::Error::other("model not found"));
+                }
                 let available = fetch_ollama_models(host_root).await;
                 if available.iter().any(|m| m == model) {
                     break;
@@ -377,6 +387,8 @@ fn print_inline_message_no_models(
     let path = config_path.display().to_string();
     // green bold helper
     let b = |s: &str| format!("\x1b[1m{s}\x1b[0m");
+    // Ensure we start clean at column 0.
+    out.write_all(b"\r\x1b[2K")?;
     out.write_all(
         format!(
             "{}\n\n",
@@ -384,14 +396,16 @@ fn print_inline_message_no_models(
         )
         .as_bytes(),
     )?;
-    out.write_all(format!("endpoint: {host_root}\n").as_bytes())?;
+    out.write_all(format!("\rendpoint: {host_root}\n").as_bytes())?;
     if provider_was_present_before {
-        out.write_all(format!("config: ollama provider already present in {path}\n").as_bytes())?;
+        out.write_all(format!("\rconfig: ollama provider already present in {path}\n").as_bytes())?;
     } else {
-        out.write_all(format!("config: added ollama as a model provider in {path}\n").as_bytes())?;
+        out.write_all(
+            format!("\rconfig: added ollama as a model provider in {path}\n").as_bytes(),
+        )?;
     }
     out.write_all(
-        b"models: none recorded in config (pull models with `ollama pull <model>`).\n\n",
+        b"\rmodels: none recorded in config (pull models with `ollama pull <model>`).\n\n",
     )?;
     out.flush()
 }
@@ -402,7 +416,6 @@ fn run_inline_models_picker(
     preselected: &[String],
     config_path: &std::path::Path,
     provider_was_present_before: bool,
-    models_count_before: usize,
 ) -> io::Result<()> {
     let mut out = std::io::stdout();
     let mut selected: Vec<bool> = available
@@ -466,6 +479,28 @@ fn run_inline_models_picker(
                 let all_sel = selected.iter().all(|s| *s);
                 selected.fill(!all_sel);
             }
+            // Allow quitting the entire app from the inline picker with Ctrl+C or Ctrl+D.
+            CEvent::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers,
+                ..
+            }) if modifiers.contains(KeyModifiers::CONTROL) => {
+                // Restore terminal state and exit with SIGINT-like code.
+                disable_raw_mode()?;
+                // Start on a clean line before exiting.
+                out.write_all(b"\r\x1b[2K\n")?;
+                std::process::exit(130);
+            }
+            CEvent::Key(KeyEvent {
+                code: KeyCode::Char('d'),
+                modifiers,
+                ..
+            }) if modifiers.contains(KeyModifiers::CONTROL) => {
+                // Restore terminal state and exit cleanly.
+                disable_raw_mode()?;
+                out.write_all(b"\r\x1b[2K\n")?;
+                std::process::exit(0);
+            }
             CEvent::Key(KeyEvent {
                 code: KeyCode::Enter,
                 ..
@@ -481,12 +516,7 @@ fn run_inline_models_picker(
             }) => {
                 // Skip saving – print summary and continue.
                 disable_raw_mode()?;
-                print_config_summary_after_save(
-                    config_path,
-                    provider_was_present_before,
-                    models_count_before,
-                    None,
-                )?;
+                print_config_summary_after_save(config_path, provider_was_present_before, None)?;
                 return Ok(());
             }
             _ => {}
@@ -506,12 +536,7 @@ fn run_inline_models_picker(
         .collect();
 
     let _ = save_ollama_models(config_path, &chosen);
-    print_config_summary_after_save(
-        config_path,
-        provider_was_present_before,
-        models_count_before,
-        Some(chosen.len()),
-    )
+    print_config_summary_after_save(config_path, provider_was_present_before, Some(chosen.len()))
 }
 
 fn render_inline_picker(
@@ -532,12 +557,9 @@ fn render_inline_picker(
 
     let mut lines = Vec::new();
     let bold = |s: &str| format!("\x1b[1m{s}\x1b[0m");
-    lines.push(bold(&format!(
-        "we've discovered some models on ollama {host_root}:"
-    )));
-    lines.push(
-        "↑/↓ move, space to toggle, 'a' select/unselect all, enter confirm, 'q' skip".to_string(),
-    );
+    lines.push(bold(&format!("discovered models on ollama ({host_root}):")));
+    lines
+        .push("↑/↓ move, space to toggle, 'a' (un)select all, enter confirm, 'q' skip".to_string());
     lines.push(String::new());
     for (i, name) in items.iter().enumerate() {
         let mark = if selected.get(i).copied().unwrap_or(false) {
@@ -567,7 +589,6 @@ fn render_inline_picker(
 fn print_config_summary_after_save(
     config_path: &std::path::Path,
     provider_was_present_before: bool,
-    models_count_before: usize,
     models_count_after: Option<usize>,
 ) -> io::Result<()> {
     let mut out = std::io::stdout();
@@ -575,21 +596,23 @@ fn print_config_summary_after_save(
     out.write_all(b"\r\x1b[2K")?;
     let path = config_path.display().to_string();
     if provider_was_present_before {
-        out.write_all(format!("config: ollama provider already present in {path}\n").as_bytes())?;
+        out.write_all(format!("\rconfig: ollama provider already present in {path}\n").as_bytes())?;
     } else {
-        out.write_all(format!("config: added ollama as a model provider in {path}\n").as_bytes())?;
+        out.write_all(
+            format!("\rconfig: added ollama as a model provider in {path}\n").as_bytes(),
+        )?;
     }
     if let Some(after) = models_count_after {
         let names = read_ollama_models_list(config_path);
         if names.is_empty() {
-            out.write_all(format!("models: recorded {after}\n\n").as_bytes())?;
+            out.write_all(format!("\rmodels: recorded {after}\n\n").as_bytes())?;
         } else {
             out.write_all(
-                format!("models: recorded {} ({})\n\n", after, names.join(", ")).as_bytes(),
+                format!("\rmodels: recorded {} ({})\n\n", after, names.join(", ")).as_bytes(),
             )?;
         }
     } else {
-        out.write_all(b"models: no changes recorded\n\n")?;
+        out.write_all(b"\rmodels: no changes recorded\n\n")?;
     }
     out.flush()
 }
@@ -616,13 +639,13 @@ pub async fn run_main(
     };
 
     // Track config.toml state for messaging before launching TUI.
-    let (provider_was_present_before, models_count_before) = if cli.ollama {
+    let provider_was_present_before = if cli.ollama {
         let codex_home = codex_core::config::find_codex_home()?;
         let config_path = codex_home.join("config.toml");
-        let (p, m) = read_ollama_config_state(&config_path);
-        (p, m)
+        let (p, _m) = read_ollama_config_state(&config_path);
+        p
     } else {
-        (false, 0)
+        false
     };
 
     let config = {
@@ -697,8 +720,9 @@ pub async fn run_main(
             if let Err(e) =
                 ensure_ollama_model_available_tui(model_name, &host_root, &config_path).await
             {
-                #[allow(clippy::print_stderr)]
-                eprintln!("{e}");
+                let mut out = std::io::stderr();
+                let _ = out.write_all(format!("{e}\n").as_bytes());
+                let _ = out.flush();
                 std::process::exit(1);
             }
         } else {
@@ -752,7 +776,6 @@ pub async fn run_main(
                         &existing_models,
                         &config_path,
                         provider_was_present_before,
-                        models_count_before,
                     )?;
                 }
             }
