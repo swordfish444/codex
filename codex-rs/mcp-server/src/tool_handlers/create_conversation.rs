@@ -140,7 +140,7 @@ pub(crate) async fn handle_create_conversation(
     // Run the conversation loop in the background so this request can return immediately.
     let outgoing = message_processor.outgoing();
     let spawn_id = id.clone();
-    let running_sessions = message_processor.running_session_ids();
+    let running_session_ids = message_processor.running_session_ids();
     tokio::spawn(async move {
         run_conversation_loop(
             codex_arc.clone(),
@@ -148,7 +148,7 @@ pub(crate) async fn handle_create_conversation(
             spawn_id,
             stream_rx,
             session_id,
-            running_sessions,
+            running_session_ids,
         )
         .await;
     });

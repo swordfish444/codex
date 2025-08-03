@@ -57,9 +57,9 @@ pub(crate) async fn handle_send_message(
     };
 
     let running = {
-        let running_sessions = message_processor.running_session_ids();
-        let mut running_sessions = running_sessions.lock().await;
-        !running_sessions.insert(session_id)
+        let running_session_ids = message_processor.running_session_ids();
+        let running_session_ids = running_session_ids.lock().await;
+        running_session_ids.contains(&session_id)
     };
 
     if running {

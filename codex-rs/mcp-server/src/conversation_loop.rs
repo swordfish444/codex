@@ -75,7 +75,7 @@ pub async fn run_conversation_loop(
     request_id: RequestId,
     mut stream_rx: WatchReceiver<bool>,
     session_id: Uuid,
-    running_sessions: Arc<Mutex<HashSet<Uuid>>>,
+    running_session_ids: Arc<Mutex<HashSet<Uuid>>>,
 ) {
     let request_id_str = match &request_id {
         RequestId::String(s) => s.clone(),
@@ -105,7 +105,7 @@ pub async fn run_conversation_loop(
                     &mut buffered_events,
                     &mut pending_elicitations,
                     &ctx,
-                    &running_sessions,
+                    &running_session_ids,
                     &session_id,
                 ).await;
             },
@@ -131,7 +131,7 @@ async fn handle_next_event_arm<E>(
     buffered_events: &mut Vec<CodexEventNotificationParams>,
     pending_elicitations: &mut Vec<PendingElicitation>,
     ctx: &LoopCtx,
-    running_sessions: &Arc<Mutex<HashSet<Uuid>>>,
+    running_session_ids: &Arc<Mutex<HashSet<Uuid>>>,
     session_id: &Uuid,
 ) where
     E: std::fmt::Display,
@@ -164,6 +164,7 @@ async fn handle_next_event_arm<E>(
                 }
                 EventMsg::Error(_) => {
                     error!("Codex runtime error");
+                    handle_task_clear(running_session_ids, session_id).await;
                 }
                 EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
                     call_id,
@@ -186,7 +187,10 @@ async fn handle_next_event_arm<E>(
                     .await;
                 }
                 EventMsg::TaskComplete(_) => {
-                    handle_task_complete(running_sessions, session_id).await;
+                    handle_task_clear(running_session_ids, session_id).await;
+                }
+                EventMsg::TaskStarted => {
+                    handle_task_started(running_session_ids, session_id).await;
                 }
                 EventMsg::SessionConfigured(_) => {
                     tracing::error!("unexpected SessionConfigured event");
@@ -194,8 +198,7 @@ async fn handle_next_event_arm<E>(
                 EventMsg::AgentMessageDelta(_) => {}
                 EventMsg::AgentReasoningDelta(_) => {}
                 EventMsg::AgentMessage(AgentMessageEvent { .. }) => {}
-                EventMsg::TaskStarted
-                | EventMsg::TokenCount(_)
+                EventMsg::TokenCount(_)
                 | EventMsg::AgentReasoning(_)
                 | EventMsg::McpToolCallBegin(_)
                 | EventMsg::McpToolCallEnd(_)
@@ -207,11 +210,14 @@ async fn handle_next_event_arm<E>(
                 | EventMsg::PatchApplyEnd(_)
                 | EventMsg::GetHistoryEntryResponse(_)
                 | EventMsg::PlanUpdate(_)
-                | EventMsg::ShutdownComplete => {}
+                | EventMsg::ShutdownComplete => {
+                    handle_task_clear(running_session_ids, session_id).await;
+                }
             }
         }
         Err(e) => {
             error!("Codex runtime error: {e}");
+            handle_task_clear(running_session_ids, session_id).await;
         }
     }
 }
@@ -425,8 +431,14 @@ async fn stream_event_if_enabled(streaming_enabled: bool, ctx: &LoopCtx, msg: &E
     }
 }
 
-/// Removes the session id from the shared running set when a task completes.
-async fn handle_task_complete(running_sessions: &Arc<Mutex<HashSet<Uuid>>>, session_id: &Uuid) {
-    let mut running_sessions = running_sessions.lock().await;
-    running_sessions.remove(session_id);
+/// Inserts the session id into the shared running set when a task starts.
+async fn handle_task_started(running_session_ids: &Arc<Mutex<HashSet<Uuid>>>, session_id: &Uuid) {
+    let mut running_session_ids = running_session_ids.lock().await;
+    running_session_ids.insert(*session_id);
+}
+
+/// Removes the session id from the shared running set for any terminal condition.
+async fn handle_task_clear(running_session_ids: &Arc<Mutex<HashSet<Uuid>>>, session_id: &Uuid) {
+    let mut running_session_ids = running_session_ids.lock().await;
+    running_session_ids.remove(session_id);
 }
