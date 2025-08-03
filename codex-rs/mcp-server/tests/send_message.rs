@@ -1,11 +1,12 @@
 #![allow(clippy::expect_used)]
 
-use std::path::Path;
+ 
 use std::thread::sleep;
 use std::time::Duration;
 
 use codex_mcp_server::CodexToolCallParam;
 use mcp_test_support::McpProcess;
+use mcp_test_support::create_config_toml;
 use mcp_test_support::create_final_assistant_message_sse_response;
 use mcp_test_support::create_mock_chat_completions_server;
 use mcp_types::JSONRPC_VERSION;
@@ -135,29 +136,4 @@ async fn test_send_message_session_not_found() {
     assert_eq!(result["isError"], json!(true));
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-fn create_config_toml(codex_home: &Path, server_uri: &str) -> std::io::Result<()> {
-    let config_toml = codex_home.join("config.toml");
-    std::fs::write(
-        config_toml,
-        format!(
-            r#"
-model = "mock-model"
-approval_policy = "never"
-sandbox_mode = "danger-full-access"
-
-model_provider = "mock_provider"
-
-[model_providers.mock_provider]
-name = "Mock provider for test"
-base_url = "{server_uri}/v1"
-wire_api = "chat"
-request_max_retries = 0
-stream_max_retries = 0
-"#
-        ),
-    )
-}
+// Helpers are provided by tests/common

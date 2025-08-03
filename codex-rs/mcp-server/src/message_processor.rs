@@ -14,6 +14,7 @@ use crate::outgoing_message::OutgoingMessageSender;
 use crate::tool_handlers::create_conversation::handle_create_conversation;
 use crate::tool_handlers::send_message::handle_send_message;
 use crate::tool_handlers::stream_conversation;
+use crate::tool_handlers::stream_conversation::handle_stream_conversation;
 
 use codex_core::Codex;
 use codex_core::config::Config as CodexConfig;
@@ -380,10 +381,7 @@ impl MessageProcessor {
                 handle_send_message(self, request_id, args).await;
             }
             ToolCallRequestParams::ConversationStream(args) => {
-                crate::tool_handlers::stream_conversation::handle_stream_conversation(
-                    self, request_id, args,
-                )
-                .await;
+                handle_stream_conversation(self, request_id, args).await;
             }
             _ => {
                 let result = CallToolResult {
@@ -615,32 +613,80 @@ impl MessageProcessor {
         params: <mcp_types::CancelledNotification as mcp_types::ModelContextProtocolNotification>::Params,
     ) {
         let request_id = params.request_id;
-        // First, route cancellation for tracked tool calls (e.g., ConversationStream)
+
         if let Some(orig) = {
             let mut guard = self.tool_request_map.lock().await;
             guard.remove(&request_id)
         } {
-            match orig {
-                ToolCallRequestParams::ConversationStream(args) => {
-                    stream_conversation::handle_cancel(self, &args).await;
-                    return;
-                }
-                _ => {
-                    // TODO: Implement later. Things like interrupt.
+            self.handle_mcp_protocol_cancelled_notification(request_id, orig)
+                .await;
+        } else {
+            self.handle_legacy_cancelled_notification(request_id).await;
+        }
+    }
+
+    async fn handle_mcp_protocol_cancelled_notification(
+        &self,
+        request_id: RequestId,
+        orig: ToolCallRequestParams,
+    ) {
+        match orig {
+            ToolCallRequestParams::ConversationStream(args) => {
+                stream_conversation::handle_cancel(self, &args).await;
+            }
+            ToolCallRequestParams::ConversationSendMessage(args) => {
+                // Cancel in-flight user input for this conversation by interrupting
+                // the submission with the same request id we used when sending.
+                let request_id_string = match &request_id {
+                    RequestId::String(s) => s.clone(),
+                    RequestId::Integer(i) => i.to_string(),
+                };
+
+                let session_id = args.conversation_id.0;
+                let codex_arc = {
+                    let sessions_guard = self.session_map.lock().await;
+                    match sessions_guard.get(&session_id) {
+                        Some(codex) => Arc::clone(codex),
+                        None => {
+                            tracing::warn!(
+                                "Cancel send_message: session not found for session_id: {session_id}"
+                            );
+                            return;
+                        }
+                    }
+                };
+
+                if let Err(e) = codex_arc
+                    .submit_with_id(Submission {
+                        id: request_id_string,
+                        op: codex_core::protocol::Op::Interrupt,
+                    })
+                    .await
+                {
+                    tracing::error!("Failed to submit interrupt for send_message cancel: {e}");
                 }
             }
+            ToolCallRequestParams::ConversationCreate(_)
+            | ToolCallRequestParams::ConversationsList(_) => {
+                // Likely fast/non-streaming; nothing to cancel currently.
+                tracing::debug!(
+                    "Cancel conversationsList received for request_id: {:?} (no-op)",
+                    request_id
+                );
+            }
         }
-        // Create a stable string form early for logging and submission id.
+    }
+
+    async fn handle_legacy_cancelled_notification(&self, request_id: RequestId) {
         let request_id_string = match &request_id {
             RequestId::String(s) => s.clone(),
             RequestId::Integer(i) => i.to_string(),
         };
 
-        // Obtain the session_id while holding the first lock, then release.
         let session_id = {
             let map_guard = self.running_requests_id_to_codex_uuid.lock().await;
             match map_guard.get(&request_id) {
-                Some(id) => *id, // Uuid is Copy
+                Some(id) => *id,
                 None => {
                     tracing::warn!("Session not found for request_id: {}", request_id_string);
                     return;
@@ -649,7 +695,6 @@ impl MessageProcessor {
         };
         tracing::info!("session_id: {session_id}");
 
-        // Obtain the Codex Arc while holding the session_map lock, then release.
         let codex_arc = {
             let sessions_guard = self.session_map.lock().await;
             match sessions_guard.get(&session_id) {
@@ -661,18 +706,17 @@ impl MessageProcessor {
             }
         };
 
-        // Submit interrupt to Codex.
-        let err = codex_arc
+        if let Err(e) = codex_arc
             .submit_with_id(Submission {
                 id: request_id_string,
                 op: codex_core::protocol::Op::Interrupt,
             })
-            .await;
-        if let Err(e) = err {
+            .await
+        {
             tracing::error!("Failed to submit interrupt to Codex: {e}");
             return;
         }
-        // unregister the id so we don't keep it in the map
+
         self.running_requests_id_to_codex_uuid
             .lock()
             .await

@@ -83,6 +83,7 @@ pub async fn run_conversation_loop(
     };
 
     // Buffer all events to include in InitialState when streaming is enabled
+    // TODO: this should be expanded to load sessions from the disk.
     let mut buffered_events: Vec<CodexEventNotificationParams> = Vec::new();
     let mut streaming_enabled = *stream_rx.borrow();
 

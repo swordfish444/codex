@@ -2,6 +2,7 @@ use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::AtomicI64;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
@@ -295,7 +296,7 @@ impl McpProcess {
     /// Wait for an agent_message with a bounded timeout. Returns Some(params) if received, None on timeout.
     pub async fn maybe_wait_for_agent_message(
         &mut self,
-        dur: std::time::Duration,
+        dur: Duration,
     ) -> anyhow::Result<Option<serde_json::Value>> {
         match tokio::time::timeout(dur, self.wait_for_agent_message()).await {
             Ok(Ok(v)) => Ok(Some(v)),
