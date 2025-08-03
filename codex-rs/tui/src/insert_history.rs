@@ -14,7 +14,6 @@ use crossterm::style::SetBackgroundColor;
 use crossterm::style::SetColors;
 use crossterm::style::SetForegroundColor;
 use ratatui::layout::Size;
-use ratatui::prelude::Backend;
 use ratatui::style::Color;
 use ratatui::style::Modifier;
 use ratatui::text::Line;
@@ -22,6 +21,20 @@ use ratatui::text::Span;
 
 /// Insert `lines` above the viewport.
 pub(crate) fn insert_history_lines(terminal: &mut tui::Tui, lines: Vec<Line>) {
+    let mut out = std::io::stdout();
+    insert_history_lines_to_writer(terminal, &mut out, lines);
+}
+
+/// Like `insert_history_lines`, but writes ANSI to the provided writer. This
+/// is intended for testing where a capture buffer is used instead of stdout.
+pub fn insert_history_lines_to_writer<B, W>(
+    terminal: &mut crate::custom_terminal::Terminal<B>,
+    writer: &mut W,
+    lines: Vec<Line>,
+) where
+    B: ratatui::backend::Backend,
+    W: Write,
+{
     let screen_size = terminal.backend().size().unwrap_or(Size::new(0, 0));
     let cursor_pos = terminal.get_cursor_position().ok();
 
@@ -32,10 +45,22 @@ pub(crate) fn insert_history_lines(terminal: &mut tui::Tui, lines: Vec<Line>) {
         // If the viewport is not at the bottom of the screen, scroll it down to make room.
         // Don't scroll it past the bottom of the screen.
         let scroll_amount = wrapped_lines.min(screen_size.height - area.bottom());
-        terminal
-            .backend_mut()
-            .scroll_region_down(area.top()..screen_size.height, scroll_amount)
-            .ok();
+
+        // Emit ANSI to scroll the lower region (from the top of the viewport to the bottom
+        // of the screen) downward by `scroll_amount` lines. We do this by:
+        //   1) Limiting the scroll region to [area.top()+1 .. screen_height] (1-based bounds)
+        //   2) Placing the cursor at the top margin of that region
+        //   3) Emitting Reverse Index (RI, ESC M) `scroll_amount` times
+        //   4) Resetting the scroll region back to full screen
+        let top_1based = area.top() + 1; // Convert 0-based row to 1-based for DECSTBM
+        queue!(writer, SetScrollRegion(top_1based..screen_size.height)).ok();
+        queue!(writer, MoveTo(0, area.top())).ok();
+        for _ in 0..scroll_amount {
+            // Reverse Index (RI): ESC M
+            queue!(writer, Print("\x1bM")).ok();
+        }
+        queue!(writer, ResetScrollRegion).ok();
+
         let cursor_top = area.top().saturating_sub(1);
         area.y += scroll_amount;
         terminal.set_viewport_area(area);
@@ -59,23 +84,23 @@ pub(crate) fn insert_history_lines(terminal: &mut tui::Tui, lines: Vec<Line>) {
     // ││                            ││
     // │╰────────────────────────────╯│
     // └──────────────────────────────┘
-    queue!(std::io::stdout(), SetScrollRegion(1..area.top())).ok();
+    queue!(writer, SetScrollRegion(1..area.top())).ok();
 
     // NB: we are using MoveTo instead of set_cursor_position here to avoid messing with the
     // terminal's last_known_cursor_position, which hopefully will still be accurate after we
     // fetch/restore the cursor position. insert_history_lines should be cursor-position-neutral :)
-    queue!(std::io::stdout(), MoveTo(0, cursor_top)).ok();
+    queue!(writer, MoveTo(0, cursor_top)).ok();
 
     for line in lines {
-        queue!(std::io::stdout(), Print("\r\n")).ok();
-        write_spans(&mut std::io::stdout(), line.iter()).ok();
+        queue!(writer, Print("\r\n")).ok();
+        write_spans(writer, line.iter()).ok();
     }
 
-    queue!(std::io::stdout(), ResetScrollRegion).ok();
+    queue!(writer, ResetScrollRegion).ok();
 
     // Restore the cursor position to where it was before we started.
     if let Some(cursor_pos) = cursor_pos {
-        queue!(std::io::stdout(), MoveTo(cursor_pos.x, cursor_pos.y)).ok();
+        queue!(writer, MoveTo(cursor_pos.x, cursor_pos.y)).ok();
     }
 }
 

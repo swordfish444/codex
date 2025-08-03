@@ -11,6 +11,10 @@ path = "src/main.rs"
 name = "codex_tui"
 path = "src/lib.rs"
 
+[features]
+# Enable vt100-based tests (emulator) when running with `--features vt100-tests`.
+vt100-tests = ["dep:vt100"]
+
 [lints]
 workspace = true
 
@@ -64,9 +68,13 @@ tui-textarea = "0.7.0"
 unicode-segmentation = "1.12.0"
 unicode-width = "0.1"
 uuid = "1"
+vt100 = { version = "0.16.2", optional = true }
 
 
 
 [dev-dependencies]
 insta = "1.43.1"
 pretty_assertions = "1"
+
+#[target.'cfg(feature = "vt100-tests")'.dev-dependencies]
+#vt100 = "0.16.2" # Revisit: conflicts with ratatui's pinned unicode-width (=0.2.0)
