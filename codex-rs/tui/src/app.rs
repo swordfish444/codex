@@ -18,7 +18,8 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::terminal::supports_keyboard_enhancement;
 use ratatui::layout::Offset;
-use ratatui::layout::Rect;
+use ratatui::prelude::Backend;
+use ratatui::text::Line;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -56,6 +57,8 @@ pub(crate) struct App<'a> {
 
     /// True when a redraw has been scheduled but not yet executed.
     pending_redraw: Arc<AtomicBool>,
+
+    pending_history_lines: Vec<Line<'static>>,
 
     /// Stored parameters needed to instantiate the ChatWidget later, e.g.,
     /// after dismissing the Git-repo warning.
@@ -161,6 +164,7 @@ impl App<'_> {
         let file_search = FileSearchManager::new(config.cwd.clone(), app_event_tx.clone());
         Self {
             app_event_tx,
+            pending_history_lines: Vec::new(),
             app_event_rx,
             app_state,
             config,
@@ -207,9 +211,8 @@ impl App<'_> {
         while let Ok(event) = self.app_event_rx.recv() {
             match event {
                 AppEvent::InsertHistory(lines) => {
-                    if let AppState::Chat { widget } = &mut self.app_state {
-                        widget.add_history_lines(lines);
-                    }
+                    self.pending_history_lines.extend(lines);
+                    self.app_event_tx.send(AppEvent::RequestRedraw);
                 }
                 AppEvent::RequestRedraw => {
                     self.schedule_redraw();
@@ -410,15 +413,30 @@ impl App<'_> {
         }
 
         let size = terminal.size()?;
-        let area = Rect {
-            x: 0,
-            y: 0,
-            width: size.width,
-            height: size.height,
+        let desired_height = match &self.app_state {
+            AppState::Chat { widget } => widget.desired_height(size.width),
+            AppState::GitWarning { .. } => 10,
         };
+
+        let mut area = terminal.viewport_area;
+        area.height = desired_height.min(size.height);
+        area.width = size.width;
+        if area.bottom() > size.height {
+            terminal
+                .backend_mut()
+                .scroll_region_up(0..area.top(), area.bottom() - size.height)?;
+            area.y = size.height - area.height;
+        }
         if area != terminal.viewport_area {
-            terminal.set_viewport_area(area);
             terminal.clear()?;
+            terminal.set_viewport_area(area);
+        }
+        if !self.pending_history_lines.is_empty() {
+            crate::insert_history::insert_history_lines(
+                terminal,
+                self.pending_history_lines.clone(),
+            );
+            self.pending_history_lines.clear();
         }
         match &mut self.app_state {
             AppState::Chat { widget } => {

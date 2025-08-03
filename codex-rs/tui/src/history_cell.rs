@@ -68,6 +68,9 @@ pub(crate) enum HistoryCell {
     /// Message from the user.
     UserPrompt { view: TextBlock },
 
+    /// Message from the agent.
+    AgentMessage { view: TextBlock },
+
     /// Reasoning event from the agent.
     AgentReasoning { view: TextBlock },
 
@@ -125,6 +128,7 @@ impl HistoryCell {
         match self {
             HistoryCell::WelcomeMessage { view }
             | HistoryCell::UserPrompt { view }
+            | HistoryCell::AgentMessage { view }
             | HistoryCell::AgentReasoning { view }
             | HistoryCell::BackgroundEvent { view }
             | HistoryCell::GitDiffOutput { view }
@@ -223,6 +227,17 @@ impl HistoryCell {
         lines.push(Line::from(""));
 
         HistoryCell::UserPrompt {
+            view: TextBlock::new(lines),
+        }
+    }
+
+    pub(crate) fn new_agent_message(config: &Config, message: String) -> Self {
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from("codex".magenta().bold()));
+        append_markdown(&message, &mut lines, config);
+        lines.push(Line::from(""));
+
+        HistoryCell::AgentMessage {
             view: TextBlock::new(lines),
         }
     }
