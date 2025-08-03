@@ -45,6 +45,7 @@ pub mod spawn;
 pub mod turn_diff_tracker;
 mod user_notification;
 pub mod util;
+pub mod providers;
 
 pub use apply_patch::CODEX_APPLY_PATCH_ARG1;
 pub use client_common::model_supports_reasoning_summaries;

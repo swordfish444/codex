@@ -671,6 +671,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "async-channel",
+ "async-stream",
  "base64 0.22.1",
  "bytes",
  "chrono",
@@ -724,21 +725,17 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
- "bytes",
  "chrono",
  "clap",
  "codex-arg0",
  "codex-common",
  "codex-core",
- "futures-util",
  "owo-colors",
  "predicates",
- "reqwest",
  "serde_json",
  "shlex",
  "tempfile",
  "tokio",
- "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
 ]
@@ -848,7 +845,6 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "bytes",
  "chrono",
  "clap",
  "codex-ansi-escape",
@@ -859,7 +855,6 @@ dependencies = [
  "codex-login",
  "color-eyre",
  "crossterm",
- "futures-util",
  "image",
  "insta",
  "lazy_static",
@@ -879,7 +874,6 @@ dependencies = [
  "supports-color",
  "textwrap 0.16.2",
  "tokio",
- "toml 0.8.23",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -4821,7 +4815,6 @@ dependencies = [
  "serde",
  "serde_spanned 0.6.9",
  "toml_datetime 0.6.11",
- "toml_write",
  "winnow",
 ]
 
@@ -4833,12 +4826,6 @@ checksum = "97200572db069e74c512a14117b296ba0a80a30123fbbb5aa1f4a348f639ca30"
 dependencies = [
  "winnow",
 ]
-
-[[package]]
-name = "toml_write"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "toml_writer"

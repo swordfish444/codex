@@ -17,7 +17,6 @@ workspace = true
 [dependencies]
 anyhow = "1"
 base64 = "0.22.1"
-bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 codex-ansi-escape = { path = "../ansi-escape" }
@@ -32,7 +31,6 @@ codex-file-search = { path = "../file-search" }
 codex-login = { path = "../login" }
 color-eyre = "0.6.3"
 crossterm = { version = "0.28.1", features = ["bracketed-paste"] }
-futures-util = "0.3"
 image = { version = "^0.25.6", default-features = false, features = ["jpeg"] }
 lazy_static = "1"
 mcp-types = { path = "../mcp-types" }
@@ -59,7 +57,6 @@ tokio = { version = "1", features = [
     "rt-multi-thread",
     "signal",
 ] }
-toml = "0.8"
 tracing = { version = "0.1.41", features = ["log"] }
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
