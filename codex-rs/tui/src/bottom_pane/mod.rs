@@ -81,13 +81,14 @@ impl BottomPane<'_> {
         self.request_redraw();
     }
 
-    /// Show the approval-mode selection popup in the composer.
-    pub(crate) fn show_approval_selector(
+    /// Show the execution-mode selection popup in the composer.
+    pub(crate) fn show_execution_selector(
         &mut self,
-        current: AskForApproval,
-        options: Vec<AskForApproval>,
+        current_approval: AskForApproval,
+        current_sandbox: &codex_core::protocol::SandboxPolicy,
     ) {
-        self.composer.open_approval_selector(current, options);
+        self.composer
+            .open_execution_selector(current_approval, current_sandbox);
         self.request_redraw();
     }
 

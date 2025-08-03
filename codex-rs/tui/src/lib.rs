@@ -225,7 +225,39 @@ fn run_ratatui_app(
     terminal.clear()?;
 
     let Cli { prompt, images, .. } = cli;
-    let mut app = App::new(config.clone(), prompt, show_git_warning, images);
+    // Build a list of CLI flags that were explicitly provided, to surface in the welcome message.
+    let mut cli_flags_used: Vec<String> = Vec::new();
+    if let Some(ap) = cli.approval_policy {
+        // kebab-case variants via clap ValueEnum Debug formatting is fine here.
+        cli_flags_used.push(format!("--ask-for-approval {}", match ap {
+            codex_common::ApprovalModeCliArg::Untrusted => "untrusted",
+            codex_common::ApprovalModeCliArg::OnFailure => "on-failure",
+            codex_common::ApprovalModeCliArg::Never => "never",
+        }));
+    }
+    if let Some(sm) = cli.sandbox_mode {
+        let mode = match sm {
+            codex_common::SandboxModeCliArg::ReadOnly => "read-only",
+            codex_common::SandboxModeCliArg::WorkspaceWrite => "workspace-write",
+            codex_common::SandboxModeCliArg::DangerFullAccess => "danger-full-access",
+        };
+        cli_flags_used.push(format!("--sandbox {}", mode));
+    }
+    if cli.full_auto {
+        cli_flags_used.push("--full-auto".to_string());
+    }
+    if cli.dangerously_bypass_approvals_and_sandbox {
+        cli_flags_used.push("--dangerously-bypass-approvals-and-sandbox".to_string());
+    }
+
+    let mut app = App::new(
+        config.clone(),
+        prompt,
+        show_git_warning,
+        images,
+        cli_flags_used,
+        cli.model.clone(),
+    );
 
     // Bridge log receiver into the AppEvent channel so latest log lines update the UI.
     {

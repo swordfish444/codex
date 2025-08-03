@@ -47,6 +47,7 @@ use crate::history_cell::CommandOutput;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PatchEventType;
 use crate::user_approval_widget::ApprovalRequest;
+use codex_core::protocol::SandboxPolicy;
 use codex_file_search::FileMatch;
 
 struct RunningCommand {
@@ -69,6 +70,8 @@ pub(crate) struct ChatWidget<'a> {
     answer_buffer: String,
     new_session: bool,
     running_commands: HashMap<String, RunningCommand>,
+    cli_flags_used: Vec<String>,
+    cli_model: Option<String>,
 }
 
 struct UserMessage {
@@ -100,6 +103,8 @@ impl ChatWidget<'_> {
         initial_prompt: Option<String>,
         initial_images: Vec<PathBuf>,
         enhanced_keys_supported: bool,
+        cli_flags_used: Vec<String>,
+        cli_model: Option<String>,
     ) -> Self {
         let (codex_op_tx, mut codex_op_rx) = unbounded_channel::<Op>();
 
@@ -157,6 +162,8 @@ impl ChatWidget<'_> {
             answer_buffer: String::new(),
             new_session: true,
             running_commands: HashMap::new(),
+            cli_flags_used,
+            cli_model,
         }
     }
 
@@ -232,7 +239,17 @@ impl ChatWidget<'_> {
 
                 // Record session information at the top of the conversation.
                 if self.new_session {
-                    self.add_to_history(HistoryCell::new_session_info(&self.config, event, true));
+                    let flags: Option<&[String]> = if self.cli_flags_used.is_empty() {
+                        None
+                    } else {
+                        Some(&self.cli_flags_used)
+                    };
+                    self.add_to_history(HistoryCell::new_session_info(
+                        &self.config,
+                        event,
+                        true,
+                        flags,
+                    ));
                     self.new_session = false;
                 }
 
@@ -550,6 +567,11 @@ impl ChatWidget<'_> {
             }
         }
 
+        // Include model specified via --model if present.
+        if let Some(m) = &self.cli_model {
+            options.push(m.clone());
+        }
+
         self.bottom_pane.show_model_selector(&current, options);
     }
 
@@ -575,30 +597,34 @@ impl ChatWidget<'_> {
         self.request_redraw();
     }
 
-    /// Open the approval selection view in the bottom pane.
-    pub(crate) fn show_approval_selector(&mut self) {
-        let current = self.config.approval_policy;
-        let options = vec![
-            AskForApproval::UnlessTrusted,
-            AskForApproval::OnFailure,
-            AskForApproval::Never,
-        ];
-        self.bottom_pane.show_approval_selector(current, options);
+    /// Open the execution-mode selection view in the bottom pane.
+    pub(crate) fn show_execution_selector(&mut self) {
+        let current_approval = self.config.approval_policy;
+        let current_sandbox = &self.config.sandbox_policy;
+        self.bottom_pane
+            .show_execution_selector(current_approval, current_sandbox);
     }
 
-    /// Update the approval policy and reconfigure the running Codex session.
-    pub(crate) fn update_approval_policy_and_reconfigure(&mut self, mode: AskForApproval) {
-        let changed = self.config.approval_policy != mode;
-        self.config.approval_policy = mode;
+    /// Update both approval policy and sandbox, then reconfigure the running session.
+    pub(crate) fn update_execution_mode_and_reconfigure(
+        &mut self,
+        approval: AskForApproval,
+        sandbox: SandboxPolicy,
+    ) {
+        let approval_changed = self.config.approval_policy != approval;
+        let sandbox_changed = self.config.sandbox_policy != sandbox;
+        self.config.approval_policy = approval;
+        self.config.sandbox_policy = sandbox.clone();
 
-        if changed {
-            let mode_str = match mode {
-                AskForApproval::UnlessTrusted => "Prompt on Writes",
-                AskForApproval::OnFailure => "Auto",
-                AskForApproval::Never => "Deny all",
+        if approval_changed || sandbox_changed {
+            let label = match (approval, &sandbox) {
+                (AskForApproval::Never, SandboxPolicy::ReadOnly) => "Read only",
+                (AskForApproval::OnFailure, SandboxPolicy::ReadOnly) => "Untrusted",
+                (AskForApproval::OnFailure, SandboxPolicy::WorkspaceWrite { .. }) => "Auto",
+                _ => "Custom",
             };
             self.add_to_history(HistoryCell::new_background_event(format!(
-                "Set approval mode to {mode_str}."
+                "Set execution mode to {label}."
             )));
         }
 

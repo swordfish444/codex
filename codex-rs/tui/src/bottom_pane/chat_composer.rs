@@ -22,7 +22,7 @@ use super::file_search_popup::FileSearchPopup;
 use super::selection_popup::SelectionKind;
 use super::selection_popup::SelectionPopup;
 use super::selection_popup::SelectionValue;
-use super::selection_popup::parse_approval_mode_token;
+use super::selection_popup::parse_execution_mode_token;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -308,19 +308,22 @@ impl ChatComposer<'_> {
         }
     }
 
-    /// Open or update the approval-mode selection popup with the provided options.
-    pub(crate) fn open_approval_selector(
+    /// Open or update the execution-mode selection popup with the provided options.
+    pub(crate) fn open_execution_selector(
         &mut self,
-        current: codex_core::protocol::AskForApproval,
-        options: Vec<codex_core::protocol::AskForApproval>,
+        current_approval: codex_core::protocol::AskForApproval,
+        current_sandbox: &codex_core::protocol::SandboxPolicy,
     ) {
         match &mut self.active_popup {
-            ActivePopup::Selection(popup) if popup.kind() == SelectionKind::Approval => {
-                *popup = SelectionPopup::new_approvals(current, options);
+            ActivePopup::Selection(popup) if popup.kind() == SelectionKind::Execution => {
+                *popup =
+                    SelectionPopup::new_execution_modes(current_approval, current_sandbox);
             }
             _ => {
-                self.active_popup =
-                    ActivePopup::Selection(SelectionPopup::new_approvals(current, options));
+                self.active_popup = ActivePopup::Selection(SelectionPopup::new_execution_modes(
+                    current_approval,
+                    current_sandbox,
+                ));
             }
         }
         // Initialize the popup's query from the arguments to `/approvals`, if present.
@@ -534,9 +537,9 @@ impl ChatComposer<'_> {
                         SelectionValue::Model(m) => {
                             self.app_event_tx.send(AppEvent::SelectModel(m))
                         }
-                        SelectionValue::Approval(mode) => {
-                            self.app_event_tx.send(AppEvent::SelectApprovalPolicy(mode))
-                        }
+                        SelectionValue::Execution { approval, sandbox } => self
+                            .app_event_tx
+                            .send(AppEvent::SelectExecutionMode { approval, sandbox }),
                     }
                     // Clear composer input and close the popup.
                     self.textarea.select_all();
@@ -570,11 +573,16 @@ impl ChatComposer<'_> {
                                 self.active_popup = ActivePopup::None;
                                 return (InputResult::None, true);
                             }
-                            SelectionKind::Approval
+                            SelectionKind::Execution
                                 if cmd_token == SlashCommand::Approvals.command() =>
                             {
-                                if let Some(mode) = parse_approval_mode_token(&args) {
-                                    self.app_event_tx.send(AppEvent::SelectApprovalPolicy(mode));
+                                if let Some((approval, sandbox)) =
+                                    parse_execution_mode_token(&args)
+                                {
+                                    self.app_event_tx.send(AppEvent::SelectExecutionMode {
+                                        approval,
+                                        sandbox,
+                                    });
                                     self.textarea.select_all();
                                     self.textarea.cut();
                                     self.pending_pastes.clear();
@@ -944,7 +952,7 @@ impl ChatComposer<'_> {
                         popup.set_query(&args);
                     }
                 }
-                ActivePopup::Selection(popup) if popup.kind() == SelectionKind::Approval => {
+                ActivePopup::Selection(popup) if popup.kind() == SelectionKind::Execution => {
                     if cmd_token == SlashCommand::Approvals.command() {
                         popup.set_query(&args);
                     }
@@ -1804,6 +1812,7 @@ mod tests {
     fn enter_on_approvals_selector_selects_current_row() {
         use crate::app_event::AppEvent;
         use codex_core::protocol::AskForApproval;
+        use codex_core::protocol::SandboxPolicy;
         use crossterm::event::KeyCode;
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
@@ -1813,22 +1822,17 @@ mod tests {
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(true, sender, false);
 
-        // Open the approvals selector directly
-        let options = vec![
-            AskForApproval::UnlessTrusted,
-            AskForApproval::OnFailure,
-            AskForApproval::Never,
-        ];
-        composer.open_approval_selector(AskForApproval::Never, options);
+        // Open the execution selector directly (current: Read only)
+        composer.open_execution_selector(AskForApproval::Never, &SandboxPolicy::ReadOnly);
 
         // Press Enter to select the currently highlighted row (first visible)
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
-        // We should receive a SelectApprovalPolicy event.
+        // We should receive a SelectExecutionMode event.
         let mut saw_select = false;
         loop {
             match rx.try_recv() {
-                Ok(AppEvent::SelectApprovalPolicy(_)) => {
+                Ok(AppEvent::SelectExecutionMode { .. }) => {
                     saw_select = true;
                     break;
                 }

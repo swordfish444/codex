@@ -166,17 +166,14 @@ mod tests {
 
     #[test]
     fn selection_list_query_and_navigation() {
-        // Build a small list with aliases similar to approvals popup.
+        // Build a small list with aliases similar to execution-mode popup.
         let items = vec![
-            SelectionItem::new("a", "Auto".to_string()).with_aliases(vec![
-                "auto".into(),
-                "full-auto".into(),
-                "on-failure".into(),
-            ]),
-            SelectionItem::new("p", "Prompt on Writes".to_string())
-                .with_aliases(vec!["untrusted".into(), "prompt-on-writes".into()]),
-            SelectionItem::new("d", "Deny all".to_string())
-                .with_aliases(vec!["never".into(), "deny-all".into()]),
+            SelectionItem::new("a", "Auto".to_string())
+                .with_aliases(vec!["auto".into()]),
+            SelectionItem::new("u", "Untrusted".to_string())
+                .with_aliases(vec!["untrusted".into()]),
+            SelectionItem::new("r", "Read only".to_string())
+                .with_aliases(vec!["read-only".into()]),
         ];
 
         let mut list = SelectionList::new(items);
@@ -188,7 +185,7 @@ mod tests {
 
         // Up wraps to the end.
         list.move_up();
-        assert_eq!(list.selected_value(), Some("d"));
+        assert_eq!(list.selected_value(), Some("r"));
         // Down wraps back to the start.
         list.move_down();
         assert_eq!(list.selected_value(), Some("a"));
@@ -200,10 +197,10 @@ mod tests {
         assert_eq!(list.selected_value(), Some("a"));
 
         // Query by alias works too.
-        list.set_query("deny-all");
+        list.set_query("read-only");
         let rows = list.visible_rows();
         assert_eq!(rows.len(), 1);
-        assert_eq!(list.selected_value(), Some("d"));
+        assert_eq!(list.selected_value(), Some("r"));
 
         // No matches clears selection.
         list.set_query("not-a-match");

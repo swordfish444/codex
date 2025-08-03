@@ -1,4 +1,5 @@
 use codex_core::protocol::AskForApproval;
+use codex_core::protocol::SandboxPolicy;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::WidgetRef;
@@ -9,15 +10,12 @@ use super::selection_popup_common::GenericDisplayRow;
 use super::selection_popup_common::render_rows;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SelectionKind {
-    Model,
-    Approval,
-}
+pub(crate) enum SelectionKind { Model, Execution }
 
 #[derive(Clone)]
 pub(crate) enum SelectionValue {
     Model(String),
-    Approval(AskForApproval),
+    Execution { approval: AskForApproval, sandbox: SandboxPolicy },
 }
 
 pub(crate) struct SelectionPopup {
@@ -46,58 +44,67 @@ impl SelectionPopup {
         }
     }
 
-    pub(crate) fn new_approvals(current: AskForApproval, options: Vec<AskForApproval>) -> Self {
-        fn display_name(mode: AskForApproval) -> &'static str {
-            match mode {
-                AskForApproval::UnlessTrusted => "Prompt on Writes",
-                AskForApproval::OnFailure => "Auto",
-                AskForApproval::Never => "Deny all",
+    pub(crate) fn new_execution_modes(
+        current_approval: AskForApproval,
+        current_sandbox: &SandboxPolicy,
+    ) -> Self {
+        fn display_name(approval: AskForApproval, sandbox: &SandboxPolicy) -> &'static str {
+            match (approval, sandbox) {
+                (AskForApproval::Never, SandboxPolicy::ReadOnly) => "Read only",
+                (AskForApproval::OnFailure, SandboxPolicy::ReadOnly) => "Untrusted",
+                (AskForApproval::OnFailure, SandboxPolicy::WorkspaceWrite { .. }) => "Auto",
+                _ => "Custom",
             }
         }
-        fn description_for(mode: AskForApproval) -> &'static str {
-            match mode {
-                AskForApproval::UnlessTrusted => {
-                    "ask for approval for every write in the CWD and every sandbox breach"
-                }
-                AskForApproval::OnFailure => "only ask for commands that would breach the sandbox",
-                AskForApproval::Never => {
-                    "deny all writes and commands that would breach the sandbox"
-                }
-            }
-        }
-        fn aliases_for(mode: AskForApproval) -> &'static [&'static str] {
-            match mode {
-                AskForApproval::UnlessTrusted => {
-                    &["untrusted", "prompt-on-writes", "prompt on writes"]
-                }
-                AskForApproval::OnFailure => {
-                    &["auto", "full-auto", "on-failure", "fullauto", "full"]
-                }
-                AskForApproval::Never => &["never", "deny-all", "deny all"],
+        fn description_for(approval: AskForApproval, sandbox: &SandboxPolicy) -> &'static str {
+            match (approval, sandbox) {
+                (AskForApproval::Never, SandboxPolicy::ReadOnly) =>
+                    "never prompt; read-only filesystem (flags: --ask-for-approval never --sandbox read-only)",
+                (AskForApproval::OnFailure, SandboxPolicy::ReadOnly) =>
+                    "ask to retry outside sandbox only on sandbox breach; read-only (flags: --ask-for-approval on-failure --sandbox read-only)",
+                (AskForApproval::OnFailure, SandboxPolicy::WorkspaceWrite { .. }) =>
+                    "auto in workspace sandbox; ask to retry outside sandbox on breach (flags: --ask-for-approval on-failure --sandbox workspace-write)",
+                _ => "custom combination",
             }
         }
 
+        let presets: Vec<(AskForApproval, SandboxPolicy)> = vec![
+            (AskForApproval::Never, SandboxPolicy::ReadOnly),
+            (AskForApproval::OnFailure, SandboxPolicy::ReadOnly),
+            (
+                AskForApproval::OnFailure,
+                SandboxPolicy::WorkspaceWrite {
+                    writable_roots: vec![],
+                    network_access: false,
+                    include_default_writable_roots: true,
+                },
+            ),
+        ];
+
         let mut items: Vec<SelectionItem<SelectionValue>> = Vec::new();
-        items.push(
-            SelectionItem::new(
-                SelectionValue::Approval(current),
-                display_name(current).to_string(),
+        for (a, s) in presets.into_iter() {
+            let name = display_name(a, &s).to_string();
+            let desc = Some(description_for(a, &s).to_string());
+            let mut item = SelectionItem::new(
+                SelectionValue::Execution {
+                    approval: a,
+                    sandbox: s.clone(),
+                },
+                name,
             )
-            .with_description(Some(description_for(current).to_string()))
-            .with_aliases(aliases_for(current).iter().map(|s| s.to_string()).collect())
-            .mark_current(true),
-        );
-        for m in options.into_iter().filter(|m| *m != current) {
-            items.push(
-                SelectionItem::new(SelectionValue::Approval(m), display_name(m).to_string())
-                    .with_description(Some(description_for(m).to_string()))
-                    .with_aliases(aliases_for(m).iter().map(|s| s.to_string()).collect()),
-            );
+            .with_description(desc);
+            if a == current_approval
+                && matches!(
+                    (&s, current_sandbox),
+                    (SandboxPolicy::ReadOnly, SandboxPolicy::ReadOnly)
+                        | (SandboxPolicy::WorkspaceWrite { .. }, SandboxPolicy::WorkspaceWrite { .. })
+                )
+            {
+                item = item.mark_current(true);
+            }
+            items.push(item);
         }
-        Self {
-            kind: SelectionKind::Approval,
-            list: SelectionList::new(items),
-        }
+        Self { kind: SelectionKind::Execution, list: SelectionList::new(items) }
     }
 
     pub(crate) fn kind(&self) -> SelectionKind {
@@ -136,43 +143,40 @@ impl WidgetRef for &SelectionPopup {
     }
 }
 
-/// Parse a free-form token to an approval mode. Used by typed /approvals.
-pub(crate) fn parse_approval_mode_token(s: &str) -> Option<AskForApproval> {
+/// Parse a free-form token to an execution preset (approval+sandbox).
+pub(crate) fn parse_execution_mode_token(
+    s: &str,
+) -> Option<(AskForApproval, SandboxPolicy)> {
     let t = s.trim().to_ascii_lowercase();
     match t.as_str() {
-        "untrusted" | "prompt-on-writes" | "prompt on writes" => {
-            Some(AskForApproval::UnlessTrusted)
-        }
-        "on-failure" | "auto" | "full-auto" | "fullauto" | "full" => {
-            Some(AskForApproval::OnFailure)
-        }
-        "never" | "deny-all" | "deny all" => Some(AskForApproval::Never),
+        "read-only" => Some((AskForApproval::Never, SandboxPolicy::ReadOnly)),
+        "untrusted" => Some((AskForApproval::OnFailure, SandboxPolicy::ReadOnly)),
+        "auto" => Some((
+            AskForApproval::OnFailure,
+            SandboxPolicy::WorkspaceWrite {
+                writable_roots: vec![],
+                network_access: false,
+                include_default_writable_roots: true,
+            },
+        )),
         _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_approval_mode_token as parse;
+    use super::parse_execution_mode_token as parse;
     use codex_core::protocol::AskForApproval;
+    use codex_core::protocol::SandboxPolicy;
 
     #[test]
     fn parse_approval_mode_aliases() {
-        // OnFailure
-        for t in ["auto", "full-auto", "on-failure", "fullauto", "full"] {
-            assert_eq!(parse(t), Some(AskForApproval::OnFailure), "{t}");
-        }
-        // UnlessTrusted
-        for t in ["untrusted", "prompt-on-writes", "prompt on writes"] {
-            assert_eq!(parse(t), Some(AskForApproval::UnlessTrusted), "{t}");
-        }
-        // Never
-        for t in ["never", "deny-all", "deny all"] {
-            assert_eq!(parse(t), Some(AskForApproval::Never), "{t}");
-        }
-        // Unknown
+        // Only accept the three canonical tokens
+        assert!(matches!(parse("auto").unwrap(), (AskForApproval::OnFailure, SandboxPolicy::WorkspaceWrite { .. })));
+        assert_eq!(parse("untrusted"), Some((AskForApproval::OnFailure, SandboxPolicy::ReadOnly)));
+        assert_eq!(parse("read-only"), Some((AskForApproval::Never, SandboxPolicy::ReadOnly)));
+        // Unknown and case/whitespace handling
         assert_eq!(parse("unknown"), None);
-        // Whitespace and case-insensitivity
-        assert_eq!(parse("  FULL-AUTO  "), Some(AskForApproval::OnFailure));
+        assert_eq!(parse("  AUTO  ").is_some(), true);
     }
 }

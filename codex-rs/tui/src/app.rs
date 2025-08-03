@@ -97,6 +97,8 @@ struct ChatWidgetArgs {
     initial_prompt: Option<String>,
     initial_images: Vec<PathBuf>,
     enhanced_keys_supported: bool,
+    cli_flags_used: Vec<String>,
+    cli_model: Option<String>,
 }
 
 impl App<'_> {
@@ -105,6 +107,8 @@ impl App<'_> {
         initial_prompt: Option<String>,
         show_git_warning: bool,
         initial_images: Vec<std::path::PathBuf>,
+        cli_flags_used: Vec<String>,
+        cli_model: Option<String>,
     ) -> Self {
         let (app_event_tx, app_event_rx) = channel();
         let app_event_tx = AppEventSender::new(app_event_tx);
@@ -165,6 +169,8 @@ impl App<'_> {
                     initial_prompt,
                     initial_images,
                     enhanced_keys_supported,
+                    cli_flags_used: cli_flags_used.clone(),
+                    cli_model: cli_model.clone(),
                 }),
             )
         } else {
@@ -174,6 +180,8 @@ impl App<'_> {
                 initial_prompt,
                 initial_images,
                 enhanced_keys_supported,
+                cli_flags_used.clone(),
+                cli_model.clone(),
             );
             (
                 AppState::Chat {
@@ -306,9 +314,9 @@ impl App<'_> {
                         widget.update_model_and_reconfigure(model);
                     }
                 }
-                AppEvent::SelectApprovalPolicy(mode) => {
+                AppEvent::SelectExecutionMode { approval, sandbox } => {
                     if let AppState::Chat { widget } = &mut self.app_state {
-                        widget.update_approval_policy_and_reconfigure(mode);
+                        widget.update_execution_mode_and_reconfigure(approval, sandbox);
                     }
                 }
                 AppEvent::OpenModelSelector => {
@@ -318,7 +326,7 @@ impl App<'_> {
                 }
                 AppEvent::OpenApprovalSelector => {
                     if let AppState::Chat { widget } = &mut self.app_state {
-                        widget.show_approval_selector();
+                        widget.show_execution_selector();
                     }
                 }
                 AppEvent::CodexOp(op) => match &mut self.app_state {
@@ -337,6 +345,15 @@ impl App<'_> {
                             None,
                             Vec::new(),
                             self.enhanced_keys_supported,
+                            self
+                                .chat_args
+                                .as_ref()
+                                .map(|a| a.cli_flags_used.clone())
+                                .unwrap_or_default(),
+                            self
+                                .chat_args
+                                .as_ref()
+                                .and_then(|a| a.cli_model.clone()),
                         ));
                         self.app_state = AppState::Chat { widget: new_widget };
                         self.app_event_tx.send(AppEvent::RequestRedraw);
@@ -433,12 +450,14 @@ impl App<'_> {
                         if let AppState::Chat { widget } = &mut self.app_state {
                             let normalized = strip_surrounding_quotes(arg).trim().to_string();
                             if !normalized.is_empty() {
-                                use crate::bottom_pane::selection_popup::parse_approval_mode_token;
-                                if let Some(mode) = parse_approval_mode_token(&normalized) {
-                                    widget.update_approval_policy_and_reconfigure(mode);
+                                use crate::bottom_pane::selection_popup::parse_execution_mode_token;
+                                if let Some((approval, sandbox)) =
+                                    parse_execution_mode_token(&normalized)
+                                {
+                                    widget.update_execution_mode_and_reconfigure(approval, sandbox);
                                 } else {
                                     widget.add_diff_output(format!(
-                                        "`/approvals {normalized}` — unrecognized approval mode"
+                                        "`/approvals {normalized}` — unrecognized execution mode"
                                     ));
                                 }
                             }
@@ -559,6 +578,8 @@ impl App<'_> {
                         args.initial_prompt,
                         args.initial_images,
                         args.enhanced_keys_supported,
+                        args.cli_flags_used,
+                        args.cli_model,
                     ));
                     self.app_state = AppState::Chat { widget };
                     self.app_event_tx.send(AppEvent::RequestRedraw);
