@@ -14,6 +14,12 @@ pub struct Cli {
     #[arg(long, short = 'm')]
     pub model: Option<String>,
 
+    /// Convenience flag to select the local Ollama provider.
+    /// Equivalent to -c model_provider=ollama; verifies a local Ollama server is running and
+    /// creates a model_providers.ollama entry in config.toml if missing.
+    #[arg(long = "ollama", default_value_t = false)]
+    pub ollama: bool,
+
     /// Select the sandbox policy to use when executing model-generated shell
     /// commands.
     #[arg(long = "sandbox", short = 's')]

@@ -9,10 +9,13 @@ use codex_core::config_types::SandboxMode;
 use codex_core::protocol::AskForApproval;
 use codex_core::util::is_inside_git_repo;
 use codex_login::load_auth;
+use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use log_layer::TuiLogLayer;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::PathBuf;
+use toml as _;
 use tracing::error;
 use tracing_appender::non_blocking;
 use tracing_subscriber::EnvFilter;
@@ -48,6 +51,327 @@ use color_eyre::owo_colors::OwoColorize;
 
 pub use cli::Cli;
 
+fn read_ollama_models_list(config_path: &std::path::Path) -> Vec<String> {
+    match std::fs::read_to_string(config_path)
+        .ok()
+        .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
+    {
+        Some(toml::Value::Table(root)) => root
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("ollama"))
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("models"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn read_ollama_config_state(config_path: &std::path::Path) -> (bool, usize) {
+    match std::fs::read_to_string(config_path)
+        .ok()
+        .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
+    {
+        Some(toml::Value::Table(root)) => {
+            let provider_present = root
+                .get("model_providers")
+                .and_then(|v| v.as_table())
+                .and_then(|t| t.get("ollama"))
+                .map(|_| true)
+                .unwrap_or(false);
+            let models_count = root
+                .get("model_providers")
+                .and_then(|v| v.as_table())
+                .and_then(|t| t.get("ollama"))
+                .and_then(|v| v.as_table())
+                .and_then(|t| t.get("models"))
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.len())
+                .unwrap_or(0);
+            (provider_present, models_count)
+        }
+        _ => (false, 0),
+    }
+}
+
+fn save_ollama_models(config_path: &std::path::Path, models: &[String]) -> std::io::Result<()> {
+    use toml::value::Table as TomlTable;
+    let mut root_value = if let Ok(contents) = std::fs::read_to_string(config_path) {
+        toml::from_str::<toml::Value>(&contents).unwrap_or(toml::Value::Table(TomlTable::new()))
+    } else {
+        toml::Value::Table(TomlTable::new())
+    };
+
+    if !matches!(root_value, toml::Value::Table(_)) {
+        root_value = toml::Value::Table(TomlTable::new());
+    }
+    let root_tbl = match root_value.as_table_mut() {
+        Some(t) => t,
+        None => return Err(std::io::Error::other("invalid TOML root value")),
+    };
+
+    let mp_val = root_tbl
+        .entry("model_providers".to_string())
+        .or_insert_with(|| toml::Value::Table(TomlTable::new()));
+    if !mp_val.is_table() {
+        *mp_val = toml::Value::Table(TomlTable::new());
+    }
+    let mp_tbl = match mp_val.as_table_mut() {
+        Some(t) => t,
+        None => return Err(std::io::Error::other("invalid model_providers table")),
+    };
+
+    let ollama_val = mp_tbl
+        .entry("ollama".to_string())
+        .or_insert_with(|| toml::Value::Table(TomlTable::new()));
+    if !ollama_val.is_table() {
+        *ollama_val = toml::Value::Table(TomlTable::new());
+    }
+    let ollama_tbl = match ollama_val.as_table_mut() {
+        Some(t) => t,
+        None => return Err(std::io::Error::other("invalid ollama table")),
+    };
+    let arr = toml::Value::Array(
+        models
+            .iter()
+            .map(|m| toml::Value::String(m.clone()))
+            .collect(),
+    );
+    ollama_tbl.insert("models".to_string(), arr);
+
+    let updated = toml::to_string_pretty(&root_value)
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(config_path, updated)
+}
+
+fn print_inline_message_no_models(
+    host_root: &str,
+    config_path: &std::path::Path,
+    provider_was_present_before: bool,
+) -> io::Result<()> {
+    let mut out = std::io::stdout();
+    let path = config_path.display().to_string();
+    // green bold helper
+    let b = |s: &str| format!("\x1b[1m{s}\x1b[0m");
+    out.write_all(
+        format!(
+            "{}\n\n",
+            b("we've discovered no models on your local Ollama instance.")
+        )
+        .as_bytes(),
+    )?;
+    out.write_all(format!("endpoint: {host_root}\n").as_bytes())?;
+    if provider_was_present_before {
+        out.write_all(format!("config: ollama provider already present in {path}\n").as_bytes())?;
+    } else {
+        out.write_all(format!("config: added ollama as a model provider in {path}\n").as_bytes())?;
+    }
+    out.write_all(
+        b"models: none recorded in config (pull models with `ollama pull <model>`).\n\n",
+    )?;
+    out.flush()
+}
+
+fn run_inline_models_picker(
+    host_root: &str,
+    available: &[String],
+    preselected: &[String],
+    config_path: &std::path::Path,
+    provider_was_present_before: bool,
+    models_count_before: usize,
+) -> io::Result<()> {
+    let mut out = std::io::stdout();
+    let mut selected: Vec<bool> = available
+        .iter()
+        .map(|m| preselected.iter().any(|x| x == m))
+        .collect();
+    let mut cursor: usize = 0;
+
+    let mut first = true;
+    let mut lines_printed: usize = 0;
+
+    enable_raw_mode()?;
+
+    loop {
+        // Render block
+        render_inline_picker(
+            &mut out,
+            host_root,
+            available,
+            &selected,
+            cursor,
+            &mut first,
+            &mut lines_printed,
+        )?;
+
+        // Wait for key
+        match event::read()? {
+            CEvent::Key(KeyEvent {
+                code: KeyCode::Up, ..
+            })
+            | CEvent::Key(KeyEvent {
+                code: KeyCode::Char('k'),
+                ..
+            }) => {
+                cursor = cursor.saturating_sub(1);
+            }
+            CEvent::Key(KeyEvent {
+                code: KeyCode::Down,
+                ..
+            })
+            | CEvent::Key(KeyEvent {
+                code: KeyCode::Char('j'),
+                ..
+            }) => {
+                if cursor + 1 < available.len() {
+                    cursor += 1;
+                }
+            }
+            CEvent::Key(KeyEvent {
+                code: KeyCode::Char(' '),
+                ..
+            }) => {
+                if let Some(s) = selected.get_mut(cursor) {
+                    *s = !*s;
+                }
+            }
+            CEvent::Key(KeyEvent {
+                code: KeyCode::Char('a'),
+                ..
+            }) => {
+                let all_sel = selected.iter().all(|s| *s);
+                selected.fill(!all_sel);
+            }
+            CEvent::Key(KeyEvent {
+                code: KeyCode::Enter,
+                ..
+            }) => {
+                break;
+            }
+            CEvent::Key(KeyEvent {
+                code: KeyCode::Char('q'),
+                ..
+            })
+            | CEvent::Key(KeyEvent {
+                code: KeyCode::Esc, ..
+            }) => {
+                // Skip saving – print summary and continue.
+                disable_raw_mode()?;
+                print_config_summary_after_save(
+                    config_path,
+                    provider_was_present_before,
+                    models_count_before,
+                    None,
+                )?;
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+
+    disable_raw_mode()?;
+
+    // Compute chosen
+    let chosen: Vec<String> = available
+        .iter()
+        .cloned()
+        .zip(selected.iter())
+        .filter_map(|(name, sel)| if *sel { Some(name) } else { None })
+        .collect();
+
+    let _ = save_ollama_models(config_path, &chosen);
+    print_config_summary_after_save(
+        config_path,
+        provider_was_present_before,
+        models_count_before,
+        Some(chosen.len()),
+    )
+}
+
+fn render_inline_picker(
+    out: &mut std::io::Stdout,
+    host_root: &str,
+    items: &[String],
+    selected: &[bool],
+    cursor: usize,
+    first: &mut bool,
+    lines_printed: &mut usize,
+) -> io::Result<()> {
+    // If not first render, move to the start of the block. We will clear each line as we redraw.
+    if !*first {
+        out.write_all(format!("\x1b[{}A", *lines_printed).as_bytes())?; // up N
+    }
+
+    let mut lines = Vec::new();
+    let bold = |s: &str| format!("\x1b[1m{s}\x1b[0m");
+    lines.push(bold("we've discovered some models on ollama:").to_string());
+    lines.push(format!("endpoint: {host_root}"));
+    lines.push(
+        "controls: ↑/↓ move, space toggle, 'a' select/unselect all, enter confirm, 'q' skip"
+            .to_string(),
+    );
+    lines.push(String::new());
+    for (i, name) in items.iter().enumerate() {
+        let mark = if selected.get(i).copied().unwrap_or(false) {
+            "\x1b[32m[x]\x1b[0m" // green
+        } else {
+            "[ ]"
+        };
+        let mut line = format!("{mark} {name}");
+        if i == cursor {
+            line = format!("\x1b[7m{line}\x1b[0m"); // reverse video for current row
+        }
+        lines.push(line);
+    }
+
+    for l in &lines {
+        out.write_all(b"\x1b[2K")?; // clear current line
+        out.write_all(l.as_bytes())?;
+        out.write_all(b"\n")?;
+    }
+    out.flush()?;
+    *first = false;
+    *lines_printed = lines.len();
+    Ok(())
+}
+
+fn print_config_summary_after_save(
+    config_path: &std::path::Path,
+    provider_was_present_before: bool,
+    models_count_before: usize,
+    models_count_after: Option<usize>,
+) -> io::Result<()> {
+    let mut out = std::io::stdout();
+    let path = config_path.display().to_string();
+    if provider_was_present_before {
+        out.write_all(format!("config: ollama provider already present in {path}\n").as_bytes())?;
+    } else {
+        out.write_all(format!("config: added ollama as a model provider in {path}\n").as_bytes())?;
+    }
+    if let Some(after) = models_count_after {
+        let names = read_ollama_models_list(config_path);
+        if names.is_empty() {
+            out.write_all(format!("models: recorded {after}\n\n").as_bytes())?;
+        } else {
+            out.write_all(
+                format!("models: recorded {} ({})\n\n", after, names.join(", ")).as_bytes(),
+            )?;
+        }
+    } else {
+        out.write_all(b"models: no changes recorded\n\n")?;
+    }
+    out.flush()
+}
+
 pub async fn run_main(
     cli: Cli,
     codex_linux_sandbox_exe: Option<PathBuf>,
@@ -69,14 +393,43 @@ pub async fn run_main(
         )
     };
 
+    // Track config.toml state for messaging before launching TUI.
+    let (provider_was_present_before, models_count_before) = if cli.ollama {
+        let codex_home = codex_core::config::find_codex_home()?;
+        let config_path = codex_home.join("config.toml");
+        let (p, m) = read_ollama_config_state(&config_path);
+        (p, m)
+    } else {
+        (false, 0)
+    };
+
     let config = {
+        // If the user selected the Ollama provider via `--ollama`, verify a
+        // local server is reachable and ensure a provider entry exists in
+        // config.toml. Exit early with a helpful message otherwise.
+        if cli.ollama {
+            if let Err(e) =
+                codex_core::config::ensure_ollama_provider_configured_and_running().await
+            {
+                #[allow(clippy::print_stderr)]
+                {
+                    eprintln!("{e}");
+                }
+                std::process::exit(1);
+            }
+        }
+
         // Load configuration and support CLI overrides.
         let overrides = ConfigOverrides {
             model: cli.model.clone(),
             approval_policy,
             sandbox_mode,
             cwd: cli.cwd.clone().map(|p| p.canonicalize().unwrap_or(p)),
-            model_provider: None,
+            model_provider: if cli.ollama {
+                Some("ollama".to_string())
+            } else {
+                None
+            },
             config_profile: cli.config_profile.clone(),
             codex_linux_sandbox_exe,
             base_instructions: None,
@@ -101,6 +454,71 @@ pub async fn run_main(
             }
         }
     };
+    // If the user passed --ollama, fetch available models from the local
+    // Ollama instance and, if they differ from what is listed in
+    // config.toml, display a minimal inline selection UI before launching the TUI.
+    if cli.ollama {
+        // Determine host root for the Ollama native API (e.g. http://localhost:11434).
+        let base_url = config
+            .model_provider
+            .base_url
+            .clone()
+            .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
+        let host_root = base_url
+            .trim_end_matches('/')
+            .trim_end_matches("/v1")
+            .to_string();
+
+        // Query the list of local models via GET /api/tags.
+        let tags_url = format!("{host_root}/api/tags");
+        let available_models: Vec<String> = match reqwest::Client::new().get(&tags_url).send().await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<serde_json::Value>().await {
+                    Ok(val) => val
+                        .get("models")
+                        .and_then(|m| m.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.get("name").and_then(|n| n.as_str()))
+                                .map(|s| s.to_string())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                    Err(_) => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        };
+
+        let config_path = config.codex_home.join("config.toml");
+        // Read existing models in config.
+        let existing_models: Vec<String> = read_ollama_models_list(&config_path);
+
+        if available_models.is_empty() {
+            // Inform the user and continue launching the TUI.
+            print_inline_message_no_models(&host_root, &config_path, provider_was_present_before)?;
+        } else {
+            // Compare sets to decide whether to show the prompt.
+            let set_eq = {
+                use std::collections::HashSet;
+                let a: HashSet<_> = available_models.iter().collect();
+                let b: HashSet<_> = existing_models.iter().collect();
+                a == b
+            };
+
+            if !set_eq {
+                run_inline_models_picker(
+                    &host_root,
+                    &available_models,
+                    &existing_models,
+                    &config_path,
+                    provider_was_present_before,
+                    models_count_before,
+                )?;
+            }
+        }
+    }
 
     let log_dir = codex_core::config::log_dir(&config)?;
     std::fs::create_dir_all(&log_dir)?;

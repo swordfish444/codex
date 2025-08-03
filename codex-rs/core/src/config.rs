@@ -11,6 +11,7 @@ use crate::config_types::Tui;
 use crate::config_types::UriBasedFileOpener;
 use crate::flags::OPENAI_DEFAULT_MODEL;
 use crate::model_provider_info::ModelProviderInfo;
+use crate::model_provider_info::WireApi;
 use crate::model_provider_info::built_in_model_providers;
 use crate::openai_model_info::get_model_info;
 use crate::protocol::AskForApproval;
@@ -185,6 +186,130 @@ impl Config {
         // Step 4: merge with the strongly-typed overrides.
         Self::load_from_base_config_with_overrides(cfg, overrides, codex_home)
     }
+}
+
+/// Ensure that when the `--ollama` flag is used, there is a configured
+/// `model_providers.ollama` entry in `config.toml` and that an Ollama server is
+/// reachable. If a provider entry is missing but a local server is running,
+/// this function will create the provider entry with sensible defaults.
+///
+/// Returns `Ok(())` when the provider exists and the server is reachable. If
+/// the server is not reachable, returns an error that callers can surface to
+/// the end user (and should exit the process).
+pub async fn ensure_ollama_provider_configured_and_running() -> std::io::Result<()> {
+    use std::time::Duration;
+
+    // Resolve the Codex home directory and parse the current config (if
+    // present).
+    let codex_home = find_codex_home()?;
+    let mut root_value = load_config_as_toml(&codex_home)?;
+
+    // Determine whether an ollama provider entry already exists and select a
+    // base URL to probe for the health check. If a provider entry exists and
+    // specifies a base_url, use it; otherwise fall back to the default.
+    let (has_ollama_entry, base_url_to_use) = match &root_value {
+        TomlValue::Table(tbl) => {
+            let model_providers = tbl.get("model_providers");
+            match model_providers {
+                Some(TomlValue::Table(mp_tbl)) => match mp_tbl.get("ollama") {
+                    Some(TomlValue::Table(ollama_tbl)) => {
+                        // Use the configured base_url when present; otherwise default.
+                        let base_url = ollama_tbl
+                            .get("base_url")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("http://localhost:11434/v1")
+                            .to_string();
+                        (true, base_url)
+                    }
+                    _ => (false, "http://localhost:11434/v1".to_string()),
+                },
+                _ => (false, "http://localhost:11434/v1".to_string()),
+            }
+        }
+        _ => (false, "http://localhost:11434/v1".to_string()),
+    };
+
+    // Select a URL to probe to determine if an Ollama server is reachable.
+    // Prefer the OpenAI-compatible endpoint when the base_url ends with /v1,
+    // fall back to the native Ollama tags endpoint otherwise.
+    let probe_path = if base_url_to_use.trim_end_matches('/').ends_with("/v1") {
+        "models"
+    } else {
+        "api/tags"
+    };
+    let probe_url = format!(
+        "{}/{}",
+        base_url_to_use.trim_end_matches('/'),
+        probe_path.trim_start_matches('/')
+    );
+
+    // Probe the server with a short timeout.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .map_err(std::io::Error::other)?;
+    let resp = client.get(probe_url).send().await;
+    let server_ok = match resp {
+        Ok(r) => r.status().is_success(),
+        Err(_) => false,
+    };
+
+    if !server_ok {
+        return Err(std::io::Error::other(
+            "No running Ollama server detected. Please install/start Ollama: https://github.com/ollama/ollama?tab=readme-ov-file#ollama",
+        ));
+    }
+
+    // If no provider entry existed, create one with sensible defaults and
+    // persist back to config.toml.
+    if !has_ollama_entry {
+        use toml::value::Table as TomlTable;
+
+        // Ensure we have a root table to operate on.
+        if !matches!(root_value, TomlValue::Table(_)) {
+            root_value = TomlValue::Table(TomlTable::new());
+        }
+        let root_tbl = match &mut root_value {
+            TomlValue::Table(tbl) => tbl,
+            _ => unreachable!(),
+        };
+
+        // Create or fetch the model_providers table.
+        let mp_val = root_tbl
+            .entry("model_providers".to_string())
+            .or_insert_with(|| TomlValue::Table(TomlTable::new()));
+        let mp_tbl = match mp_val {
+            TomlValue::Table(t) => t,
+            _ => {
+                *mp_val = TomlValue::Table(TomlTable::new());
+                match mp_val {
+                    TomlValue::Table(t) => t,
+                    _ => unreachable!(),
+                }
+            }
+        };
+
+        // Insert the ollama provider entry.
+        let mut ollama_tbl = TomlTable::new();
+        ollama_tbl.insert("name".to_string(), TomlValue::String("Ollama".to_string()));
+        ollama_tbl.insert(
+            "base_url".to_string(),
+            TomlValue::String("http://localhost:11434/v1".to_string()),
+        );
+        ollama_tbl.insert(
+            "wire_api".to_string(),
+            TomlValue::String("chat".to_string()),
+        );
+        mp_tbl.insert("ollama".to_string(), TomlValue::Table(ollama_tbl));
+
+        // Persist the updated TOML back to disk.
+        std::fs::create_dir_all(&codex_home)?;
+        let config_path = codex_home.join("config.toml");
+        let updated = toml::to_string_pretty(&root_value).map_err(std::io::Error::other)?;
+        std::fs::write(config_path, updated)?;
+    }
+
+    Ok(())
 }
 
 /// Read `CODEX_HOME/config.toml` and return it as a generic TOML value. Returns
@@ -428,6 +553,28 @@ impl Config {
             .or(config_profile.model_provider)
             .or(cfg.model_provider)
             .unwrap_or_else(|| "openai".to_string());
+        // If the user explicitly selected the `ollama` provider but it is not
+        // defined in `config.toml`, inject a sensible default so the flag works
+        // out of the box without requiring manual configuration.
+        if model_provider_id == "ollama" && !model_providers.contains_key("ollama") {
+            model_providers.insert(
+                "ollama".to_string(),
+                ModelProviderInfo {
+                    name: "Ollama".to_string(),
+                    base_url: Some("http://localhost:11434/v1".to_string()),
+                    env_key: None,
+                    env_key_instructions: None,
+                    wire_api: WireApi::Chat,
+                    query_params: None,
+                    http_headers: None,
+                    env_http_headers: None,
+                    request_max_retries: None,
+                    stream_max_retries: None,
+                    stream_idle_timeout_ms: None,
+                    requires_auth: false,
+                },
+            );
+        }
         let model_provider = model_providers
             .get(&model_provider_id)
             .ok_or_else(|| {

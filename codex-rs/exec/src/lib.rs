@@ -35,6 +35,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     let Cli {
         images,
         model,
+        ollama,
         config_profile,
         full_auto,
         dangerously_bypass_approvals_and_sandbox,
@@ -114,6 +115,15 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         sandbox_mode_cli_arg.map(Into::<SandboxMode>::into)
     };
 
+    // When the user opts into the Ollama provider via `--ollama`, ensure we
+    // have a configured provider entry and that a local server is running.
+        if ollama {
+        if let Err(e) = codex_core::config::ensure_ollama_provider_configured_and_running().await {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    }
+
     // Load configuration and determine approval policy
     let overrides = ConfigOverrides {
         model,
@@ -123,7 +133,11 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         approval_policy: Some(AskForApproval::Never),
         sandbox_mode,
         cwd: cwd.map(|p| p.canonicalize().unwrap_or(p)),
-        model_provider: None,
+        model_provider: if ollama {
+            Some("ollama".to_string())
+        } else {
+            None
+        },
         codex_linux_sandbox_exe,
         base_instructions: None,
         include_plan_tool: None,

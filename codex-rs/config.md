@@ -3,6 +3,7 @@
 Codex supports several mechanisms for setting config values:
 
 - Config-specific command-line flags, such as `--model o3` (highest precedence).
+- Convenience provider flags, such as `--ollama` (equivalent to `-c model_provider=ollama`).
 - A generic `-c`/`--config` flag that takes a `key=value` pair, such as `--config model="o3"`.
   - The key can contain dots to set a value deeper than the root, e.g. `--config model_providers.openai.wire_api="chat"`.
   - Values can contain objects, such as `--config shell_environment_policy.include_only=["PATH", "HOME", "USER"]`.
@@ -55,6 +56,13 @@ Note this makes it possible to use Codex CLI with non-OpenAI models, so long as 
 name = "Ollama"
 base_url = "http://localhost:11434/v1"
 ```
+
+Alternatively, you can pass `--ollama` on the CLI, which is equivalent to `-c model_provider=ollama`.
+When using `--ollama`, Codex will verify that an Ollama server is running locally and
+will create a `[model_providers.ollama]` entry in your `config.toml` with sensible defaults
+(`base_url = "http://localhost:11434/v1"`, `wire_api = "chat"`) if one does not already exist.
+If no running Ollama server is detected, Codex will print instructions to install/start Ollama
+and exit: https://github.com/ollama/ollama?tab=readme-ov-file#ollama
 
 Or a third-party provider (using a distinct environment variable for the API key):
 

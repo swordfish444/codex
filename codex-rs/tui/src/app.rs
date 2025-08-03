@@ -43,6 +43,7 @@ enum AppState<'a> {
     },
     /// The start-up warning that recommends running codex inside a Git repo.
     GitWarning { screen: GitWarningScreen },
+    // (no additional states)
 }
 
 pub(crate) struct App<'a> {
