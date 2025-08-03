@@ -102,6 +102,18 @@ pub enum CodexErr {
 
     #[error("{0}")]
     EnvVar(EnvVarError),
+
+    // ------------------------------
+    // Ollama‑specific errors
+    // ------------------------------
+    #[error("no running Ollama server detected; please install/start Ollama")] 
+    OllamaServerUnreachable,
+
+    #[error("ollama model not found: {0}")]
+    OllamaModelNotFound(String),
+
+    #[error("ollama pull failed: {0}")]
+    OllamaPullFailed(String),
 }
 
 #[derive(Debug)]

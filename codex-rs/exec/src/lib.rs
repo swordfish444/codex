@@ -128,6 +128,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     // have a configured provider entry and that a local server is running.
     if ollama {
         if let Err(e) = ensure_configured_and_running().await {
+            tracing::error!("{e}");
             eprintln!("{e}");
             std::process::exit(1);
         }
@@ -172,6 +173,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         if let Err(e) =
             ensure_model_available(&model_name, &client, &config_path, &mut reporter).await
         {
+            tracing::error!("{e}");
             eprintln!("{e}");
             std::process::exit(1);
         }

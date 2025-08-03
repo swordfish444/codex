@@ -342,6 +342,7 @@ pub async fn run_main(
             if let Err(e) = ensure_configured_and_running().await {
                 #[allow(clippy::print_stderr)]
                 {
+                    tracing::error!("{e}");
                     eprintln!("{e}");
                 }
                 std::process::exit(1);
@@ -407,6 +408,7 @@ pub async fn run_main(
                 ensure_model_available(model_name, &client, &config_path, &mut reporter).await
             {
                 let mut out = std::io::stderr();
+                tracing::error!("{e}");
                 let _ = out.write_all(format!("{e}\n").as_bytes());
                 let _ = out.flush();
                 std::process::exit(1);
