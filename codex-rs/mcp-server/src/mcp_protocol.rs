@@ -132,32 +132,32 @@ impl From<ToolCallResponse> for CallToolResult {
             is_error,
             result,
         } = val;
-        let (content, structured_content, is_error_out) = match result {
+        match result {
             Some(res) => match serde_json::to_value(&res) {
-                Ok(v) => {
-                    let content = vec![ContentBlock::TextContent(TextContent {
+                Ok(v) => CallToolResult {
+                    content: vec![ContentBlock::TextContent(TextContent {
                         r#type: "text".to_string(),
                         text: v.to_string(),
                         annotations: None,
-                    })];
-                    (content, Some(v), is_error)
-                }
-                Err(e) => {
-                    let content = vec![ContentBlock::TextContent(TextContent {
+                    })],
+                    is_error,
+                    structured_content: Some(v),
+                },
+                Err(e) => CallToolResult {
+                    content: vec![ContentBlock::TextContent(TextContent {
                         r#type: "text".to_string(),
                         text: format!("Failed to serialize tool result: {e}"),
                         annotations: None,
-                    })];
-                    (content, None, Some(true))
-                }
+                    })],
+                    is_error: Some(true),
+                    structured_content: None,
+                },
             },
-            None => (vec![], None, is_error),
-        };
-
-        CallToolResult {
-            content,
-            is_error: is_error_out,
-            structured_content,
+            None => CallToolResult {
+                content: vec![],
+                is_error,
+                structured_content: None,
+            },
         }
     }
 }
@@ -172,15 +172,22 @@ pub enum ToolCallResponseResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ConversationCreateResult {
-    pub conversation_id: ConversationId,
-    pub model: String,
+#[serde(untagged)]
+pub enum ConversationCreateResult {
+    Ok {
+        conversation_id: ConversationId,
+        model: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConversationStreamResult {}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+// TODO: remove this status because we have is_error field in the response.
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum ConversationSendMessageResult {
     Ok,
@@ -491,7 +498,7 @@ mod tests {
             request_id: RequestId::Integer(1),
             is_error: None,
             result: Some(ToolCallResponseResult::ConversationCreate(
-                ConversationCreateResult {
+                ConversationCreateResult::Ok {
                     conversation_id: ConversationId(uuid!("d0f6ecbe-84a2-41c1-b23d-b20473b25eab")),
                     model: "o3".into(),
                 },
@@ -513,6 +520,35 @@ mod tests {
             "response (ConversationCreate) must match"
         );
         assert_eq!(req_id, RequestId::Integer(1));
+    }
+
+    #[test]
+    fn response_error_conversation_create_full_schema() {
+        let env = ToolCallResponse {
+            request_id: RequestId::Integer(2),
+            is_error: Some(true),
+            result: Some(ToolCallResponseResult::ConversationCreate(
+                ConversationCreateResult::Error {
+                    message: "Failed to initialize session".into(),
+                },
+            )),
+        };
+        let req_id = env.request_id.clone();
+        let observed = to_val(&CallToolResult::from(env));
+        let expected = json!({
+            "content": [
+                { "type": "text", "text": "{\"message\":\"Failed to initialize session\"}" }
+            ],
+            "isError": true,
+            "structuredContent": {
+                "message": "Failed to initialize session"
+            }
+        });
+        assert_eq!(
+            observed, expected,
+            "error response (ConversationCreate) must match"
+        );
+        assert_eq!(req_id, RequestId::Integer(2));
     }
 
     #[test]
