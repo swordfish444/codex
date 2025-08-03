@@ -1,8 +1,6 @@
 #![cfg(unix)]
 // Support code lives in the `mcp_test_support` crate under tests/common.
 
- 
-
 use codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_mcp_server::CodexToolCallParam;
 use mcp_types::JSONRPCResponse;

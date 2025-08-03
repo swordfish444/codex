@@ -1,7 +1,5 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
- 
-
 use mcp_test_support::McpProcess;
 use mcp_test_support::create_config_toml;
 use mcp_test_support::create_final_assistant_message_sse_response;
