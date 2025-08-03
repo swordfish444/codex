@@ -240,6 +240,7 @@ impl ChatWidget<'_> {
 
     pub(crate) fn handle_codex_event(&mut self, event: Event) {
         let Event { id, msg } = event;
+        tracing::trace!("[TUI] codex_event: {:?}", msg);
         match msg {
             EventMsg::SessionConfigured(event) => {
                 self.bottom_pane

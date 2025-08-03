@@ -261,10 +261,15 @@ async fn process_chat_sse<S>(
                 .and_then(|d| d.get("content"))
                 .and_then(|c| c.as_str())
             {
-                assistant_text.push_str(content);
-                let _ = tx_event
-                    .send(Ok(ResponseEvent::OutputTextDelta(content.to_string())))
-                    .await;
+                // Some providers emit frequent empty-string content deltas.
+                // Suppress empty deltas to avoid creating a premature answer block
+                // ahead of reasoning in streaming UIs.
+                if !content.is_empty() {
+                    assistant_text.push_str(content);
+                    let _ = tx_event
+                        .send(Ok(ResponseEvent::OutputTextDelta(content.to_string())))
+                        .await;
+                }
             }
 
             // Forward any reasoning/thinking deltas if present.
@@ -389,7 +394,8 @@ async fn process_chat_sse<S>(
 pub(crate) struct AggregatedChatStream<S> {
     inner: S,
     cumulative: String,
-    pending_completed: Option<ResponseEvent>,
+    cumulative_reasoning: String,
+    pending: std::collections::VecDeque<ResponseEvent>,
     // When true, do not emit a cumulative assistant message at Completed.
     streaming_mode: bool,
     // When true, forward reasoning deltas instead of ignoring them.
@@ -404,8 +410,8 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
 
-        // First, flush any buffered Completed event from the previous call.
-        if let Some(ev) = this.pending_completed.take() {
+        // First, flush any buffered events from the previous call.
+        if let Some(ev) = this.pending.pop_front() {
             return Poll::Ready(Some(Ok(ev)));
         }
 
@@ -447,28 +453,48 @@ where
                     response_id,
                     token_usage,
                 }))) => {
-                    // Always emit a final OutputItemDone with the cumulative assistant text
-                    // so downstream consumers see a completed item, even when streaming mode
-                    // is enabled (which forwards deltas). This mirrors the Responses API
-                    // behaviour where `response.output_item.done` is emitted alongside deltas.
+                    // Build any aggregated items in the correct order: Reasoning first, then Message.
+                    let mut emitted_any = false;
+
+                    if !this.cumulative_reasoning.is_empty() {
+                        let aggregated_reasoning = crate::models::ResponseItem::Reasoning {
+                            id: String::new(),
+                            summary: vec![
+                                crate::models::ReasoningItemReasoningSummary::SummaryText {
+                                    text: std::mem::take(&mut this.cumulative_reasoning),
+                                },
+                            ],
+                            content: None,
+                            encrypted_content: None,
+                        };
+                        this.pending
+                            .push_back(ResponseEvent::OutputItemDone(aggregated_reasoning));
+                        emitted_any = true;
+                    }
+
                     if !this.cumulative.is_empty() {
-                        let aggregated_item = crate::models::ResponseItem::Message {
+                        let aggregated_message = crate::models::ResponseItem::Message {
                             id: None,
                             role: "assistant".to_string(),
                             content: vec![crate::models::ContentItem::OutputText {
                                 text: std::mem::take(&mut this.cumulative),
                             }],
                         };
+                        this.pending
+                            .push_back(ResponseEvent::OutputItemDone(aggregated_message));
+                        emitted_any = true;
+                    }
 
-                        // Buffer Completed so it is returned *after* the aggregated message.
-                        this.pending_completed = Some(ResponseEvent::Completed {
-                            response_id,
-                            token_usage,
+                    // Always emit Completed last when anything was aggregated.
+                    if emitted_any {
+                        this.pending.push_back(ResponseEvent::Completed {
+                            response_id: response_id.clone(),
+                            token_usage: token_usage.clone(),
                         });
-
-                        return Poll::Ready(Some(Ok(ResponseEvent::OutputItemDone(
-                            aggregated_item,
-                        ))));
+                        // Return the first pending event now.
+                        if let Some(ev) = this.pending.pop_front() {
+                            return Poll::Ready(Some(Ok(ev)));
+                        }
                     }
 
                     // Nothing aggregated – forward Completed directly.
@@ -493,10 +519,12 @@ where
                     }
                 }
                 Poll::Ready(Some(Ok(ResponseEvent::ReasoningSummaryDelta(delta)))) => {
+                    // Always accumulate reasoning deltas so we can emit a final Reasoning item at Completed.
+                    this.cumulative_reasoning.push_str(&delta);
                     if this.streaming_mode {
+                        // In streaming mode, also forward the delta immediately.
                         return Poll::Ready(Some(Ok(ResponseEvent::ReasoningSummaryDelta(delta))));
                     } else {
-                        // Reasoning deltas are intentionally ignored in aggregated mode.
                         continue;
                     }
                 }
@@ -530,7 +558,8 @@ pub(crate) trait AggregateStreamExt: Stream<Item = Result<ResponseEvent>> + Size
         AggregatedChatStream {
             inner: self,
             cumulative: String::new(),
-            pending_completed: None,
+            cumulative_reasoning: String::new(),
+            pending: std::collections::VecDeque::new(),
             streaming_mode: false,
         }
     }
@@ -543,7 +572,8 @@ impl<S> AggregatedChatStream<S> {
         AggregatedChatStream {
             inner,
             cumulative: String::new(),
-            pending_completed: None,
+            cumulative_reasoning: String::new(),
+            pending: std::collections::VecDeque::new(),
             streaming_mode: true,
         }
     }
