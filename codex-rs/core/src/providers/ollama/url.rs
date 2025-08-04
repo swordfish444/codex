@@ -42,7 +42,10 @@ pub fn probe_url_for_base(base_url: &str) -> String {
 /// Convenience helper to probe an Ollama server given a provider style base URL.
 pub async fn probe_ollama_server(base_url: &str) -> CoreResult<bool> {
     let url = probe_url_for_base(base_url);
-    let resp = reqwest::Client::new().get(url).send().await?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    let resp = client.get(url).send().await?;
     Ok(resp.status().is_success())
 }
 

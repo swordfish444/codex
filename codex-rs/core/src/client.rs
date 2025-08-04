@@ -62,10 +62,14 @@ impl ModelClient {
         summary: ReasoningSummaryConfig,
         session_id: Uuid,
     ) -> Self {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             config,
             auth,
-            client: reqwest::Client::new(),
+            client,
             provider,
             session_id,
             effort,

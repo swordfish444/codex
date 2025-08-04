@@ -34,8 +34,12 @@ impl OllamaClient {
             || matches!(provider.wire_api, WireApi::Chat)
                 && is_openai_compatible_base_url(&base_url);
         let host_root = base_url_to_host_root(&base_url);
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
-            client: reqwest::Client::new(),
+            client,
             host_root,
             uses_openai_compat,
         }
@@ -43,8 +47,12 @@ impl OllamaClient {
 
     /// Low-level constructor given a raw host root, e.g. "http://localhost:11434".
     pub fn from_host_root(host_root: impl Into<String>) -> Self {
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
-            client: reqwest::Client::new(),
+            client,
             host_root: host_root.into(),
             uses_openai_compat: false,
         }
