@@ -100,4 +100,56 @@ mod tests {
     fn unicode_german_sharp_s_casefold() {
         assert!(fuzzy_match("straße", "strasse").is_none());
     }
+
+    #[test]
+    fn prefer_contiguous_match_over_spread() {
+        // Contiguous match should receive a better (smaller) score than a
+        // spread-out match because the window penalty is larger when
+        // characters are farther apart.
+        let (_idx_a, score_a) = fuzzy_match("abc", "abc").expect("expected match");
+        let (_idx_b, score_b) = fuzzy_match("a-b-c", "abc").expect("expected match");
+        assert!(
+            score_a < score_b,
+            "contiguous match should rank better: {score_a} < {score_b}"
+        );
+    }
+
+    #[test]
+    fn start_of_string_bonus_applies() {
+        // Matches that begin at index 0 get a large bonus (-100), so
+        // "file_name" should outrank "my_file_name" for the pattern "file".
+        let (_idx_a, score_a) = fuzzy_match("file_name", "file").expect("expected match");
+        let (_idx_b, score_b) = fuzzy_match("my_file_name", "file").expect("expected match");
+        assert!(
+            score_a < score_b,
+            "start-of-string bonus should apply: {score_a} < {score_b}"
+        );
+    }
+
+    #[test]
+    fn empty_needle_matches_with_max_score_and_no_indices() {
+        let (idx, score) = fuzzy_match("anything", "").expect("empty needle should match");
+        assert!(idx.is_empty());
+        assert_eq!(score, i32::MAX);
+    }
+
+    #[test]
+    fn case_insensitive_matching_basic() {
+        // Verify case-insensitivity: mixed-case needle should match and
+        // indices should refer to original haystack character positions.
+        let (idx, _score) = fuzzy_match("Hello", "heL").expect("expected match");
+        assert_eq!(idx, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn indices_are_deduped_for_multichar_lowercase_expansion() {
+        // U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE lowercases to two code
+        // points: 'i' + U+0307 COMBINING DOT ABOVE. When the needle matches
+        // both of these lowered code points, the resulting original indices
+        // would be [0, 0] (same original char). The implementation should
+        // return unique, sorted indices.
+        let needle = "\u{0069}\u{0307}"; // "i" + combining dot above
+        let (idx, _score) = fuzzy_match("İ", needle).expect("expected match");
+        assert_eq!(idx, vec![0], "indices should be unique and sorted");
+    }
 }
