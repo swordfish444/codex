@@ -78,7 +78,7 @@ pub(crate) enum HistoryCell {
     AgentReasoning { view: TextBlock },
 
     /// An exec tool call that has not finished yet.
-    ActiveExecCommand { view: TextBlock },
+    ActiveExecCommand { command: String },
 
     /// Completed exec tool call.
     CompletedExecCommand { view: TextBlock },
@@ -123,6 +123,10 @@ pub(crate) enum HistoryCell {
 
 const TOOL_CALL_MAX_LINES: usize = 5;
 
+pub trait DynamicHeightWidgetRef: WidgetRef {
+    fn desired_height(&self, width: u16) -> u16;
+}
+
 impl HistoryCell {
     /// Return a cloned, plain representation of the cell's lines suitable for
     /// one‑shot insertion into the terminal scrollback. Image cells are
@@ -141,9 +145,16 @@ impl HistoryCell {
             | HistoryCell::CompletedMcpToolCall { view }
             | HistoryCell::PendingPatch { view }
             | HistoryCell::PlanUpdate { view }
-            | HistoryCell::ActiveExecCommand { view, .. }
             | HistoryCell::ActiveMcpToolCall { view, .. } => {
                 view.lines.iter().map(line_to_static).collect()
+            }
+            HistoryCell::ActiveExecCommand { command, .. } => {
+                let lines: Vec<Line<'static>> = vec![
+                    Line::from(vec!["command".magenta(), " running...".dim()]),
+                    Line::from(format!("$ {command}")),
+                    Line::from(""),
+                ];
+                lines.iter().map(line_to_static).collect()
             }
             HistoryCell::CompletedMcpToolCallWithImageOutput { .. } => vec![
                 Line::from("tool result (image output omitted)"),
@@ -152,12 +163,28 @@ impl HistoryCell {
         }
     }
 
-    pub(crate) fn desired_height(&self, width: u16) -> u16 {
-        Paragraph::new(Text::from(self.plain_lines()))
-            .wrap(Wrap { trim: false })
-            .line_count(width)
-            .try_into()
-            .unwrap_or(0)
+    fn view(&self) -> Box<dyn DynamicHeightWidgetRef + '_> {
+        match self {
+            HistoryCell::WelcomeMessage { view }
+            | HistoryCell::UserPrompt { view }
+            | HistoryCell::AgentMessage { view }
+            | HistoryCell::AgentReasoning { view }
+            | HistoryCell::BackgroundEvent { view }
+            | HistoryCell::GitDiffOutput { view }
+            | HistoryCell::ErrorEvent { view }
+            | HistoryCell::SessionInfo { view }
+            | HistoryCell::CompletedExecCommand { view }
+            | HistoryCell::CompletedMcpToolCall { view }
+            | HistoryCell::PendingPatch { view }
+            | HistoryCell::PlanUpdate { view }
+            | HistoryCell::ActiveMcpToolCall { view, .. } => Box::new(view),
+            HistoryCell::ActiveExecCommand { command, .. } => Box::new(ActiveExecCommandView {
+                command: command.clone(),
+            }),
+            HistoryCell::CompletedMcpToolCallWithImageOutput { .. } => {
+                panic!("view() called on image output cell")
+            }
+        }
     }
 
     pub(crate) fn new_session_info(
@@ -268,14 +295,8 @@ impl HistoryCell {
     pub(crate) fn new_active_exec_command(command: Vec<String>) -> Self {
         let command_escaped = strip_bash_lc_and_escape(&command);
 
-        let lines: Vec<Line<'static>> = vec![
-            Line::from(vec!["command".magenta(), " running...".dim()]),
-            Line::from(format!("$ {command_escaped}")),
-            Line::from(""),
-        ];
-
         HistoryCell::ActiveExecCommand {
-            view: TextBlock::new(lines),
+            command: command_escaped,
         }
     }
 
@@ -643,9 +664,43 @@ impl HistoryCell {
     }
 }
 
+impl DynamicHeightWidgetRef for &HistoryCell {
+    fn desired_height(&self, width: u16) -> u16 {
+        self.view().desired_height(width)
+    }
+}
+
 impl WidgetRef for &HistoryCell {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        Paragraph::new(Text::from(self.plain_lines()))
+        self.view().render_ref(area, buf);
+    }
+}
+
+struct ActiveExecCommandView {
+    command: String,
+}
+impl DynamicHeightWidgetRef for ActiveExecCommandView {
+    fn desired_height(&self, width: u16) -> u16 {
+        let lines: Vec<Line<'static>> = vec![
+            Line::from(vec!["command".yellow(), " running...".dim()]),
+            Line::from(format!("$ {}", self.command)),
+            Line::from(""),
+        ];
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .line_count(width)
+            .try_into()
+            .unwrap_or(0)
+    }
+}
+impl WidgetRef for ActiveExecCommandView {
+    fn render_ref(&self, area: Rect, buf: &mut Buffer) {
+        let lines: Vec<Line<'static>> = vec![
+            Line::from(vec!["command".yellow(), " running...".dim()]),
+            Line::from(format!("$ {}", self.command)),
+            Line::from(""),
+        ];
+        Paragraph::new(Text::from(lines))
             .wrap(Wrap { trim: false })
             .render(area, buf);
     }
