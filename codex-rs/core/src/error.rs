@@ -106,7 +106,7 @@ pub enum CodexErr {
     // ------------------------------
     // Ollama‑specific errors
     // ------------------------------
-    #[error("no running Ollama server detected; please install/start Ollama")] 
+    #[error("no running Ollama server detected; please install/start Ollama")]
     OllamaServerUnreachable,
 
     #[error("ollama model not found: {0}")]
