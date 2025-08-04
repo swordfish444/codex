@@ -36,26 +36,6 @@ pub(crate) struct Conversation {
     pending_elicitations: Vec<PendingElicitation>,
 }
 
-enum PendingElicitation {
-    ExecRequest(ExecRequest),
-    PatchRequest(PatchRequest),
-}
-
-struct PatchRequest {
-    call_id: String,
-    reason: Option<String>,
-    grant_root: Option<PathBuf>,
-    changes: HashMap<PathBuf, FileChange>,
-    event_id: String,
-}
-
-struct ExecRequest {
-    command: Vec<String>,
-    cwd: PathBuf,
-    event_id: String,
-    call_id: String,
-}
-
 impl Conversation {
     pub(crate) fn new(
         codex: Arc<Codex>,
@@ -375,4 +355,24 @@ impl Conversation {
     async fn handle_task_clear(&mut self) {
         self.running = false;
     }
+}
+
+enum PendingElicitation {
+    ExecRequest(ExecRequest),
+    PatchRequest(PatchRequest),
+}
+
+struct PatchRequest {
+    call_id: String,
+    reason: Option<String>,
+    grant_root: Option<PathBuf>,
+    changes: HashMap<PathBuf, FileChange>,
+    event_id: String,
+}
+
+struct ExecRequest {
+    command: Vec<String>,
+    cwd: PathBuf,
+    event_id: String,
+    call_id: String,
 }
