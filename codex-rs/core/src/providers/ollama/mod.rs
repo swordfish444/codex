@@ -16,10 +16,13 @@ pub mod parser;
 pub mod url;
 
 pub use client::OllamaClient;
-pub use config::{read_config_models, read_provider_state, write_config_models};
-pub use url::{
-    base_url_to_host_root, base_url_to_host_root_with_wire, probe_ollama_server, probe_url_for_base,
-};
+pub use config::read_config_models;
+pub use config::read_provider_state;
+pub use config::write_config_models;
+pub use url::base_url_to_host_root;
+pub use url::base_url_to_host_root_with_wire;
+pub use url::probe_ollama_server;
+pub use url::probe_url_for_base;
 /// Coordinator wrapper used by frontends when responding to `--ollama`.
 ///
 /// - Probes the server using the configured base_url when present, otherwise
@@ -50,8 +53,10 @@ pub async fn ensure_configured_and_running() -> CoreResult<()> {
         Err(_) => DEFAULT_BASE_URL.to_string(),
     };
 
-    // Probe reachability.
-    let ok = url::probe_ollama_server(&base_url).await?;
+    // Probe reachability; map any probe error to a friendly unreachable message.
+    let ok: bool = url::probe_ollama_server(&base_url)
+        .await
+        .unwrap_or_default();
     if !ok {
         return Err(CodexErr::OllamaServerUnreachable);
     }
@@ -59,6 +64,45 @@ pub async fn ensure_configured_and_running() -> CoreResult<()> {
     // Ensure provider entry exists with defaults.
     let _ = config::ensure_ollama_provider_entry(&codex_home)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod ensure_tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+    use super::*;
+
+    #[tokio::test]
+    async fn test_ensure_configured_returns_friendly_error_when_unreachable() {
+        // Skip in CI sandbox environments without network to avoid false negatives.
+        if std::env::var(crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+            tracing::info!(
+                "{} is set; skipping test_ensure_configured_returns_friendly_error_when_unreachable",
+                crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
+            );
+            return;
+        }
+
+        let tmpdir = tempfile::TempDir::new().expect("tempdir");
+        let config_path = tmpdir.path().join("config.toml");
+        std::fs::create_dir_all(tmpdir.path()).unwrap();
+        std::fs::write(
+            &config_path,
+            r#"[model_providers.ollama]
+name = "Ollama"
+base_url = "http://127.0.0.1:1/v1"
+wire_api = "chat"
+"#,
+        )
+        .unwrap();
+        unsafe {
+            std::env::set_var("CODEX_HOME", tmpdir.path());
+        }
+
+        let err = ensure_configured_and_running()
+            .await
+            .expect_err("should report unreachable server as friendly error");
+        assert!(matches!(err, CodexErr::OllamaServerUnreachable));
+    }
 }
 
 /// Events emitted while pulling a model from Ollama.

@@ -5,11 +5,15 @@ use serde_json::Value as JsonValue;
 use std::collections::VecDeque;
 use std::io;
 
-use crate::model_provider_info::{ModelProviderInfo, WireApi};
+use crate::model_provider_info::ModelProviderInfo;
+use crate::model_provider_info::WireApi;
 
+use super::DEFAULT_BASE_URL;
+use super::PullEvent;
+use super::PullProgressReporter;
 use super::parser::pull_events_from_value;
-use super::url::{base_url_to_host_root, is_openai_compatible_base_url};
-use super::{DEFAULT_BASE_URL, PullEvent, PullProgressReporter};
+use super::url::base_url_to_host_root;
+use super::url::is_openai_compatible_base_url;
 
 /// Client for interacting with a local Ollama instance.
 pub struct OllamaClient {
@@ -158,5 +162,90 @@ impl OllamaClient {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+    use super::*;
+    use crate::model_provider_info::ModelProviderInfo;
+    use crate::model_provider_info::WireApi;
+
+    // Happy-path tests using a mock HTTP server; skip if sandbox network is disabled.
+    #[tokio::test]
+    async fn test_fetch_models_happy_path() {
+        if std::env::var(crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+            tracing::info!(
+                "{} is set; skipping test_fetch_models_happy_path",
+                crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
+            );
+            return;
+        }
+
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/api/tags"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_raw(
+                    serde_json::json!({
+                        "models": [ {"name": "llama3.2:3b"}, {"name":"mistral"} ]
+                    })
+                    .to_string(),
+                    "application/json",
+                ),
+            )
+            .mount(&server)
+            .await;
+
+        let client = OllamaClient::from_host_root(server.uri());
+        let models = client.fetch_models().await.expect("fetch models");
+        assert!(models.contains(&"llama3.2:3b".to_string()));
+        assert!(models.contains(&"mistral".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_probe_server_happy_path_openai_compat_and_native() {
+        if std::env::var(crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+            tracing::info!(
+                "{} set; skipping test_probe_server_happy_path_openai_compat_and_native",
+                crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
+            );
+            return;
+        }
+
+        let server = wiremock::MockServer::start().await;
+
+        // Native endpoint
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/api/tags"))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let native = OllamaClient::from_host_root(server.uri());
+        assert!(native.probe_server().await.expect("probe native"));
+
+        // OpenAI compatibility endpoint
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/v1/models"))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let provider = ModelProviderInfo {
+            name: "Ollama".to_string(),
+            base_url: Some(format!("{}/v1", server.uri())),
+            env_key: None,
+            env_key_instructions: None,
+            wire_api: WireApi::Chat,
+            query_params: None,
+            http_headers: None,
+            env_http_headers: None,
+            request_max_retries: None,
+            stream_max_retries: None,
+            stream_idle_timeout_ms: None,
+            requires_auth: false,
+        };
+        let compat = OllamaClient::from_provider(&provider);
+        assert!(compat.probe_server().await.expect("probe compat"));
     }
 }
