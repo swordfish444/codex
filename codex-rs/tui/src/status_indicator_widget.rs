@@ -11,6 +11,7 @@ use std::time::Duration;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -65,7 +66,7 @@ impl StatusIndicatorWidget {
             thread::spawn(move || {
                 let mut counter = 0usize;
                 while running_clone.load(Ordering::Relaxed) {
-                    std::thread::sleep(Duration::from_millis(33));
+                    std::thread::sleep(Duration::from_millis(100));
                     counter = counter.wrapping_add(1);
                     frame_idx_clone.store(counter, Ordering::Relaxed);
                     app_event_tx_clone.send(AppEvent::RequestRedraw);
@@ -170,18 +171,65 @@ impl WidgetRef for StatusIndicatorWidget {
         if area.height == 0 || area.width == 0 {
             return;
         }
-        // Plain rendering: no borders or padding so the live cell is visually
-        // indistinguishable from terminal scrollback. No left bar.
+
+        // Build animated gradient header for the word "Working".
+        let idx = self.frame_idx.load(std::sync::atomic::Ordering::Relaxed);
+        let header_text = "Working";
+        let header_chars: Vec<char> = header_text.chars().collect();
+        let padding = 4usize; // virtual padding around the word for smoother loop
+        let period = header_chars.len() + padding * 2;
+        let pos = idx % period;
+        let has_true_color = supports_color::on_cached(supports_color::Stream::Stdout)
+            .map(|level| level.has_16m)
+            .unwrap_or(false);
+        let band_half_width = 2.0; // width of the bright band in characters
+
+        let mut header_spans: Vec<Span<'static>> = Vec::new();
+        for (i, ch) in header_chars.iter().enumerate() {
+            let i_pos = i as isize + padding as isize;
+            let pos = pos as isize;
+            let dist = (i_pos - pos).abs() as f32;
+
+            let t = if dist <= band_half_width {
+                let x = std::f32::consts::PI * (dist / band_half_width);
+                0.5 * (1.0 + x.cos())
+            } else {
+                0.0
+            };
+
+            let brightness = 0.4 + 0.6 * t;
+            let level = (brightness * 255.0).clamp(0.0, 255.0) as u8;
+            let style = if has_true_color {
+                Style::default()
+                    .fg(Color::Rgb(level, level, level))
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                // Bold makes dark gray and gray look the same, so don't use it when true color is not supported.
+                Style::default().fg(color_for_level(level))
+            };
+
+            header_spans.push(Span::styled(ch.to_string(), style));
+        }
+
+        // Plain rendering: no borders or padding so the live cell is visually indistinguishable from terminal scrollback.
         let inner_width = area.width as usize;
 
         // Compose a single status line like: "▌ Working [·] waiting for model"
         let mut spans: Vec<Span<'static>> = Vec::new();
         spans.push(Span::styled("▌ ", Style::default().fg(Color::Cyan)));
-        spans.push(Span::raw("Working "));
+        // Gradient header
+        spans.extend(header_spans);
+        // Space after header
+        spans.push(Span::styled(
+            " ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ));
 
         // Append animated dot in brackets.
         const ANIM: [usize; 9] = [0, 1, 2, 3, 4, 3, 2, 1, 0];
-        const DOTS: [&str; 5] = ["·", "•", "●", "◉", "⬤"]; // small → large
+        const DOTS: [&str; 5] = ["·", "•", "●", "◉", "○"];
         const DOT_SLOWDOWN: usize = 6; // slow down animation relative to frame tick
         let frame = self.frame_idx.load(std::sync::atomic::Ordering::Relaxed);
         let idx = (frame / DOT_SLOWDOWN) % ANIM.len();
@@ -222,6 +270,16 @@ impl WidgetRef for StatusIndicatorWidget {
 
         let paragraph = Paragraph::new(lines);
         paragraph.render_ref(area, buf);
+    }
+}
+
+fn color_for_level(level: u8) -> Color {
+    if level < 128 {
+        Color::DarkGray
+    } else if level < 192 {
+        Color::Gray
+    } else {
+        Color::White
     }
 }
 
