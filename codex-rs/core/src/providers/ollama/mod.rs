@@ -555,20 +555,69 @@ fn write_document(path: &Path, doc: &Document) -> io::Result<()> {
 }
 
 pub fn upsert_provider_ollama(doc: &mut Document) -> &mut Table {
-    if doc.get("model_providers").is_none() {
+    // Ensure "model_providers" exists and is a table.
+    let needs_init = match doc.get("model_providers") {
+        None => true,
+        Some(item) => !item.is_table(),
+    };
+    if needs_init {
         doc.as_table_mut()
             .insert("model_providers", Item::Table(Table::new()));
-    } else if !doc["model_providers"].is_table() {
-        doc["model_providers"] = Item::Table(Table::new());
     }
 
-    let providers = doc["model_providers"]
-        .as_table_mut()
-        .expect("providers table");
-    if providers.get("ollama").is_none() || !providers["ollama"].is_table() {
-        providers["ollama"] = Item::Table(Table::new());
+    // Now, get a mutable reference to the "model_providers" table without `expect`/`unwrap`.
+    let providers: &mut Table = {
+        // Insert if missing.
+        if doc.as_table().get("model_providers").is_none() {
+            doc.as_table_mut()
+                .insert("model_providers", Item::Table(Table::new()));
+        }
+        match doc.as_table_mut().get_mut("model_providers") {
+            Some(item) => {
+                if !item.is_table() {
+                    *item = Item::Table(Table::new());
+                }
+                match item.as_table_mut() {
+                    Some(t) => t,
+                    None => unreachable!("model_providers was set to a table"),
+                }
+            }
+            None => unreachable!("model_providers should exist after insertion"),
+        }
+    };
+
+    // Ensure "ollama" exists and is a table.
+    let needs_ollama_init = match providers.get("ollama") {
+        None => true,
+        Some(item) => !item.is_table(),
+    };
+    if needs_ollama_init {
+        providers.insert("ollama", Item::Table(Table::new()));
     }
-    let tbl = providers["ollama"].as_table_mut().expect("ollama table");
+
+    // Get a mutable reference to the "ollama" table without `expect`/`unwrap`.
+    let tbl: &mut Table = {
+        let needs_set = match providers.get("ollama") {
+            None => true,
+            Some(item) => !item.is_table(),
+        };
+        if needs_set {
+            providers.insert("ollama", Item::Table(Table::new()));
+        }
+        match providers.get_mut("ollama") {
+            Some(item) => {
+                if !item.is_table() {
+                    *item = Item::Table(Table::new());
+                }
+                match item.as_table_mut() {
+                    Some(t) => t,
+                    None => unreachable!("ollama was set to a table"),
+                }
+            }
+            None => unreachable!("ollama should exist after insertion"),
+        }
+    };
+
     if !tbl.contains_key("name") {
         tbl["name"] = Item::Value(TomlValueEdit::from("Ollama"));
     }
@@ -704,14 +753,20 @@ mod tests {
         assert!(tbl.contains_key("name"));
         assert!(tbl.contains_key("base_url"));
         assert!(tbl.contains_key("wire_api"));
-        set_ollama_models(&mut doc, &vec!["llama3.2:3b".to_string()]);
+        set_ollama_models(&mut doc, &[String::from("llama3.2:3b")]);
         let root = doc.as_table();
-        let mp = root
-            .get("model_providers")
-            .and_then(|i| i.as_table())
-            .expect("model_providers");
-        let ollama = mp.get("ollama").and_then(|i| i.as_table()).expect("ollama");
-        let arr = ollama.get("models").expect("models array");
+        let mp = match root.get("model_providers").and_then(|i| i.as_table()) {
+            Some(t) => t,
+            None => panic!("model_providers"),
+        };
+        let ollama = match mp.get("ollama").and_then(|i| i.as_table()) {
+            Some(t) => t,
+            None => panic!("ollama"),
+        };
+        let arr = match ollama.get("models") {
+            Some(v) => v,
+            None => panic!("models array"),
+        };
         assert!(arr.is_array(), "models should be an array");
         let s = doc.to_string();
         assert!(s.contains("model_providers"));
