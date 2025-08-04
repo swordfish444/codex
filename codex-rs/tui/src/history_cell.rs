@@ -25,6 +25,9 @@ use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line as RtLine;
 use ratatui::text::Span as RtSpan;
+use ratatui::widgets::Paragraph;
+use ratatui::widgets::WidgetRef;
+use ratatui::widgets::Wrap;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -148,6 +151,15 @@ impl HistoryCell {
             ],
         }
     }
+
+    pub(crate) fn desired_height(&self, width: u16) -> u16 {
+        Paragraph::new(Text::from(self.plain_lines()))
+            .wrap(Wrap { trim: false })
+            .line_count(width)
+            .try_into()
+            .unwrap_or(0)
+    }
+
     pub(crate) fn new_session_info(
         config: &Config,
         event: SessionConfiguredEvent,
@@ -628,6 +640,14 @@ impl HistoryCell {
         HistoryCell::PendingPatch {
             view: TextBlock::new(lines),
         }
+    }
+}
+
+impl WidgetRef for &HistoryCell {
+    fn render_ref(&self, area: Rect, buf: &mut Buffer) {
+        Paragraph::new(Text::from(self.plain_lines()))
+            .wrap(Wrap { trim: false })
+            .render(area, buf);
     }
 }
 
