@@ -17,7 +17,7 @@ pub(crate) async fn handle_stream_conversation(
 
     let session_id = conversation_id.0;
 
-    // Ensure the session exists and enable streaming
+    // Ensure the session exists
     let conv = get_session(session_id, message_processor.conversation_map()).await;
 
     if conv.is_none() {
@@ -28,11 +28,7 @@ pub(crate) async fn handle_stream_conversation(
         return;
     }
 
-    if let Some(conv) = conv {
-        conv.lock().await.set_streaming(true).await;
-    }
-
-    // Acknowledge the stream request
+    // Acknowledge the stream request first so the client can start listening
     message_processor
         .send_response_with_optional_error(
             id,
@@ -42,6 +38,13 @@ pub(crate) async fn handle_stream_conversation(
             Some(false),
         )
         .await;
+
+    // Now enable streaming and send initial state
+    if let Some(conv) = conv {
+        tokio::spawn(async move {
+            conv.lock().await.set_streaming(true).await;
+        });
+    }
 }
 
 /// Handles cancellation for ConversationStream by disabling streaming for the session.
