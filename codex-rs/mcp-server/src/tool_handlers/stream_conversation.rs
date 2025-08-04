@@ -17,12 +17,10 @@ pub(crate) async fn handle_stream_conversation(
 
     let session_id = conversation_id.0;
 
-    // Ensure the session exists
-    let session_exists = get_session(session_id, message_processor.session_map())
-        .await
-        .is_some();
+    // Ensure the session exists and enable streaming
+    let conv = get_session(session_id, message_processor.conversation_map()).await;
 
-    if !session_exists {
+    if conv.is_none() {
         // Return an error with no result payload per MCP error pattern
         message_processor
             .send_response_with_optional_error(id, None, Some(true))
@@ -30,20 +28,8 @@ pub(crate) async fn handle_stream_conversation(
         return;
     }
 
-    // Toggle streaming to enabled via the per-session watch channel
-    let senders_map = message_processor.streaming_session_senders();
-    let tx = {
-        let guard = senders_map.lock().await;
-        guard.get(&session_id).cloned()
-    };
-    if let Some(tx) = tx {
-        let _ = tx.send(true);
-    } else {
-        // No channel found for the session; treat as error
-        message_processor
-            .send_response_with_optional_error(id, None, Some(true))
-            .await;
-        return;
+    if let Some(conv) = conv {
+        conv.lock().await.set_streaming(true).await;
     }
 
     // Acknowledge the stream request
@@ -64,12 +50,7 @@ pub(crate) async fn handle_cancel(
     args: &ConversationStreamArgs,
 ) {
     let session_id = args.conversation_id.0;
-    let sender_opt: Option<tokio::sync::watch::Sender<bool>> = {
-        let senders = message_processor.streaming_session_senders();
-        let guard = senders.lock().await;
-        guard.get(&session_id).cloned()
-    };
-    if let Some(tx) = sender_opt {
-        let _ = tx.send(false);
+    if let Some(conv) = get_session(session_id, message_processor.conversation_map()).await {
+        conv.lock().await.set_streaming(false).await;
     }
 }

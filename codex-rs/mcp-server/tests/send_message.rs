@@ -3,7 +3,6 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use codex_mcp_server::CodexToolCallParam;
 use mcp_test_support::McpProcess;
 use mcp_test_support::create_config_toml;
 use mcp_test_support::create_final_assistant_message_sse_response;
@@ -20,10 +19,8 @@ const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_send_message_success() {
-    // Spin up a mock completions server that immediately ends the Codex turn.
-    // Two Codex turns hit the mock model (session start + send-user-message). Provide two SSE responses.
+    // Spin up a mock completions server that ends the Codex turn for the send-user-message call.
     let responses = vec![
-        create_final_assistant_message_sse_response("Done").expect("build mock assistant message"),
         create_final_assistant_message_sse_response("Done").expect("build mock assistant message"),
     ];
     let server = create_mock_chat_completions_server(responses).await;
@@ -41,29 +38,11 @@ async fn test_send_message_success() {
         .expect("init timed out")
         .expect("init failed");
 
-    // Kick off a Codex session so we have a valid session_id.
-    let codex_request_id = mcp_process
-        .send_codex_tool_call(CodexToolCallParam {
-            prompt: "Start a session".to_string(),
-            ..Default::default()
-        })
-        .await
-        .expect("send codex tool call");
-
-    // Wait for the session_configured event to get the session_id.
+    // Create a conversation using the tool and get its conversation_id
     let session_id = mcp_process
-        .read_stream_until_configured_response_message()
+        .create_conversation_and_get_id("", "mock-model", "/repo")
         .await
-        .expect("read session_configured");
-
-    // The original codex call will finish quickly given our mock; consume its response.
-    timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp_process.read_stream_until_response_message(RequestId::Integer(codex_request_id)),
-    )
-    .await
-    .expect("codex response timeout")
-    .expect("codex response error");
+        .expect("create conversation");
 
     // Now exercise the send-user-message tool.
     let send_msg_request_id = mcp_process

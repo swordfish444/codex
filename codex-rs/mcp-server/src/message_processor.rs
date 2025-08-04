@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -37,7 +36,6 @@ use mcp_types::ServerNotification;
 use mcp_types::TextContent;
 use serde_json::json;
 use tokio::sync::Mutex;
-use tokio::sync::watch;
 use tokio::task;
 use uuid::Uuid;
 
@@ -46,10 +44,8 @@ pub(crate) struct MessageProcessor {
     initialized: bool,
     codex_linux_sandbox_exe: Option<PathBuf>,
     session_map: Arc<Mutex<HashMap<Uuid, Arc<Codex>>>>,
+    conversation_map: Arc<Mutex<HashMap<Uuid, Arc<Mutex<crate::conversation_loop::Conversation>>>>>,
     running_requests_id_to_codex_uuid: Arc<Mutex<HashMap<RequestId, Uuid>>>,
-    running_session_ids: Arc<Mutex<HashSet<Uuid>>>,
-    /// Per-session streaming state signal (true when client connected via ConversationStream)
-    streaming_session_senders: Arc<Mutex<HashMap<Uuid, watch::Sender<bool>>>>,
     /// Track request IDs to the original ToolCallRequestParams for cancellation handling
     tool_request_map: Arc<Mutex<HashMap<RequestId, ToolCallRequestParams>>>,
 }
@@ -66,29 +62,20 @@ impl MessageProcessor {
             initialized: false,
             codex_linux_sandbox_exe,
             session_map: Arc::new(Mutex::new(HashMap::new())),
+            conversation_map: Arc::new(Mutex::new(HashMap::new())),
             running_requests_id_to_codex_uuid: Arc::new(Mutex::new(HashMap::new())),
-            running_session_ids: Arc::new(Mutex::new(HashSet::new())),
-            streaming_session_senders: Arc::new(Mutex::new(HashMap::new())),
             tool_request_map: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub(crate) fn session_map(&self) -> Arc<Mutex<HashMap<Uuid, Arc<Codex>>>> {
-        self.session_map.clone()
+    pub(crate) fn conversation_map(
+        &self,
+    ) -> Arc<Mutex<HashMap<Uuid, Arc<Mutex<crate::conversation_loop::Conversation>>>>> {
+        self.conversation_map.clone()
     }
 
     pub(crate) fn outgoing(&self) -> Arc<OutgoingMessageSender> {
         self.outgoing.clone()
-    }
-
-    pub(crate) fn running_session_ids(&self) -> Arc<Mutex<HashSet<Uuid>>> {
-        self.running_session_ids.clone()
-    }
-
-    pub(crate) fn streaming_session_senders(
-        &self,
-    ) -> Arc<Mutex<HashMap<Uuid, watch::Sender<bool>>>> {
-        self.streaming_session_senders.clone()
     }
 
     pub(crate) async fn process_request(&mut self, request: JSONRPCRequest) {
@@ -644,9 +631,9 @@ impl MessageProcessor {
 
                 let session_id = args.conversation_id.0;
                 let codex_arc = {
-                    let sessions_guard = self.session_map.lock().await;
+                    let sessions_guard = self.conversation_map.lock().await;
                     match sessions_guard.get(&session_id) {
-                        Some(codex) => Arc::clone(codex),
+                        Some(conv) => conv.lock().await.codex().clone(),
                         None => {
                             tracing::warn!(
                                 "Cancel send_message: session not found for session_id: {session_id}"

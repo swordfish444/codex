@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use codex_core::Codex;
-use codex_core::protocol::Op;
-use codex_core::protocol::Submission;
 use mcp_types::RequestId;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use crate::conversation_loop::Conversation;
 use crate::mcp_protocol::ConversationSendMessageArgs;
 use crate::mcp_protocol::ConversationSendMessageResult;
 use crate::mcp_protocol::ToolCallResponseResult;
@@ -41,7 +39,8 @@ pub(crate) async fn handle_send_message(
     }
 
     let session_id = conversation_id.0;
-    let Some(codex) = get_session(session_id, message_processor.session_map()).await else {
+    let Some(conversation) = get_session(session_id, message_processor.conversation_map()).await
+    else {
         message_processor
             .send_response_with_optional_error(
                 id,
@@ -56,47 +55,17 @@ pub(crate) async fn handle_send_message(
         return;
     };
 
-    let running = {
-        let running_session_ids = message_processor.running_session_ids();
-        let running_session_ids = running_session_ids.lock().await;
-        running_session_ids.contains(&session_id)
+    let res = {
+        let mut guard = conversation.lock().await;
+        guard.try_submit_user_input(id.clone(), items).await
     };
 
-    if running {
+    if let Err(e) = res {
         message_processor
             .send_response_with_optional_error(
                 id,
                 Some(ToolCallResponseResult::ConversationSendMessage(
-                    ConversationSendMessageResult::Error {
-                        message: "Session is already running".to_string(),
-                    },
-                )),
-                Some(true),
-            )
-            .await;
-        return;
-    }
-
-    let request_id_string = match &id {
-        RequestId::String(s) => s.clone(),
-        RequestId::Integer(i) => i.to_string(),
-    };
-
-    let submit_res = codex
-        .submit_with_id(Submission {
-            id: request_id_string,
-            op: Op::UserInput { items },
-        })
-        .await;
-
-    if let Err(e) = submit_res {
-        message_processor
-            .send_response_with_optional_error(
-                id,
-                Some(ToolCallResponseResult::ConversationSendMessage(
-                    ConversationSendMessageResult::Error {
-                        message: format!("Failed to submit user input: {e}"),
-                    },
+                    ConversationSendMessageResult::Error { message: e },
                 )),
                 Some(true),
             )
@@ -117,8 +86,8 @@ pub(crate) async fn handle_send_message(
 
 pub(crate) async fn get_session(
     session_id: Uuid,
-    session_map: Arc<Mutex<HashMap<Uuid, Arc<Codex>>>>,
-) -> Option<Arc<Codex>> {
-    let guard = session_map.lock().await;
+    conversation_map: Arc<Mutex<HashMap<Uuid, Arc<Mutex<Conversation>>>>>,
+) -> Option<Arc<Mutex<Conversation>>> {
+    let guard = conversation_map.lock().await;
     guard.get(&session_id).cloned()
 }

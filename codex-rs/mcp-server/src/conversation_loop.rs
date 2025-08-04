@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -12,7 +11,7 @@ use codex_core::protocol::ExecApprovalRequestEvent;
 use codex_core::protocol::FileChange;
 use mcp_types::RequestId;
 use tokio::sync::Mutex;
-use tokio::sync::watch::Receiver as WatchReceiver;
+// no streaming watch channel; streaming is toggled via set_streaming on the struct
 use tracing::error;
 use uuid::Uuid;
 
@@ -24,6 +23,19 @@ use crate::mcp_protocol::InitialStatePayload;
 use crate::mcp_protocol::NotificationMeta;
 use crate::outgoing_message::OutgoingMessageSender;
 use crate::patch_approval::handle_patch_approval_request;
+
+/// A single source of truth for an active conversation.
+/// Owns the Codex session and all per-conversation state.
+pub(crate) struct Conversation {
+    codex: Arc<Codex>,
+    session_id: Uuid,
+    outgoing: Arc<OutgoingMessageSender>,
+    request_id: RequestId,
+    running: bool,
+    streaming_enabled: bool,
+    buffered_events: Vec<CodexEventNotificationParams>,
+    pending_elicitations: Vec<PendingElicitation>,
+}
 
 /// Deferred elicitation requests to be sent after InitialState when
 /// streaming is enabled. Preserves original event order (FIFO).
@@ -43,15 +55,6 @@ enum PendingElicitation {
     },
 }
 
-/// Immutable context shared across helper functions to avoid long
-/// argument lists.
-struct LoopCtx {
-    outgoing: Arc<OutgoingMessageSender>,
-    codex: Arc<Codex>,
-    request_id: RequestId,
-    request_id_str: String,
-}
-
 /// Snapshot of a patch approval request used to defer elicitation.
 struct PatchReq {
     call_id: String,
@@ -61,384 +64,324 @@ struct PatchReq {
     event_id: String,
 }
 
-/// Conversation event loop bridging Codex events to MCP notifications.
-///
-/// Semantics:
-/// - Always buffers all Codex events to include in an InitialState snapshot when
-///   streaming turns on.
-/// - Streams notifications live when `streaming_enabled` is true.
-/// - Defers exec/patch approval elicitations until streaming turns on so
-///   the client first receives InitialState, then the corresponding requests.
-pub async fn run_conversation_loop(
-    codex: Arc<Codex>,
-    outgoing: Arc<OutgoingMessageSender>,
-    request_id: RequestId,
-    mut stream_rx: WatchReceiver<bool>,
-    session_id: Uuid,
-    running_session_ids: Arc<Mutex<HashSet<Uuid>>>,
-) {
-    let request_id_str = match &request_id {
-        RequestId::String(s) => s.clone(),
-        RequestId::Integer(n) => n.to_string(),
-    };
+impl Conversation {
+    pub(crate) fn new(
+        codex: Arc<Codex>,
+        outgoing: Arc<OutgoingMessageSender>,
+        request_id: RequestId,
+        session_id: Uuid,
+    ) -> Arc<Mutex<Self>> {
+        let conv = Arc::new(Mutex::new(Self {
+            codex,
+            session_id,
+            outgoing,
+            request_id,
+            running: false,
+            streaming_enabled: false,
+            buffered_events: Vec::new(),
+            pending_elicitations: Vec::new(),
+        }));
+        // Detach a background loop tied to this Conversation
+        Conversation::spawn_loop(conv.clone());
+        conv
+    }
 
-    // Buffer all events to include in InitialState when streaming is enabled
-    // TODO: this should be expanded to load sessions from the disk.
-    let mut buffered_events: Vec<CodexEventNotificationParams> = Vec::new();
-    let mut streaming_enabled = *stream_rx.borrow();
-
-    let mut pending_elicitations: Vec<PendingElicitation> = Vec::new();
-
-    let ctx = LoopCtx {
-        outgoing: outgoing.clone(),
-        codex: codex.clone(),
-        request_id: request_id.clone(),
-        request_id_str: request_id_str.clone(),
-    };
-
-    loop {
-        tokio::select! {
-            res = codex.next_event() => {
-                handle_next_event_arm(
-                    res,
-                    streaming_enabled,
-                    &mut buffered_events,
-                    &mut pending_elicitations,
-                    &ctx,
-                    &running_session_ids,
-                    &session_id,
-                ).await;
-            },
-            changed = stream_rx.changed() => {
-                handle_stream_rx_arm(
-                    changed,
-                    &mut stream_rx,
-                    &mut streaming_enabled,
-                    &session_id,
-                    &buffered_events,
-                    &mut pending_elicitations,
-                    &ctx,
-                ).await;
-            }
+    pub(crate) async fn set_streaming(&mut self, enabled: bool) {
+        if enabled && !self.streaming_enabled {
+            self.streaming_enabled = true;
+            self.emit_initial_state().await;
+            self.drain_pending_elicitations().await;
+        } else if !enabled && self.streaming_enabled {
+            self.streaming_enabled = false;
         }
     }
-}
 
-/// Handles the `codex.next_event()` select arm.
-async fn handle_next_event_arm<E>(
-    res: Result<Event, E>,
-    streaming_enabled: bool,
-    buffered_events: &mut Vec<CodexEventNotificationParams>,
-    pending_elicitations: &mut Vec<PendingElicitation>,
-    ctx: &LoopCtx,
-    running_session_ids: &Arc<Mutex<HashSet<Uuid>>>,
-    session_id: &Uuid,
-) where
-    E: std::fmt::Display,
-{
-    match res {
-        Ok(event) => {
-            buffered_events.push(CodexEventNotificationParams {
-                meta: None,
-                msg: event.msg.clone(),
-            });
-            stream_event_if_enabled(streaming_enabled, ctx, &event.msg).await;
+    fn spawn_loop(this: Arc<Mutex<Self>>) {
+        tokio::spawn(async move {
+            loop {
+                // We clone codex to avoid holding the lock while awaiting next_event
+                let codex = { this.lock().await.codex.clone() };
+                let res = codex.next_event().await;
+                let mut guard = this.lock().await;
+                guard.handle_next_event(res).await;
+            }
+        });
+    }
 
-            match event.msg {
-                EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
-                    command,
-                    cwd,
-                    call_id,
-                    reason: _,
-                }) => {
-                    process_exec_request(
-                        streaming_enabled,
-                        pending_elicitations,
+    pub(crate) fn codex(&self) -> Arc<Codex> {
+        self.codex.clone()
+    }
+
+    pub(crate) async fn try_submit_user_input(
+        &mut self,
+        request_id: RequestId,
+        items: Vec<codex_core::protocol::InputItem>,
+    ) -> Result<(), String> {
+        if self.running {
+            return Err("Session is already running".to_string());
+        }
+        // Optimistically mark running to avoid races between quick successive submits
+        self.running = true;
+        let request_id_string = match &request_id {
+            RequestId::String(s) => s.clone(),
+            RequestId::Integer(i) => i.to_string(),
+        };
+        let submit_res = self
+            .codex
+            .submit_with_id(codex_core::protocol::Submission {
+                id: request_id_string,
+                op: codex_core::protocol::Op::UserInput { items },
+            })
+            .await;
+        if let Err(e) = submit_res {
+            // Revert running on error
+            self.running = false;
+            return Err(format!("Failed to submit user input: {e}"));
+        }
+        Ok(())
+    }
+
+    async fn handle_next_event<E>(&mut self, res: Result<Event, E>)
+    where
+        E: std::fmt::Display,
+    {
+        match res {
+            Ok(event) => {
+                self.buffered_events.push(CodexEventNotificationParams {
+                    meta: None,
+                    msg: event.msg.clone(),
+                });
+                self.stream_event_if_enabled(&event.msg).await;
+
+                match event.msg {
+                    EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
                         command,
                         cwd,
                         call_id,
-                        event.id.clone(),
-                        ctx,
-                    )
-                    .await;
-                }
-                EventMsg::Error(_) => {
-                    error!("Codex runtime error");
-                    handle_task_clear(running_session_ids, session_id).await;
-                }
-                EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
-                    call_id,
-                    reason,
-                    grant_root,
-                    changes,
-                }) => {
-                    process_patch_request(
-                        streaming_enabled,
-                        pending_elicitations,
-                        PatchReq {
+                        reason: _,
+                    }) => {
+                        self.process_exec_request(command, cwd, call_id, event.id.clone())
+                            .await;
+                    }
+                    EventMsg::Error(_) => {
+                        error!("Codex runtime error");
+                        self.handle_task_clear().await;
+                    }
+                    EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
+                        call_id,
+                        reason,
+                        grant_root,
+                        changes,
+                    }) => {
+                        self.process_patch_request(PatchReq {
                             call_id,
                             reason,
                             grant_root,
                             changes,
                             event_id: event.id.clone(),
+                        })
+                        .await;
+                    }
+                    EventMsg::TaskComplete(_) => {
+                        self.handle_task_clear().await;
+                    }
+                    EventMsg::TaskStarted => {
+                        self.handle_task_started().await;
+                    }
+                    EventMsg::SessionConfigured(_) => {
+                        tracing::error!("unexpected SessionConfigured event");
+                    }
+                    EventMsg::AgentMessageDelta(_) => {}
+                    EventMsg::AgentReasoningDelta(_) => {}
+                    EventMsg::AgentMessage(AgentMessageEvent { .. }) => {}
+                    EventMsg::TokenCount(_)
+                    | EventMsg::AgentReasoning(_)
+                    | EventMsg::McpToolCallBegin(_)
+                    | EventMsg::McpToolCallEnd(_)
+                    | EventMsg::ExecCommandBegin(_)
+                    | EventMsg::ExecCommandEnd(_)
+                    | EventMsg::BackgroundEvent(_)
+                    | EventMsg::ExecCommandOutputDelta(_)
+                    | EventMsg::PatchApplyBegin(_)
+                    | EventMsg::PatchApplyEnd(_)
+                    | EventMsg::GetHistoryEntryResponse(_)
+                    | EventMsg::PlanUpdate(_)
+                    | EventMsg::TurnDiff(_)
+                    | EventMsg::ShutdownComplete => {
+                        self.handle_task_clear().await;
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Codex runtime error: {e}");
+                self.handle_task_clear().await;
+            }
+        }
+    }
+
+    // streaming toggling handled by set_streaming()
+
+    async fn emit_initial_state(&self) {
+        let params = InitialStateNotificationParams {
+            meta: Some(NotificationMeta {
+                conversation_id: Some(ConversationId(self.session_id)),
+                request_id: None,
+            }),
+            initial_state: InitialStatePayload {
+                events: self.buffered_events.clone(),
+            },
+        };
+        if let Ok(params_val) = serde_json::to_value(&params) {
+            self.outgoing
+                .send_custom_notification("notifications/initial_state", params_val)
+                .await;
+        } else {
+            error!("Failed to serialize InitialState params");
+        }
+    }
+
+    async fn drain_pending_elicitations(&mut self) {
+        for item in self.pending_elicitations.drain(..) {
+            match item {
+                PendingElicitation::Exec {
+                    command,
+                    cwd,
+                    event_id,
+                    call_id,
+                } => {
+                    handle_exec_approval_request(
+                        command,
+                        cwd,
+                        self.outgoing.clone(),
+                        self.codex.clone(),
+                        self.request_id.clone(),
+                        match &self.request_id {
+                            RequestId::String(s) => s.clone(),
+                            RequestId::Integer(n) => n.to_string(),
                         },
-                        ctx,
+                        event_id,
+                        call_id,
                     )
                     .await;
                 }
-                EventMsg::TaskComplete(_) => {
-                    handle_task_clear(running_session_ids, session_id).await;
-                }
-                EventMsg::TaskStarted => {
-                    handle_task_started(running_session_ids, session_id).await;
-                }
-                EventMsg::SessionConfigured(_) => {
-                    tracing::error!("unexpected SessionConfigured event");
-                }
-                EventMsg::AgentMessageDelta(_) => {}
-                EventMsg::AgentReasoningDelta(_) => {}
-                EventMsg::AgentMessage(AgentMessageEvent { .. }) => {}
-                EventMsg::TokenCount(_)
-                | EventMsg::AgentReasoning(_)
-                | EventMsg::McpToolCallBegin(_)
-                | EventMsg::McpToolCallEnd(_)
-                | EventMsg::ExecCommandBegin(_)
-                | EventMsg::ExecCommandEnd(_)
-                | EventMsg::BackgroundEvent(_)
-                | EventMsg::ExecCommandOutputDelta(_)
-                | EventMsg::PatchApplyBegin(_)
-                | EventMsg::PatchApplyEnd(_)
-                | EventMsg::GetHistoryEntryResponse(_)
-                | EventMsg::PlanUpdate(_)
-                | EventMsg::ShutdownComplete => {
-                    handle_task_clear(running_session_ids, session_id).await;
-                }
-            }
-        }
-        Err(e) => {
-            error!("Codex runtime error: {e}");
-            handle_task_clear(running_session_ids, session_id).await;
-        }
-    }
-}
-
-/// Handles the `stream_rx.changed()` select arm.
-async fn handle_stream_rx_arm(
-    changed: Result<(), tokio::sync::watch::error::RecvError>,
-    stream_rx: &mut WatchReceiver<bool>,
-    streaming_enabled: &mut bool,
-    session_id: &Uuid,
-    buffered_events: &[CodexEventNotificationParams],
-    pending_elicitations: &mut Vec<PendingElicitation>,
-    ctx: &LoopCtx,
-) {
-    if changed.is_ok() {
-        let now = *stream_rx.borrow();
-        handle_stream_change(
-            now,
-            streaming_enabled,
-            *session_id,
-            buffered_events,
-            pending_elicitations,
-            ctx,
-        )
-        .await;
-    } else {
-        error!("stream_rx change error; streaming control channel closed");
-    }
-}
-
-/// Handles a streaming state change.
-///
-/// When enabling streaming:
-/// 1) emits InitialState with all buffered events
-/// 2) drains and sends any deferred elicitations
-async fn handle_stream_change(
-    now: bool,
-    streaming_enabled: &mut bool,
-    session_id: Uuid,
-    buffered_events: &[CodexEventNotificationParams],
-    pending: &mut Vec<PendingElicitation>,
-    ctx: &LoopCtx,
-) {
-    if now && !*streaming_enabled {
-        *streaming_enabled = true;
-        emit_initial_state(ctx, session_id, buffered_events).await;
-        drain_pending_elicitations(pending, ctx).await;
-    } else if !now && *streaming_enabled {
-        *streaming_enabled = false;
-    }
-}
-
-/// Emits the InitialState snapshot to the client.
-async fn emit_initial_state(
-    ctx: &LoopCtx,
-    session_id: Uuid,
-    buffered_events: &[CodexEventNotificationParams],
-) {
-    let params = InitialStateNotificationParams {
-        meta: Some(NotificationMeta {
-            conversation_id: Some(ConversationId(session_id)),
-            request_id: None,
-        }),
-        initial_state: InitialStatePayload {
-            events: buffered_events.to_vec(),
-        },
-    };
-    if let Ok(params_val) = serde_json::to_value(&params) {
-        ctx.outgoing
-            .send_custom_notification("notifications/initial_state", params_val)
-            .await;
-    } else {
-        error!("Failed to serialize InitialState params");
-    }
-}
-
-/// Sends any deferred exec/patch elicitations in FIFO order.
-async fn drain_pending_elicitations(pending: &mut Vec<PendingElicitation>, ctx: &LoopCtx) {
-    for item in pending.drain(..) {
-        match item {
-            PendingElicitation::Exec {
-                command,
-                cwd,
-                event_id,
-                call_id,
-            } => {
-                handle_exec_approval_request(
-                    command,
-                    cwd,
-                    ctx.outgoing.clone(),
-                    ctx.codex.clone(),
-                    ctx.request_id.clone(),
-                    ctx.request_id_str.clone(),
-                    event_id,
-                    call_id,
-                )
-                .await;
-            }
-            PendingElicitation::PatchReq {
-                call_id,
-                reason,
-                grant_root,
-                changes,
-                event_id,
-            } => {
-                handle_patch_approval_request(
+                PendingElicitation::PatchReq {
                     call_id,
                     reason,
                     grant_root,
                     changes,
-                    ctx.outgoing.clone(),
-                    ctx.codex.clone(),
-                    ctx.request_id.clone(),
-                    ctx.request_id_str.clone(),
                     event_id,
-                )
-                .await;
+                } => {
+                    handle_patch_approval_request(
+                        call_id,
+                        reason,
+                        grant_root,
+                        changes,
+                        self.outgoing.clone(),
+                        self.codex.clone(),
+                        self.request_id.clone(),
+                        match &self.request_id {
+                            RequestId::String(s) => s.clone(),
+                            RequestId::Integer(n) => n.to_string(),
+                        },
+                        event_id,
+                    )
+                    .await;
+                }
             }
         }
     }
-}
 
-/// Handles an exec approval request. If streaming is disabled, defers the
-/// elicitation until after InitialState; otherwise elicits immediately.
-async fn process_exec_request(
-    streaming_enabled: bool,
-    pending: &mut Vec<PendingElicitation>,
-    command: Vec<String>,
-    cwd: PathBuf,
-    call_id: String,
-    event_id: String,
-    ctx: &LoopCtx,
-) {
-    if streaming_enabled {
-        handle_exec_approval_request(
-            command,
-            cwd,
-            ctx.outgoing.clone(),
-            ctx.codex.clone(),
-            ctx.request_id.clone(),
-            ctx.request_id_str.clone(),
-            event_id,
-            call_id,
-        )
-        .await;
-    } else {
-        pending.push(PendingElicitation::Exec {
-            command,
-            cwd,
-            event_id,
-            call_id,
-        });
-    }
-}
-
-/// Handles a patch approval request. If streaming is disabled, defers the
-/// elicitation until after InitialState; otherwise elicits immediately.
-async fn process_patch_request(
-    streaming_enabled: bool,
-    pending: &mut Vec<PendingElicitation>,
-    req: PatchReq,
-    ctx: &LoopCtx,
-) {
-    let PatchReq {
-        call_id,
-        reason,
-        grant_root,
-        changes,
-        event_id,
-    } = req;
-    if streaming_enabled {
-        handle_patch_approval_request(
-            call_id,
-            reason,
-            grant_root,
-            changes,
-            ctx.outgoing.clone(),
-            ctx.codex.clone(),
-            ctx.request_id.clone(),
-            ctx.request_id_str.clone(),
-            event_id,
-        )
-        .await;
-    } else {
-        pending.push(PendingElicitation::PatchReq {
-            call_id,
-            reason,
-            grant_root,
-            changes,
-            event_id,
-        });
-    }
-}
-
-/// Streams a single Codex event as an MCP notification if streaming is enabled.
-async fn stream_event_if_enabled(streaming_enabled: bool, ctx: &LoopCtx, msg: &EventMsg) {
-    if !streaming_enabled {
-        return;
-    }
-    let method = msg.to_string();
-    let params = CodexEventNotificationParams {
-        meta: None,
-        msg: msg.clone(),
-    };
-    if let Ok(params_val) = serde_json::to_value(&params) {
-        ctx.outgoing
-            .send_custom_notification(&method, params_val)
+    async fn process_exec_request(
+        &mut self,
+        command: Vec<String>,
+        cwd: PathBuf,
+        call_id: String,
+        event_id: String,
+    ) {
+        if self.streaming_enabled {
+            handle_exec_approval_request(
+                command,
+                cwd,
+                self.outgoing.clone(),
+                self.codex.clone(),
+                self.request_id.clone(),
+                match &self.request_id {
+                    RequestId::String(s) => s.clone(),
+                    RequestId::Integer(n) => n.to_string(),
+                },
+                event_id,
+                call_id,
+            )
             .await;
-    } else {
-        error!("Failed to serialize event params");
+        } else {
+            self.pending_elicitations.push(PendingElicitation::Exec {
+                command,
+                cwd,
+                event_id,
+                call_id,
+            });
+        }
     }
-}
 
-/// Inserts the session id into the shared running set when a task starts.
-async fn handle_task_started(running_session_ids: &Arc<Mutex<HashSet<Uuid>>>, session_id: &Uuid) {
-    let mut running_session_ids = running_session_ids.lock().await;
-    running_session_ids.insert(*session_id);
-}
+    async fn process_patch_request(&mut self, req: PatchReq) {
+        let PatchReq {
+            call_id,
+            reason,
+            grant_root,
+            changes,
+            event_id,
+        } = req;
+        if self.streaming_enabled {
+            handle_patch_approval_request(
+                call_id,
+                reason,
+                grant_root,
+                changes,
+                self.outgoing.clone(),
+                self.codex.clone(),
+                self.request_id.clone(),
+                match &self.request_id {
+                    RequestId::String(s) => s.clone(),
+                    RequestId::Integer(n) => n.to_string(),
+                },
+                event_id,
+            )
+            .await;
+        } else {
+            self.pending_elicitations
+                .push(PendingElicitation::PatchReq {
+                    call_id,
+                    reason,
+                    grant_root,
+                    changes,
+                    event_id,
+                });
+        }
+    }
 
-/// Removes the session id from the shared running set for any terminal condition.
-async fn handle_task_clear(running_session_ids: &Arc<Mutex<HashSet<Uuid>>>, session_id: &Uuid) {
-    let mut running_session_ids = running_session_ids.lock().await;
-    running_session_ids.remove(session_id);
+    async fn stream_event_if_enabled(&self, msg: &EventMsg) {
+        if !self.streaming_enabled {
+            return;
+        }
+        let method = msg.to_string();
+        let params = CodexEventNotificationParams {
+            meta: None,
+            msg: msg.clone(),
+        };
+        if let Ok(params_val) = serde_json::to_value(&params) {
+            self.outgoing
+                .send_custom_notification(&method, params_val)
+                .await;
+        } else {
+            error!("Failed to serialize event params");
+        }
+    }
+
+    async fn handle_task_started(&mut self) {
+        self.running = true;
+    }
+
+    async fn handle_task_clear(&mut self) {
+        self.running = false;
+    }
 }
