@@ -486,6 +486,7 @@ impl ChatWidget<'_> {
             CancellationEvent::Ignored => {}
         }
         if self.bottom_pane.is_task_running() {
+            self.active_history_cell = None;
             self.bottom_pane.clear_ctrl_c_quit_hint();
             self.submit_op(Op::Interrupt);
             self.answer_buffer.clear();
