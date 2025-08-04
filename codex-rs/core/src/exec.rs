@@ -365,7 +365,7 @@ pub(crate) async fn consume_truncated_output(
             join_res = &mut *handle => {
                 match join_res {
                     Ok(io_res) => io_res,
-                    Err(join_err) => Err(std::io::Error::new(std::io::ErrorKind::Other, join_err)),
+                    Err(join_err) => Err(std::io::Error::other(join_err)),
                 }
             },
             _ = tokio::time::sleep(timeout) => {
@@ -378,8 +378,16 @@ pub(crate) async fn consume_truncated_output(
     let mut stdout_handle = stdout_handle;
     let mut stderr_handle = stderr_handle;
 
-    let stdout = await_with_timeout(&mut stdout_handle, Duration::from_millis(IO_DRAIN_TIMEOUT_MS)).await?;
-    let stderr = await_with_timeout(&mut stderr_handle, Duration::from_millis(IO_DRAIN_TIMEOUT_MS)).await?;
+    let stdout = await_with_timeout(
+        &mut stdout_handle,
+        Duration::from_millis(IO_DRAIN_TIMEOUT_MS),
+    )
+    .await?;
+    let stderr = await_with_timeout(
+        &mut stderr_handle,
+        Duration::from_millis(IO_DRAIN_TIMEOUT_MS),
+    )
+    .await?;
 
     Ok(RawExecToolCallOutput {
         exit_status,
