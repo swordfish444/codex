@@ -134,36 +134,8 @@ impl WidgetRef for &SelectionPopup {
 
 #[cfg(test)]
 mod tests {
-    use crate::command_utils::parse_execution_mode_token as parse;
     use codex_core::protocol::AskForApproval;
     use codex_core::protocol::SandboxPolicy;
-
-    #[test]
-    fn parse_approval_mode_aliases() {
-        // Only accept the three canonical tokens
-        assert!(matches!(
-            parse("auto"),
-            Some((
-                AskForApproval::OnFailure,
-                SandboxPolicy::WorkspaceWrite { .. }
-            ))
-        ));
-        assert_eq!(
-            parse("untrusted"),
-            Some((AskForApproval::OnFailure, SandboxPolicy::ReadOnly))
-        );
-        assert_eq!(
-            parse("read-only"),
-            Some((AskForApproval::Never, SandboxPolicy::ReadOnly))
-        );
-        // Unknown and case/whitespace handling
-        assert_eq!(parse("unknown"), None);
-        assert!(parse("  AUTO  ").is_some());
-        assert_eq!(
-            parse("full-yolo"),
-            Some((AskForApproval::Never, SandboxPolicy::DangerFullAccess))
-        );
-    }
 
     #[test]
     fn execution_selector_includes_full_yolo() {
@@ -179,8 +151,8 @@ mod tests {
         let rows = popup.visible_rows();
         let labels: Vec<String> = rows.into_iter().map(|r| r.name).collect();
         assert!(
-            labels.iter().any(|l| l.contains("Full yolo")),
-            "selector should include 'Full yolo'"
+            labels.iter().any(|l| l.contains("Danger")),
+            "selector should include 'Danger'"
         );
     }
 }

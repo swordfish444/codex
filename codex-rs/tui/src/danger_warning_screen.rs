@@ -25,7 +25,7 @@ use ratatui::widgets::Wrap;
 const DANGER_TEXT: &str = "You're about to disable both approvals and sandboxing.\n\
 This gives the agent full, unrestricted access to your system.\n\
 \n\
-This can seriously damage your computer. Only proceed if you fully understand the risks.";
+The agent can and will do stupid things as your user. Only proceed if you fully understand the risks.";
 
 pub(crate) enum DangerWarningOutcome {
     Continue,

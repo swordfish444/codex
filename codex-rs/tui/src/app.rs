@@ -510,8 +510,13 @@ impl App<'_> {
                     }
                     (SlashCommand::Model, Some(args)) => self.handle_model_command(args),
                     (SlashCommand::Approvals, Some(args)) => self.handle_approvals_command(args),
-                    // Disallow `/model` and `/approvals` without args: no action.
-                    (SlashCommand::Model, None) | (SlashCommand::Approvals, None) => {}
+                    // With no args, open the corresponding selector popups.
+                    (SlashCommand::Model, None) => {
+                        self.app_event_tx.send(AppEvent::OpenModelSelector)
+                    }
+                    (SlashCommand::Approvals, None) => {
+                        self.app_event_tx.send(AppEvent::OpenExecutionSelector)
+                    }
                 },
                 AppEvent::StartFileSearch(query) => {
                     self.file_search.on_user_query(query);

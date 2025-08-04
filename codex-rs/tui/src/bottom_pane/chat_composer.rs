@@ -80,30 +80,6 @@ impl ChatComposer<'_> {
     }
 
     #[inline]
-    fn slash_token_from_first_line(first_line: &str) -> Option<&str> {
-        if !first_line.starts_with('/') {
-            return None;
-        }
-        let stripped = first_line.strip_prefix('/').unwrap_or("");
-        let token = stripped.trim_start();
-        Some(token.split_whitespace().next().unwrap_or(""))
-    }
-
-    #[inline]
-    fn emit_unrecognized_slash_command(&mut self, cmd_token: &str) {
-        let attempted = if cmd_token.is_empty() {
-            "/".to_string()
-        } else {
-            format!("/{cmd_token}")
-        };
-        let msg = format!("{attempted} not a recognized command");
-        self.app_event_tx
-            .send(AppEvent::InsertHistory(vec![Line::from(msg)]));
-        self.dismissed.slash = Some(cmd_token.to_string());
-        self.active_popup = ActivePopup::None;
-    }
-
-    #[inline]
     fn sync_popups(&mut self) {
         self.sync_command_popup();
         if matches!(self.active_popup, ActivePopup::Command(_)) {
@@ -303,16 +279,11 @@ impl ChatComposer<'_> {
         // If the composer currently contains a `/model` command, initialize the
         // popup's query from its arguments. Otherwise, leave the popup visible
         // with an empty query.
-        let first_line = self
-            .textarea
-            .lines()
-            .first()
-            .map(|s| s.as_str())
-            .unwrap_or("");
-        if let Some((cmd_token, args)) = Self::parse_slash_command_and_args_from_line(first_line) {
-            if cmd_token == SlashCommand::Model.command() {
+        let first_line_owned = self.first_line().to_string();
+        if let ParsedSlash::Command { cmd, args } = parse_slash_line(&first_line_owned) {
+            if cmd == SlashCommand::Model {
                 if let ActivePopup::Selection(popup) = &mut self.active_popup {
-                    popup.set_query(&args);
+                    popup.set_query(args);
                 }
             }
         }
@@ -336,16 +307,11 @@ impl ChatComposer<'_> {
             }
         }
         // Initialize the popup's query from the arguments to `/approvals`, if present.
-        let first_line = self
-            .textarea
-            .lines()
-            .first()
-            .map(|s| s.as_str())
-            .unwrap_or("");
-        if let Some((cmd_token, args)) = Self::parse_slash_command_and_args_from_line(first_line) {
-            if cmd_token == SlashCommand::Approvals.command() {
+        let first_line_owned = self.first_line().to_string();
+        if let ParsedSlash::Command { cmd, args } = parse_slash_line(&first_line_owned) {
+            if cmd == SlashCommand::Approvals {
                 if let ActivePopup::Selection(popup) = &mut self.active_popup {
-                    popup.set_query(&args);
+                    popup.set_query(args);
                 }
             }
         }
@@ -398,8 +364,14 @@ impl ChatComposer<'_> {
                 (InputResult::None, true)
             }
             Input { key: Key::Esc, .. } => {
-                if let Some(cmd_token) = Self::slash_token_from_first_line(&first_line_owned) {
-                    self.dismissed.slash = Some(cmd_token.to_string());
+                // Remember the dismissed token to avoid immediate reopen until input changes.
+                let token = match parse_slash_line(&first_line_owned) {
+                    ParsedSlash::Command { cmd, .. } => Some(cmd.command().to_string()),
+                    ParsedSlash::Incomplete { token } => Some(token.to_string()),
+                    ParsedSlash::None => None,
+                };
+                if let Some(tok) = token {
+                    self.dismissed.slash = Some(tok);
                 }
                 self.active_popup = ActivePopup::None;
                 (InputResult::None, true)
@@ -425,34 +397,23 @@ impl ChatComposer<'_> {
                 ctrl: false,
             } => {
                 if let Some(cmd) = popup.selected_command() {
-                    // Extract arguments after the command from the first line.
-                    let first_line = self
-                        .textarea
-                        .lines()
-                        .first()
-                        .map(|s| s.as_str())
-                        .unwrap_or("");
-
-                    let args = if let Some((_, args)) =
-                        Self::parse_slash_command_and_args_from_line(first_line)
-                    {
-                        args
-                    } else {
-                        String::new()
+                    // Extract arguments after the command from the first line using the shared parser.
+                    let args_opt = match parse_slash_line(&first_line_owned) {
+                        ParsedSlash::Command {
+                            cmd: parsed_cmd,
+                            args,
+                        } if parsed_cmd == *cmd => {
+                            let a = args.trim().to_string();
+                            if a.is_empty() { None } else { Some(a) }
+                        }
+                        _ => None,
                     };
 
-                    // Special cases: selecting `/model` or `/approvals` without args opens a submenu.
-                    if *cmd == SlashCommand::Model && args.trim().is_empty() {
-                        self.app_event_tx.send(AppEvent::OpenModelSelector);
-                    } else if *cmd == SlashCommand::Approvals && args.trim().is_empty() {
-                        self.app_event_tx.send(AppEvent::OpenExecutionSelector);
-                    } else {
-                        // Send command + args to the app layer.
-                        self.app_event_tx.send(AppEvent::DispatchCommand {
-                            cmd: *cmd,
-                            args: Some(args),
-                        });
-                    }
+                    // Send command + args (if any) to the app layer.
+                    self.app_event_tx.send(AppEvent::DispatchCommand {
+                        cmd: *cmd,
+                        args: args_opt,
+                    });
 
                     // Clear textarea so no residual text remains
                     self.textarea.select_all();
@@ -460,11 +421,29 @@ impl ChatComposer<'_> {
                     self.active_popup = ActivePopup::None;
                     return (InputResult::None, true);
                 }
-                if let Some(cmd_token) = Self::slash_token_from_first_line(&first_line_owned) {
-                    self.emit_unrecognized_slash_command(cmd_token);
-                    return (InputResult::None, true);
+                // No valid selection – treat as invalid command: dismiss popup and surface error.
+                let invalid_token = match parse_slash_line(&first_line_owned) {
+                    ParsedSlash::Command { cmd, .. } => cmd.command().to_string(),
+                    ParsedSlash::Incomplete { token } => token.to_string(),
+                    ParsedSlash::None => String::new(),
+                };
+                // Prevent immediate reopen for the same token.
+                self.dismissed.slash = Some(invalid_token.clone());
+                self.active_popup = ActivePopup::None;
+
+                // Emit an error entry into history so the user understands what happened.
+                {
+                    use crate::history_cell::HistoryCell;
+                    let message = if invalid_token.is_empty() {
+                        "Invalid command".to_string()
+                    } else {
+                        format!("Invalid command: /{invalid_token}")
+                    };
+                    let lines = HistoryCell::new_error_event(message).plain_lines();
+                    self.app_event_tx.send(AppEvent::InsertHistory(lines));
                 }
-                (InputResult::None, false)
+
+                (InputResult::None, true)
             }
             input => self.handle_input_basic(input),
         }
@@ -472,6 +451,7 @@ impl ChatComposer<'_> {
 
     /// Handle key events when file search popup is visible.
     fn handle_key_event_with_file_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        let first_line_owned = self.first_line().to_string();
         let ActivePopup::File(popup) = &mut self.active_popup else {
             unreachable!();
         };
@@ -518,6 +498,7 @@ impl ChatComposer<'_> {
         &mut self,
         key_event: KeyEvent,
     ) -> (InputResult, bool) {
+        let first_line_owned = self.first_line().to_string();
         let ActivePopup::Selection(popup) = &mut self.active_popup else {
             unreachable!();
         };
@@ -560,20 +541,11 @@ impl ChatComposer<'_> {
                     return (InputResult::None, true);
                 }
                 // No selection in the list: attempt to parse typed arguments for the appropriate kind.
-                let first_line = self
-                    .textarea
-                    .lines()
-                    .first()
-                    .map(|s| s.as_str())
-                    .unwrap_or("");
-
-                if let Some((cmd_token, args)) =
-                    Self::parse_slash_command_and_args_from_line(first_line)
-                {
+                if let ParsedSlash::Command { cmd, args } = parse_slash_line(&first_line_owned) {
                     let args = args.trim().to_string();
                     if !args.is_empty() {
                         match popup.kind() {
-                            SelectionKind::Model if cmd_token == SlashCommand::Model.command() => {
+                            SelectionKind::Model if cmd == SlashCommand::Model => {
                                 self.app_event_tx.send(AppEvent::DispatchCommand {
                                     cmd: SlashCommand::Model,
                                     args: Some(args),
@@ -584,9 +556,7 @@ impl ChatComposer<'_> {
                                 self.active_popup = ActivePopup::None;
                                 return (InputResult::None, true);
                             }
-                            SelectionKind::Execution
-                                if cmd_token == SlashCommand::Approvals.command() =>
-                            {
+                            SelectionKind::Execution if cmd == SlashCommand::Approvals => {
                                 if let Some((approval, sandbox)) = parse_execution_mode_token(&args)
                                 {
                                     self.app_event_tx
@@ -835,51 +805,16 @@ impl ChatComposer<'_> {
         if !input_starts_with_slash {
             self.dismissed.slash = None;
         }
-        let current_cmd_token: Option<&str> = Self::slash_token_from_first_line(&first_line);
-
-        // Special handling: if the user typed `/model ` (with a space), open the model selector
-        // and do not show the slash-command popup.
-        let should_open_model_selector = if let Some(stripped) = first_line.strip_prefix('/') {
-            let token = stripped.trim_start();
-            let cmd_token = token.split_whitespace().next().unwrap_or("");
-            if cmd_token == SlashCommand::Model.command() {
-                let rest = &token[cmd_token.len()..];
-                // Show model popup as soon as a whitespace after the command is present.
-                rest.chars().next().is_some_and(|c| c.is_whitespace())
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        // And similarly for `/approvals `.
-        let should_open_approval_selector = if let Some(stripped) = first_line.strip_prefix('/') {
-            let token = stripped.trim_start();
-            let cmd_token = token.split_whitespace().next().unwrap_or("");
-            if cmd_token == SlashCommand::Approvals.command() {
-                let rest = &token[cmd_token.len()..];
-                rest.chars().next().is_some_and(|c| c.is_whitespace())
-            } else {
-                false
-            }
-        } else {
-            false
+        let current_cmd_token: Option<String> = match parse_slash_line(&first_line) {
+            ParsedSlash::Command { cmd, .. } => Some(cmd.command().to_string()),
+            ParsedSlash::Incomplete { token } => Some(token.to_string()),
+            ParsedSlash::None => None,
         };
 
         match &mut self.active_popup {
             ActivePopup::Command(popup) => {
                 if input_starts_with_slash {
-                    if should_open_model_selector {
-                        // Switch away from command popup and request opening the model selector.
-                        self.active_popup = ActivePopup::None;
-                        self.app_event_tx.send(AppEvent::OpenModelSelector);
-                    } else if should_open_approval_selector {
-                        self.active_popup = ActivePopup::None;
-                        self.app_event_tx.send(AppEvent::OpenExecutionSelector);
-                    } else {
-                        popup.on_composer_text_change(first_line.clone());
-                    }
+                    popup.on_composer_text_change(first_line.clone());
                 } else {
                     self.active_popup = ActivePopup::None;
                     self.dismissed.slash = None;
@@ -887,22 +822,19 @@ impl ChatComposer<'_> {
             }
             _ => {
                 if input_starts_with_slash {
-                    if should_open_model_selector {
-                        // Always allow opening the model selector even if the user previously
-                        // dismissed the slash popup for this token.
-                        self.app_event_tx.send(AppEvent::OpenModelSelector);
-                    } else if should_open_approval_selector {
-                        self.app_event_tx.send(AppEvent::OpenExecutionSelector);
-                    } else {
-                        // Avoid immediate reopen of the slash popup if it was just dismissed for
-                        // this exact command token.
-                        if self.dismissed.slash.as_deref() == current_cmd_token {
-                            return;
-                        }
-                        let mut command_popup = CommandPopup::new();
-                        command_popup.on_composer_text_change(first_line);
-                        self.active_popup = ActivePopup::Command(command_popup);
+                    // Avoid immediate reopen of the slash popup if it was just dismissed for
+                    // this exact command token.
+                    if self
+                        .dismissed
+                        .slash
+                        .as_ref()
+                        .is_some_and(|d| Some(d) == current_cmd_token.as_ref())
+                    {
+                        return;
                     }
+                    let mut command_popup = CommandPopup::new();
+                    command_popup.on_composer_text_change(first_line);
+                    self.active_popup = ActivePopup::Command(command_popup);
                 }
             }
         }
@@ -945,50 +877,35 @@ impl ChatComposer<'_> {
     }
 
     /// Synchronize the selection popup filter with the current composer text.
+    ///
+    /// When a selection popup is open, we want typing to filter the visible
+    /// options. If the user is typing a slash command (e.g. `/model o3` or
+    /// `/approvals auto`), we use only the arguments after the command token
+    /// as the filter. Otherwise, we treat the entire first line as the filter
+    /// so that typing free‑form text narrows the list as well.
     fn sync_selection_popup(&mut self) {
-        let first_line = self
-            .textarea
-            .lines()
-            .first()
-            .map(|s| s.as_str())
-            .unwrap_or("");
-
-        if let Some((cmd_token, args)) = Self::parse_slash_command_and_args_from_line(first_line) {
-            match &mut self.active_popup {
-                ActivePopup::Selection(popup) if popup.kind() == SelectionKind::Model => {
-                    if cmd_token == SlashCommand::Model.command() {
-                        popup.set_query(&args);
-                    }
+        let first_line_owned = self.first_line().to_string();
+        match (&mut self.active_popup, parse_slash_line(&first_line_owned)) {
+            (ActivePopup::Selection(popup), ParsedSlash::Command { cmd, args }) => match popup
+                .kind()
+            {
+                SelectionKind::Model if cmd == SlashCommand::Model => popup.set_query(args),
+                SelectionKind::Execution if cmd == SlashCommand::Approvals => popup.set_query(args),
+                _ => {
+                    // Command present but not relevant to the open selector –
+                    // fall back to using the free‑form text as the query.
+                    popup.set_query(first_line_owned.trim());
                 }
-                ActivePopup::Selection(popup) if popup.kind() == SelectionKind::Execution => {
-                    if cmd_token == SlashCommand::Approvals.command() {
-                        popup.set_query(&args);
-                    }
-                }
-                _ => {}
+            },
+            (ActivePopup::Selection(popup), _no_slash_cmd) => {
+                // No slash command present – use whatever is typed as the query.
+                popup.set_query(first_line_owned.trim());
             }
+            _ => {}
         }
     }
 
-    /// Parse a leading "/command" via the centralized slash parser, returning
-    /// (command_token, args_trimmed_left) for compatibility with existing code.
-    /// Returns None if the line does not start with a slash or the command token is empty.
-    fn parse_slash_command_and_args_from_line(line: &str) -> Option<(String, String)> {
-        match parse_slash_line(line) {
-            ParsedSlash::Command { cmd, args } => {
-                Some((cmd.command().to_string(), args.to_string()))
-            }
-            ParsedSlash::Incomplete { token } if !token.is_empty() => {
-                // Compute rest of line after token for completeness.
-                // We mimic the previous logic: take the substring after the token in the trimmed view.
-                let stripped = line.strip_prefix('/')?;
-                let token_with_ws = stripped.trim_start();
-                let rest = &token_with_ws[token.len()..];
-                Some((token.to_string(), rest.trim_start().to_string()))
-            }
-            _ => None,
-        }
-    }
+    // removed duplicate slash parsing helpers; use parse_slash_line directly
 
     fn update_border(&mut self, has_focus: bool) {
         let border_style = if has_focus {
@@ -1370,52 +1287,6 @@ mod tests {
     }
 
     #[test]
-    fn enter_with_unrecognized_slash_command_closes_popup_and_emits_error() {
-        use crate::app_event::AppEvent;
-        use crate::bottom_pane::chat_composer::ActivePopup;
-        use crossterm::event::KeyCode;
-        use crossterm::event::KeyEvent;
-        use crossterm::event::KeyModifiers;
-        use std::sync::mpsc::TryRecvError;
-
-        let (tx, rx) = std::sync::mpsc::channel();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(true, sender, false);
-
-        composer.handle_paste("/ notacommand args".to_string());
-        assert!(matches!(composer.active_popup, ActivePopup::Command(_)));
-
-        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-
-        assert!(matches!(composer.active_popup, ActivePopup::None));
-
-        let mut saw_error = false;
-        loop {
-            match rx.try_recv() {
-                Ok(AppEvent::InsertHistory(lines)) => {
-                    let text = lines
-                        .into_iter()
-                        .map(|l| l.to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if text.contains("/notacommand not a recognized command") {
-                        saw_error = true;
-                        break;
-                    }
-                }
-                Ok(_) => continue,
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break,
-            }
-        }
-
-        assert!(
-            saw_error,
-            "expected InsertHistory error for unrecognized command"
-        );
-    }
-
-    #[test]
     fn esc_dismiss_then_delete_and_retype_slash_reopens_popup() {
         use crate::bottom_pane::chat_composer::ActivePopup;
         use crossterm::event::KeyCode;
@@ -1439,8 +1310,38 @@ mod tests {
         assert!(matches!(composer.active_popup, ActivePopup::Command(_)));
     }
 
+    // removed tests tied to auto-opening selectors and composer-owned error messages
+
     #[test]
-    fn esc_dismiss_on_model_then_space_requests_model_selector() {
+    fn slash_popup_filters_as_user_types() {
+        use crate::bottom_pane::chat_composer::ActivePopup;
+        use crate::slash_command::SlashCommand;
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, sender, false);
+
+        // Open the slash popup.
+        composer.handle_paste("/".to_string());
+        assert!(matches!(composer.active_popup, ActivePopup::Command(_)));
+
+        // Type 'mo' and ensure the top selection corresponds to /model.
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+
+        if let ActivePopup::Command(popup) = &composer.active_popup {
+            let selected = popup.selected_command();
+            assert_eq!(selected, Some(SlashCommand::Model).as_ref());
+        } else {
+            panic!("expected Command popup");
+        }
+    }
+
+    #[test]
+    fn enter_with_invalid_slash_token_shows_error_and_closes_popup() {
         use crate::app_event::AppEvent;
         use crate::bottom_pane::chat_composer::ActivePopup;
         use crossterm::event::KeyCode;
@@ -1452,72 +1353,37 @@ mod tests {
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(true, sender, false);
 
-        // Type '/model'
-        composer.handle_paste("/model".to_string());
-        // Ensure command popup present
+        composer.handle_paste("/zzz".to_string());
         assert!(matches!(composer.active_popup, ActivePopup::Command(_)));
 
-        // Dismiss with Esc, which records dismissed_slash_token = "model"
-        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let (result, _redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(result, InputResult::None));
+
+        // Popup should be closed.
         assert!(matches!(composer.active_popup, ActivePopup::None));
 
-        // Type a space to make it '/model '
-        composer.handle_paste(" ".to_string());
-
-        // We should emit OpenModelSelector even though the slash token was dismissed.
-        let mut saw_open = false;
+        // We should receive an InsertHistory with an error message.
+        let mut saw_error = false;
         loop {
             match rx.try_recv() {
-                Ok(AppEvent::OpenModelSelector) => {
-                    saw_open = true;
-                    break;
+                Ok(AppEvent::InsertHistory(lines)) => {
+                    let joined: String = lines
+                        .iter()
+                        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+                        .collect::<Vec<_>>()
+                        .join("");
+                    if joined.to_lowercase().contains("invalid command") {
+                        saw_error = true;
+                        break;
+                    }
                 }
                 Ok(_) => continue,
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => break,
             }
         }
-        assert!(
-            saw_open,
-            "expected OpenModelSelector event after '/model ' characters"
-        );
-    }
-
-    #[test]
-    fn selecting_model_in_slash_menu_opens_model_selector() {
-        use crate::app_event::AppEvent;
-        use std::sync::mpsc::TryRecvError;
-
-        let (tx, rx) = std::sync::mpsc::channel();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(true, sender, false);
-
-        // Type a prefix that uniquely selects the model command in slash popup
-        composer.handle_paste("/mo".to_string());
-
-        // Press Enter to select the command (no args)
-        use crossterm::event::KeyCode;
-        use crossterm::event::KeyEvent;
-        use crossterm::event::KeyModifiers;
-        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-
-        // We should emit OpenModelSelector
-        let mut saw_open = false;
-        loop {
-            match rx.try_recv() {
-                Ok(AppEvent::OpenModelSelector) => {
-                    saw_open = true;
-                    break;
-                }
-                Ok(_) => continue,
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break,
-            }
-        }
-        assert!(
-            saw_open,
-            "pressing Enter on /model should open model selector"
-        );
+        assert!(saw_error, "expected an error InsertHistory entry");
     }
 
     #[test]
@@ -1587,6 +1453,51 @@ mod tests {
         // Press Up; popup should remain visible
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         assert!(matches!(composer.active_popup, ActivePopup::Selection(_)));
+    }
+
+    #[test]
+    fn model_selector_filters_with_free_text_typing() {
+        use crate::app_event::AppEvent;
+        use crate::bottom_pane::chat_composer::ActivePopup;
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+        use std::sync::mpsc::TryRecvError;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, sender, false);
+
+        let options = vec![
+            "codex-mini-latest".to_string(),
+            "o3".to_string(),
+            "gpt-4o".to_string(),
+        ];
+        composer.open_model_selector("o3", options);
+        assert!(matches!(composer.active_popup, ActivePopup::Selection(_)));
+
+        // Type a free‑form query (without leading /model) and ensure it filters.
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+
+        // Press Enter to select the (filtered) current row.
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // We should receive a SelectModel for the filtered option.
+        let mut selected: Option<String> = None;
+        loop {
+            match rx.try_recv() {
+                Ok(AppEvent::SelectModel(m)) => {
+                    selected = Some(m);
+                    break;
+                }
+                Ok(_) => continue,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => break,
+            }
+        }
+        assert_eq!(selected.as_deref(), Some("gpt-4o"));
     }
 
     #[test]
@@ -1820,42 +1731,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn selecting_approvals_in_slash_menu_opens_selector() {
-        use crate::app_event::AppEvent;
-        use std::sync::mpsc::TryRecvError;
-
-        let (tx, rx) = std::sync::mpsc::channel();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(true, sender, false);
-
-        // Type a prefix that uniquely selects the approvals command in slash popup
-        composer.handle_paste("/appr".to_string());
-
-        // Press Enter to select the command (no args)
-        use crossterm::event::KeyCode;
-        use crossterm::event::KeyEvent;
-        use crossterm::event::KeyModifiers;
-        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-
-        // We should emit OpenExecutionSelector
-        let mut saw_open = false;
-        loop {
-            match rx.try_recv() {
-                Ok(AppEvent::OpenExecutionSelector) => {
-                    saw_open = true;
-                    break;
-                }
-                Ok(_) => continue,
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break,
-            }
-        }
-        assert!(
-            saw_open,
-            "pressing Enter on /approvals should open selector"
-        );
-    }
+    // removed test tied to composer opening approvals selector
 
     #[test]
     fn enter_on_approvals_selector_selects_current_row() {

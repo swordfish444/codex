@@ -22,35 +22,20 @@ impl ExecutionPreset {
             ExecutionPreset::ReadOnly => "Read only",
             ExecutionPreset::Untrusted => "Untrusted",
             ExecutionPreset::Auto => "Auto",
-            ExecutionPreset::FullYolo => "Full yolo",
+            ExecutionPreset::FullYolo => "Danger",
         }
     }
 
     pub fn description(self) -> &'static str {
         match self {
-            ExecutionPreset::ReadOnly => {
-                "never prompt; read-only filesystem (flags: --ask-for-approval never --sandbox read-only)"
-            }
-            ExecutionPreset::Untrusted => {
-                "ask to retry outside sandbox only on sandbox breach; read-only (flags: --ask-for-approval on-failure --sandbox read-only)"
-            }
+            ExecutionPreset::ReadOnly => "read only filesystem, never prompt for approval",
+            ExecutionPreset::Untrusted => "user confirms writes and commands outside sandbox",
             ExecutionPreset::Auto => {
-                "auto in workspace sandbox; ask to retry outside sandbox on breach (flags: --ask-for-approval on-failure --sandbox workspace-write)"
+                "auto approve writes in the workspace; ask to run outside sandbox"
             }
             ExecutionPreset::FullYolo => {
-                "DANGEROUS: disables sandbox and approvals; the agent can run any commands with full system access (flags: --dangerously-bypass-approvals-and-sandbox)"
+                "disables sandbox and approvals; the agent can run any commands"
             }
-        }
-    }
-
-    /// Canonical CLI flags string for the preset.
-    #[allow(dead_code)]
-    pub fn cli_flags(self) -> &'static str {
-        match self {
-            ExecutionPreset::ReadOnly => "--ask-for-approval never --sandbox read-only",
-            ExecutionPreset::Untrusted => "--ask-for-approval on-failure --sandbox read-only",
-            ExecutionPreset::Auto => "--ask-for-approval on-failure --sandbox workspace-write",
-            ExecutionPreset::FullYolo => "--dangerously-bypass-approvals-and-sandbox",
         }
     }
 
@@ -140,16 +125,7 @@ pub fn execution_mode_label(approval: AskForApproval, sandbox: &SandboxPolicy) -
         .unwrap_or("Custom")
 }
 
-/// Describe the current execution preset including CLI flag equivalents.
-#[allow(dead_code)]
-pub fn execution_mode_description(
-    approval: AskForApproval,
-    sandbox: &SandboxPolicy,
-) -> &'static str {
-    ExecutionPreset::from_policies(approval, sandbox)
-        .map(|p| p.description())
-        .unwrap_or("custom combination")
-}
+// removed unused execution_mode_description and cli_flags helpers
 
 /// Parse a free-form token to an execution preset (approval+sandbox).
 pub fn parse_execution_mode_token(s: &str) -> Option<(AskForApproval, SandboxPolicy)> {
@@ -229,5 +205,10 @@ mod tests {
             };
             assert_eq!(ExecutionPreset::parse_token(token), Some(p));
         }
+    }
+
+    #[test]
+    fn full_yolo_label_is_danger() {
+        assert_eq!(ExecutionPreset::FullYolo.label(), "Danger");
     }
 }

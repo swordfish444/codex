@@ -6,6 +6,7 @@ use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
+// use ratatui::text::Text; // removed as we reverted multi-line cell rendering
 use ratatui::widgets::Block;
 use ratatui::widgets::BorderType;
 use ratatui::widgets::Borders;
@@ -124,3 +125,5 @@ pub(crate) fn render_rows(
 
     table.render(area, buf);
 }
+
+// (wrapping test removed; keeping rendering simple for now)
