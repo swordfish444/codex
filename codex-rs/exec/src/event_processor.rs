@@ -57,7 +57,7 @@ pub(crate) fn handle_last_message(
                 path.display()
             );
         }
-        (None, _) => eprintln!("Warning: no file to write last message to."),
+        (None, _) => {}
     }
 }
 

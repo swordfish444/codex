@@ -181,20 +181,22 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
                             )
                             .await;
 
-                        // Exit the inner loop and return to the main input prompt.  The codex
-                        // will emit a `TurnInterrupted` (Error) event which is drained later.
                         break;
                     }
                     res = codex.next_event() => match res {
                         Ok(event) => {
+                            let is_shutdown = matches!(event.msg, EventMsg::ShutdownComplete);
                             debug!("Received event: {event:?}");
                             if let Err(e) = tx.send(event) {
                                 error!("Error sending event: {e:?}");
                                 break;
                             }
+                            if is_shutdown {
+                                break;
+                            }
                         },
                         Err(e) => {
-                            error!("Error receiving event: {e:?}");
+                            debug!("Event stream ended: {e:?}");
                             break;
                         }
                     }

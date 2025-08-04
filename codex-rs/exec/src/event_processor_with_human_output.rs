@@ -173,6 +173,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                     last_agent_message.as_deref(),
                     self.last_message_path.as_deref(),
                 );
+                ts_println!(self, "{}", "Task complete.".style(self.green));
                 return CodexStatus::InitiateShutdown;
             }
             EventMsg::TokenCount(TokenUsage { total_tokens, .. }) => {
