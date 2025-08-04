@@ -28,7 +28,6 @@ pub(crate) async fn handle_stream_conversation(
         return;
     }
 
-    // Acknowledge the stream request first so the client can start listening
     message_processor
         .send_response_with_optional_error(
             id,
@@ -39,7 +38,6 @@ pub(crate) async fn handle_stream_conversation(
         )
         .await;
 
-    // Now enable streaming and send initial state
     if let Some(conv) = conv {
         tokio::spawn(async move {
             conv.lock().await.set_streaming(true).await;
