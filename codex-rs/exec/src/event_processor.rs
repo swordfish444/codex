@@ -44,20 +44,16 @@ pub(crate) fn create_config_summary_entries(config: &Config) -> Vec<(&'static st
     entries
 }
 
-pub(crate) fn handle_last_message(
-    last_agent_message: Option<&str>,
-    last_message_path: Option<&Path>,
-) {
-    match (last_message_path, last_agent_message) {
-        (Some(path), Some(msg)) => write_last_message_file(msg, Some(path)),
-        (Some(path), None) => {
-            write_last_message_file("", Some(path));
+pub(crate) fn handle_last_message(last_agent_message: Option<&str>, output_file: &Path) {
+    match last_agent_message {
+        Some(msg) => write_last_message_file(msg, Some(output_file)),
+        None => {
+            write_last_message_file("", Some(output_file));
             eprintln!(
                 "Warning: no last agent message; wrote empty content to {}",
-                path.display()
+                output_file.display()
             );
         }
-        (None, _) => eprintln!("Warning: no file to write last message to."),
     }
 }
 
