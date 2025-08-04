@@ -24,6 +24,7 @@ mod selection_list;
 pub(crate) mod selection_popup;
 mod selection_popup_common;
 mod status_indicator_view;
+mod textarea;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CancellationEvent {
@@ -42,7 +43,7 @@ use status_indicator_view::StatusIndicatorView;
 pub(crate) struct BottomPane<'a> {
     /// Composer is retained even when a BottomPaneView is displayed so the
     /// input state is retained when the view is closed.
-    composer: ChatComposer<'a>,
+    composer: ChatComposer,
 
     /// If present, this is displayed instead of the `composer`.
     active_view: Option<Box<dyn BottomPaneView<'a> + 'a>>,
@@ -97,7 +98,19 @@ impl BottomPane<'_> {
         self.active_view
             .as_ref()
             .map(|v| v.desired_height(width))
-            .unwrap_or(self.composer.desired_height())
+            .unwrap_or(self.composer.desired_height(width))
+    }
+
+    pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
+        // Hide the cursor whenever an overlay view is active (e.g. the
+        // status indicator shown while a task is running, or approval modal).
+        // In these states the textarea is not interactable, so we should not
+        // show its caret.
+        if self.active_view.is_some() {
+            None
+        } else {
+            self.composer.cursor_pos(area)
+        }
     }
 
     /// Forward a key event to the active view or the composer.

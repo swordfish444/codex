@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use codex_core::codex_wrapper::CodexConversation;
 use codex_core::codex_wrapper::init_codex;
@@ -416,6 +415,7 @@ impl ChatWidget<'_> {
             EventMsg::ExecCommandEnd(ExecCommandEndEvent {
                 call_id,
                 exit_code,
+                duration,
                 stdout,
                 stderr,
             }) => {
@@ -426,7 +426,7 @@ impl ChatWidget<'_> {
                         exit_code,
                         stdout,
                         stderr,
-                        duration: Duration::from_secs(0),
+                        duration,
                     },
                 ));
             }
@@ -631,6 +631,10 @@ impl ChatWidget<'_> {
             .to_configure_session_op(None, self.config.user_instructions.clone());
         self.submit_op(op);
         self.request_redraw();
+    }
+
+    pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
+        self.bottom_pane.cursor_pos(area)
     }
 }
 

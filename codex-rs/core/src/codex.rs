@@ -85,11 +85,13 @@ use crate::protocol::SandboxPolicy;
 use crate::protocol::SessionConfiguredEvent;
 use crate::protocol::Submission;
 use crate::protocol::TaskCompleteEvent;
+use crate::protocol::TurnDiffEvent;
 use crate::rollout::RolloutRecorder;
 use crate::safety::SafetyCheck;
 use crate::safety::assess_command_safety;
 use crate::safety::assess_safety_for_untrusted_command;
 use crate::shell;
+use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::user_notification::UserNotification;
 use crate::util::backoff;
 
@@ -350,7 +352,11 @@ impl Session {
         }
     }
 
-    async fn notify_exec_command_begin(&self, exec_command_context: ExecCommandContext) {
+    async fn on_exec_command_begin(
+        &self,
+        turn_diff_tracker: &mut TurnDiffTracker,
+        exec_command_context: ExecCommandContext,
+    ) {
         let ExecCommandContext {
             sub_id,
             call_id,
@@ -362,11 +368,15 @@ impl Session {
             Some(ApplyPatchCommandContext {
                 user_explicitly_approved_this_action,
                 changes,
-            }) => EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
-                call_id,
-                auto_approved: !user_explicitly_approved_this_action,
-                changes,
-            }),
+            }) => {
+                turn_diff_tracker.on_patch_begin(&changes);
+
+                EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
+                    call_id,
+                    auto_approved: !user_explicitly_approved_this_action,
+                    changes,
+                })
+            }
             None => EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
                 call_id,
                 command: command_for_display.clone(),
@@ -380,15 +390,21 @@ impl Session {
         let _ = self.tx_event.send(event).await;
     }
 
-    async fn notify_exec_command_end(
+    #[allow(clippy::too_many_arguments)]
+    async fn on_exec_command_end(
         &self,
+        turn_diff_tracker: &mut TurnDiffTracker,
         sub_id: &str,
         call_id: &str,
-        stdout: &str,
-        stderr: &str,
-        exit_code: i32,
+        output: &ExecToolCallOutput,
         is_apply_patch: bool,
     ) {
+        let ExecToolCallOutput {
+            stdout,
+            stderr,
+            duration,
+            exit_code,
+        } = output;
         // Because stdout and stderr could each be up to 100 KiB, we send
         // truncated versions.
         const MAX_STREAM_OUTPUT: usize = 5 * 1024; // 5KiB
@@ -400,14 +416,15 @@ impl Session {
                 call_id: call_id.to_string(),
                 stdout,
                 stderr,
-                success: exit_code == 0,
+                success: *exit_code == 0,
             })
         } else {
             EventMsg::ExecCommandEnd(ExecCommandEndEvent {
                 call_id: call_id.to_string(),
                 stdout,
                 stderr,
-                exit_code,
+                duration: *duration,
+                exit_code: *exit_code,
             })
         };
 
@@ -416,6 +433,20 @@ impl Session {
             msg,
         };
         let _ = self.tx_event.send(event).await;
+
+        // If this is an apply_patch, after we emit the end patch, emit a second event
+        // with the full turn diff if there is one.
+        if is_apply_patch {
+            let unified_diff = turn_diff_tracker.get_unified_diff();
+            if let Ok(Some(unified_diff)) = unified_diff {
+                let msg = EventMsg::TurnDiff(TurnDiffEvent { unified_diff });
+                let event = Event {
+                    id: sub_id.into(),
+                    msg,
+                };
+                let _ = self.tx_event.send(event).await;
+            }
+        }
     }
 
     /// Helper that emits a BackgroundEvent with the given message. This keeps
@@ -995,6 +1026,10 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
         .await;
 
     let last_agent_message: Option<String>;
+    // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
+    // many turns, from the perspective of the user, it is a single turn.
+    let mut turn_diff_tracker = TurnDiffTracker::new();
+
     loop {
         // Note that pending_input would be something like a message the user
         // submitted through the UI while the model was running. Though the UI
@@ -1026,7 +1061,7 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
                 })
             })
             .collect();
-        match run_turn(&sess, sub_id.clone(), turn_input).await {
+        match run_turn(&sess, &mut turn_diff_tracker, sub_id.clone(), turn_input).await {
             Ok(turn_output) => {
                 let mut items_to_record_in_conversation_history = Vec::<ResponseItem>::new();
                 let mut responses = Vec::<ResponseInputItem>::new();
@@ -1152,6 +1187,7 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
 
 async fn run_turn(
     sess: &Session,
+    turn_diff_tracker: &mut TurnDiffTracker,
     sub_id: String,
     input: Vec<ResponseItem>,
 ) -> CodexResult<Vec<ProcessedResponseItem>> {
@@ -1166,7 +1202,7 @@ async fn run_turn(
 
     let mut retries = 0;
     loop {
-        match try_run_turn(sess, &sub_id, &prompt).await {
+        match try_run_turn(sess, turn_diff_tracker, &sub_id, &prompt).await {
             Ok(output) => return Ok(output),
             Err(CodexErr::Interrupted) => return Err(CodexErr::Interrupted),
             Err(CodexErr::EnvVar(var)) => return Err(CodexErr::EnvVar(var)),
@@ -1212,6 +1248,7 @@ struct ProcessedResponseItem {
 
 async fn try_run_turn(
     sess: &Session,
+    turn_diff_tracker: &mut TurnDiffTracker,
     sub_id: &str,
     prompt: &Prompt,
 ) -> CodexResult<Vec<ProcessedResponseItem>> {
@@ -1299,7 +1336,8 @@ async fn try_run_turn(
         match event {
             ResponseEvent::Created => {}
             ResponseEvent::OutputItemDone(item) => {
-                let response = handle_response_item(sess, sub_id, item.clone()).await?;
+                let response =
+                    handle_response_item(sess, turn_diff_tracker, sub_id, item.clone()).await?;
 
                 output.push(ProcessedResponseItem { item, response });
             }
@@ -1315,6 +1353,16 @@ async fn try_run_turn(
                         })
                         .await
                         .ok();
+                }
+
+                let unified_diff = turn_diff_tracker.get_unified_diff();
+                if let Ok(Some(unified_diff)) = unified_diff {
+                    let msg = EventMsg::TurnDiff(TurnDiffEvent { unified_diff });
+                    let event = Event {
+                        id: sub_id.to_string(),
+                        msg,
+                    };
+                    let _ = sess.tx_event.send(event).await;
                 }
 
                 return Ok(output);
@@ -1421,6 +1469,7 @@ async fn run_compact_task(
 
 async fn handle_response_item(
     sess: &Session,
+    turn_diff_tracker: &mut TurnDiffTracker,
     sub_id: &str,
     item: ResponseItem,
 ) -> CodexResult<Option<ResponseInputItem>> {
@@ -1458,7 +1507,17 @@ async fn handle_response_item(
             ..
         } => {
             info!("FunctionCall: {arguments}");
-            Some(handle_function_call(sess, sub_id.to_string(), name, arguments, call_id).await)
+            Some(
+                handle_function_call(
+                    sess,
+                    turn_diff_tracker,
+                    sub_id.to_string(),
+                    name,
+                    arguments,
+                    call_id,
+                )
+                .await,
+            )
         }
         ResponseItem::LocalShellCall {
             id,
@@ -1493,6 +1552,7 @@ async fn handle_response_item(
                 handle_container_exec_with_params(
                     exec_params,
                     sess,
+                    turn_diff_tracker,
                     sub_id.to_string(),
                     effective_call_id,
                 )
@@ -1510,6 +1570,7 @@ async fn handle_response_item(
 
 async fn handle_function_call(
     sess: &Session,
+    turn_diff_tracker: &mut TurnDiffTracker,
     sub_id: String,
     name: String,
     arguments: String,
@@ -1523,7 +1584,8 @@ async fn handle_function_call(
                     return *output;
                 }
             };
-            handle_container_exec_with_params(params, sess, sub_id, call_id).await
+            handle_container_exec_with_params(params, sess, turn_diff_tracker, sub_id, call_id)
+                .await
         }
         "update_plan" => handle_update_plan(sess, arguments, sub_id, call_id).await,
         _ => {
@@ -1597,6 +1659,7 @@ fn maybe_run_with_user_profile(params: ExecParams, sess: &Session) -> ExecParams
 async fn handle_container_exec_with_params(
     params: ExecParams,
     sess: &Session,
+    turn_diff_tracker: &mut TurnDiffTracker,
     sub_id: String,
     call_id: String,
 ) -> ResponseInputItem {
@@ -1744,7 +1807,7 @@ async fn handle_container_exec_with_params(
             },
         ),
     };
-    sess.notify_exec_command_begin(exec_command_context.clone())
+    sess.on_exec_command_begin(turn_diff_tracker, exec_command_context.clone())
         .await;
 
     let params = maybe_run_with_user_profile(params, sess);
@@ -1769,23 +1832,22 @@ async fn handle_container_exec_with_params(
                 stdout,
                 stderr,
                 duration,
-            } = output;
+            } = &output;
 
-            sess.notify_exec_command_end(
+            sess.on_exec_command_end(
+                turn_diff_tracker,
                 &sub_id,
                 &call_id,
-                &stdout,
-                &stderr,
-                exit_code,
+                &output,
                 exec_command_context.apply_patch.is_some(),
             )
             .await;
 
-            let is_success = exit_code == 0;
+            let is_success = *exit_code == 0;
             let content = format_exec_output(
-                if is_success { &stdout } else { &stderr },
-                exit_code,
-                duration,
+                if is_success { stdout } else { stderr },
+                *exit_code,
+                *duration,
             );
 
             ResponseInputItem::FunctionCallOutput {
@@ -1797,7 +1859,15 @@ async fn handle_container_exec_with_params(
             }
         }
         Err(CodexErr::Sandbox(error)) => {
-            handle_sandbox_error(params, exec_command_context, error, sandbox_type, sess).await
+            handle_sandbox_error(
+                turn_diff_tracker,
+                params,
+                exec_command_context,
+                error,
+                sandbox_type,
+                sess,
+            )
+            .await
         }
         Err(e) => {
             // Handle non-sandbox errors
@@ -1813,6 +1883,7 @@ async fn handle_container_exec_with_params(
 }
 
 async fn handle_sandbox_error(
+    turn_diff_tracker: &mut TurnDiffTracker,
     params: ExecParams,
     exec_command_context: ExecCommandContext,
     error: SandboxErr,
@@ -1869,7 +1940,8 @@ async fn handle_sandbox_error(
             sess.notify_background_event(&sub_id, "retrying command without sandbox")
                 .await;
 
-            sess.notify_exec_command_begin(exec_command_context).await;
+            sess.on_exec_command_begin(turn_diff_tracker, exec_command_context)
+                .await;
 
             // This is an escalated retry; the policy will not be
             // examined and the sandbox has been set to `None`.
@@ -1894,23 +1966,22 @@ async fn handle_sandbox_error(
                         stdout,
                         stderr,
                         duration,
-                    } = retry_output;
+                    } = &retry_output;
 
-                    sess.notify_exec_command_end(
+                    sess.on_exec_command_end(
+                        turn_diff_tracker,
                         &sub_id,
                         &call_id,
-                        &stdout,
-                        &stderr,
-                        exit_code,
+                        &retry_output,
                         is_apply_patch,
                     )
                     .await;
 
-                    let is_success = exit_code == 0;
+                    let is_success = *exit_code == 0;
                     let content = format_exec_output(
-                        if is_success { &stdout } else { &stderr },
-                        exit_code,
-                        duration,
+                        if is_success { stdout } else { stderr },
+                        *exit_code,
+                        *duration,
                     );
 
                     ResponseInputItem::FunctionCallOutput {
