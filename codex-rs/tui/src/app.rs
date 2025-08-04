@@ -187,14 +187,10 @@ impl App<'_> {
                                     let pasted = pasted.replace("\r", "\n");
                                     app_event_tx.send(AppEvent::Paste(pasted));
                                 }
-                                _ => {
-                                    // Ignore any other events.
-                                }
+                                _ => {}
                             }
                         }
-                    } else {
-                        // Timeout expired, no `Event` is available
-                    }
+                    } 
                 }
             });
         }
@@ -344,24 +340,19 @@ impl App<'_> {
                             modifiers: crossterm::event::KeyModifiers::CONTROL,
                             kind: KeyEventKind::Press,
                             ..
-                        } => {
-                            match &mut self.app_state {
-                                AppState::Chat { widget } => {
-                                    if widget.composer_is_empty() {
-                                        self.app_event_tx.send(AppEvent::ExitRequest);
-                                    } else {
-                                        // Treat Ctrl+D as a normal key event when the composer
-                                        // is not empty so that it doesn't quit the application
-                                        // prematurely.
-                                        self.dispatch_key_event(key_event);
-                                    }
-                                }
-                                AppState::GitWarning { .. } => {
+                        } => match &mut self.app_state {
+                            AppState::Chat { widget } => {
+                                if widget.composer_is_empty() {
                                     self.app_event_tx.send(AppEvent::ExitRequest);
+                                } else {
+                                    self.dispatch_key_event(key_event);
                                 }
-                                AppState::DangerWarning { .. } => {}
                             }
-                        }
+                            AppState::GitWarning { .. } => {
+                                self.app_event_tx.send(AppEvent::ExitRequest);
+                            }
+                            AppState::DangerWarning { .. } => {}
+                        },
                         KeyEvent {
                             kind: KeyEventKind::Press | KeyEventKind::Repeat,
                             ..
@@ -654,9 +645,7 @@ impl App<'_> {
                 GitWarningOutcome::Quit => {
                     self.app_event_tx.send(AppEvent::ExitRequest);
                 }
-                GitWarningOutcome::None => {
-                    // do nothing
-                }
+                GitWarningOutcome::None => {}
             },
             AppState::DangerWarning { screen, .. } => match screen.handle_key_event(key_event) {
                 DangerWarningOutcome::Continue => {
@@ -667,8 +656,6 @@ impl App<'_> {
                         },
                     );
                     let _ = ct_execute!(std::io::stdout(), LeaveAlternateScreen);
-                    // After leaving the alternate screen, resync our viewport/cursor
-                    // so the chat composer stays anchored at the bottom.
                     self.fixup_viewport_after_danger = true;
                     if let AppState::DangerWarning {
                         mut widget,
@@ -692,8 +679,6 @@ impl App<'_> {
                         },
                     );
                     let _ = ct_execute!(std::io::stdout(), LeaveAlternateScreen);
-                    // After leaving the alternate screen, resync our viewport/cursor
-                    // so the chat composer stays anchored at the bottom.
                     self.fixup_viewport_after_danger = true;
                     if let AppState::DangerWarning { widget, .. } = taken {
                         self.app_state = AppState::Chat { widget };
@@ -748,7 +733,6 @@ mod tests {
             ("/model another_model", "another_model", "another_model"),
         ];
         for (line, raw_expected, norm_expected) in cases {
-            // Extract raw args as in chat_composer
             let raw = if let Some(stripped) = line.strip_prefix('/') {
                 let token = stripped.trim_start();
                 let cmd_token = token.split_whitespace().next().unwrap_or("");
@@ -758,7 +742,6 @@ mod tests {
                 String::new()
             };
             assert_eq!(raw, raw_expected, "raw args for '{line}'");
-            // Normalize as in app dispatch logic
             let normalized = strip_surrounding_quotes(&raw).trim().to_string();
             assert_eq!(normalized, norm_expected, "normalized args for '{line}'");
         }

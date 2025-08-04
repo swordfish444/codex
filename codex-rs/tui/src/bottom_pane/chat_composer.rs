@@ -238,9 +238,6 @@ impl ChatComposer {
                     ActivePopup::Selection(SelectionPopup::new_model(current_model, options));
             }
         }
-        // If the composer currently contains a `/model` command, initialize the
-        // popup's query from its arguments. Otherwise, leave the popup visible
-        // with an empty query.
         let first_line_owned = self.first_line().to_string();
         if let ParsedSlash::Command { cmd, args } = parse_slash_line(&first_line_owned) {
             if cmd == SlashCommand::Model {
@@ -268,7 +265,6 @@ impl ChatComposer {
                 ));
             }
         }
-        // Initialize the popup's query from the arguments to `/approvals`, if present.
         let first_line_owned = self.first_line().to_string();
         if let ParsedSlash::Command { cmd, args } = parse_slash_line(&first_line_owned) {
             if cmd == SlashCommand::Approvals {
@@ -366,7 +362,6 @@ impl ChatComposer {
                 ..
             } => {
                 if let Some(cmd) = popup.selected_command() {
-                    // Extract arguments after the command from the first line using the shared parser.
                     let args_opt = match parse_slash_line(&first_line_owned) {
                         ParsedSlash::Command {
                             cmd: parsed_cmd,
@@ -378,28 +373,21 @@ impl ChatComposer {
                         _ => None,
                     };
 
-                    // Send command + args (if any) to the app layer.
                     self.app_event_tx.send(AppEvent::DispatchCommand {
                         cmd: *cmd,
                         args: args_opt,
                     });
-                    // Clear textarea so no residual text remains.
                     self.textarea.set_text("");
-                    // Hide popup since the command has been dispatched.
                     self.active_popup = ActivePopup::None;
                     return (InputResult::None, true);
                 }
-                // No valid selection – treat as invalid command: dismiss popup and surface error.
                 let invalid_token = match parse_slash_line(&first_line_owned) {
                     ParsedSlash::Command { cmd, .. } => cmd.command().to_string(),
                     ParsedSlash::Incomplete { token } => token.to_string(),
                     ParsedSlash::None => String::new(),
                 };
-                // Prevent immediate reopen for the same token.
                 self.dismissed.slash = Some(invalid_token.clone());
                 self.active_popup = ActivePopup::None;
-
-                // Emit an error entry into history so the user understands what happened.
                 {
                     use crate::history_cell::HistoryCell;
                     let message = if invalid_token.is_empty() {
@@ -441,7 +429,6 @@ impl ChatComposer {
             KeyEvent {
                 code: KeyCode::Esc, ..
             } => {
-                // Hide popup without modifying text, remember token to avoid immediate reopen.
                 if let Some(tok) = Self::current_at_token(&self.textarea) {
                     self.dismissed.file = Some(tok.to_string());
                 }
@@ -458,7 +445,6 @@ impl ChatComposer {
             } => {
                 if let Some(sel) = popup.selected_match() {
                     let sel_path = sel.to_string();
-                    // Drop popup borrow before using self mutably again.
                     self.insert_selected_path(&sel_path);
                     self.active_popup = ActivePopup::None;
                     return (InputResult::None, true);
@@ -496,7 +482,6 @@ impl ChatComposer {
             KeyEvent {
                 code: KeyCode::Esc, ..
             } => {
-                // Hide selection popup; keep composer content unchanged.
                 self.active_popup = ActivePopup::None;
                 (InputResult::None, true)
             }
@@ -682,7 +667,6 @@ impl ChatComposer {
             .unwrap_or(after_cursor.len());
         let end_idx = cursor_offset + end_rel_idx;
 
-        // Replace the slice `[start_idx, end_idx)` with the chosen path and a trailing space.
         let mut new_text =
             String::with_capacity(text.len() - (end_idx - start_idx) + path.len() + 1);
         new_text.push_str(&text[..start_idx]);
@@ -696,11 +680,6 @@ impl ChatComposer {
     /// Handle key event when no popup is visible.
     fn handle_key_event_without_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
         match key_event {
-            // -------------------------------------------------------------
-            // History navigation (Up / Down) – only when the composer is not
-            // empty or when the cursor is at the correct position, to avoid
-            // interfering with normal cursor movement.
-            // -------------------------------------------------------------
             KeyEvent {
                 code: KeyCode::Up | KeyCode::Down,
                 ..
@@ -730,7 +709,6 @@ impl ChatComposer {
                 let mut text = self.textarea.text().to_string();
                 self.textarea.set_text("");
 
-                // Replace all pending pastes in the text
                 for (placeholder, actual) in &self.pending_pastes {
                     if text.contains(placeholder) {
                         text = text.replace(placeholder, actual);
@@ -751,7 +729,6 @@ impl ChatComposer {
 
     /// Handle generic Input events that modify the textarea content.
     fn handle_input_basic(&mut self, input: KeyEvent) -> (InputResult, bool) {
-        // Special handling for backspace on placeholders
         if let KeyEvent {
             code: KeyCode::Backspace,
             ..
@@ -761,12 +738,8 @@ impl ChatComposer {
                 return (InputResult::None, true);
             }
         }
-
-        // Normal input handling
         self.textarea.input(input);
         let text_after = self.textarea.text();
-
-        // Check if any placeholders were removed and remove their corresponding pending pastes
         self.pending_pastes
             .retain(|(placeholder, _)| text_after.contains(placeholder));
 
@@ -801,9 +774,6 @@ impl ChatComposer {
         }
     }
 
-    /// Synchronize `self.command_popup` with the current text in the
-    /// textarea. This must be called after every modification that can change
-    /// the text so the popup is shown/updated/hidden as appropriate.
     fn sync_command_popup(&mut self) {
         let first_line = self.textarea.text().lines().next().unwrap_or("");
         let input_starts_with_slash = first_line.starts_with('/');
@@ -827,8 +797,6 @@ impl ChatComposer {
             }
             _ => {
                 if input_starts_with_slash {
-                    // Avoid immediate reopen of the slash popup if it was just dismissed for
-                    // this exact command token.
                     if self
                         .dismissed
                         .slash
@@ -845,10 +813,7 @@ impl ChatComposer {
         }
     }
 
-    /// Synchronize `self.file_search_popup` with the current text in the textarea.
-    /// Note this is only called when self.active_popup is NOT Command.
     fn sync_file_search_popup(&mut self) {
-        // Determine if there is an @token underneath the cursor.
         let query = match Self::current_at_token(&self.textarea) {
             Some(token) => token,
             None => {
@@ -857,8 +822,6 @@ impl ChatComposer {
                 return;
             }
         };
-
-        // If user dismissed popup for this exact query, don't reopen until text changes.
         if self.dismissed.file.as_ref() == Some(&query) {
             return;
         }
@@ -881,13 +844,6 @@ impl ChatComposer {
         self.dismissed.file = None;
     }
 
-    /// Synchronize the selection popup filter with the current composer text.
-    ///
-    /// When a selection popup is open, we want typing to filter the visible
-    /// options. If the user is typing a slash command (e.g. `/model o3` or
-    /// `/approvals auto`), we use only the arguments after the command token
-    /// as the filter. Otherwise, we treat the entire first line as the filter
-    /// so that typing free‑form text narrows the list as well.
     fn sync_selection_popup(&mut self) {
         let first_line_owned = self.first_line().to_string();
         match (&mut self.active_popup, parse_slash_line(&first_line_owned)) {
@@ -897,13 +853,10 @@ impl ChatComposer {
                 SelectionKind::Model if cmd == SlashCommand::Model => popup.set_query(args),
                 SelectionKind::Execution if cmd == SlashCommand::Approvals => popup.set_query(args),
                 _ => {
-                    // Command present but not relevant to the open selector –
-                    // fall back to using the free‑form text as the query.
                     popup.set_query(first_line_owned.trim());
                 }
             },
             (ActivePopup::Selection(popup), _no_slash_cmd) => {
-                // No slash command present – use whatever is typed as the query.
                 popup.set_query(first_line_owned.trim());
             }
             _ => {}

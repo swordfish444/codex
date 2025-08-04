@@ -112,7 +112,6 @@ impl<T: Clone> SelectionList<T> {
     pub fn visible_rows(&self) -> Vec<(GenericDisplayRow, Option<&T>)> {
         let query = self.query.trim();
 
-        // Helper to convert an item to a GenericDisplayRow with optional match indices.
         let to_row = |it: &SelectionItem<T>, match_indices: Option<Vec<usize>>| GenericDisplayRow {
             name: it.name.clone(),
             match_indices,
@@ -128,9 +127,6 @@ impl<T: Clone> SelectionList<T> {
                 .collect();
         }
 
-        // Fuzzy search across names and aliases; sort by score (smaller is better),
-        // then by name for a stable ordering. If the current item matches, include
-        // it with indices so the UI can highlight matches.
         let mut out: Vec<(GenericDisplayRow, Option<&T>, i32, usize)> = Vec::new();
 
         for it in self.items.iter() {
@@ -143,7 +139,6 @@ impl<T: Clone> SelectionList<T> {
                 ));
                 continue;
             }
-            // Try aliases; keep the best score but do not show indices on the primary name.
             let mut best_alias_score: Option<i32> = None;
             for alias in it.aliases.iter() {
                 if let Some((_idx, score)) = fuzzy_match(alias, query) {
@@ -155,8 +150,6 @@ impl<T: Clone> SelectionList<T> {
             }
         }
 
-        // Sort: lower score first (fuzzy_match returns smaller score = better),
-        // then by name asc, then by name length as a final tiebreaker.
         out.sort_by(|a, b| {
             a.2.cmp(&b.2)
                 .then_with(|| a.0.name.cmp(&b.0.name))
@@ -176,7 +169,6 @@ mod tests {
 
     #[test]
     fn selection_list_query_and_navigation() {
-        // Build a small list with aliases similar to execution-mode popup.
         let items = vec![
             SelectionItem::new("a", "Auto".to_string()).with_aliases(vec!["auto".into()]),
             SelectionItem::new("u", "Untrusted".to_string()).with_aliases(vec!["untrusted".into()]),
@@ -185,31 +177,25 @@ mod tests {
 
         let mut list = SelectionList::new(items);
 
-        // No query shows all, selection clamped to first row.
         let rows = list.visible_rows();
         assert_eq!(rows.len(), 3);
         assert_eq!(list.selected_value(), Some("a"));
 
-        // Up wraps to the end.
         list.move_up();
         assert_eq!(list.selected_value(), Some("r"));
-        // Down wraps back to the start.
         list.move_down();
         assert_eq!(list.selected_value(), Some("a"));
 
-        // Query by name prefix prefers the tighter match.
         list.set_query("auto");
         let rows = list.visible_rows();
         assert_eq!(rows.len(), 1);
         assert_eq!(list.selected_value(), Some("a"));
 
-        // Query by alias works too.
         list.set_query("read-only");
         let rows = list.visible_rows();
         assert_eq!(rows.len(), 1);
         assert_eq!(list.selected_value(), Some("r"));
 
-        // No matches clears selection.
         list.set_query("not-a-match");
         let rows = list.visible_rows();
         assert_eq!(rows.len(), 0);

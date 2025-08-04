@@ -179,9 +179,7 @@ impl BottomPane<'_> {
                 ConditionalUpdate::NeedsRedraw => {
                     self.request_redraw();
                 }
-                ConditionalUpdate::NoRedraw => {
-                    // No redraw needed.
-                }
+                ConditionalUpdate::NoRedraw => {}
             }
         }
     }
@@ -211,7 +209,6 @@ impl BottomPane<'_> {
 
         match (running, self.active_view.is_some()) {
             (true, false) => {
-                // Show status indicator overlay.
                 self.active_view = Some(Box::new(StatusIndicatorView::new(
                     self.app_event_tx.clone(),
                 )));
@@ -220,17 +217,13 @@ impl BottomPane<'_> {
             (false, true) => {
                 if let Some(mut view) = self.active_view.take() {
                     if view.should_hide_when_task_is_done() {
-                        // Leave self.active_view as None.
                         self.request_redraw();
                     } else {
-                        // Preserve the view.
                         self.active_view = Some(view);
                     }
                 }
             }
-            _ => {
-                // No change.
-            }
+            _ => {}
         }
     }
 
@@ -308,7 +301,6 @@ impl BottomPane<'_> {
 
 impl WidgetRef for &BottomPane<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        // Show BottomPaneView if present.
         if let Some(ov) = &self.active_view {
             ov.render(area, buf);
         } else {

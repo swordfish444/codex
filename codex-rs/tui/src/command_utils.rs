@@ -94,7 +94,6 @@ impl ExecutionPreset {
 /// Strip a single pair of surrounding quotes from the provided string if present.
 /// Supports straight and common curly quotes: '…', "…", ‘…’, “…”.
 pub fn strip_surrounding_quotes(s: &str) -> &str {
-    // Opening/closing pairs (note curly quotes differ on each side)
     const QUOTE_PAIRS: &[(char, char)] = &[('\"', '\"'), ('\'', '\''), ('“', '”'), ('‘', '’')];
 
     let t = s.trim();
@@ -124,8 +123,6 @@ pub fn execution_mode_label(approval: AskForApproval, sandbox: &SandboxPolicy) -
         .map(|p| p.label())
         .unwrap_or("Custom")
 }
-
-// removed unused execution_mode_description and cli_flags helpers
 
 /// Parse a free-form token to an execution preset (approval+sandbox).
 pub fn parse_execution_mode_token(s: &str) -> Option<(AskForApproval, SandboxPolicy)> {
@@ -180,7 +177,6 @@ mod tests {
 
     #[test]
     fn execution_preset_round_trip() {
-        // For each preset, ensure to_policies -> from_policies -> label/description are consistent
         let presets = [
             ExecutionPreset::ReadOnly,
             ExecutionPreset::Untrusted,
@@ -190,13 +186,9 @@ mod tests {
 
         for p in presets {
             let (a, s) = p.to_policies();
-            // Back to preset
             assert_eq!(ExecutionPreset::from_policies(a, &s), Some(p));
-            // Labels and descriptions are non-empty and stable
             assert!(!p.label().is_empty());
             assert!(!p.description().is_empty());
-
-            // Parsing the canonical token yields the same preset
             let token = match p {
                 ExecutionPreset::ReadOnly => "read-only",
                 ExecutionPreset::Untrusted => "untrusted",
