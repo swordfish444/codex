@@ -451,7 +451,7 @@ impl ChatComposer<'_> {
 
     /// Handle key events when file search popup is visible.
     fn handle_key_event_with_file_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
-        let first_line_owned = self.first_line().to_string();
+        let _first_line_owned = self.first_line().to_string();
         let ActivePopup::File(popup) = &mut self.active_popup else {
             unreachable!();
         };
@@ -1222,7 +1222,9 @@ mod tests {
         let mut terminal = match Terminal::new(TestBackend::new(100, 10)) {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("Skipping ui_snapshots: failed to create terminal: {e}");
+                // Avoid printing directly to stderr/stdout (clippy::print_stderr).
+                // Log a warning instead and skip the snapshot test.
+                tracing::warn!("Skipping ui_snapshots: failed to create terminal: {e}");
                 return;
             }
         };

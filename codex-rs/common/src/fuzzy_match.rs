@@ -90,14 +90,20 @@ mod tests {
 
     #[test]
     fn ascii_basic_indices() {
-        let (idx, _score) = fuzzy_match("hello", "hl").expect("match");
+        let (idx, _score) = match fuzzy_match("hello", "hl") {
+            Some(v) => v,
+            None => panic!("expected a match"),
+        };
         assert_eq!(idx, vec![0, 2]);
     }
 
     #[test]
     fn unicode_dotted_i_istanbul_highlighting() {
         // 'İ' lowercases to two chars (i + combining dot). Ensure index 0 is highlighted once.
-        let (idx, _score) = fuzzy_match("İstanbul", "is").expect("match");
+        let (idx, _score) = match fuzzy_match("İstanbul", "is") {
+            Some(v) => v,
+            None => panic!("expected a match"),
+        };
         assert_eq!(idx, vec![0, 1]);
     }
 
