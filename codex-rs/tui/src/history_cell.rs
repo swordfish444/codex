@@ -31,15 +31,12 @@ use ratatui::widgets::Wrap;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tracing::error;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::shimmer_text::shimmer_spans;
 
 pub(crate) struct CommandOutput {
     pub(crate) exit_code: i32,
@@ -686,104 +683,22 @@ impl WidgetRef for &HistoryCell {
 
 pub(crate) struct ActiveExecCommandView {
     command: String,
-    frame_idx: Arc<AtomicUsize>,
-    running: Arc<AtomicBool>,
+    _app_event_tx: AppEventSender,
 }
 
 impl ActiveExecCommandView {
     fn new(command: String, app_event_tx: AppEventSender) -> Self {
-        let frame_idx = Arc::new(AtomicUsize::new(0));
-        let running = Arc::new(AtomicBool::new(true));
-
-        // Animation thread to drive shimmer and trigger redraws.
-        {
-            let frame_idx_clone = Arc::clone(&frame_idx);
-            let running_clone = Arc::clone(&running);
-            let app_event_tx_clone = app_event_tx.clone();
-            std::thread::spawn(move || {
-                let mut counter = 0usize;
-                while running_clone.load(Ordering::Relaxed) {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    counter = counter.wrapping_add(1);
-                    frame_idx_clone.store(counter, Ordering::Relaxed);
-                    app_event_tx_clone.send(AppEvent::RequestRedraw);
-                }
-            });
-        }
-
         Self {
             command,
-            frame_idx,
-            running,
+            _app_event_tx: app_event_tx,
         }
-    }
-
-    fn shimmering_header_spans(&self) -> Vec<Span<'static>> {
-        let header_text = "command";
-        let header_chars: Vec<char> = header_text.chars().collect();
-
-        let padding = 4usize; // virtual padding around the word for smoother loop
-        let period = header_chars.len() + padding * 2;
-        let pos = self.frame_idx.load(Ordering::Relaxed) % period;
-
-        let has_true_color = supports_color::on_cached(supports_color::Stream::Stdout)
-            .map(|level| level.has_16m)
-            .unwrap_or(false);
-
-        // Width of the bright band (in characters).
-        let band_half_width = 2.0;
-
-        let mut header_spans: Vec<Span<'static>> = Vec::new();
-        for (i, ch) in header_chars.iter().enumerate() {
-            let i_pos = i as isize + padding as isize;
-            let pos = pos as isize;
-            let dist = (i_pos - pos).abs() as f32;
-
-            let t = if dist <= band_half_width {
-                let x = std::f32::consts::PI * (dist / band_half_width);
-                0.5 * (1.0 + x.cos())
-            } else {
-                0.0
-            };
-
-            let brightness = 0.4 + 0.6 * t;
-            let level = (brightness * 255.0).clamp(0.0, 255.0) as u8;
-            let style = if has_true_color {
-                Style::default()
-                    .fg(Color::Rgb(level, level, level))
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                // Bold makes dark gray and gray look the same, so don't use it
-                // when true color is not supported.
-                Style::default().fg(color_for_level(level))
-            };
-
-            header_spans.push(Span::styled(ch.to_string(), style));
-        }
-
-        header_spans
-    }
-}
-
-impl Drop for ActiveExecCommandView {
-    fn drop(&mut self) {
-        self.running.store(false, Ordering::Relaxed);
     }
 }
 
 impl DynamicHeightWidgetRef for &ActiveExecCommandView {
     fn desired_height(&self, width: u16) -> u16 {
-        let mut spans = self.shimmering_header_spans();
-        spans.push(Span::styled(
-            " ",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled("running...", Style::default().dim()));
-
         let lines: Vec<Line<'static>> = vec![
-            Line::from(spans),
+            Line::from("Running command"),
             Line::from(format!("$ {}", self.command)),
             Line::from(""),
         ];
@@ -796,32 +711,17 @@ impl DynamicHeightWidgetRef for &ActiveExecCommandView {
 }
 impl WidgetRef for &ActiveExecCommandView {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        let mut spans = self.shimmering_header_spans();
-        spans.push(Span::styled(
-            " ",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled("running...", Style::default().dim()));
+        // Schedule a one-shot next frame to continue the shimmer.
+        self._app_event_tx
+            .send(AppEvent::ScheduleFrameIn(Duration::from_millis(100)));
         let lines: Vec<Line<'static>> = vec![
-            Line::from(spans),
+            Line::from(shimmer_spans("Running command")),
             Line::from(format!("$ {}", self.command)),
             Line::from(""),
         ];
         Paragraph::new(Text::from(lines))
             .wrap(Wrap { trim: false })
             .render(area, buf);
-    }
-}
-
-fn color_for_level(level: u8) -> Color {
-    if level < 128 {
-        Color::DarkGray
-    } else if level < 192 {
-        Color::Gray
-    } else {
-        Color::White
     }
 }
 
