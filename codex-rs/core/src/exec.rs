@@ -361,14 +361,13 @@ pub(crate) async fn consume_truncated_output(
         handle: &mut JoinHandle<std::io::Result<Vec<u8>>>,
         timeout: Duration,
     ) -> std::io::Result<Vec<u8>> {
-        tokio::select! {
-            join_res = &mut *handle => {
-                match join_res {
-                    Ok(io_res) => io_res,
-                    Err(join_err) => Err(std::io::Error::other(join_err)),
-                }
+        match tokio::time::timeout(timeout, &mut *handle).await {
+            Ok(join_res) => match join_res {
+                Ok(io_res) => io_res,
+                Err(join_err) => Err(std::io::Error::other(join_err)),
             },
-            _ = tokio::time::sleep(timeout) => {
+            Err(_elapsed) => {
+                // Timeout: abort the task to avoid hanging on open pipes.
                 handle.abort();
                 Ok(Vec::new())
             }
