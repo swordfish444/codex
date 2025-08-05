@@ -44,7 +44,7 @@ pub(crate) struct MessageProcessor {
     initialized: bool,
     codex_linux_sandbox_exe: Option<PathBuf>,
     session_map: Arc<Mutex<HashMap<Uuid, Arc<Codex>>>>,
-    conversation_map: Arc<Mutex<HashMap<Uuid, Arc<Mutex<crate::conversation_loop::Conversation>>>>>,
+    conversation_map: Arc<Mutex<HashMap<Uuid, Arc<crate::conversation_loop::Conversation>>>>,
     running_requests_id_to_codex_uuid: Arc<Mutex<HashMap<RequestId, Uuid>>>,
     /// Track request IDs to the original ToolCallRequestParams for cancellation handling
     tool_request_map: Arc<Mutex<HashMap<RequestId, ToolCallRequestParams>>>,
@@ -70,7 +70,7 @@ impl MessageProcessor {
 
     pub(crate) fn conversation_map(
         &self,
-    ) -> Arc<Mutex<HashMap<Uuid, Arc<Mutex<crate::conversation_loop::Conversation>>>>> {
+    ) -> Arc<Mutex<HashMap<Uuid, Arc<crate::conversation_loop::Conversation>>>> {
         self.conversation_map.clone()
     }
 
@@ -632,7 +632,7 @@ impl MessageProcessor {
                 let codex_arc = {
                     let sessions_guard = self.conversation_map.lock().await;
                     match sessions_guard.get(&session_id) {
-                        Some(conv) => conv.lock().await.codex().clone(),
+                        Some(conv) => conv.codex().clone(),
                         None => {
                             tracing::warn!(
                                 "Cancel send_message: session not found for session_id: {session_id}"

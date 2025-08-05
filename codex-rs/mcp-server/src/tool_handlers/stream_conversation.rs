@@ -40,7 +40,7 @@ pub(crate) async fn handle_stream_conversation(
 
     if let Some(conv) = conv {
         tokio::spawn(async move {
-            conv.lock().await.set_streaming(true).await;
+            conv.set_streaming(true).await;
         });
     }
 }
@@ -52,6 +52,6 @@ pub(crate) async fn handle_cancel(
 ) {
     let session_id = args.conversation_id.0;
     if let Some(conv) = get_session(session_id, message_processor.conversation_map()).await {
-        conv.lock().await.set_streaming(false).await;
+        conv.set_streaming(false).await;
     }
 }

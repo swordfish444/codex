@@ -55,10 +55,7 @@ pub(crate) async fn handle_send_message(
         return;
     };
 
-    let res = {
-        let mut guard = conversation.lock().await;
-        guard.try_submit_user_input(id.clone(), items).await
-    };
+    let res = conversation.try_submit_user_input(id.clone(), items).await;
 
     if let Err(e) = res {
         message_processor
@@ -86,8 +83,8 @@ pub(crate) async fn handle_send_message(
 
 pub(crate) async fn get_session(
     session_id: Uuid,
-    conversation_map: Arc<Mutex<HashMap<Uuid, Arc<Mutex<Conversation>>>>>,
-) -> Option<Arc<Mutex<Conversation>>> {
+    conversation_map: Arc<Mutex<HashMap<Uuid, Arc<Conversation>>>>,
+) -> Option<Arc<Conversation>> {
     let guard = conversation_map.lock().await;
     guard.get(&session_id).cloned()
 }
