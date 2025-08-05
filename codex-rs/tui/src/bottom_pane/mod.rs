@@ -184,7 +184,7 @@ impl BottomPane<'_> {
 
     /// Update the status indicator text. Prefer replacing the composer with
     /// the StatusIndicatorView so the input pane shows a single-line status
-    /// like: `▌ Working [·] waiting for model`.
+    /// like: `▌ Working waiting for model`.
     pub(crate) fn update_status_text(&mut self, text: String) {
         let mut handled_by_view = false;
         if let Some(view) = self.active_view.as_mut() {
