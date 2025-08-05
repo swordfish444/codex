@@ -3,6 +3,7 @@
 // alternate‑screen mode starts; that file opts‑out locally via `allow`.
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 use app::App;
+use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config_types::SandboxMode;
@@ -70,6 +71,11 @@ pub async fn run_main(
         )
     };
 
+    let model_provider_override = if cli.oss {
+        Some(BUILT_IN_OSS_MODEL_PROVIDER_ID.to_owned())
+    } else {
+        None
+    };
     let config = {
         // Load configuration and support CLI overrides.
         let overrides = ConfigOverrides {
@@ -77,7 +83,7 @@ pub async fn run_main(
             approval_policy,
             sandbox_mode,
             cwd: cli.cwd.clone().map(|p| p.canonicalize().unwrap_or(p)),
-            model_provider: None,
+            model_provider: model_provider_override,
             config_profile: cli.config_profile.clone(),
             codex_linux_sandbox_exe,
             base_instructions: None,
