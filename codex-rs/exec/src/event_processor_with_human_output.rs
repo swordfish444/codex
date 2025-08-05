@@ -4,6 +4,7 @@ use codex_core::config::Config;
 use codex_core::plan_tool::UpdatePlanArgs;
 use codex_core::protocol::AgentMessageDeltaEvent;
 use codex_core::protocol::AgentMessageEvent;
+use codex_core::protocol::AgentReasoningContentDeltaEvent;
 use codex_core::protocol::AgentReasoningContentEvent;
 use codex_core::protocol::AgentReasoningDeltaEvent;
 use codex_core::protocol::BackgroundEventEvent;
@@ -56,6 +57,7 @@ pub(crate) struct EventProcessorWithHumanOutput {
 
     /// Whether to include `AgentReasoning` events in the output.
     show_agent_reasoning: bool,
+    show_raw_agent_reasoning: bool,
     answer_started: bool,
     reasoning_started: bool,
     last_message_path: Option<PathBuf>,
@@ -82,6 +84,7 @@ impl EventProcessorWithHumanOutput {
                 green: Style::new().green(),
                 cyan: Style::new().cyan(),
                 show_agent_reasoning: !config.hide_agent_reasoning,
+                show_raw_agent_reasoning: config.show_raw_agent_reasoning,
                 answer_started: false,
                 reasoning_started: false,
                 last_message_path,
@@ -98,6 +101,7 @@ impl EventProcessorWithHumanOutput {
                 green: Style::new(),
                 cyan: Style::new(),
                 show_agent_reasoning: !config.hide_agent_reasoning,
+                show_raw_agent_reasoning: config.show_raw_agent_reasoning,
                 answer_started: false,
                 reasoning_started: false,
                 last_message_path,
@@ -205,12 +209,18 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 std::io::stdout().flush().expect("could not flush stdout");
             }
             EventMsg::AgentReasoningContent(AgentReasoningContentEvent { text }) => {
-                if !self.show_agent_reasoning {
+                if !self.show_raw_agent_reasoning {
                     return CodexStatus::Running;
                 }
                 print!("{text}");
                 #[allow(clippy::expect_used)]
                 std::io::stdout().flush().expect("could not flush stdout");
+            }
+            EventMsg::AgentReasoningContentDelta(AgentReasoningContentDeltaEvent { delta }) => {
+                if !self.show_raw_agent_reasoning {
+                    return CodexStatus::Running;
+                }
+                print!("{delta}");
             }
             EventMsg::AgentMessage(AgentMessageEvent { message }) => {
                 // if answer_started is false, this means we haven't received any

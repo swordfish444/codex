@@ -60,7 +60,8 @@ pub enum ResponseEvent {
         token_usage: Option<TokenUsage>,
     },
     OutputTextDelta(String),
-    ReasoningDelta(String),
+    ReasoningSummaryDelta(String),
+    ReasoningContentDelta(String),
 }
 
 #[derive(Debug, Serialize)]

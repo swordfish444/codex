@@ -93,7 +93,7 @@ impl ModelClient {
                 // Wrap it with the aggregation adapter so callers see *only*
                 // the final assistant message per turn (matching the
                 // behaviour of the Responses API).
-                let mut aggregated = if !self.config.hide_agent_reasoning {
+                let mut aggregated = if self.config.show_raw_agent_reasoning {
                     crate::chat_completions::AggregatedChatStream::streaming_mode(response_stream)
                 } else {
                     response_stream.aggregate()
@@ -442,9 +442,17 @@ async fn process_sse<S>(
                     }
                 }
             }
-            "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
+            "response.reasoning_summary_text.delta" => {
                 if let Some(delta) = event.delta {
-                    let event = ResponseEvent::ReasoningDelta(delta);
+                    let event = ResponseEvent::ReasoningSummaryDelta(delta);
+                    if tx_event.send(Ok(event)).await.is_err() {
+                        return;
+                    }
+                }
+            }
+            "response.reasoning_text.delta" => {
+                if let Some(delta) = event.delta {
+                    let event = ResponseEvent::ReasoningContentDelta(delta);
                     if tx_event.send(Ok(event)).await.is_err() {
                         return;
                     }

@@ -65,6 +65,7 @@ use crate::plan_tool::handle_update_plan;
 use crate::project_doc::get_user_instructions;
 use crate::protocol::AgentMessageDeltaEvent;
 use crate::protocol::AgentMessageEvent;
+use crate::protocol::AgentReasoningContentDeltaEvent;
 use crate::protocol::AgentReasoningContentEvent;
 use crate::protocol::AgentReasoningDeltaEvent;
 use crate::protocol::AgentReasoningEvent;
@@ -229,7 +230,7 @@ pub(crate) struct Session {
     state: Mutex<State>,
     codex_linux_sandbox_exe: Option<PathBuf>,
     user_shell: shell::Shell,
-    hide_agent_reasoning: bool,
+    show_raw_agent_reasoning: bool,
 }
 
 impl Session {
@@ -825,7 +826,7 @@ async fn submission_loop(
                     codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
                     disable_response_storage,
                     user_shell: default_shell,
-                    hide_agent_reasoning: config.hide_agent_reasoning,
+                    show_raw_agent_reasoning: config.show_raw_agent_reasoning,
                 }));
 
                 // Patch restored state into the newly created session.
@@ -1386,11 +1387,20 @@ async fn try_run_turn(
                 };
                 sess.tx_event.send(event).await.ok();
             }
-            ResponseEvent::ReasoningDelta(delta) => {
-                if !sess.hide_agent_reasoning {
+            ResponseEvent::ReasoningSummaryDelta(delta) => {
+                let event = Event {
+                    id: sub_id.to_string(),
+                    msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }),
+                };
+                sess.tx_event.send(event).await.ok();
+            }
+            ResponseEvent::ReasoningContentDelta(delta) => {
+                if sess.show_raw_agent_reasoning {
                     let event = Event {
                         id: sub_id.to_string(),
-                        msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }),
+                        msg: EventMsg::AgentReasoningContentDelta(
+                            AgentReasoningContentDeltaEvent { delta },
+                        ),
                     };
                     sess.tx_event.send(event).await.ok();
                 }
@@ -1507,19 +1517,17 @@ async fn handle_response_item(
             content,
             encrypted_content: _,
         } => {
-            if !sess.hide_agent_reasoning {
-                for item in summary {
-                    let text = match item {
-                        ReasoningItemReasoningSummary::SummaryText { text } => text,
-                    };
-                    let event = Event {
-                        id: sub_id.to_string(),
-                        msg: EventMsg::AgentReasoning(AgentReasoningEvent { text }),
-                    };
-                    sess.tx_event.send(event).await.ok();
-                }
+            for item in summary {
+                let text = match item {
+                    ReasoningItemReasoningSummary::SummaryText { text } => text,
+                };
+                let event = Event {
+                    id: sub_id.to_string(),
+                    msg: EventMsg::AgentReasoning(AgentReasoningEvent { text }),
+                };
+                sess.tx_event.send(event).await.ok();
             }
-            if !sess.hide_agent_reasoning && content.is_some() {
+            if sess.show_raw_agent_reasoning && content.is_some() {
                 let content = content.unwrap();
                 for item in content {
                     let text = match item {
