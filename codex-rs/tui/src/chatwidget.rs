@@ -10,6 +10,7 @@ use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::AgentReasoningDeltaEvent;
 use codex_core::protocol::AgentReasoningEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
+use codex_core::protocol::BackgroundEventEvent;
 use codex_core::protocol::ErrorEvent;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
@@ -220,6 +221,13 @@ impl ChatWidget<'_> {
     pub(crate) fn handle_codex_event(&mut self, event: Event) {
         let Event { id, msg } = event;
         match msg {
+            EventMsg::BackgroundEvent(BackgroundEventEvent { message }) => {
+                self.add_to_history(HistoryCell::new_background_event(message.clone()));
+                if message.contains("Turn interrupted") {
+                    self.bottom_pane.set_task_running(false);
+                }
+                self.request_redraw();
+            }
             EventMsg::SessionConfigured(event) => {
                 self.bottom_pane
                     .set_history_metadata(event.history_log_id, event.history_entry_count);

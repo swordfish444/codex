@@ -628,7 +628,7 @@ impl AgentTask {
             let event = Event {
                 id: self.sub_id,
                 msg: EventMsg::BackgroundEvent(BackgroundEventEvent {
-                    message: "Turn interrupted — returning to the prompt.".to_string(),
+                    message: "Response interrupted.".to_string(),
                 }),
             };
             let tx_event = self.sess.tx_event.clone();
