@@ -170,6 +170,8 @@ impl Conversation {
             EventMsg::AgentMessage(AgentMessageEvent { .. }) => {}
             EventMsg::TokenCount(_)
             | EventMsg::AgentReasoning(_)
+            | EventMsg::AgentReasoningRawContent(_)
+            | EventMsg::AgentReasoningRawContentDelta(_)
             | EventMsg::McpToolCallBegin(_)
             | EventMsg::McpToolCallEnd(_)
             | EventMsg::ExecCommandBegin(_)
