@@ -25,19 +25,13 @@ mod bottom_pane;
 mod chatwidget;
 mod citation_regex;
 mod cli;
-#[cfg(feature = "vt100-tests")]
 pub mod custom_terminal;
-#[cfg(not(feature = "vt100-tests"))]
-mod custom_terminal;
 mod exec_command;
 mod file_search;
 mod get_git_diff;
 mod git_warning_screen;
 mod history_cell;
-#[cfg(feature = "vt100-tests")]
 pub mod insert_history;
-#[cfg(not(feature = "vt100-tests"))]
-mod insert_history;
 pub mod live_wrap;
 mod log_layer;
 mod markdown;

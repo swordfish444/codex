@@ -223,8 +223,6 @@ impl HistoryCell {
         }
     }
 
-    // Removed unused new_agent_message and new_agent_reasoning constructors.
-
     pub(crate) fn new_active_exec_command(command: Vec<String>) -> Self {
         let command_escaped = strip_bash_lc_and_escape(&command);
 

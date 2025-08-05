@@ -177,17 +177,16 @@ mod tests {
         h.record_items([&a1, &a2]);
 
         let items = h.contents();
-        assert_eq!(items.len(), 1, "adjacent assistant messages should merge");
-        if let ResponseItem::Message { role, content, .. } = &items[0] {
-            assert_eq!(role, "assistant");
-            let text = match &content[0] {
-                ContentItem::OutputText { text } => text,
-                _ => panic!("expected OutputText"),
-            };
-            assert_eq!(text, "Hello, world!");
-        } else {
-            panic!("expected Message");
-        }
+        assert_eq!(
+            items,
+            vec![ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "Hello, world!".to_string()
+                }]
+            }]
+        );
     }
 
     #[test]
@@ -201,17 +200,16 @@ mod tests {
         h.record_items([&final_msg]);
 
         let items = h.contents();
-        assert_eq!(items.len(), 1);
-        if let ResponseItem::Message { role, content, .. } = &items[0] {
-            assert_eq!(role, "assistant");
-            let text = match &content[0] {
-                ContentItem::OutputText { text } => text,
-                _ => panic!("expected OutputText"),
-            };
-            assert_eq!(text, "Hello, world!");
-        } else {
-            panic!("expected Message");
-        }
+        assert_eq!(
+            items,
+            vec![ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "Hello, world!".to_string()
+                }]
+            }]
+        );
     }
 
     #[test]
@@ -233,13 +231,24 @@ mod tests {
         h.record_items([&u, &a]);
 
         let items = h.contents();
-        assert_eq!(items.len(), 2);
-        match (&items[0], &items[1]) {
-            (ResponseItem::Message { role: r0, .. }, ResponseItem::Message { role: r1, .. }) => {
-                assert_eq!(r0, "user");
-                assert_eq!(r1, "assistant");
-            }
-            _ => panic!("expected two Message items"),
-        }
+        assert_eq!(
+            items,
+            vec![
+                ResponseItem::Message {
+                    id: None,
+                    role: "user".to_string(),
+                    content: vec![ContentItem::OutputText {
+                        text: "hi".to_string()
+                    }]
+                },
+                ResponseItem::Message {
+                    id: None,
+                    role: "assistant".to_string(),
+                    content: vec![ContentItem::OutputText {
+                        text: "hello".to_string()
+                    }]
+                }
+            ]
+        );
     }
 }

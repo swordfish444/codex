@@ -182,15 +182,15 @@ impl RowBuilder {
     }
 }
 
-/// Take a prefix of `s` whose visible width is at most `max_cols`.
+/// Take a prefix of `text` whose visible width is at most `max_cols`.
 /// Returns (prefix, suffix, prefix_width).
-pub fn take_prefix_by_width(s: &str, max_cols: usize) -> (String, &str, usize) {
-    if max_cols == 0 || s.is_empty() {
-        return (String::new(), s, 0);
+pub fn take_prefix_by_width(text: &str, max_cols: usize) -> (String, &str, usize) {
+    if max_cols == 0 || text.is_empty() {
+        return (String::new(), text, 0);
     }
     let mut cols = 0usize;
     let mut end_idx = 0usize;
-    for (i, ch) in s.char_indices() {
+    for (i, ch) in text.char_indices() {
         let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
         if cols.saturating_add(ch_width) > max_cols {
             break;
@@ -201,24 +201,34 @@ pub fn take_prefix_by_width(s: &str, max_cols: usize) -> (String, &str, usize) {
             break;
         }
     }
-    let prefix = s[..end_idx].to_string();
-    let suffix = &s[end_idx..];
+    let prefix = text[..end_idx].to_string();
+    let suffix = &text[end_idx..];
     (prefix, suffix, cols)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn rows_do_not_exceed_width_ascii() {
         let mut rb = RowBuilder::new(10);
         rb.push_fragment("hello world this is a test");
-        let rows = rb.rows();
-        assert!(!rows.is_empty());
-        for r in rows {
-            assert!(r.width() <= 10, "row exceeds width: {r:?}");
-        }
+        let rows = rb.rows().to_vec();
+        assert_eq!(
+            rows,
+            vec![
+                Row {
+                    text: "hello worl".to_string(),
+                    explicit_break: false
+                },
+                Row {
+                    text: "d this is ".to_string(),
+                    explicit_break: false
+                }
+            ]
+        );
     }
 
     #[test]
@@ -226,9 +236,17 @@ mod tests {
         // 😀 is width 2; 你/好 are width 2.
         let mut rb = RowBuilder::new(6);
         rb.push_fragment("😀😀 你好");
-        for r in rb.rows() {
-            assert!(r.width() <= 6, "row exceeds width: {r:?}");
-        }
+        let rows = rb.rows().to_vec();
+        // At width 6, we expect the first row to fit exactly two emojis and a space
+        // (2 + 2 + 1 = 5) plus one more column for the first CJK char (2 would overflow),
+        // so only the two emojis and the space fit; the rest remains buffered.
+        assert_eq!(
+            rows,
+            vec![Row {
+                text: "😀😀 ".to_string(),
+                explicit_break: false
+            }]
+        );
     }
 
     #[test]

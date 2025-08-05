@@ -137,25 +137,8 @@ fn hist_003_emoji_and_cjk() {
     let text = String::from("😀😀😀😀😀 你好世界");
     let lines = vec![Line::from(text.clone())];
     let buf = scenario.run_insert(lines);
-    let mut parser = vt100::Parser::new(6, 20, 0);
-    parser.process(&buf);
-    let screen = parser.screen();
-
-    // Reconstruct string by concatenating non-space cells; ensure all emojis and CJK are present.
-    let mut reconstructed = String::new();
-    for row in 0..6 {
-        for col in 0..20 {
-            if let Some(cell) = screen.cell(row, col) {
-                let cont = cell.contents();
-                if let Some(ch) = cont.chars().next() {
-                    if ch != ' ' {
-                        reconstructed.push(ch);
-                    }
-                }
-            }
-        }
-    }
-
+    let rows = scenario.screen_rows_from_bytes(&buf);
+    let reconstructed: String = rows.join("").chars().filter(|c| *c != ' ').collect();
     for ch in text.chars().filter(|c| !c.is_whitespace()) {
         assert!(
             reconstructed.contains(ch),

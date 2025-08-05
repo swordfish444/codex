@@ -9,6 +9,7 @@ use codex_file_search::FileMatch;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::text::Line;
 use ratatui::widgets::WidgetRef;
 
 mod approval_modal_view;
@@ -30,6 +31,7 @@ pub(crate) enum CancellationEvent {
 pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
 
+use crate::status_indicator_widget::StatusIndicatorWidget;
 use approval_modal_view::ApprovalModalView;
 use status_indicator_view::StatusIndicatorView;
 
@@ -50,7 +52,7 @@ pub(crate) struct BottomPane<'a> {
     /// Optional live, multi‑line status/"live cell" rendered directly above
     /// the composer while a task is running. Unlike `active_view`, this does
     /// not replace the composer; it augments it.
-    live_status: Option<crate::status_indicator_widget::StatusIndicatorWidget>,
+    live_status: Option<StatusIndicatorWidget>,
 
     /// Optional transient ring shown above the composer. This is a rendering-only
     /// container used during development before we wire it to ChatWidget events.
@@ -100,24 +102,22 @@ impl BottomPane<'_> {
             .map(|r| r.desired_height(width))
             .unwrap_or(0);
 
-        if let Some(view) = self.active_view.as_ref() {
+        let view_height = if let Some(view) = self.active_view.as_ref() {
             // Add a single blank spacer line between live ring and status view when active.
             let spacer = if self.live_ring.is_some() && self.status_view_active {
                 1
             } else {
                 0
             };
-            overlay_status_h
-                .saturating_add(ring_h)
-                .saturating_add(spacer)
-                .saturating_add(view.desired_height(width))
-                .saturating_add(Self::BOTTOM_PAD_LINES)
+            spacer + view.desired_height(width)
         } else {
-            overlay_status_h
-                .saturating_add(ring_h)
-                .saturating_add(self.composer.desired_height(width))
-                .saturating_add(Self::BOTTOM_PAD_LINES)
-        }
+            self.composer.desired_height(width)
+        };
+
+        overlay_status_h
+            .saturating_add(ring_h)
+            .saturating_add(view_height)
+            .saturating_add(Self::BOTTOM_PAD_LINES)
     }
 
     pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
@@ -206,10 +206,7 @@ impl BottomPane<'_> {
         // present an overlay above the composer.
         if !handled_by_view {
             if self.live_status.is_none() {
-                self.live_status =
-                    Some(crate::status_indicator_widget::StatusIndicatorWidget::new(
-                        self.app_event_tx.clone(),
-                    ));
+                self.live_status = Some(StatusIndicatorWidget::new(self.app_event_tx.clone()));
             }
             if let Some(status) = &mut self.live_status {
                 status.update_text(text);
@@ -256,10 +253,8 @@ impl BottomPane<'_> {
             if let Some(mut view) = self.active_view.take() {
                 if !view.should_hide_when_task_is_done() {
                     self.active_view = Some(view);
-                    self.status_view_active = false;
-                } else {
-                    self.status_view_active = false;
                 }
+                self.status_view_active = false;
             }
         }
     }
@@ -337,11 +332,7 @@ impl BottomPane<'_> {
     }
 
     /// Set the rows and cap for the transient live ring overlay.
-    pub(crate) fn set_live_ring_rows(
-        &mut self,
-        max_rows: u16,
-        rows: Vec<ratatui::text::Line<'static>>,
-    ) {
+    pub(crate) fn set_live_ring_rows(&mut self, max_rows: u16, rows: Vec<Line<'static>>) {
         let mut w = live_ring_widget::LiveRingWidget::new();
         w.set_max_rows(max_rows);
         w.set_rows(rows);
@@ -390,7 +381,7 @@ impl WidgetRef for &BottomPane<'_> {
             }
         }
 
-        if let Some(ov) = &self.active_view {
+        if let Some(view) = &self.active_view {
             if y_offset < area.height {
                 // Reserve bottom padding lines; keep at least 1 line for the view.
                 let avail = area.height - y_offset;
@@ -401,7 +392,7 @@ impl WidgetRef for &BottomPane<'_> {
                     width: area.width,
                     height: avail - pad,
                 };
-                ov.render(view_rect, buf);
+                view.render(view_rect, buf);
             }
         } else if y_offset < area.height {
             let composer_rect = Rect {
@@ -485,18 +476,7 @@ mod tests {
             }
             lines.push(s.trim_end().to_string());
         }
-        assert!(
-            lines[0].contains("two"),
-            "top row should be 'two': {lines:?}"
-        );
-        assert!(
-            lines[1].contains("three"),
-            "middle row should be 'three': {lines:?}"
-        );
-        assert!(
-            lines[2].contains("four"),
-            "bottom row should be 'four': {lines:?}"
-        );
+        assert_eq!(lines, vec!["two", "three", "four"]);
     }
 
     #[test]

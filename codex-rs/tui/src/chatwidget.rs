@@ -250,11 +250,10 @@ impl ChatWidget<'_> {
 
                 self.request_redraw();
             }
-            EventMsg::AgentMessage(AgentMessageEvent { message }) => {
+            EventMsg::AgentMessage(AgentMessageEvent { message: _ }) => {
                 // Final assistant answer: commit all remaining rows and close with
                 // a blank line. Use the final text if provided, otherwise rely on
                 // streamed deltas already in the builder.
-                let _ = message; // Already streamed via deltas in most providers.
                 self.finalize_stream(StreamKind::Answer);
                 self.request_redraw();
             }
@@ -272,9 +271,8 @@ impl ChatWidget<'_> {
                 self.stream_push_and_maybe_commit(&delta);
                 self.request_redraw();
             }
-            EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
+            EventMsg::AgentReasoning(AgentReasoningEvent { text: _ }) => {
                 // Final reasoning: commit remaining rows and close with a blank.
-                let _ = text; // Deltas carried the content; finalize below.
                 self.finalize_stream(StreamKind::Reasoning);
                 self.request_redraw();
             }
@@ -597,7 +595,7 @@ impl ChatWidget<'_> {
                 lines.push(ratatui::text::Line::from(r.text));
             }
             // Close the block with a blank line for readability.
-            lines.push(ratatui::text::Line::from(String::new()));
+            lines.push(ratatui::text::Line::from(""));
             self.app_event_tx.send(AppEvent::InsertHistory(lines));
         }
 
