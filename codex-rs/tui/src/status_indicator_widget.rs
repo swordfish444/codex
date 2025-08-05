@@ -222,12 +222,6 @@ impl WidgetRef for StatusIndicatorWidget {
                 .add_modifier(Modifier::BOLD),
         ));
 
-        // Append a static dot in brackets (no animation).
-        spans.push(Span::raw("["));
-        spans.push(Span::styled("•", Style::default().fg(Color::Gray)));
-        spans.push(Span::raw("] "));
-        spans.push(Span::raw(self.text.clone()));
-
         // Truncate spans to fit the width.
         let mut acc: Vec<Span<'static>> = Vec::new();
         let mut used = 0usize;
