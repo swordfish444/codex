@@ -3,12 +3,14 @@
 // alternate‑screen mode starts; that file opts‑out locally via `allow`.
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 use app::App;
+use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config_types::SandboxMode;
 use codex_core::protocol::AskForApproval;
 use codex_core::util::is_inside_git_repo;
 use codex_login::load_auth;
+use codex_ollama::OllamaClient;
 use log_layer::TuiLogLayer;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -70,6 +72,11 @@ pub async fn run_main(
         )
     };
 
+    let model_provider_override = if cli.oss {
+        Some(BUILT_IN_OSS_MODEL_PROVIDER_ID.to_owned())
+    } else {
+        None
+    };
     let config = {
         // Load configuration and support CLI overrides.
         let overrides = ConfigOverrides {
@@ -77,7 +84,7 @@ pub async fn run_main(
             approval_policy,
             sandbox_mode,
             cwd: cli.cwd.clone().map(|p| p.canonicalize().unwrap_or(p)),
-            model_provider: None,
+            model_provider: model_provider_override,
             config_profile: cli.config_profile.clone(),
             codex_linux_sandbox_exe,
             base_instructions: None,
@@ -175,6 +182,23 @@ pub async fn run_main(
         }
 
         eprintln!("");
+    }
+
+    if cli.oss {
+        // Should maybe load the client using `config.model_provider`?
+        let ollama_client = OllamaClient::from_oss_provider();
+        let is_ollama_available = ollama_client.probe_server().await?;
+        #[allow(clippy::print_stderr)]
+        if !is_ollama_available {
+            eprintln!(
+                "Ollama server is not reachable at {}. Please ensure Ollama is running.",
+                ollama_client.get_host()
+            );
+            std::process::exit(1);
+        }
+
+        // TODO(easong): Check if the model is available, and if not, prompt the
+        // user to pull it.
     }
 
     let show_login_screen = should_show_login_screen(&config);
