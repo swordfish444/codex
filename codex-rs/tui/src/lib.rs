@@ -79,17 +79,7 @@ pub async fn run_main(
     let config = {
         // Load configuration and support CLI overrides.
         let overrides = ConfigOverrides {
-            // When using `--oss`, let the bootstrapper pick the model
-            // (defaulting to gpt-oss:20b) and ensure it is present locally.
-            model: if cli.oss {
-                Some(
-                    codex_ollama::ensure_oss_ready(cli.model.clone())
-                        .await
-                        .map_err(|e| std::io::Error::other(format!("OSS setup failed: {e}")))?,
-                )
-            } else {
-                cli.model.clone()
-            },
+            model: cli.model.clone(),
             approval_policy,
             sandbox_mode,
             cwd: cli.cwd.clone().map(|p| p.canonicalize().unwrap_or(p)),
@@ -153,6 +143,12 @@ pub async fn run_main(
         .with_writer(non_blocking)
         .with_target(false)
         .with_filter(env_filter());
+
+    if cli.oss {
+        codex_ollama::ensure_oss_ready(&config)
+            .await
+            .map_err(|e| std::io::Error::other(format!("OSS setup failed: {e}")))?;
+    }
 
     // Channel that carries formatted log lines to the UI.
     let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
