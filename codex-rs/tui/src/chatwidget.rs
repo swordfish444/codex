@@ -469,7 +469,9 @@ impl ChatWidget<'_> {
 
     /// Update the live log preview while a task is running.
     pub(crate) fn update_latest_log(&mut self, line: String) {
-        self.bottom_pane.update_status_text(line);
+        if self.bottom_pane.is_task_running() {
+            self.bottom_pane.update_status_text(line);
+        }
     }
 
     fn request_redraw(&mut self) {
