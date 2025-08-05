@@ -276,9 +276,7 @@ async fn process_chat_sse<S>(
                 .and_then(|c| c.as_str())
             {
                 let _ = tx_event
-                    .send(Ok(ResponseEvent::ReasoningSummaryDelta(
-                        reasoning.to_string(),
-                    )))
+                    .send(Ok(ResponseEvent::ReasoningDelta(reasoning.to_string())))
                     .await;
             }
 
@@ -507,12 +505,12 @@ where
                         continue;
                     }
                 }
-                Poll::Ready(Some(Ok(ResponseEvent::ReasoningSummaryDelta(delta)))) => {
+                Poll::Ready(Some(Ok(ResponseEvent::ReasoningDelta(delta)))) => {
                     // Always accumulate reasoning deltas so we can emit a final Reasoning item at Completed.
                     this.cumulative_reasoning.push_str(&delta);
                     if matches!(this.mode, AggregateMode::Streaming) {
                         // In streaming mode, also forward the delta immediately.
-                        return Poll::Ready(Some(Ok(ResponseEvent::ReasoningSummaryDelta(delta))));
+                        return Poll::Ready(Some(Ok(ResponseEvent::ReasoningDelta(delta))));
                     } else {
                         continue;
                     }

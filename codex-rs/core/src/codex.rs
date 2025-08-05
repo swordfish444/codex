@@ -1386,7 +1386,7 @@ async fn try_run_turn(
                 };
                 sess.tx_event.send(event).await.ok();
             }
-            ResponseEvent::ReasoningSummaryDelta(delta) => {
+            ResponseEvent::ReasoningDelta(delta) => {
                 if !sess.hide_agent_reasoning {
                     let event = Event {
                         id: sub_id.to_string(),
