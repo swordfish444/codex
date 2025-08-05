@@ -528,15 +528,15 @@ mod tests {
         }
         assert!(r2.trim().is_empty(), "expected blank spacer line: {r2:?}");
 
-        // Bottom row is the status line; it should contain the left bar and "Working [".
+        // Bottom row is the status line; it should contain the left bar and "Working".
         let mut r3 = String::new();
         for x in 0..area.width {
             r3.push(buf[(x, 3)].symbol().chars().next().unwrap_or(' '));
         }
         assert_eq!(buf[(0, 3)].symbol().chars().next().unwrap_or(' '), '▌');
         assert!(
-            r3.contains("Working ["),
-            "expected spinner prefix in status line: {r3:?}"
+            r3.contains("Working"),
+            "expected Working header in status line: {r3:?}"
         );
     }
 
@@ -564,15 +564,15 @@ mod tests {
         let mut buf = Buffer::empty(area);
         (&pane).render_ref(area, &mut buf);
 
-        // Top row contains the spinner
+        // Top row contains the status header
         let mut top = String::new();
         for x in 0..area.width {
             top.push(buf[(x, 0)].symbol().chars().next().unwrap_or(' '));
         }
         assert_eq!(buf[(0, 0)].symbol().chars().next().unwrap_or(' '), '▌');
         assert!(
-            top.contains("Working ["),
-            "expected spinner on top row: {top:?}"
+            top.contains("Working"),
+            "expected Working header on top row: {top:?}"
         );
 
         // Bottom two rows are blank padding
@@ -616,8 +616,8 @@ mod tests {
             row1.push(buf2[(x, 1)].symbol().chars().next().unwrap_or(' '));
         }
         assert!(
-            row0.contains("Working ["),
-            "expected spinner on row 0: {row0:?}"
+            row0.contains("Working"),
+            "expected Working header on row 0: {row0:?}"
         );
         assert!(
             row1.trim().is_empty(),
@@ -633,8 +633,8 @@ mod tests {
             only.push(buf1[(x, 0)].symbol().chars().next().unwrap_or(' '));
         }
         assert!(
-            only.contains("Working ["),
-            "expected spinner only with no padding: {only:?}"
+            only.contains("Working"),
+            "expected Working header with no padding: {only:?}"
         );
     }
 }

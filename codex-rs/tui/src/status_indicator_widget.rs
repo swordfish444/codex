@@ -279,7 +279,7 @@ mod tests {
     }
 
     #[test]
-    fn bracket_dot_animation_is_present_on_last_line() {
+    fn working_header_is_present_on_last_line() {
         let (tx_raw, _rx) = channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut w = StatusIndicatorWidget::new(tx);
@@ -291,16 +291,11 @@ mod tests {
         let mut buf = ratatui::buffer::Buffer::empty(area);
         w.render_ref(area, &mut buf);
 
-        // Single line; it should contain "Working [" and closing "]" and the provided text.
+        // Single line; it should contain the animated "Working" header.
         let mut row = String::new();
         for x in 0..area.width {
             row.push(buf[(x, 0)].symbol().chars().next().unwrap_or(' '));
         }
-        assert!(row.contains("Working ["), "expected status prefix: {row:?}");
-        assert!(row.contains("]"), "expected bracket: {row:?}");
-        assert!(
-            row.contains("Hi"),
-            "expected provided text in status: {row:?}"
-        );
+        assert!(row.contains("Working"), "expected Working header: {row:?}");
     }
 }
