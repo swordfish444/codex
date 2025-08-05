@@ -186,32 +186,34 @@ impl BottomPane<'_> {
     /// the StatusIndicatorView so the input pane shows a single-line status
     /// like: `▌ Working [·] waiting for model`.
     pub(crate) fn update_status_text(&mut self, text: String) {
+        let mut handled_by_view = false;
         if let Some(view) = self.active_view.as_mut() {
-            match view.update_status_text(text.clone()) {
-                bottom_pane_view::ConditionalUpdate::NeedsRedraw => {
-                    self.request_redraw();
-                    return;
-                }
-                bottom_pane_view::ConditionalUpdate::NoRedraw => {}
+            if matches!(
+                view.update_status_text(text.clone()),
+                bottom_pane_view::ConditionalUpdate::NeedsRedraw
+            ) {
+                handled_by_view = true;
             }
         } else {
             let mut v = StatusIndicatorView::new(self.app_event_tx.clone());
-            v.update_text(text);
+            v.update_text(text.clone());
             self.active_view = Some(Box::new(v));
             self.status_view_active = true;
-            self.request_redraw();
-            return;
+            handled_by_view = true;
         }
 
-        // Fallback: if the current active view does not consume status updates,
+        // Fallback: if the current active view did not consume status updates,
         // present an overlay above the composer.
-        if self.live_status.is_none() {
-            self.live_status = Some(crate::status_indicator_widget::StatusIndicatorWidget::new(
-                self.app_event_tx.clone(),
-            ));
-        }
-        if let Some(status) = &mut self.live_status {
-            status.update_text(text);
+        if !handled_by_view {
+            if self.live_status.is_none() {
+                self.live_status =
+                    Some(crate::status_indicator_widget::StatusIndicatorWidget::new(
+                        self.app_event_tx.clone(),
+                    ));
+            }
+            if let Some(status) = &mut self.live_status {
+                status.update_text(text);
+            }
         }
         self.request_redraw();
     }

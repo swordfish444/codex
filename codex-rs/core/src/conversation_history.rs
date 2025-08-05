@@ -48,7 +48,6 @@ impl ConversationHistory {
                     append_text_content(last_content, new_content);
                 }
                 _ => {
-                    // Note agent-loop.ts also does filtering on some of the fields.
                     self.items.push(item.clone());
                 }
             }
@@ -142,5 +141,105 @@ fn append_text_delta(content: &mut Vec<crate::models::ContentItem>, delta: &str)
         content.push(crate::models::ContentItem::OutputText {
             text: delta.to_string(),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::ContentItem;
+
+    fn assistant_msg(text: &str) -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: text.to_string(),
+            }],
+        }
+    }
+
+    fn user_msg(text: &str) -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: text.to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn merges_adjacent_assistant_messages() {
+        let mut h = ConversationHistory::default();
+        let a1 = assistant_msg("Hello");
+        let a2 = assistant_msg(", world!");
+        h.record_items([&a1, &a2]);
+
+        let items = h.contents();
+        assert_eq!(items.len(), 1, "adjacent assistant messages should merge");
+        if let ResponseItem::Message { role, content, .. } = &items[0] {
+            assert_eq!(role, "assistant");
+            let text = match &content[0] {
+                ContentItem::OutputText { text } => text,
+                _ => panic!("expected OutputText"),
+            };
+            assert_eq!(text, "Hello, world!");
+        } else {
+            panic!("expected Message");
+        }
+    }
+
+    #[test]
+    fn append_assistant_text_creates_and_appends() {
+        let mut h = ConversationHistory::default();
+        h.append_assistant_text("Hello");
+        h.append_assistant_text(", world");
+
+        // Now record a final full assistant message and verify it merges.
+        let final_msg = assistant_msg("!");
+        h.record_items([&final_msg]);
+
+        let items = h.contents();
+        assert_eq!(items.len(), 1);
+        if let ResponseItem::Message { role, content, .. } = &items[0] {
+            assert_eq!(role, "assistant");
+            let text = match &content[0] {
+                ContentItem::OutputText { text } => text,
+                _ => panic!("expected OutputText"),
+            };
+            assert_eq!(text, "Hello, world!");
+        } else {
+            panic!("expected Message");
+        }
+    }
+
+    #[test]
+    fn filters_non_api_messages() {
+        let mut h = ConversationHistory::default();
+        // System message is not an API message; Other is ignored.
+        let system = ResponseItem::Message {
+            id: None,
+            role: "system".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "ignored".to_string(),
+            }],
+        };
+        h.record_items([&system, &ResponseItem::Other]);
+
+        // User and assistant should be retained.
+        let u = user_msg("hi");
+        let a = assistant_msg("hello");
+        h.record_items([&u, &a]);
+
+        let items = h.contents();
+        assert_eq!(items.len(), 2);
+        match (&items[0], &items[1]) {
+            (ResponseItem::Message { role: r0, .. }, ResponseItem::Message { role: r1, .. }) => {
+                assert_eq!(r0, "user");
+                assert_eq!(r1, "assistant");
+            }
+            _ => panic!("expected two Message items"),
+        }
     }
 }

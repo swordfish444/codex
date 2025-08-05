@@ -13,7 +13,7 @@ path = "src/lib.rs"
 
 [features]
 # Enable vt100-based tests (emulator) when running with `--features vt100-tests`.
-vt100-tests = ["dep:vt100"]
+vt100-tests = []
 
 [lints]
 workspace = true
@@ -69,7 +69,6 @@ tui-markdown = "0.3.3"
 unicode-segmentation = "1.12.0"
 unicode-width = "0.1"
 uuid = "1"
-vt100 = { version = "0.16.2", optional = true }
 
 
 
@@ -78,3 +77,4 @@ insta = "1.43.1"
 pretty_assertions = "1"
 rand = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
+vt100 = "0.16.2"

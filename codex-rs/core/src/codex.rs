@@ -122,15 +122,6 @@ impl Codex {
         // experimental resume path (undocumented)
         let resume_path = config.experimental_resume.clone();
         info!("resume_path: {resume_path:?}");
-        // Use a bounded channel for submissions to retain backpressure on the
-        // producer of Ops, but avoid blocking the agent on event delivery to
-        // the UI. If the event queue fills and is not drained (e.g., if the
-        // UI forwarder task exits unexpectedly), a bounded channel here would
-        // cause the agent to block inside `send(event).await`, which in turn
-        // prevents it from handling interrupts (Ctrl-C) or any further Ops.
-        // An unbounded channel for events ensures the agent never deadlocks on
-        // UI delivery; the UI remains responsible for rendering/consuming at
-        // its own pace.
         let (tx_sub, rx_sub) = async_channel::bounded(64);
         let (tx_event, rx_event) = async_channel::unbounded();
 
@@ -1383,8 +1374,6 @@ async fn try_run_turn(
                 return Ok(output);
             }
             ResponseEvent::OutputTextDelta(delta) => {
-                // Stream assistant text into in-memory conversation history so
-                // subsequent turns (e.g. tool calls) see the partial message.
                 {
                     let mut st = sess.state.lock().unwrap();
                     st.history.append_assistant_text(&delta);

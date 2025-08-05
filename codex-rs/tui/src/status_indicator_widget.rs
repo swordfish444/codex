@@ -42,9 +42,6 @@ pub(crate) struct StatusIndicatorWidget {
 
     frame_idx: Arc<AtomicUsize>,
     running: Arc<AtomicBool>,
-    /// Ensure we only notify the app once per target text when the full
-    /// reveal completes.
-    completion_sent: AtomicBool,
     // Keep one sender alive to prevent the channel from closing while the
     // animation thread is still running. The field itself is currently not
     // accessed anywhere, therefore the leading underscore silences the
@@ -81,7 +78,7 @@ impl StatusIndicatorWidget {
             reveal_len_at_base: 0,
             frame_idx,
             running,
-            completion_sent: AtomicBool::new(false),
+
             _app_event_tx: app_event_tx,
         }
     }
@@ -118,7 +115,6 @@ impl StatusIndicatorWidget {
         self.last_target_len = new_len;
         self.base_frame = current_frame;
         self.reveal_len_at_base = shown_now.min(new_len);
-        self.completion_sent.store(false, Ordering::Relaxed);
     }
 
     /// Reset the animation and start revealing `text` from the beginning.
@@ -142,7 +138,6 @@ impl StatusIndicatorWidget {
         self.base_frame = current_frame;
         // Start from zero revealed characters for a fresh typewriter cycle.
         self.reveal_len_at_base = 0;
-        self.completion_sent.store(false, Ordering::Relaxed);
     }
 
     /// Calculate how many characters should currently be visible given the
@@ -254,19 +249,7 @@ impl WidgetRef for StatusIndicatorWidget {
         }
         let lines = vec![Line::from(acc)];
 
-        // If the animation for the current target has just finished, notify the app
-        // so it can commit the cell to history and advance.
-        {
-            let current_frame = self.frame_idx.load(std::sync::atomic::Ordering::Relaxed);
-            let shown = self.current_shown_len(current_frame);
-            if self.last_target_len > 0
-                && shown >= self.last_target_len
-                && !self.completion_sent.swap(true, Ordering::Relaxed)
-            {
-                self._app_event_tx
-                    .send(crate::app_event::AppEvent::LiveStatusRevealComplete);
-            }
-        }
+        // No-op once full text is revealed; the app no longer reacts to a completion event.
 
         let paragraph = Paragraph::new(lines);
         paragraph.render_ref(area, buf);

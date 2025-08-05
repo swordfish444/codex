@@ -220,7 +220,6 @@ impl App<'_> {
                 AppEvent::Redraw => {
                     std::io::stdout().sync_update(|_| self.draw_next_frame(terminal))??;
                 }
-                AppEvent::LiveStatusRevealComplete => {}
                 AppEvent::KeyEvent(key_event) => {
                     match key_event {
                         KeyEvent {
