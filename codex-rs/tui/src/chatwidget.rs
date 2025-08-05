@@ -283,18 +283,15 @@ impl ChatWidget<'_> {
             EventMsg::AgentReasoningRawContentDelta(AgentReasoningRawContentDeltaEvent {
                 delta,
             }) => {
-                self.content_buffer.push_str(&delta);
+                // Treat raw reasoning content the same as summarized reasoning for UI flow.
+                self.begin_stream(StreamKind::Reasoning);
+                self.reasoning_buffer.push_str(&delta);
+                self.stream_push_and_maybe_commit(&delta);
+                self.request_redraw();
             }
-            EventMsg::AgentReasoningRawContent(AgentReasoningRawContentEvent { text }) => {
-                let full = if text.is_empty() {
-                    std::mem::take(&mut self.content_buffer)
-                } else {
-                    self.content_buffer.clear();
-                    text
-                };
-                if !full.is_empty() {
-                    self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, full));
-                }
+            EventMsg::AgentReasoningRawContent(AgentReasoningRawContentEvent { text: _ }) => {
+                // Finalize the raw reasoning stream just like the summarized reasoning event.
+                self.finalize_stream(StreamKind::Reasoning);
                 self.request_redraw();
             }
             EventMsg::TaskStarted => {
