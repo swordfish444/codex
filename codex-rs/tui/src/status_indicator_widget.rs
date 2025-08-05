@@ -209,7 +209,7 @@ impl WidgetRef for StatusIndicatorWidget {
         // Plain rendering: no borders or padding so the live cell is visually indistinguishable from terminal scrollback.
         let inner_width = area.width as usize;
 
-        // Compose a single status line like: "▌ Working [·] waiting for model"
+        // Compose a single status line like: "▌ Working [•] waiting for model"
         let mut spans: Vec<Span<'static>> = Vec::new();
         spans.push(Span::styled("▌ ", Style::default().fg(Color::Cyan)));
         // Gradient header
@@ -222,16 +222,9 @@ impl WidgetRef for StatusIndicatorWidget {
                 .add_modifier(Modifier::BOLD),
         ));
 
-        // Append animated dot in brackets.
-        const ANIM: [usize; 9] = [0, 1, 2, 3, 4, 3, 2, 1, 0];
-        const DOTS: [&str; 5] = ["·", "•", "●", "◉", "○"];
-        const DOT_SLOWDOWN: usize = 6; // slow down animation relative to frame tick
-        let frame = self.frame_idx.load(std::sync::atomic::Ordering::Relaxed);
-        let idx = (frame / DOT_SLOWDOWN) % ANIM.len();
-        let size = ANIM[idx];
-        let glyph = DOTS[size];
+        // Append a static dot in brackets (no animation).
         spans.push(Span::raw("["));
-        spans.push(Span::styled(glyph, Style::default().fg(Color::Gray)));
+        spans.push(Span::styled("•", Style::default().fg(Color::Gray)));
         spans.push(Span::raw("] "));
         spans.push(Span::raw(self.text.clone()));
 
