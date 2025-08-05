@@ -27,9 +27,13 @@ pub fn load_default_config_for_test(codex_home: &TempDir) -> Config {
 /// makes it trivial to extend the fixtures as OpenAI adds new event kinds or
 /// fields.
 pub fn load_sse_fixture(path: impl AsRef<std::path::Path>) -> String {
-    let events: Vec<serde_json::Value> =
-        serde_json::from_reader(std::fs::File::open(path).expect("read fixture"))
-            .expect("parse JSON fixture");
+    // Resolve relative to this crate's root so tests are independent of the
+    // current working directory used by the test runner.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let events: Vec<serde_json::Value> = serde_json::from_reader(
+        std::fs::File::open(path).expect("read fixture"),
+    )
+    .expect("parse JSON fixture");
     events
         .into_iter()
         .map(|e| {
@@ -51,6 +55,9 @@ pub fn load_sse_fixture(path: impl AsRef<std::path::Path>) -> String {
 /// single JSON template be reused by multiple tests that each need a unique
 /// `response_id`.
 pub fn load_sse_fixture_with_id(path: impl AsRef<std::path::Path>, id: &str) -> String {
+    // Resolve relative to this crate's root so tests are independent of the
+    // current working directory used by the test runner.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
     let raw = std::fs::read_to_string(path).expect("read fixture template");
     let replaced = raw.replace("__ID__", id);
     let events: Vec<serde_json::Value> =
