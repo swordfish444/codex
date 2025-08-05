@@ -377,13 +377,17 @@ async fn process_chat_sse<S>(
 /// The adapter is intentionally *lossless*: callers who do **not** opt in via
 /// [`AggregateStreamExt::aggregate()`] keep receiving the original unmodified
 /// events.
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum AggregateMode {
+    AggregatedOnly,
+    Streaming,
+}
 pub(crate) struct AggregatedChatStream<S> {
     inner: S,
     cumulative: String,
     cumulative_reasoning: String,
     pending: std::collections::VecDeque<ResponseEvent>,
-    // When true, do not emit a cumulative assistant message at Completed.
-    streaming_mode: bool,
+    mode: AggregateMode,
 }
 
 impl<S> Stream for AggregatedChatStream<S>
@@ -496,7 +500,7 @@ where
                 Poll::Ready(Some(Ok(ResponseEvent::OutputTextDelta(delta)))) => {
                     // Always accumulate deltas so we can emit a final OutputItemDone at Completed.
                     this.cumulative.push_str(&delta);
-                    if this.streaming_mode {
+                    if matches!(this.mode, AggregateMode::Streaming) {
                         // In streaming mode, also forward the delta immediately.
                         return Poll::Ready(Some(Ok(ResponseEvent::OutputTextDelta(delta))));
                     } else {
@@ -506,7 +510,7 @@ where
                 Poll::Ready(Some(Ok(ResponseEvent::ReasoningSummaryDelta(delta)))) => {
                     // Always accumulate reasoning deltas so we can emit a final Reasoning item at Completed.
                     this.cumulative_reasoning.push_str(&delta);
-                    if this.streaming_mode {
+                    if matches!(this.mode, AggregateMode::Streaming) {
                         // In streaming mode, also forward the delta immediately.
                         return Poll::Ready(Some(Ok(ResponseEvent::ReasoningSummaryDelta(delta))));
                     } else {
@@ -540,26 +544,24 @@ pub(crate) trait AggregateStreamExt: Stream<Item = Result<ResponseEvent>> + Size
     /// }
     /// ```
     fn aggregate(self) -> AggregatedChatStream<Self> {
-        AggregatedChatStream {
-            inner: self,
-            cumulative: String::new(),
-            cumulative_reasoning: String::new(),
-            pending: std::collections::VecDeque::new(),
-            streaming_mode: false,
-        }
+        AggregatedChatStream::new(self, AggregateMode::AggregatedOnly)
     }
 }
 
 impl<T> AggregateStreamExt for T where T: Stream<Item = Result<ResponseEvent>> + Sized {}
 
 impl<S> AggregatedChatStream<S> {
-    pub(crate) fn streaming_mode(inner: S) -> Self {
+    fn new(inner: S, mode: AggregateMode) -> Self {
         AggregatedChatStream {
             inner,
             cumulative: String::new(),
             cumulative_reasoning: String::new(),
             pending: std::collections::VecDeque::new(),
-            streaming_mode: true,
+            mode,
         }
+    }
+
+    pub(crate) fn streaming_mode(inner: S) -> Self {
+        Self::new(inner, AggregateMode::Streaming)
     }
 }
