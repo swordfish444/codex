@@ -13,6 +13,8 @@ use crate::pull::PullProgressReporter;
 use crate::url::base_url_to_host_root;
 use crate::url::is_openai_compatible_base_url;
 
+const OLLAMA_CONNECTION_ERROR: &str = "No running Ollama server detected. Start it with: `ollama serve` (after installing). Install instructions: https://github.com/ollama/ollama?tab=readme-ov-file#ollama";
+
 /// Client for interacting with a local Ollama instance.
 pub struct OllamaClient {
     client: reqwest::Client,
@@ -21,7 +23,26 @@ pub struct OllamaClient {
 }
 
 impl OllamaClient {
-    pub fn from_oss_provider() -> Self {
+    /// Construct a client for the built‑in open‑source ("oss") model provider
+    /// and verify that a local Ollama server is reachable. If no server is
+    /// detected, returns an error with helpful installation/run instructions.
+    pub async fn try_from_oss_provider() -> io::Result<Self> {
+        let client = Self::from_oss_provider();
+        Self::verify_client(client).await
+    }
+
+    #[cfg(test)]
+    async fn try_from_provider(base_url: &str, wire_api: WireApi) -> io::Result<Self> {
+        let client = Self::from_provider(base_url, wire_api);
+        Self::verify_client(client).await
+    }
+
+    async fn verify_client(self) -> io::Result<Self> {
+        self.probe_server().await?;
+        Ok(self)
+    }
+
+    fn from_oss_provider() -> Self {
         #![allow(clippy::expect_used)]
         // Use the built-in OSS provider's base URL.
         let built_in_model_providers = codex_core::built_in_model_providers();
@@ -33,20 +54,6 @@ impl OllamaClient {
             .as_ref()
             .expect("oss provider must have a base_url");
         Self::from_provider(base_url, provider.wire_api)
-    }
-
-    /// Construct a client for the built‑in open‑source ("oss") model provider
-    /// and verify that a local Ollama server is reachable. If no server is
-    /// detected, returns an error with helpful installation/run instructions.
-    pub async fn try_from_oss_provider() -> io::Result<Self> {
-        let client = Self::from_oss_provider();
-        if client.probe_server().await? {
-            Ok(client)
-        } else {
-            Err(io::Error::other(
-                "No running Ollama server detected. Start it with: `ollama serve` (after installing). Install instructions: https://github.com/ollama/ollama?tab=readme-ov-file#ollama",
-            ))
-        }
     }
 
     /// Build a client from a provider definition. Falls back to the default
@@ -81,14 +88,26 @@ impl OllamaClient {
     }
 
     /// Probe whether the server is reachable by hitting the appropriate health endpoint.
-    pub async fn probe_server(&self) -> io::Result<bool> {
+    async fn probe_server(&self) -> io::Result<()> {
         let url = if self.uses_openai_compat {
             format!("{}/v1/models", self.host_root.trim_end_matches('/'))
         } else {
             format!("{}/api/tags", self.host_root.trim_end_matches('/'))
         };
-        let resp = self.client.get(url).send().await;
-        Ok(matches!(resp, Ok(r) if r.status().is_success()))
+        let resp = self.client.get(url).send().await.map_err(|err| {
+            tracing::warn!("Failed to connect to Ollama server: {err:?}");
+            io::Error::other(OLLAMA_CONNECTION_ERROR)
+        })?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            tracing::warn!(
+                "Failed to probe server at {}: HTTP {}",
+                self.host_root,
+                resp.status()
+            );
+            Err(io::Error::other(OLLAMA_CONNECTION_ERROR))
+        }
     }
 
     /// Return the list of model names known to the local Ollama instance.
@@ -217,34 +236,6 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
-    /// Simple RAII guard to set an environment variable for the duration of a test
-    /// and restore the previous value (or remove it) on drop to avoid cross-test
-    /// interference.
-    struct EnvVarGuard {
-        key: String,
-        prev: Option<String>,
-    }
-    impl EnvVarGuard {
-        fn set(key: &str, value: String) -> Self {
-            let prev = std::env::var(key).ok();
-            // set_var is safe but we mirror existing tests that use an unsafe block
-            // to silence edition lints around global mutation during tests.
-            unsafe { std::env::set_var(key, value) };
-            Self {
-                key: key.to_string(),
-                prev,
-            }
-        }
-    }
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            match &self.prev {
-                Some(v) => unsafe { std::env::set_var(&self.key, v) },
-                None => unsafe { std::env::remove_var(&self.key) },
-            }
-        }
-    }
-
     // Happy-path tests using a mock HTTP server; skip if sandbox network is disabled.
     #[tokio::test]
     async fn test_fetch_models_happy_path() {
@@ -296,7 +287,7 @@ mod tests {
             .mount(&server)
             .await;
         let native = OllamaClient::from_host_root(server.uri());
-        assert!(native.probe_server().await.expect("probe native"));
+        native.probe_server().await.expect("probe native");
 
         // OpenAI compatibility endpoint
         wiremock::Mock::given(wiremock::matchers::method("GET"))
@@ -304,11 +295,14 @@ mod tests {
             .respond_with(wiremock::ResponseTemplate::new(200))
             .mount(&server)
             .await;
-        // Ensure the built-in OSS provider points at our mock server for this test
-        // to avoid depending on any globally configured environment from other tests.
-        let _guard = EnvVarGuard::set("CODEX_OSS_BASE_URL", format!("{}/v1", server.uri()));
-        let ollama_client = OllamaClient::from_oss_provider();
-        assert!(ollama_client.probe_server().await.expect("probe compat"));
+        let ollama_client =
+            OllamaClient::try_from_provider(&format!("{}/v1", server.uri()), WireApi::Chat)
+                .await
+                .expect("probe OpenAI compat");
+        ollama_client
+            .probe_server()
+            .await
+            .expect("probe OpenAI compat");
     }
 
     #[tokio::test]
@@ -322,9 +316,6 @@ mod tests {
         }
 
         let server = wiremock::MockServer::start().await;
-        // Configure built‑in `oss` provider to point at this mock server.
-        // set_var is unsafe on Rust 2024 edition; use unsafe block in tests.
-        let _guard = EnvVarGuard::set("CODEX_OSS_BASE_URL", format!("{}/v1", server.uri()));
 
         // OpenAI‑compat models endpoint responds OK.
         wiremock::Mock::given(wiremock::matchers::method("GET"))
@@ -349,18 +340,10 @@ mod tests {
         }
 
         let server = wiremock::MockServer::start().await;
-        // Point oss provider at our mock server but do NOT set up a handler
-        // for /v1/models so the request returns a non‑success status.
-        unsafe { std::env::set_var("CODEX_OSS_BASE_URL", format!("{}/v1", server.uri())) };
-
-        let err = OllamaClient::try_from_oss_provider()
+        let err = OllamaClient::try_from_provider(&format!("{}/v1", server.uri()), WireApi::Chat)
             .await
             .err()
             .expect("expected error");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("No running Ollama server detected."),
-            "msg = {msg}"
-        );
+        assert_eq!(OLLAMA_CONNECTION_ERROR, err.to_string());
     }
 }
