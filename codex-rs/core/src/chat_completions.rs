@@ -281,17 +281,6 @@ async fn process_chat_sse<S>(
                     )))
                     .await;
             }
-            if let Some(reasoning_content) = choice
-                .get("delta")
-                .and_then(|d| d.get("reasoning_content"))
-                .and_then(|c| c.as_str())
-            {
-                let _ = tx_event
-                    .send(Ok(ResponseEvent::ReasoningSummaryDelta(
-                        reasoning_content.to_string(),
-                    )))
-                    .await;
-            }
 
             // Handle streaming function / tool calls.
             if let Some(tool_calls) = choice
