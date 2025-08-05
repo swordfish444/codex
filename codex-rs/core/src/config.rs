@@ -57,7 +57,7 @@ pub struct Config {
     /// users are only interested in the final agent responses.
     pub hide_agent_reasoning: bool,
 
-    /// When set to `true`, `AgentReasoningContentEvent` events will be shown in the UI/output.
+    /// When set to `true`, `AgentReasoningRawContentEvent` events will be shown in the UI/output.
     /// Defaults to `false`.
     pub show_raw_agent_reasoning: bool,
 
@@ -329,7 +329,7 @@ pub struct ConfigToml {
     /// UI/output. Defaults to `false`.
     pub hide_agent_reasoning: Option<bool>,
 
-    /// When set to `true`, `AgentReasoningContentEvent` events will be shown in the UI/output.
+    /// When set to `true`, `AgentReasoningRawContentEvent` events will be shown in the UI/output.
     /// Defaults to `false`.
     pub show_raw_agent_reasoning: Option<bool>,
 
