@@ -84,8 +84,14 @@ impl Conversation {
         tokio::spawn(async move {
             // Clone once outside the loop; `Codex` is cheap to clone but we don't need to do it repeatedly.
             let codex = this.codex.clone();
-            while let Ok(event) = codex.next_event().await {
-                this.handle_event(event).await;
+            loop {
+                match codex.next_event().await {
+                    Ok(event) => this.handle_event(event).await,
+                    Err(e) => {
+                        error!("Codex next_event error (session {}): {e}", this.session_id);
+                        break;
+                    }
+                }
             }
         });
     }
