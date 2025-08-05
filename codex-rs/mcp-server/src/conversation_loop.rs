@@ -90,8 +90,8 @@ pub async fn run_conversation_loop(
                     EventMsg::AgentMessage(AgentMessageEvent { .. }) => {
                         // TODO: think how we want to support this in the MCP
                     }
-                    EventMsg::AgentReasoningContent(_)
-                    | EventMsg::AgentReasoningContentDelta(_)
+                    EventMsg::AgentReasoningRawContent(_)
+                    | EventMsg::AgentReasoningRawContentDelta(_)
                     | EventMsg::TaskStarted
                     | EventMsg::TokenCount(_)
                     | EventMsg::AgentReasoning(_)

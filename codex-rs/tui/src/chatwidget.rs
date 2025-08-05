@@ -9,6 +9,8 @@ use codex_core::protocol::AgentMessageDeltaEvent;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::AgentReasoningDeltaEvent;
 use codex_core::protocol::AgentReasoningEvent;
+use codex_core::protocol::AgentReasoningRawContentDeltaEvent;
+use codex_core::protocol::AgentReasoningRawContentEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::ErrorEvent;
 use codex_core::protocol::Event;
@@ -59,6 +61,7 @@ pub(crate) struct ChatWidget<'a> {
     initial_user_message: Option<UserMessage>,
     token_usage: TokenUsage,
     reasoning_buffer: String,
+    content_buffer: String,
     // Buffer for streaming assistant answer text; we do not surface partial
     // We wait for the final AgentMessage event and then emit the full text
     // at once into scrollback so the history contains a single message.
@@ -149,6 +152,7 @@ impl ChatWidget<'_> {
             ),
             token_usage: TokenUsage::default(),
             reasoning_buffer: String::new(),
+            content_buffer: String::new(),
             answer_buffer: String::new(),
             running_commands: HashMap::new(),
         }
@@ -270,6 +274,23 @@ impl ChatWidget<'_> {
                     std::mem::take(&mut self.reasoning_buffer)
                 } else {
                     self.reasoning_buffer.clear();
+                    text
+                };
+                if !full.is_empty() {
+                    self.add_to_history(HistoryCell::new_agent_reasoning(&self.config, full));
+                }
+                self.request_redraw();
+            }
+            EventMsg::AgentReasoningRawContentDelta(AgentReasoningRawContentDeltaEvent {
+                delta,
+            }) => {
+                self.content_buffer.push_str(&delta);
+            }
+            EventMsg::AgentReasoningRawContent(AgentReasoningRawContentEvent { text }) => {
+                let full = if text.is_empty() {
+                    std::mem::take(&mut self.content_buffer)
+                } else {
+                    self.content_buffer.clear();
                     text
                 };
                 if !full.is_empty() {
@@ -479,6 +500,7 @@ impl ChatWidget<'_> {
             self.submit_op(Op::Interrupt);
             self.answer_buffer.clear();
             self.reasoning_buffer.clear();
+            self.content_buffer.clear();
             CancellationEvent::Ignored
         } else if self.bottom_pane.ctrl_c_quit_hint_visible() {
             self.submit_op(Op::Shutdown);

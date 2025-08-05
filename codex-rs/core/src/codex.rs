@@ -65,10 +65,10 @@ use crate::plan_tool::handle_update_plan;
 use crate::project_doc::get_user_instructions;
 use crate::protocol::AgentMessageDeltaEvent;
 use crate::protocol::AgentMessageEvent;
-use crate::protocol::AgentReasoningContentDeltaEvent;
-use crate::protocol::AgentReasoningContentEvent;
 use crate::protocol::AgentReasoningDeltaEvent;
 use crate::protocol::AgentReasoningEvent;
+use crate::protocol::AgentReasoningRawContentDeltaEvent;
+use crate::protocol::AgentReasoningRawContentEvent;
 use crate::protocol::ApplyPatchApprovalRequestEvent;
 use crate::protocol::AskForApproval;
 use crate::protocol::BackgroundEventEvent;
@@ -1398,8 +1398,8 @@ async fn try_run_turn(
                 if sess.show_raw_agent_reasoning {
                     let event = Event {
                         id: sub_id.to_string(),
-                        msg: EventMsg::AgentReasoningContentDelta(
-                            AgentReasoningContentDeltaEvent { delta },
+                        msg: EventMsg::AgentReasoningRawContentDelta(
+                            AgentReasoningRawContentDeltaEvent { delta },
                         ),
                     };
                     sess.tx_event.send(event).await.ok();
@@ -1535,7 +1535,9 @@ async fn handle_response_item(
                     };
                     let event = Event {
                         id: sub_id.to_string(),
-                        msg: EventMsg::AgentReasoningContent(AgentReasoningContentEvent { text }),
+                        msg: EventMsg::AgentReasoningRawContent(AgentReasoningRawContentEvent {
+                            text,
+                        }),
                     };
                     sess.tx_event.send(event).await.ok();
                 }
