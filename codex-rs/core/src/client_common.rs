@@ -44,7 +44,7 @@ impl Prompt {
             .as_deref()
             .unwrap_or(BASE_INSTRUCTIONS);
         let mut sections: Vec<&str> = vec![base];
-        if model.starts_with("gpt-4.1") {
+        if model.starts_with("gpt-4.1") || model.starts_with("gpt-oss") {
             sections.push(APPLY_PATCH_TOOL_INSTRUCTIONS);
         }
         Cow::Owned(sections.join("\n"))
