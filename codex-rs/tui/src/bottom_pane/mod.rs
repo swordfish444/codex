@@ -187,7 +187,25 @@ impl BottomPane<'_> {
     /// like: `▌ Working waiting for model`.
     pub(crate) fn update_status_text(&mut self, text: String) {
         let mut handled_by_view = false;
-        if let Some(view) = self.active_view.as_mut() {
+        if self.is_task_running {
+            // While a task is running, the status view should take precedence over
+            // transient modals when status text is updated, so that long-running
+            // command execution surfaces the status indicator even if a modal was shown.
+            if !self.status_view_active {
+                let mut v = StatusIndicatorView::new(self.app_event_tx.clone());
+                v.update_text(text.clone());
+                self.active_view = Some(Box::new(v));
+                self.status_view_active = true;
+                handled_by_view = true;
+            } else if let Some(view) = self.active_view.as_mut() {
+                if matches!(
+                    view.update_status_text(text.clone()),
+                    bottom_pane_view::ConditionalUpdate::NeedsRedraw
+                ) {
+                    handled_by_view = true;
+                }
+            }
+        } else if let Some(view) = self.active_view.as_mut() {
             if matches!(
                 view.update_status_text(text.clone()),
                 bottom_pane_view::ConditionalUpdate::NeedsRedraw
