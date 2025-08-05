@@ -286,8 +286,8 @@ impl BottomPane<'_> {
 impl WidgetRef for &BottomPane<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         // Show BottomPaneView if present.
-        if let Some(ov) = &self.active_view {
-            ov.render(area, buf);
+        if let Some(active_view) = &self.active_view {
+            active_view.render(area, buf);
         } else {
             (&self.composer).render_ref(area, buf);
         }
