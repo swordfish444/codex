@@ -3393,7 +3393,7 @@ dependencies = [
 [[package]]
 name = "ratatui"
 version = "0.29.0"
-source = "git+https://github.com/easong-openai/ratatui?branch=nornagon-v0.29.0-patch#159c1978c2f829cd322ec778df4168815ed9af96"
+source = "git+https://github.com/nornagon/ratatui?branch=nornagon-v0.29.0-patch#9b2ad1298408c45918ee9f8241a6f95498cdbed2"
 dependencies = [
  "bitflags 2.9.1",
  "cassowary",
