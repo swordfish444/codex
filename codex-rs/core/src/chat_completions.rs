@@ -248,9 +248,7 @@ async fn process_chat_sse<S>(
                     }],
                     id: None,
                 };
-                let _ = tx_event
-                    .send(Ok(ResponseEvent::OutputItemDone(item)))
-                    .await;
+                let _ = tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
             }
 
             if !reasoning_text.is_empty() {
@@ -262,9 +260,7 @@ async fn process_chat_sse<S>(
                     }]),
                     encrypted_content: None,
                 };
-                let _ = tx_event
-                    .send(Ok(ResponseEvent::OutputItemDone(item)))
-                    .await;
+                let _ = tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
             }
 
             let _ = tx_event
@@ -374,9 +370,7 @@ async fn process_chat_sse<S>(
                                 }]),
                                 encrypted_content: None,
                             };
-                            let _ = tx_event
-                                .send(Ok(ResponseEvent::OutputItemDone(item)))
-                                .await;
+                            let _ = tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
                         }
 
                         // Then emit the FunctionCall response item.
@@ -412,9 +406,7 @@ async fn process_chat_sse<S>(
                                 }]),
                                 encrypted_content: None,
                             };
-                            let _ = tx_event
-                                .send(Ok(ResponseEvent::OutputItemDone(item)))
-                                .await;
+                            let _ = tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
                         }
                     }
                     _ => {}
