@@ -214,17 +214,17 @@ mod tests {
     #[test]
     fn rows_do_not_exceed_width_ascii() {
         let mut rb = RowBuilder::new(10);
-        rb.push_fragment("hello world this is a test");
+        rb.push_fragment("hello whirl this is a test");
         let rows = rb.rows().to_vec();
         assert_eq!(
             rows,
             vec![
                 Row {
-                    text: "hello worl".to_string(),
+                    text: "hello whir".to_string(),
                     explicit_break: false
                 },
                 Row {
-                    text: "d this is ".to_string(),
+                    text: "l this is ".to_string(),
                     explicit_break: false
                 }
             ]
