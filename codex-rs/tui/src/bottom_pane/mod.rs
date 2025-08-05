@@ -100,24 +100,22 @@ impl BottomPane<'_> {
             .map(|r| r.desired_height(width))
             .unwrap_or(0);
 
-        if let Some(view) = self.active_view.as_ref() {
+        let view_height = if let Some(view) = self.active_view.as_ref() {
             // Add a single blank spacer line between live ring and status view when active.
             let spacer = if self.live_ring.is_some() && self.status_view_active {
                 1
             } else {
                 0
             };
-            overlay_status_h
-                .saturating_add(ring_h)
-                .saturating_add(spacer)
-                .saturating_add(view.desired_height(width))
-                .saturating_add(Self::BOTTOM_PAD_LINES)
+            spacer + view.desired_height(width)
         } else {
-            overlay_status_h
+            self.composer.desired_height(width)
+        };
+
+        overlay_status_h
                 .saturating_add(ring_h)
-                .saturating_add(self.composer.desired_height(width))
+                .saturating_add(view_height)
                 .saturating_add(Self::BOTTOM_PAD_LINES)
-        }
     }
 
     pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
