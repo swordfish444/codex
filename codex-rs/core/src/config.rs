@@ -517,7 +517,7 @@ impl Config {
             tui: cfg.tui.unwrap_or_default(),
             codex_linux_sandbox_exe,
 
-            hide_agent_reasoning: cfg.hide_agent_reasoning.unwrap_or(false);,
+            hide_agent_reasoning: cfg.hide_agent_reasoning.unwrap_or(false),
             model_reasoning_effort: config_profile
                 .model_reasoning_effort
                 .or(cfg.model_reasoning_effort)
