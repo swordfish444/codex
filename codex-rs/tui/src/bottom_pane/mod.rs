@@ -758,6 +758,122 @@ mod tests {
     }
 
     #[test]
+    fn overlay_not_shown_above_approval_modal() {
+        let (tx_raw, _rx) = channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = BottomPane::new(BottomPaneParams {
+            app_event_tx: tx,
+            has_input_focus: true,
+            enhanced_keys_supported: false,
+        });
+
+        // Create an approval modal (active view).
+        pane.push_approval_request(exec_request());
+        // Attempt to update status; this should NOT create an overlay while modal is visible.
+        pane.update_status_text("running command".to_string());
+
+        // Render and verify the top row does not include the Working header overlay.
+        let area = Rect::new(0, 0, 60, 6);
+        let mut buf = Buffer::empty(area);
+        (&pane).render_ref(area, &mut buf);
+
+        let mut r0 = String::new();
+        for x in 0..area.width {
+            r0.push(buf[(x, 0)].symbol().chars().next().unwrap_or(' '));
+        }
+        assert!(
+            !r0.contains("Working"),
+            "overlay Working header should not render above modal"
+        );
+    }
+
+    #[test]
+    fn composer_not_shown_after_denied_if_task_running() {
+        let (tx_raw, rx) = channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = BottomPane::new(BottomPaneParams {
+            app_event_tx: tx.clone(),
+            has_input_focus: true,
+            enhanced_keys_supported: false,
+        });
+
+        // Start a running task so the status indicator replaces the composer.
+        pane.set_task_running(true);
+        pane.update_status_text("waiting for model".to_string());
+
+        // Push an approval modal (e.g., command approval) which should hide the status view.
+        pane.push_approval_request(exec_request());
+
+        // Simulate pressing 'n' (deny) on the modal.
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+        pane.handle_key_event(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+
+        // After denial, since the task is still running, the status indicator
+        // should be restored as the active view; the composer should NOT be visible.
+        assert!(
+            pane.status_view_active,
+            "status view should be active after denial"
+        );
+        assert!(pane.active_view.is_some(), "active view should be present");
+
+        // Render and ensure the top row includes the Working header instead of the composer.
+        // Give the animation thread a moment to tick.
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        let area = Rect::new(0, 0, 40, 3);
+        let mut buf = Buffer::empty(area);
+        (&pane).render_ref(area, &mut buf);
+        let mut row0 = String::new();
+        for x in 0..area.width {
+            row0.push(buf[(x, 0)].symbol().chars().next().unwrap_or(' '));
+        }
+        assert!(
+            row0.contains("Working"),
+            "expected Working header after denial: {row0:?}"
+        );
+
+        // Drain the channel to avoid unused warnings.
+        drop(rx);
+    }
+
+    #[test]
+    fn status_indicator_visible_during_command_execution() {
+        let (tx_raw, _rx) = channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = BottomPane::new(BottomPaneParams {
+            app_event_tx: tx,
+            has_input_focus: true,
+            enhanced_keys_supported: false,
+        });
+
+        // Begin a task: show initial status.
+        pane.set_task_running(true);
+        pane.update_status_text("waiting for model".to_string());
+
+        // As a long-running command begins (post-approval), ensure the status
+        // indicator is visible while we wait for the command to run.
+        pane.update_status_text("running command".to_string());
+
+        // Allow some frames so the animation thread ticks.
+        std::thread::sleep(std::time::Duration::from_millis(120));
+
+        // Render and confirm the line contains the "Working" header.
+        let area = Rect::new(0, 0, 40, 3);
+        let mut buf = Buffer::empty(area);
+        (&pane).render_ref(area, &mut buf);
+
+        let mut row0 = String::new();
+        for x in 0..area.width {
+            row0.push(buf[(x, 0)].symbol().chars().next().unwrap_or(' '));
+        }
+        assert!(
+            row0.contains("Working"),
+            "expected Working header: {row0:?}"
+        );
+    }
+
+    #[test]
     fn bottom_padding_present_for_status_view() {
         let (tx_raw, _rx) = channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
