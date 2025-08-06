@@ -906,6 +906,7 @@ mod tests {
             msg: EventMsg::SessionConfigured(codex_core::protocol::SessionConfiguredEvent {
                 session_id: uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8"),
                 model: "codex-mini-latest".into(),
+                agents_doc_path: None,
                 history_log_id: 42,
                 history_entry_count: 3,
             }),

@@ -857,6 +857,7 @@ async fn submission_loop(
                     msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
                         session_id,
                         model,
+                        agents_doc_path: crate::project_doc::agents_doc_path_string(&config),
                         history_log_id,
                         history_entry_count,
                     }),

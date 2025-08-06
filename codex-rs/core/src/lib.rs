@@ -39,6 +39,7 @@ mod openai_model_info;
 mod openai_tools;
 pub mod plan_tool;
 mod project_doc;
+pub use project_doc::agents_doc_path_string;
 pub use project_doc::discover_project_doc_path;
 pub mod protocol;
 mod rollout;

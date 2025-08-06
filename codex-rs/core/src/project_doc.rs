@@ -13,6 +13,7 @@
 
 use crate::config::Config;
 use std::path::Path;
+use std::path::PathBuf;
 use tokio::io::AsyncReadExt;
 use tracing::error;
 
@@ -126,6 +127,113 @@ pub(crate) async fn get_user_instructions(config: &Config) -> Option<String> {
             config.user_instructions.clone()
         }
     }
+}
+
+/// Return a human‑readable description of the AGENTS.md path(s) that will be
+/// loaded for this session, or `None` if neither global nor project docs are
+/// present.
+///
+/// This mirrors the discovery logic used by `get_user_instructions()`:
+/// - If `~/.codex/AGENTS.md` (global) is non‑empty, it is included.
+/// - If a project AGENTS.md is found (respecting the byte limit and git root
+///   stop), it is included.
+/// - When the project_doc_max_bytes is set to 0, project docs are disabled.
+pub fn agents_doc_path_string(config: &Config) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    // Global AGENTS.md in CODEX_HOME.
+    if config.user_instructions.is_some() {
+        let global = config.codex_home.join("AGENTS.md");
+        parts.push(global.display().to_string());
+    }
+
+    // Project AGENTS.md, unless disabled via byte‑limit == 0.
+    if config.project_doc_max_bytes > 0 {
+        if let Some(p) = find_project_doc_path_sync(config) {
+            parts.push(p.display().to_string());
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" + "))
+    }
+}
+
+/// Synchronous counterpart to `find_project_doc()` that returns the discovered
+/// path rather than the contents. Skips empty files (after trimming) to stay
+/// consistent with `load_first_candidate()`.
+fn find_project_doc_path_sync(config: &Config) -> Option<PathBuf> {
+    // Attempt to locate in cwd first.
+    if let Some(p) = first_nonempty_candidate_in_dir(&config.cwd, CANDIDATE_FILENAMES) {
+        return Some(p);
+    }
+
+    // Walk up to git root.
+    let mut dir = config.cwd.clone();
+    if let Ok(canon) = dir.canonicalize() {
+        dir = canon;
+    }
+
+    while let Some(parent) = dir.parent() {
+        let git_marker = dir.join(".git");
+        let git_exists = std::fs::metadata(&git_marker).is_ok();
+        if git_exists {
+            if let Some(p) = first_nonempty_candidate_in_dir(&dir, CANDIDATE_FILENAMES) {
+                return Some(p);
+            }
+            break; // do not walk past git root
+        }
+        dir = parent.to_path_buf();
+    }
+
+    None
+}
+
+/// Return the first path in `dir` that matches any of `names` and is non‑empty
+/// (after trimming). Returns `None` if no such file exists.
+fn first_nonempty_candidate_in_dir(dir: &Path, names: &[&str]) -> Option<PathBuf> {
+    for name in names {
+        let candidate = dir.join(name);
+        // Fast path: must exist and be a file.
+        let md = match std::fs::metadata(&candidate) {
+            Ok(m) if m.is_file() => m,
+            _ => continue,
+        };
+
+        // If the file is zero bytes, skip without reading.
+        if md.len() == 0 {
+            continue;
+        }
+
+        // Read up to a modest limit to determine if the contents are
+        // effectively empty after trimming. Use the same limit as
+        // `project_doc_max_bytes` would permit by default: however, the goal is
+        // to avoid reading arbitrarily large files here just for display. Read
+        // up to 8 KiB which should be sufficient to determine non‑emptiness
+        // after trimming whitespace.
+        const MAX_PEEK_BYTES: usize = 8 * 1024;
+        let mut file = match std::fs::File::open(&candidate) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        use std::io::Read as _;
+        let mut buf = Vec::with_capacity(std::cmp::min(md.len() as usize, MAX_PEEK_BYTES));
+        if std::io::Read::by_ref(&mut file)
+            .take(MAX_PEEK_BYTES as u64)
+            .read_to_end(&mut buf)
+            .is_err()
+        {
+            continue;
+        }
+        let s = String::from_utf8_lossy(&buf);
+        if s.trim().is_empty() {
+            continue;
+        }
+        return Some(candidate);
+    }
+    None
 }
 
 /// Attempt to locate and load the project documentation. Currently, the search

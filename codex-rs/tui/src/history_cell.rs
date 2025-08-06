@@ -169,6 +169,7 @@ impl HistoryCell {
             session_id,
             history_log_id: _,
             history_entry_count: _,
+            ..
         } = event;
         if is_first_event {
             const VERSION: &str = env!("CARGO_PKG_VERSION");
