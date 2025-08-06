@@ -203,11 +203,17 @@ impl HistoryCell {
                 let user_path: Option<String> = instructions_info
                     .user_instructions_path
                     .as_ref()
-                    .map(|p| p.display().to_string());
+                    .map(|p| match relativize_to_home(p) {
+                        Some(rel) if !rel.as_os_str().is_empty() => format!("~/{}", rel.display()),
+                        _ => p.display().to_string(),
+                    });
                 let project_path: Option<String> = instructions_info
                     .project_instructions_path
                     .as_ref()
-                    .map(|p| p.display().to_string());
+                    .map(|p| match relativize_to_home(p) {
+                        Some(rel) if !rel.as_os_str().is_empty() => format!("~/{}", rel.display()),
+                        _ => p.display().to_string(),
+                    });
 
                 show_init = false;
 
@@ -516,6 +522,7 @@ impl HistoryCell {
     pub(crate) fn new_status_output(config: &Config, usage: &TokenUsage) -> Self {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from("/status".magenta()));
+        lines.push(Line::from(""));
 
         // If instructions are configured, show the source paths at the top.
         let info = collect_instructions_info_sync(config);
@@ -528,13 +535,20 @@ impl HistoryCell {
             };
             let mut parts: Vec<String> = Vec::new();
             if let Some(p) = info.user_instructions_path.as_ref() {
-                parts.push(format!("user instructions ({})", render_path(p)));
+                parts.push(render_path(p));
             }
             if let Some(p) = info.project_instructions_path.as_ref() {
-                parts.push(format!("project instructions ({})", render_path(p)));
+                parts.push(render_path(p));
             }
-            lines.push(Line::from(format!("Using {}", parts.join(" and "))));
-            lines.push(Line::from(""));
+            let joined = if parts.len() == 2 {
+                format!("{} + {}", parts[0], parts[1])
+            } else {
+                parts.join("")
+            };
+            lines.push(Line::from(vec![
+                "agents.md: ".white().bold(),
+                joined.dim().white(),
+            ]));
         }
 
         // Config
