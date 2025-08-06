@@ -45,14 +45,14 @@ Enter "q" to exit out of the current session and `open poem.html`. You should se
 
 ## Custom instructions
 
-Codex supports two types of Markdown-based instruction files that influence model behavior and prompting:
+Codex supports Markdown-based instruction files that influence model behavior and prompting:
 
-### `~/.codex/instructions.md`
-Global, user-level custom guidance injected into every session. You should keep this relatively short and concise. These instructions are applied to all Codex runs across all projects and are great for personal defaults, shell setup tips, safety constraints, or preferred tools.
+### `~/.codex/AGENTS.md`
+Global, user-level custom guidance injected into every session. Keep this relatively short and concise. These instructions are applied to all Codex runs across all projects and are great for personal defaults, shell setup tips, safety constraints, or preferred tools.
 
 **Example:** "Before executing shell commands, create and activate a `.codex-venv` Python environment." or "Avoid running pytest until you've completed all your changes."
 
-### `CODEX.md`
+### `AGENTS.md`
 Project-specific instructions loaded from the current directory or Git root. Use this for repo-specific context, file structure, command policies, or project conventions. These are automatically detected unless `--no-project-doc` or `CODEX_DISABLE_PROJECT_DOC=1` is set.
 
 **Example:** “All React components live in `src/components/`".
@@ -80,7 +80,7 @@ For more complex tasks requiring longer form input, you can write the instructio
 
 `codex "$(cat task_description.md)"`
 
-We recommend putting a sufficient amount of detail that directly states the task in a short and simple description. Add any relevant context that you’d share with someone new to your codebase (if not already in `CODEX.md`). You can also include any files Codex should read for more context, edit or take inspiration from, along with any preferences for how Codex should verify its work.
+We recommend putting a sufficient amount of detail that directly states the task in a short and simple description. Add any relevant context that you’d share with someone new to your codebase (if not already in `AGENTS.md`). You can also include any files Codex should read for more context, edit or take inspiration from, along with any preferences for how Codex should verify its work.
 
 If Codex doesn’t get it right on the first try, give feedback to fix when you're in interactive mode!
 
