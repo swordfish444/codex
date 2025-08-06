@@ -300,6 +300,13 @@ impl App<'_> {
                         self.app_state = AppState::Chat { widget: new_widget };
                         self.app_event_tx.send(AppEvent::RequestRedraw);
                     }
+                    SlashCommand::Init => {
+                        // Guard: do not run if a task is active.
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            const INIT_PROMPT: &str = include_str!("../prompt_for_init_command.md");
+                            widget.submit_text_message(INIT_PROMPT.to_string());
+                        }
+                    }
                     SlashCommand::Compact => {
                         if let AppState::Chat { widget } = &mut self.app_state {
                             widget.clear_token_usage();
@@ -328,6 +335,11 @@ impl App<'_> {
                                 "`/diff` — _not inside a git repository_".to_string()
                             };
                             widget.add_diff_output(text);
+                        }
+                    }
+                    SlashCommand::Status => {
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.add_status_output();
                         }
                     }
                     #[cfg(debug_assertions)]
