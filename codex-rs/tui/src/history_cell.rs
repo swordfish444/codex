@@ -190,68 +190,74 @@ impl HistoryCell {
                     Span::raw(format!(" {cwd_str}")).dim(),
                 ]),
                 Line::from("".dim()),
-                Line::from(" Try one of the following commands to get started:".dim()),
-                Line::from("".dim()),
             ];
 
-            // If user/project instructions are configured, show their paths and
-            // replace the '/init' hint; otherwise keep the original '/init'.
-            let info = collect_instructions_info_sync(config);
-            let render_path = |p: &std::path::PathBuf| -> String {
-                match relativize_to_home(p) {
-                    Some(rel) if !rel.as_os_str().is_empty() => format!("~/{}", rel.display()),
-                    _ => p.display().to_string(),
+            // If AGENTS.md is configured (either user-level or project-level),
+            // show a concise summary and omit the /init hint, but still show the other onboarding commands.
+            let mut show_init = true;
+            let instructions_info = collect_instructions_info_sync(config);
+
+            if instructions_info.user_instructions_path.is_some()
+                || instructions_info.project_instructions_path.is_some()
+            {
+                let user_path: Option<String> = instructions_info
+                    .user_instructions_path
+                    .as_ref()
+                    .map(|p| p.display().to_string());
+                let project_path: Option<String> = instructions_info
+                    .project_instructions_path
+                    .as_ref()
+                    .map(|p| p.display().to_string());
+
+                show_init = false;
+
+                let summary_line = match (user_path, project_path) {
+                    (Some(u), Some(pr)) => {
+                        format!(" Using user instructions ({u}) and project instructions ({pr})")
+                    }
+                    (Some(u), None) => format!("Using user instructions ({u})"),
+                    (None, Some(pr)) => format!(" Using project instructions ({pr})"),
+                    (None, None) => String::new(),
+                };
+
+                if !summary_line.is_empty() {
+                    lines.push(Line::from(summary_line.dim()));
+                    lines.push(Line::from("".dim()));
                 }
-            };
-            let mut command_number = 1;
-            if info.user_instructions_path.is_some() || info.project_instructions_path.is_some() {
-                let mut parts: Vec<String> = Vec::new();
-                if let Some(p) = info.user_instructions_path.as_ref() {
-                    parts.push(format!("user instructions ({})", render_path(p)));
-                }
-                if let Some(p) = info.project_instructions_path.as_ref() {
-                    parts.push(format!("project instructions ({})", render_path(p)));
-                }
-                let using_line = format!(" Using {}", parts.join(" and "));
-                lines.push(Line::from(using_line).dim());
-            } else {
-                lines.push(
-                    Line::from(format!(
-                        " {}. /init - {}",
-                        command_number,
-                        SlashCommand::Init.description()
-                    ))
-                    .dim(),
-                );
-                command_number += 1;
             }
-            // Always keep the remaining suggestions.
-            lines.push(
-                Line::from(format!(
-                    " {}. /status - {}",
-                    command_number,
+
+            // Onboarding hints, with index based on whether /init is shown
+            lines.push(Line::from(
+                " Try one of the following commands to get started:".dim(),
+            ));
+            lines.push(Line::from("".dim()));
+
+            let mut cmd_index = 1;
+            if show_init {
+                lines.push(Line::from(
+                    format!(" {cmd_index}. /init - {}", SlashCommand::Init.description()).dim(),
+                ));
+                cmd_index += 1;
+            }
+            lines.push(Line::from(
+                format!(
+                    " {cmd_index}. /status - {}",
                     SlashCommand::Status.description()
-                ))
+                )
                 .dim(),
-            );
-            command_number += 1;
-            lines.push(
-                Line::from(format!(
-                    " {}. /compact - {}",
-                    command_number,
+            ));
+            cmd_index += 1;
+            lines.push(Line::from(
+                format!(
+                    " {cmd_index}. /compact - {}",
                     SlashCommand::Compact.description()
-                ))
+                )
                 .dim(),
-            );
-            command_number += 1;
-            lines.push(
-                Line::from(format!(
-                    " {}. /new - {}",
-                    command_number,
-                    SlashCommand::New.description()
-                ))
-                .dim(),
-            );
+            ));
+            cmd_index += 1;
+            lines.push(Line::from(
+                format!(" {cmd_index}. /new - {}", SlashCommand::New.description()).dim(),
+            ));
             lines.push(Line::from("".dim()));
             HistoryCell::WelcomeMessage {
                 view: TextBlock::new(lines),
