@@ -1,5 +1,3 @@
-use shlex;
-
 #[derive(Debug, PartialEq, Eq)]
 pub struct ZshShell {
     shell_path: String,
