@@ -24,9 +24,64 @@ const CANDIDATE_FILENAMES: &[&str] = &["AGENTS.md"];
 /// be concatenated with the following separator.
 const PROJECT_DOC_SEPARATOR: &str = "\n\n--- project-doc ---\n\n";
 
+pub(crate) async fn get_user_instructions(config: &Config) -> Option<String> {
+    match find_project_doc(config).await {
+        Ok(Some(project_doc)) => match &config.user_instructions {
+            Some(original_instructions) => Some(format!(
+                "{original_instructions}{PROJECT_DOC_SEPARATOR}{project_doc}"
+            )),
+            None => Some(project_doc),
+        },
+        Ok(None) => config.user_instructions.clone(),
+        Err(e) => {
+            error!("error trying to find project doc: {e:#}");
+            config.user_instructions.clone()
+        }
+    }
+}
+
+
+/// Attempt to locate and load the project documentation. Currently, the search
+/// starts from `Config::cwd`, but if we may want to consider other directories
+/// in the future, e.g., additional writable directories in the `SandboxPolicy`.
+///
+/// On success returns `Ok(Some(contents))`. If no documentation file is found
+/// the function returns `Ok(None)`. Unexpected I/O failures bubble up as
+/// `Err` so callers can decide how to handle them.
+async fn find_project_doc(config: &Config) -> std::io::Result<Option<String>> {
+    use tokio::io::BufReader;
+
+    let Some(path) = discover_project_doc_path(config)? else {
+        return Ok(None);
+    };
+
+    let max_bytes = config.project_doc_max_bytes;
+
+    let file = tokio::fs::File::open(&path).await?;
+    let size = file.metadata().await?.len() as usize;
+
+    let reader = BufReader::new(file);
+    let mut data = Vec::with_capacity(std::cmp::min(size, max_bytes));
+    let mut limited = reader.take(max_bytes as u64);
+    limited.read_to_end(&mut data).await?;
+
+    if size > max_bytes {
+        tracing::warn!(
+            "Project doc `{}` exceeds {max_bytes} bytes - truncating.",
+            path.display(),
+        );
+    }
+
+    let contents = String::from_utf8_lossy(&data).to_string();
+    if contents.trim().is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(contents))
+}
+
 /// Public helper that returns the discovered AGENTS.md path.
-/// Returns `Ok(None)` when no suitable file is found or
-/// `project_doc_max_bytes == 0`.
+/// Returns `Ok(None)` when no suitable file is found or `project_doc_max_bytes == 0`.
 pub fn discover_project_doc_path(config: &Config) -> std::io::Result<Option<std::path::PathBuf>> {
     if config.project_doc_max_bytes == 0 {
         return Ok(None);
@@ -75,24 +130,6 @@ fn discover_project_doc_path_from_dir(
     Ok(None)
 }
 
-/// Combines `Config::instructions` and `AGENTS.md` (if present) into a single
-/// string of instructions.
-pub(crate) async fn get_user_instructions(config: &Config) -> Option<String> {
-    match find_project_doc(config).await {
-        Ok(Some(project_doc)) => match &config.user_instructions {
-            Some(original_instructions) => Some(format!(
-                "{original_instructions}{PROJECT_DOC_SEPARATOR}{project_doc}"
-            )),
-            None => Some(project_doc),
-        },
-        Ok(None) => config.user_instructions.clone(),
-        Err(e) => {
-            error!("error trying to find project doc: {e:#}");
-            config.user_instructions.clone()
-        }
-    }
-}
-
 /// Return a human‑readable description of the AGENTS.md path(s) that will be
 /// loaded for this session, or `None` if neither global nor project docs are
 /// present.
@@ -125,8 +162,6 @@ pub fn agents_doc_path_string(config: &Config) -> Option<String> {
     }
 }
 
-/// Return the first path in `dir` that matches any of `names` and is non‑empty
-/// (after trimming). Returns `None` if no such file exists.
 fn first_nonempty_candidate_in_dir(dir: &Path, names: &[&str]) -> Option<PathBuf> {
     for name in names {
         let candidate = dir.join(name);
@@ -141,12 +176,8 @@ fn first_nonempty_candidate_in_dir(dir: &Path, names: &[&str]) -> Option<PathBuf
             continue;
         }
 
-        // Read up to a modest limit to determine if the contents are
-        // effectively empty after trimming. Use the same limit as
-        // `project_doc_max_bytes` would permit by default: however, the goal is
-        // to avoid reading arbitrarily large files here just for display. Read
-        // up to 8 KiB which should be sufficient to determine non‑emptiness
-        // after trimming whitespace.
+        // Read up to a modest limit to determine if the contents are effectively empty after trimming.
+        // Use the same limit as `project_doc_max_bytes` would permit by default.
         const MAX_PEEK_BYTES: usize = 8 * 1024;
         let mut file = match std::fs::File::open(&candidate) {
             Ok(f) => f,
@@ -168,45 +199,6 @@ fn first_nonempty_candidate_in_dir(dir: &Path, names: &[&str]) -> Option<PathBuf
         return Some(candidate);
     }
     None
-}
-
-/// Attempt to locate and load the project documentation. Currently, the search
-/// starts from `Config::cwd`, but if we may want to consider other directories
-/// in the future, e.g., additional writable directories in the `SandboxPolicy`.
-///
-/// On success returns `Ok(Some(contents))`. If no documentation file is found
-/// the function returns `Ok(None)`. Unexpected I/O failures bubble up as
-/// `Err` so callers can decide how to handle them.
-async fn find_project_doc(config: &Config) -> std::io::Result<Option<String>> {
-    use tokio::io::BufReader;
-
-    let Some(path) = discover_project_doc_path(config)? else {
-        return Ok(None);
-    };
-
-    let max_bytes = config.project_doc_max_bytes;
-
-    let file = tokio::fs::File::open(&path).await?;
-    let size = file.metadata().await?.len() as usize;
-
-    let reader = BufReader::new(file);
-    let mut data = Vec::with_capacity(std::cmp::min(size, max_bytes));
-    let mut limited = reader.take(max_bytes as u64);
-    limited.read_to_end(&mut data).await?;
-
-    if size > max_bytes {
-        tracing::warn!(
-            "Project doc `{}` exceeds {max_bytes} bytes - truncating.",
-            path.display(),
-        );
-    }
-
-    let contents = String::from_utf8_lossy(&data).to_string();
-    if contents.trim().is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(contents))
 }
 
 #[cfg(test)]
