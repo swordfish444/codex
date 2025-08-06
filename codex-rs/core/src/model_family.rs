@@ -23,6 +23,8 @@ pub struct ModelFamily {
     // the model such that its description can be omitted.
     // See https://platform.openai.com/docs/guides/tools-local-shell
     pub uses_local_shell_tool: bool,
+
+    pub requires_chatgpt_auth: bool,
 }
 
 macro_rules! model_family {
@@ -36,6 +38,7 @@ macro_rules! model_family {
             needs_special_apply_patch_instructions: false,
             supports_reasoning_summaries: false,
             uses_local_shell_tool: false,
+            requires_chatgpt_auth: false,
         };
         // apply overrides
         $(
@@ -55,6 +58,7 @@ macro_rules! simple_model_family {
             needs_special_apply_patch_instructions: false,
             supports_reasoning_summaries: false,
             uses_local_shell_tool: false,
+            requires_chatgpt_auth: false,
         })
     }};
 }
@@ -93,6 +97,7 @@ pub fn find_family_for_model(slug: &str) -> Option<ModelFamily> {
         model_family!(
             slug, "2025-08-06-model",
             supports_reasoning_summaries: true,
+            requires_chatgpt_auth: true,
         )
     } else {
         None
