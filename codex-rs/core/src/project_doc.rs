@@ -35,14 +35,12 @@ pub fn discover_project_doc_path(config: &Config) -> std::io::Result<Option<std:
     discover_project_doc_path_from_dir(
         &config.cwd,
         CANDIDATE_FILENAMES,
-        config.project_doc_max_bytes,
     )
 }
 
 fn discover_project_doc_path_from_dir(
     start_dir: &Path,
     names: &[&str],
-    max_bytes: usize,
 ) -> std::io::Result<Option<std::path::PathBuf>> {
     use std::fs;
 
@@ -54,7 +52,7 @@ fn discover_project_doc_path_from_dir(
     }
 
     // Attempt in the working directory first.
-    if let Some(path) = find_non_empty_candidate(&dir, names, max_bytes)? {
+    if let Some(path) = first_nonempty_candidate_in_dir(&dir, names) {
         return Ok(Some(path));
     }
 
@@ -68,44 +66,13 @@ fn discover_project_doc_path_from_dir(
         };
 
         if git_exists {
-            if let Some(path) = find_non_empty_candidate(&dir, names, max_bytes)? {
+            if let Some(path) = first_nonempty_candidate_in_dir(&dir, names) {
                 return Ok(Some(path));
             }
             break; // do not walk past the Git root
         }
 
         dir = parent.to_path_buf();
-    }
-
-    Ok(None)
-}
-
-fn find_non_empty_candidate(
-    dir: &Path,
-    names: &[&str],
-    max_bytes: usize,
-) -> std::io::Result<Option<std::path::PathBuf>> {
-    use std::fs::File;
-    use std::io::Read;
-
-    for name in names {
-        let candidate = dir.join(name);
-        let mut file = match File::open(&candidate) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e),
-            Ok(f) => f,
-        };
-
-        let size = file.metadata()?.len() as usize;
-        let to_read = std::cmp::min(size, max_bytes);
-        let mut data = vec![0u8; to_read];
-        let read_n = file.read(&mut data)?;
-        let contents = String::from_utf8_lossy(&data[..read_n]).to_string();
-        if contents.trim().is_empty() {
-            continue;
-        }
-
-        return Ok(Some(candidate));
     }
 
     Ok(None)
@@ -149,7 +116,7 @@ pub fn agents_doc_path_string(config: &Config) -> Option<String> {
 
     // Project AGENTS.md, unless disabled via byte‑limit == 0.
     if config.project_doc_max_bytes > 0 {
-        if let Some(p) = find_project_doc_path_sync(config) {
+        if let Ok(Some(p)) = discover_project_doc_path(config) {
             parts.push(p.display().to_string());
         }
     }
@@ -159,36 +126,6 @@ pub fn agents_doc_path_string(config: &Config) -> Option<String> {
     } else {
         Some(parts.join(" + "))
     }
-}
-
-/// Synchronous counterpart to `find_project_doc()` that returns the discovered
-/// path rather than the contents. Skips empty files (after trimming) to stay
-/// consistent with `load_first_candidate()`.
-fn find_project_doc_path_sync(config: &Config) -> Option<PathBuf> {
-    // Attempt to locate in cwd first.
-    if let Some(p) = first_nonempty_candidate_in_dir(&config.cwd, CANDIDATE_FILENAMES) {
-        return Some(p);
-    }
-
-    // Walk up to git root.
-    let mut dir = config.cwd.clone();
-    if let Ok(canon) = dir.canonicalize() {
-        dir = canon;
-    }
-
-    while let Some(parent) = dir.parent() {
-        let git_marker = dir.join(".git");
-        let git_exists = std::fs::metadata(&git_marker).is_ok();
-        if git_exists {
-            if let Some(p) = first_nonempty_candidate_in_dir(&dir, CANDIDATE_FILENAMES) {
-                return Some(p);
-            }
-            break; // do not walk past git root
-        }
-        dir = parent.to_path_buf();
-    }
-
-    None
 }
 
 /// Return the first path in `dir` that matches any of `names` and is non‑empty
