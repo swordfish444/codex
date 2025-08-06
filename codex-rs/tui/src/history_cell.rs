@@ -193,8 +193,8 @@ impl HistoryCell {
                 Line::from("".dim()),
                 Line::from(format!(" 1. /init - {}", SlashCommand::Init.description()).dim()),
                 Line::from(format!(" 2. /status - {}", SlashCommand::Status.description()).dim()),
-                Line::from(format!(" 3. /compact - {}", SlashCommand::Compact.description()).dim()),
-                Line::from(format!(" 4. /new - {}", SlashCommand::New.description()).dim()),
+                Line::from(format!(" 3. /diff - {}", SlashCommand::Diff.description()).dim()),
+                Line::from(format!(" 4. /compact - {}", SlashCommand::Compact.description()).dim()),
                 Line::from("".dim()),
             ];
             HistoryCell::WelcomeMessage {
