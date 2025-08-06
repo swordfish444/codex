@@ -10,6 +10,8 @@ use crate::config_types::ShellEnvironmentPolicyToml;
 use crate::config_types::Tui;
 use crate::config_types::UriBasedFileOpener;
 use crate::flags::OPENAI_DEFAULT_MODEL;
+use crate::model_family::ModelFamily;
+use crate::model_family::find_family_for_model;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::built_in_model_providers;
 use crate::openai_model_info::get_model_info;
@@ -32,6 +34,8 @@ pub(crate) const PROJECT_DOC_MAX_BYTES: usize = 32 * 1024; // 32 KiB
 pub struct Config {
     /// Optional override of model selection.
     pub model: String,
+
+    pub model_family: ModelFamily,
 
     /// Size of the context window for the model, in tokens.
     pub model_context_window: Option<u64>,
@@ -57,12 +61,16 @@ pub struct Config {
     /// users are only interested in the final agent responses.
     pub hide_agent_reasoning: bool,
 
+    /// When set to `true`, `AgentReasoningRawContentEvent` events will be shown in the UI/output.
+    /// Defaults to `false`.
+    pub show_raw_agent_reasoning: bool,
+
     /// Disable server-side response storage (sends the full conversation
     /// context with every request). Currently necessary for OpenAI customers
     /// who have opted into Zero Data Retention (ZDR).
     pub disable_response_storage: bool,
 
-    /// User-provided instructions from instructions.md.
+    /// User-provided instructions from AGENTS.md.
     pub user_instructions: Option<String>,
 
     /// Base instructions override.
@@ -134,10 +142,6 @@ pub struct Config {
     /// request using the Responses API.
     pub model_reasoning_summary: ReasoningSummary,
 
-    /// When set to `true`, overrides the default heuristic and forces
-    /// `model_supports_reasoning_summaries()` to return `true`.
-    pub model_supports_reasoning_summaries: bool,
-
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: String,
 
@@ -146,6 +150,9 @@ pub struct Config {
 
     /// Include an experimental plan tool that the model can use to update its current plan and status of each step.
     pub include_plan_tool: bool,
+
+    /// The value for the `originator` header included with Responses API requests.
+    pub internal_originator: Option<String>,
 }
 
 impl Config {
@@ -322,6 +329,10 @@ pub struct ConfigToml {
     /// UI/output. Defaults to `false`.
     pub hide_agent_reasoning: Option<bool>,
 
+    /// When set to `true`, `AgentReasoningRawContentEvent` events will be shown in the UI/output.
+    /// Defaults to `false`.
+    pub show_raw_agent_reasoning: Option<bool>,
+
     pub model_reasoning_effort: Option<ReasoningEffort>,
     pub model_reasoning_summary: Option<ReasoningSummary>,
 
@@ -336,6 +347,9 @@ pub struct ConfigToml {
 
     /// Experimental path to a file whose contents replace the built-in BASE_INSTRUCTIONS.
     pub experimental_instructions_file: Option<PathBuf>,
+
+    /// The value for the `originator` header included with Responses API requests.
+    pub internal_originator: Option<String>,
 }
 
 impl ConfigToml {
@@ -350,6 +364,7 @@ impl ConfigToml {
                 Some(s) => SandboxPolicy::WorkspaceWrite {
                     writable_roots: s.writable_roots.clone(),
                     network_access: s.network_access,
+                    include_default_writable_roots: true,
                 },
                 None => SandboxPolicy::new_workspace_write_policy(),
             },
@@ -370,6 +385,8 @@ pub struct ConfigOverrides {
     pub codex_linux_sandbox_exe: Option<PathBuf>,
     pub base_instructions: Option<String>,
     pub include_plan_tool: Option<bool>,
+    pub disable_response_storage: Option<bool>,
+    pub show_raw_agent_reasoning: Option<bool>,
 }
 
 impl Config {
@@ -393,6 +410,8 @@ impl Config {
             codex_linux_sandbox_exe,
             base_instructions,
             include_plan_tool,
+            disable_response_storage,
+            show_raw_agent_reasoning,
         } = overrides;
 
         let config_profile = match config_profile_key.as_ref().or(cfg.profile.as_ref()) {
@@ -458,7 +477,19 @@ impl Config {
             .or(config_profile.model)
             .or(cfg.model)
             .unwrap_or_else(default_model);
-        let openai_model_info = get_model_info(&model);
+        let model_family = find_family_for_model(&model).unwrap_or_else(|| {
+            let supports_reasoning_summaries =
+                cfg.model_supports_reasoning_summaries.unwrap_or(false);
+            ModelFamily {
+                slug: model.clone(),
+                family: model.clone(),
+                needs_special_apply_patch_instructions: false,
+                supports_reasoning_summaries,
+                uses_local_shell_tool: false,
+            }
+        });
+
+        let openai_model_info = get_model_info(&model_family);
         let model_context_window = cfg
             .model_context_window
             .or_else(|| openai_model_info.as_ref().map(|info| info.context_window));
@@ -473,14 +504,17 @@ impl Config {
         // Load base instructions override from a file if specified. If the
         // path is relative, resolve it against the effective cwd so the
         // behaviour matches other path-like config values.
-        let file_base_instructions = Self::get_base_instructions(
-            cfg.experimental_instructions_file.as_ref(),
-            &resolved_cwd,
-        )?;
+        let experimental_instructions_path = config_profile
+            .experimental_instructions_file
+            .as_ref()
+            .or(cfg.experimental_instructions_file.as_ref());
+        let file_base_instructions =
+            Self::get_base_instructions(experimental_instructions_path, &resolved_cwd)?;
         let base_instructions = base_instructions.or(file_base_instructions);
 
         let config = Self {
             model,
+            model_family,
             model_context_window,
             model_max_output_tokens,
             model_provider_id,
@@ -495,6 +529,7 @@ impl Config {
             disable_response_storage: config_profile
                 .disable_response_storage
                 .or(cfg.disable_response_storage)
+                .or(disable_response_storage)
                 .unwrap_or(false),
             notify: cfg.notify,
             user_instructions,
@@ -509,6 +544,10 @@ impl Config {
             codex_linux_sandbox_exe,
 
             hide_agent_reasoning: cfg.hide_agent_reasoning.unwrap_or(false),
+            show_raw_agent_reasoning: cfg
+                .show_raw_agent_reasoning
+                .or(show_raw_agent_reasoning)
+                .unwrap_or(false),
             model_reasoning_effort: config_profile
                 .model_reasoning_effort
                 .or(cfg.model_reasoning_effort)
@@ -518,16 +557,14 @@ impl Config {
                 .or(cfg.model_reasoning_summary)
                 .unwrap_or_default(),
 
-            model_supports_reasoning_summaries: cfg
-                .model_supports_reasoning_summaries
-                .unwrap_or(false),
-
             chatgpt_base_url: config_profile
                 .chatgpt_base_url
                 .or(cfg.chatgpt_base_url)
                 .unwrap_or("https://chatgpt.com/backend-api/".to_string()),
+
             experimental_resume,
             include_plan_tool: include_plan_tool.unwrap_or(false),
+            internal_originator: cfg.internal_originator,
         };
         Ok(config)
     }
@@ -538,7 +575,7 @@ impl Config {
             None => return None,
         };
 
-        p.push("instructions.md");
+        p.push("AGENTS.md");
         std::fs::read_to_string(&p).ok().and_then(|s| {
             let s = s.trim();
             if s.is_empty() {
@@ -719,6 +756,7 @@ writable_roots = [
             SandboxPolicy::WorkspaceWrite {
                 writable_roots: vec![PathBuf::from("/tmp")],
                 network_access: false,
+                include_default_writable_roots: true,
             },
             sandbox_workspace_write_cfg.derive_sandbox_policy(sandbox_mode_override)
         );
@@ -794,7 +832,7 @@ disable_response_storage = true
 
         let openai_chat_completions_provider = ModelProviderInfo {
             name: "OpenAI using Chat Completions".to_string(),
-            base_url: "https://api.openai.com/v1".to_string(),
+            base_url: Some("https://api.openai.com/v1".to_string()),
             env_key: Some("OPENAI_API_KEY".to_string()),
             wire_api: crate::WireApi::Chat,
             env_key_instructions: None,
@@ -804,6 +842,7 @@ disable_response_storage = true
             request_max_retries: Some(4),
             stream_max_retries: Some(10),
             stream_idle_timeout_ms: Some(300_000),
+            requires_openai_auth: false,
         };
         let model_provider_map = {
             let mut model_provider_map = built_in_model_providers();
@@ -858,6 +897,7 @@ disable_response_storage = true
         assert_eq!(
             Config {
                 model: "o3".to_string(),
+                model_family: find_family_for_model("o3").expect("known model slug"),
                 model_context_window: Some(200_000),
                 model_max_output_tokens: Some(100_000),
                 model_provider_id: "openai".to_string(),
@@ -878,13 +918,14 @@ disable_response_storage = true
                 tui: Tui::default(),
                 codex_linux_sandbox_exe: None,
                 hide_agent_reasoning: false,
+                show_raw_agent_reasoning: false,
                 model_reasoning_effort: ReasoningEffort::High,
                 model_reasoning_summary: ReasoningSummary::Detailed,
-                model_supports_reasoning_summaries: false,
                 chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
                 experimental_resume: None,
                 base_instructions: None,
                 include_plan_tool: false,
+                internal_originator: None,
             },
             o3_profile_config
         );
@@ -907,6 +948,7 @@ disable_response_storage = true
         )?;
         let expected_gpt3_profile_config = Config {
             model: "gpt-3.5-turbo".to_string(),
+            model_family: find_family_for_model("gpt-3.5-turbo").expect("known model slug"),
             model_context_window: Some(16_385),
             model_max_output_tokens: Some(4_096),
             model_provider_id: "openai-chat-completions".to_string(),
@@ -927,13 +969,14 @@ disable_response_storage = true
             tui: Tui::default(),
             codex_linux_sandbox_exe: None,
             hide_agent_reasoning: false,
+            show_raw_agent_reasoning: false,
             model_reasoning_effort: ReasoningEffort::default(),
             model_reasoning_summary: ReasoningSummary::default(),
-            model_supports_reasoning_summaries: false,
             chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
             experimental_resume: None,
             base_instructions: None,
             include_plan_tool: false,
+            internal_originator: None,
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -971,6 +1014,7 @@ disable_response_storage = true
         )?;
         let expected_zdr_profile_config = Config {
             model: "o3".to_string(),
+            model_family: find_family_for_model("o3").expect("known model slug"),
             model_context_window: Some(200_000),
             model_max_output_tokens: Some(100_000),
             model_provider_id: "openai".to_string(),
@@ -991,13 +1035,14 @@ disable_response_storage = true
             tui: Tui::default(),
             codex_linux_sandbox_exe: None,
             hide_agent_reasoning: false,
+            show_raw_agent_reasoning: false,
             model_reasoning_effort: ReasoningEffort::default(),
             model_reasoning_summary: ReasoningSummary::default(),
-            model_supports_reasoning_summaries: false,
             chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
             experimental_resume: None,
             base_instructions: None,
             include_plan_tool: false,
+            internal_originator: None,
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);

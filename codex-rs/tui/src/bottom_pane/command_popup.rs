@@ -3,9 +3,9 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::style::Style;
 use ratatui::style::Stylize;
-use ratatui::widgets::Block;
-use ratatui::widgets::BorderType;
-use ratatui::widgets::Borders;
+use ratatui::symbols::border::QUADRANT_LEFT_HALF;
+use ratatui::text::Line;
+use ratatui::text::Span;
 use ratatui::widgets::Cell;
 use ratatui::widgets::Row;
 use ratatui::widgets::Table;
@@ -71,12 +71,8 @@ impl CommandPopup {
     /// Determine the preferred height of the popup. This is the number of
     /// rows required to show **at most** `MAX_POPUP_ROWS` commands plus the
     /// table/border overhead (one line at the top and one at the bottom).
-    pub(crate) fn calculate_required_height(&self, _area: &Rect) -> u16 {
-        let matches = self.filtered_commands();
-        let row_count = matches.len().clamp(1, MAX_POPUP_ROWS) as u16;
-        // Account for the border added by the Block that wraps the table.
-        // 2 = one line at the top, one at the bottom.
-        row_count + 2
+    pub(crate) fn calculate_required_height(&self) -> u16 {
+        self.filtered_commands().len().clamp(1, MAX_POPUP_ROWS) as u16
     }
 
     /// Return the list of commands that match the current filter. Matching is
@@ -158,18 +154,19 @@ impl WidgetRef for CommandPopup {
             let default_style = Style::default();
             let command_style = Style::default().fg(Color::LightBlue);
             for (idx, cmd) in visible_matches.iter().enumerate() {
-                let (cmd_style, desc_style) = if Some(idx) == self.selected_idx {
-                    (
-                        command_style.bg(Color::DarkGray),
-                        default_style.bg(Color::DarkGray),
-                    )
-                } else {
-                    (command_style, default_style)
-                };
-
                 rows.push(Row::new(vec![
-                    Cell::from(format!("/{}", cmd.command())).style(cmd_style),
-                    Cell::from(cmd.description().to_string()).style(desc_style),
+                    Cell::from(Line::from(vec![
+                        if Some(idx) == self.selected_idx {
+                            Span::styled(
+                                "›",
+                                Style::default().bg(Color::DarkGray).fg(Color::LightCyan),
+                            )
+                        } else {
+                            Span::styled(QUADRANT_LEFT_HALF, Style::default().fg(Color::DarkGray))
+                        },
+                        Span::styled(format!("/{}", cmd.command()), command_style),
+                    ])),
+                    Cell::from(cmd.description().to_string()).style(default_style),
                 ]));
             }
         }
@@ -180,13 +177,49 @@ impl WidgetRef for CommandPopup {
             rows,
             [Constraint::Length(FIRST_COLUMN_WIDTH), Constraint::Min(10)],
         )
-        .column_spacing(0)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded),
-        );
+        .column_spacing(0);
+        // .block(
+        //     Block::default()
+        //         .borders(Borders::LEFT)
+        //         .border_type(BorderType::QuadrantOutside)
+        //         .border_style(Style::default().fg(Color::DarkGray)),
+        // );
 
         table.render(area, buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_includes_init_when_typing_prefix() {
+        let mut popup = CommandPopup::new();
+        // Simulate the composer line starting with '/in' so the popup filters
+        // matching commands by prefix.
+        popup.on_composer_text_change("/in".to_string());
+
+        // Access the filtered list via the selected command and ensure that
+        // one of the matches is the new "init" command.
+        let matches = popup.filtered_commands();
+        assert!(
+            matches.iter().any(|cmd| cmd.command() == "init"),
+            "expected '/init' to appear among filtered commands"
+        );
+    }
+
+    #[test]
+    fn selecting_init_by_exact_match() {
+        let mut popup = CommandPopup::new();
+        popup.on_composer_text_change("/init".to_string());
+
+        // When an exact match exists, the selected command should be that
+        // command by default.
+        let selected = popup.selected_command();
+        match selected {
+            Some(cmd) => assert_eq!(cmd.command(), "init"),
+            None => panic!("expected a selected command for exact match"),
+        }
     }
 }

@@ -110,12 +110,15 @@ stream_idle_timeout_ms = 300000    # 5m idle timeout
 ```
 
 #### request_max_retries
+
 How many times Codex will retry a failed HTTP request to the model provider. Defaults to `4`.
 
 #### stream_max_retries
+
 Number of times Codex will attempt to reconnect when a streaming response is interrupted. Defaults to `10`.
 
 #### stream_idle_timeout_ms
+
 How long Codex will wait for activity on a streaming response before treating the connection as lost. Defaults to `300_000` (5 minutes).
 
 ## model_provider
@@ -145,12 +148,20 @@ Determines when the user should be prompted to approve whether Codex can execute
 approval_policy = "untrusted"
 ```
 
+If you want to be notified whenever a command fails, use "on-failure":
 ```toml
 # If the command fails when run in the sandbox, Codex asks for permission to
 # retry the command outside the sandbox.
 approval_policy = "on-failure"
 ```
 
+If you want the model to run until it decides that it needs to ask you for escalated permissions, use "on-request":
+```toml
+# The model decides when to escalate
+approval_policy = "on-request"
+```
+
+Alternatively, you can have the model run until it is done, and never ask to run a command with escalated permissions:
 ```toml
 # User is never prompted: if the command fails, Codex will automatically try
 # something out. Note the `exec` subcommand always uses this mode.
@@ -255,6 +266,8 @@ The default policy is `read-only`, which means commands can read any file on
 disk, but attempts to write a file or access the network will be blocked.
 
 A more relaxed policy is `workspace-write`. When specified, the current working directory for the Codex task will be writable (as well as `$TMPDIR` on macOS). Note that the CLI defaults to using the directory where it was spawned as `cwd`, though this can be overridden using `--cwd/-C`.
+
+On macOS (and soon Linux), all writable roots (including `cwd`) that contain a `.git/` folder _as an immediate child_ will configure the `.git/` folder to be read-only while the rest of the Git repository will be writable. This means that commands like `git commit` will fail, by default (as it entails writing to `.git/`), and will require Codex to ask for permission.
 
 ```toml
 # same as `--sandbox workspace-write`
@@ -476,6 +489,19 @@ Setting `hide_agent_reasoning` to `true` suppresses these events in **both** the
 
 ```toml
 hide_agent_reasoning = true   # defaults to false
+```
+
+## show_raw_agent_reasoning
+
+Surfaces the model’s raw chain-of-thought ("raw reasoning content") when available.
+
+Notes:
+- Only takes effect if the selected model/provider actually emits raw reasoning content. Many models do not. When unsupported, this option has no visible effect.
+- Raw reasoning may include intermediate thoughts or sensitive context. Enable only if acceptable for your workflow.
+
+Example:
+```toml
+show_raw_agent_reasoning = true  # defaults to false
 ```
 
 ## model_context_window

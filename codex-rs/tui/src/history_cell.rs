@@ -1,21 +1,20 @@
-use crate::cell_widget::CellWidget;
-use crate::exec_command::escape_command;
-use crate::markdown::append_markdown;
+use crate::exec_command::strip_bash_lc_and_escape;
 use crate::text_block::TextBlock;
 use crate::text_formatting::format_and_truncate_tool_result;
 use base64::Engine;
 use codex_ansi_escape::ansi_escape_line;
+use codex_common::create_config_summary_entries;
 use codex_common::elapsed::format_duration;
-use codex_common::summarize_sandbox_policy;
-use codex_core::WireApi;
 use codex_core::config::Config;
-use codex_core::model_supports_reasoning_summaries;
+use codex_core::plan_tool::PlanItemArg;
+use codex_core::plan_tool::StepStatus;
+use codex_core::plan_tool::UpdatePlanArgs;
 use codex_core::protocol::FileChange;
+use codex_core::protocol::McpInvocation;
 use codex_core::protocol::SessionConfiguredEvent;
+use codex_core::protocol::TokenUsage;
 use image::DynamicImage;
-use image::GenericImageView;
 use image::ImageReader;
-use lazy_static::lazy_static;
 use mcp_types::EmbeddedResourceResource;
 use mcp_types::ResourceLink;
 use ratatui::prelude::*;
@@ -24,14 +23,13 @@ use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line as RtLine;
 use ratatui::text::Span as RtSpan;
-use ratatui_image::Image as TuiImage;
-use ratatui_image::Resize as ImgResize;
-use ratatui_image::picker::ProtocolType;
+use ratatui::widgets::Paragraph;
+use ratatui::widgets::WidgetRef;
+use ratatui::widgets::Wrap;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::time::Instant;
 use tracing::error;
 
 pub(crate) struct CommandOutput {
@@ -46,6 +44,21 @@ pub(crate) enum PatchEventType {
     ApplyBegin { auto_approved: bool },
 }
 
+fn span_to_static(span: &Span) -> Span<'static> {
+    Span {
+        style: span.style,
+        content: std::borrow::Cow::Owned(span.content.clone().into_owned()),
+    }
+}
+
+fn line_to_static(line: &Line) -> Line<'static> {
+    Line {
+        style: line.style,
+        alignment: line.alignment,
+        spans: line.spans.iter().map(span_to_static).collect(),
+    }
+}
+
 /// Represents an event to display in the conversation history. Returns its
 /// `Vec<Line<'static>>` representation to make it easier to display in a
 /// scrollable list.
@@ -56,32 +69,15 @@ pub(crate) enum HistoryCell {
     /// Message from the user.
     UserPrompt { view: TextBlock },
 
-    /// Message from the agent.
-    AgentMessage { view: TextBlock },
-
-    /// Reasoning event from the agent.
-    AgentReasoning { view: TextBlock },
-
+    // AgentMessage and AgentReasoning variants were unused and have been removed.
     /// An exec tool call that has not finished yet.
-    ActiveExecCommand {
-        call_id: String,
-        /// The shell command, escaped and formatted.
-        command: String,
-        start: Instant,
-        view: TextBlock,
-    },
+    ActiveExecCommand { view: TextBlock },
 
     /// Completed exec tool call.
     CompletedExecCommand { view: TextBlock },
 
     /// An MCP tool call that has not finished yet.
-    ActiveMcpToolCall {
-        call_id: String,
-        /// Formatted line that shows the command name and arguments
-        invocation: Line<'static>,
-        start: Instant,
-        view: TextBlock,
-    },
+    ActiveMcpToolCall { view: TextBlock },
 
     /// Completed MCP tool call where we show the result serialized as JSON.
     CompletedMcpToolCall { view: TextBlock },
@@ -94,19 +90,16 @@ pub(crate) enum HistoryCell {
     // resized version avoids doing the potentially expensive rescale twice
     // because the scroll-view first calls `height()` for layouting and then
     // `render_window()` for painting.
-    CompletedMcpToolCallWithImageOutput {
-        image: DynamicImage,
-        /// Cached data derived from the current terminal width.  The cache is
-        /// invalidated whenever the width changes (e.g. when the user
-        /// resizes the window).
-        render_cache: std::cell::RefCell<Option<ImageRenderCache>>,
-    },
+    CompletedMcpToolCallWithImageOutput { _image: DynamicImage },
 
     /// Background event.
     BackgroundEvent { view: TextBlock },
 
     /// Output from the `/diff` command.
     GitDiffOutput { view: TextBlock },
+
+    /// Output from the `/status` command.
+    StatusOutput { view: TextBlock },
 
     /// Error event from the backend.
     ErrorEvent { view: TextBlock },
@@ -118,6 +111,13 @@ pub(crate) enum HistoryCell {
     /// behaviour of `ActiveExecCommand` so the user sees *what* patch the
     /// model wants to apply before being prompted to approve or deny it.
     PendingPatch { view: TextBlock },
+
+    /// A human‑friendly rendering of the model's current plan and step
+    /// statuses provided via the `update_plan` tool.
+    PlanUpdate { view: TextBlock },
+
+    /// Result of applying a patch (success or failure) with optional output.
+    PatchApplyResult { view: TextBlock },
 }
 
 const TOOL_CALL_MAX_LINES: usize = 5;
@@ -130,23 +130,35 @@ impl HistoryCell {
         match self {
             HistoryCell::WelcomeMessage { view }
             | HistoryCell::UserPrompt { view }
-            | HistoryCell::AgentMessage { view }
-            | HistoryCell::AgentReasoning { view }
             | HistoryCell::BackgroundEvent { view }
             | HistoryCell::GitDiffOutput { view }
+            | HistoryCell::StatusOutput { view }
             | HistoryCell::ErrorEvent { view }
             | HistoryCell::SessionInfo { view }
             | HistoryCell::CompletedExecCommand { view }
             | HistoryCell::CompletedMcpToolCall { view }
             | HistoryCell::PendingPatch { view }
+            | HistoryCell::PlanUpdate { view }
+            | HistoryCell::PatchApplyResult { view }
             | HistoryCell::ActiveExecCommand { view, .. }
-            | HistoryCell::ActiveMcpToolCall { view, .. } => view.lines.clone(),
+            | HistoryCell::ActiveMcpToolCall { view, .. } => {
+                view.lines.iter().map(line_to_static).collect()
+            }
             HistoryCell::CompletedMcpToolCallWithImageOutput { .. } => vec![
                 Line::from("tool result (image output omitted)"),
                 Line::from(""),
             ],
         }
     }
+
+    pub(crate) fn desired_height(&self, width: u16) -> u16 {
+        Paragraph::new(Text::from(self.plain_lines()))
+            .wrap(Wrap { trim: false })
+            .line_count(width)
+            .try_into()
+            .unwrap_or(0)
+    }
+
     pub(crate) fn new_session_info(
         config: &Config,
         event: SessionConfiguredEvent,
@@ -176,37 +188,7 @@ impl HistoryCell {
                 ]),
             ];
 
-            // Show which AGENTS.md is being used (or 'none' if unavailable).
-            let agents_value = if config.project_doc_max_bytes > 0 {
-                match codex_core::discover_project_doc_path(config) {
-                    Ok(Some(path)) => path.display().to_string(),
-                    _ => "none".to_string(),
-                }
-            } else {
-                "none".to_string()
-            };
-
-            let mut entries = vec![
-                ("workdir", config.cwd.display().to_string()),
-                ("agents.md", agents_value),
-                ("model", config.model.clone()),
-                ("provider", config.model_provider_id.clone()),
-                ("approval", config.approval_policy.to_string()),
-                ("sandbox", summarize_sandbox_policy(&config.sandbox_policy)),
-            ];
-            if config.model_provider.wire_api == WireApi::Responses
-                && model_supports_reasoning_summaries(config)
-            {
-                entries.push((
-                    "reasoning effort",
-                    config.model_reasoning_effort.to_string(),
-                ));
-                entries.push((
-                    "reasoning summaries",
-                    config.model_reasoning_summary.to_string(),
-                ));
-            }
-            for (key, value) in entries {
+            for (key, value) in create_config_summary_entries(config) {
                 lines.push(Line::from(vec![format!("{key}: ").bold(), value.into()]));
             }
             lines.push(Line::from(""));
@@ -241,31 +223,8 @@ impl HistoryCell {
         }
     }
 
-    pub(crate) fn new_agent_message(config: &Config, message: String) -> Self {
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(Line::from("codex".magenta().bold()));
-        append_markdown(&message, &mut lines, config);
-        lines.push(Line::from(""));
-
-        HistoryCell::AgentMessage {
-            view: TextBlock::new(lines),
-        }
-    }
-
-    pub(crate) fn new_agent_reasoning(config: &Config, text: String) -> Self {
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(Line::from("thinking".magenta().italic()));
-        append_markdown(&text, &mut lines, config);
-        lines.push(Line::from(""));
-
-        HistoryCell::AgentReasoning {
-            view: TextBlock::new(lines),
-        }
-    }
-
-    pub(crate) fn new_active_exec_command(call_id: String, command: Vec<String>) -> Self {
-        let command_escaped = escape_command(&command);
-        let start = Instant::now();
+    pub(crate) fn new_active_exec_command(command: Vec<String>) -> Self {
+        let command_escaped = strip_bash_lc_and_escape(&command);
 
         let lines: Vec<Line<'static>> = vec![
             Line::from(vec!["command".magenta(), " running...".dim()]),
@@ -274,14 +233,11 @@ impl HistoryCell {
         ];
 
         HistoryCell::ActiveExecCommand {
-            call_id,
-            command: command_escaped,
-            start,
             view: TextBlock::new(lines),
         }
     }
 
-    pub(crate) fn new_completed_exec_command(command: String, output: CommandOutput) -> Self {
+    pub(crate) fn new_completed_exec_command(command: Vec<String>, output: CommandOutput) -> Self {
         let CommandOutput {
             exit_code,
             stdout,
@@ -305,7 +261,8 @@ impl HistoryCell {
 
         let src = if exit_code == 0 { stdout } else { stderr };
 
-        lines.push(Line::from(format!("$ {command}")));
+        let cmdline = strip_bash_lc_and_escape(&command);
+        lines.push(Line::from(format!("$ {cmdline}")));
         let mut lines_iter = src.lines();
         for raw in lines_iter.by_ref().take(TOOL_CALL_MAX_LINES) {
             lines.push(ansi_escape_line(raw).dim());
@@ -321,41 +278,15 @@ impl HistoryCell {
         }
     }
 
-    pub(crate) fn new_active_mcp_tool_call(
-        call_id: String,
-        server: String,
-        tool: String,
-        arguments: Option<serde_json::Value>,
-    ) -> Self {
-        // Format the arguments as compact JSON so they roughly fit on one
-        // line. If there are no arguments we keep it empty so the invocation
-        // mirrors a function-style call.
-        let args_str = arguments
-            .as_ref()
-            .map(|v| {
-                // Use compact form to keep things short but readable.
-                serde_json::to_string(v).unwrap_or_else(|_| v.to_string())
-            })
-            .unwrap_or_default();
-
-        let invocation_spans = vec![
-            Span::styled(server, Style::default().fg(Color::Blue)),
-            Span::raw("."),
-            Span::styled(tool, Style::default().fg(Color::Blue)),
-            Span::raw("("),
-            Span::styled(args_str, Style::default().fg(Color::Gray)),
-            Span::raw(")"),
-        ];
-        let invocation = Line::from(invocation_spans);
-
-        let start = Instant::now();
+    pub(crate) fn new_active_mcp_tool_call(invocation: McpInvocation) -> Self {
         let title_line = Line::from(vec!["tool".magenta(), " running...".dim()]);
-        let lines: Vec<Line<'static>> = vec![title_line, invocation.clone(), Line::from("")];
+        let lines: Vec<Line> = vec![
+            title_line,
+            format_mcp_invocation(invocation.clone()),
+            Line::from(""),
+        ];
 
         HistoryCell::ActiveMcpToolCall {
-            call_id,
-            invocation,
-            start,
             view: TextBlock::new(lines),
         }
     }
@@ -393,10 +324,7 @@ impl HistoryCell {
                         }
                     };
 
-                    Some(HistoryCell::CompletedMcpToolCallWithImageOutput {
-                        image,
-                        render_cache: std::cell::RefCell::new(None),
-                    })
+                    Some(HistoryCell::CompletedMcpToolCallWithImageOutput { _image: image })
                 } else {
                     None
                 }
@@ -407,8 +335,8 @@ impl HistoryCell {
 
     pub(crate) fn new_completed_mcp_tool_call(
         num_cols: u16,
-        invocation: Line<'static>,
-        start: Instant,
+        invocation: McpInvocation,
+        duration: Duration,
         success: bool,
         result: Result<mcp_types::CallToolResult, String>,
     ) -> Self {
@@ -416,7 +344,7 @@ impl HistoryCell {
             return cell;
         }
 
-        let duration = format_duration(start.elapsed());
+        let duration = format_duration(duration);
         let status_str = if success { "success" } else { "failed" };
         let title_line = Line::from(vec![
             "tool".magenta(),
@@ -431,7 +359,7 @@ impl HistoryCell {
 
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(title_line);
-        lines.push(invocation);
+        lines.push(format_mcp_invocation(invocation));
 
         match result {
             Ok(mcp_types::CallToolResult { content, .. }) => {
@@ -517,12 +445,136 @@ impl HistoryCell {
         }
     }
 
+    pub(crate) fn new_status_output(config: &Config, usage: &TokenUsage) -> Self {
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from("/status".magenta()));
+
+        // Config
+        for (key, value) in create_config_summary_entries(config) {
+            lines.push(Line::from(vec![format!("{key}: ").bold(), value.into()]));
+        }
+
+        // Token usage
+        lines.push(Line::from(""));
+        lines.push(Line::from("token usage".bold()));
+        lines.push(Line::from(vec![
+            "  input: ".bold(),
+            usage.input_tokens.to_string().into(),
+        ]));
+        lines.push(Line::from(vec![
+            "  cached input: ".bold(),
+            usage.cached_input_tokens.unwrap_or(0).to_string().into(),
+        ]));
+        lines.push(Line::from(vec![
+            "  output: ".bold(),
+            usage.output_tokens.to_string().into(),
+        ]));
+        lines.push(Line::from(vec![
+            "  reasoning output: ".bold(),
+            usage
+                .reasoning_output_tokens
+                .unwrap_or(0)
+                .to_string()
+                .into(),
+        ]));
+        lines.push(Line::from(vec![
+            "  total: ".bold(),
+            usage.total_tokens.to_string().into(),
+        ]));
+
+        lines.push(Line::from(""));
+        HistoryCell::StatusOutput {
+            view: TextBlock::new(lines),
+        }
+    }
+
     pub(crate) fn new_error_event(message: String) -> Self {
         let lines: Vec<Line<'static>> = vec![
             vec!["ERROR: ".red().bold(), message.into()].into(),
             "".into(),
         ];
         HistoryCell::ErrorEvent {
+            view: TextBlock::new(lines),
+        }
+    }
+
+    /// Render a user‑friendly plan update with colourful status icons and a
+    /// simple progress indicator so users can follow along.
+    pub(crate) fn new_plan_update(update: UpdatePlanArgs) -> Self {
+        let UpdatePlanArgs { explanation, plan } = update;
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        // Title
+        lines.push(Line::from("plan".magenta().bold()));
+
+        if !plan.is_empty() {
+            // Progress bar – show completed/total with a visual bar
+            let total = plan.len();
+            let completed = plan
+                .iter()
+                .filter(|p| matches!(p.status, StepStatus::Completed))
+                .count();
+            let width: usize = 20;
+            let filled = (completed * width + total / 2) / total;
+            let empty = width.saturating_sub(filled);
+            let mut bar_spans: Vec<Span> = Vec::new();
+            if filled > 0 {
+                bar_spans.push(Span::styled(
+                    "█".repeat(filled),
+                    Style::default().fg(Color::Green),
+                ));
+            }
+            if empty > 0 {
+                bar_spans.push(Span::styled(
+                    "░".repeat(empty),
+                    Style::default().fg(Color::Gray),
+                ));
+            }
+            let progress_prefix = Span::raw("progress [");
+            let progress_suffix = Span::raw("] ");
+            let fraction = Span::raw(format!("{completed}/{total}"));
+            let mut progress_line_spans = vec![progress_prefix];
+            progress_line_spans.extend(bar_spans);
+            progress_line_spans.push(progress_suffix);
+            progress_line_spans.push(fraction);
+            lines.push(Line::from(progress_line_spans));
+        }
+
+        // Optional explanation/note from the model
+        if let Some(expl) = explanation.and_then(|s| {
+            let t = s.trim().to_string();
+            if t.is_empty() { None } else { Some(t) }
+        }) {
+            lines.push(Line::from("note".gray().italic()));
+            for l in expl.lines() {
+                lines.push(Line::from(l.to_string()).gray());
+            }
+        }
+
+        // Steps (1‑based numbering) with fun, readable status icons
+        if plan.is_empty() {
+            lines.push(Line::from("(no steps provided)".gray().italic()));
+        } else {
+            for (idx, PlanItemArg { step, status }) in plan.into_iter().enumerate() {
+                let num = idx + 1;
+                let icon_span: Span = match status {
+                    StepStatus::Completed => Span::from("✓").fg(Color::Green),
+                    StepStatus::InProgress => Span::from("▶").fg(Color::Yellow).bold(),
+                    StepStatus::Pending => Span::from("○").fg(Color::Gray),
+                };
+                lines.push(Line::from(vec![
+                    format!("{num:>2}. [").into(),
+                    icon_span,
+                    "] ".into(),
+                    step.into(),
+                ]));
+            }
+        }
+
+        lines.push(Line::from(""));
+
+        HistoryCell::PlanUpdate {
             view: TextBlock::new(lines),
         }
     }
@@ -542,7 +594,10 @@ impl HistoryCell {
             PatchEventType::ApplyBegin {
                 auto_approved: false,
             } => {
-                let lines = vec![Line::from("patch applied".magenta().bold())];
+                let lines: Vec<Line<'static>> = vec![
+                    Line::from("applying patch".magenta().bold()),
+                    Line::from(""),
+                ];
                 return Self::PendingPatch {
                     view: TextBlock::new(lines),
                 };
@@ -590,84 +645,61 @@ impl HistoryCell {
             view: TextBlock::new(lines),
         }
     }
-}
 
-// ---------------------------------------------------------------------------
-// `CellWidget` implementation – most variants delegate to their internal
-// `TextBlock`.  Variants that need custom painting can add their own logic in
-// the match arms.
-// ---------------------------------------------------------------------------
+    pub(crate) fn new_patch_apply_end(stdout: String, stderr: String, success: bool) -> Self {
+        let mut lines: Vec<Line<'static>> = Vec::new();
 
-impl CellWidget for HistoryCell {
-    fn height(&self, width: u16) -> usize {
-        match self {
-            HistoryCell::WelcomeMessage { view }
-            | HistoryCell::UserPrompt { view }
-            | HistoryCell::AgentMessage { view }
-            | HistoryCell::AgentReasoning { view }
-            | HistoryCell::BackgroundEvent { view }
-            | HistoryCell::GitDiffOutput { view }
-            | HistoryCell::ErrorEvent { view }
-            | HistoryCell::SessionInfo { view }
-            | HistoryCell::CompletedExecCommand { view }
-            | HistoryCell::CompletedMcpToolCall { view }
-            | HistoryCell::PendingPatch { view }
-            | HistoryCell::ActiveExecCommand { view, .. }
-            | HistoryCell::ActiveMcpToolCall { view, .. } => view.height(width),
-            HistoryCell::CompletedMcpToolCallWithImageOutput {
-                image,
-                render_cache,
-            } => ensure_image_cache(image, width, render_cache),
+        let status = if success {
+            RtSpan::styled("patch applied", Style::default().fg(Color::Green))
+        } else {
+            RtSpan::styled(
+                "patch failed",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            )
+        };
+        lines.push(RtLine::from(vec![
+            "patch".magenta().bold(),
+            " ".into(),
+            status,
+        ]));
+
+        let src = if success {
+            if stdout.trim().is_empty() {
+                &stderr
+            } else {
+                &stdout
+            }
+        } else if stderr.trim().is_empty() {
+            &stdout
+        } else {
+            &stderr
+        };
+
+        if !src.trim().is_empty() {
+            lines.push(Line::from(""));
+            let mut iter = src.lines();
+            for raw in iter.by_ref().take(TOOL_CALL_MAX_LINES) {
+                lines.push(ansi_escape_line(raw).dim());
+            }
+            let remaining = iter.count();
+            if remaining > 0 {
+                lines.push(Line::from(format!("... {remaining} additional lines")).dim());
+            }
+        }
+
+        lines.push(Line::from(""));
+
+        HistoryCell::PatchApplyResult {
+            view: TextBlock::new(lines),
         }
     }
+}
 
-    fn render_window(&self, first_visible_line: usize, area: Rect, buf: &mut Buffer) {
-        match self {
-            HistoryCell::WelcomeMessage { view }
-            | HistoryCell::UserPrompt { view }
-            | HistoryCell::AgentMessage { view }
-            | HistoryCell::AgentReasoning { view }
-            | HistoryCell::BackgroundEvent { view }
-            | HistoryCell::GitDiffOutput { view }
-            | HistoryCell::ErrorEvent { view }
-            | HistoryCell::SessionInfo { view }
-            | HistoryCell::CompletedExecCommand { view }
-            | HistoryCell::CompletedMcpToolCall { view }
-            | HistoryCell::PendingPatch { view }
-            | HistoryCell::ActiveExecCommand { view, .. }
-            | HistoryCell::ActiveMcpToolCall { view, .. } => {
-                view.render_window(first_visible_line, area, buf)
-            }
-            HistoryCell::CompletedMcpToolCallWithImageOutput {
-                image,
-                render_cache,
-            } => {
-                // Ensure we have a cached, resized copy that matches the current width.
-                // `height()` should have prepared the cache, but if something invalidated it
-                // (e.g. the first `render_window()` call happens *before* `height()` after a
-                // resize) we rebuild it here.
-
-                let width_cells = area.width;
-
-                // Ensure the cache is up-to-date and extract the scaled image.
-                let _ = ensure_image_cache(image, width_cells, render_cache);
-
-                let Some(resized) = render_cache
-                    .borrow()
-                    .as_ref()
-                    .map(|c| c.scaled_image.clone())
-                else {
-                    return;
-                };
-
-                let picker = &*TERMINAL_PICKER;
-
-                if let Ok(protocol) = picker.new_protocol(resized, area, ImgResize::Fit(None)) {
-                    let img_widget = TuiImage::new(&protocol);
-                    img_widget.render(area, buf);
-                }
-            }
-        }
+impl WidgetRef for &HistoryCell {
+    fn render_ref(&self, area: Rect, buf: &mut Buffer) {
+        Paragraph::new(Text::from(self.plain_lines()))
+            .wrap(Wrap { trim: false })
+            .render(area, buf);
     }
 }
 
@@ -703,119 +735,23 @@ fn create_diff_summary(changes: HashMap<PathBuf, FileChange>) -> Vec<String> {
     summaries
 }
 
-// -------------------------------------
-// Helper types for image rendering
-// -------------------------------------
+fn format_mcp_invocation<'a>(invocation: McpInvocation) -> Line<'a> {
+    let args_str = invocation
+        .arguments
+        .as_ref()
+        .map(|v| {
+            // Use compact form to keep things short but readable.
+            serde_json::to_string(v).unwrap_or_else(|_| v.to_string())
+        })
+        .unwrap_or_default();
 
-/// Cached information for rendering an image inside a conversation cell.
-///
-/// The cache ties the resized image to a *specific* content width (in
-/// terminal cells).  Whenever the terminal is resized and the width changes
-/// we need to re-compute the scaled variant so that it still fits the
-/// available space.  Keeping the resized copy around saves a costly rescale
-/// between the back-to-back `height()` and `render_window()` calls that the
-/// scroll-view performs while laying out the UI.
-pub(crate) struct ImageRenderCache {
-    /// Width in *terminal cells* the cached image was generated for.
-    width_cells: u16,
-    /// Height in *terminal rows* that the conversation cell must occupy so
-    /// the whole image becomes visible.
-    height_rows: usize,
-    /// The resized image that fits the given width / height constraints.
-    scaled_image: DynamicImage,
-}
-
-lazy_static! {
-    static ref TERMINAL_PICKER: ratatui_image::picker::Picker = {
-        use ratatui_image::picker::Picker;
-        use ratatui_image::picker::cap_parser::QueryStdioOptions;
-
-        // Ask the terminal for capabilities and explicit font size.  Request the
-        // Kitty *text-sizing protocol* as a fallback mechanism for terminals
-        // (like iTerm2) that do not reply to the standard CSI 16/18 queries.
-        match Picker::from_query_stdio_with_options(QueryStdioOptions {
-            text_sizing_protocol: true,
-        }) {
-            Ok(picker) => picker,
-            Err(err) => {
-                // Fall back to the conservative default that assumes ~8×16 px cells.
-                // Still better than breaking the build in a headless test run.
-                tracing::warn!("terminal capability query failed: {err:?}; using default font size");
-                Picker::from_fontsize((8, 16))
-            }
-        }
-    };
-}
-
-/// Resize `image` to fit into `width_cells`×10-rows keeping the original aspect
-/// ratio. The function updates `render_cache` and returns the number of rows
-/// (<= 10) the picture will occupy.
-fn ensure_image_cache(
-    image: &DynamicImage,
-    width_cells: u16,
-    render_cache: &std::cell::RefCell<Option<ImageRenderCache>>,
-) -> usize {
-    if let Some(cache) = render_cache.borrow().as_ref() {
-        if cache.width_cells == width_cells {
-            return cache.height_rows;
-        }
-    }
-
-    let picker = &*TERMINAL_PICKER;
-    let (char_w_px, char_h_px) = picker.font_size();
-
-    // Heuristic to compensate for Hi-DPI terminals (iTerm2 on Retina Mac) that
-    // report logical pixels (≈ 8×16) while the iTerm2 graphics protocol
-    // expects *device* pixels.  Empirically the device-pixel-ratio is almost
-    // always 2 on macOS Retina panels.
-    let hidpi_scale = if picker.protocol_type() == ProtocolType::Iterm2 {
-        2.0f64
-    } else {
-        1.0
-    };
-
-    // The fallback Halfblocks protocol encodes two pixel rows per cell, so each
-    // terminal *row* represents only half the (possibly scaled) font height.
-    let effective_char_h_px: f64 = if picker.protocol_type() == ProtocolType::Halfblocks {
-        (char_h_px as f64) * hidpi_scale / 2.0
-    } else {
-        (char_h_px as f64) * hidpi_scale
-    };
-
-    let char_w_px_f64 = (char_w_px as f64) * hidpi_scale;
-
-    const MAX_ROWS: f64 = 10.0;
-    let max_height_px: f64 = effective_char_h_px * MAX_ROWS;
-
-    let (orig_w_px, orig_h_px) = {
-        let (w, h) = image.dimensions();
-        (w as f64, h as f64)
-    };
-
-    if orig_w_px == 0.0 || orig_h_px == 0.0 || width_cells == 0 {
-        *render_cache.borrow_mut() = None;
-        return 0;
-    }
-
-    let max_w_px = char_w_px_f64 * width_cells as f64;
-    let scale_w = max_w_px / orig_w_px;
-    let scale_h = max_height_px / orig_h_px;
-    let scale = scale_w.min(scale_h).min(1.0);
-
-    use image::imageops::FilterType;
-    let scaled_w_px = (orig_w_px * scale).round().max(1.0) as u32;
-    let scaled_h_px = (orig_h_px * scale).round().max(1.0) as u32;
-
-    let scaled_image = image.resize(scaled_w_px, scaled_h_px, FilterType::Lanczos3);
-
-    let height_rows = ((scaled_h_px as f64 / effective_char_h_px).ceil()) as usize;
-
-    let new_cache = ImageRenderCache {
-        width_cells,
-        height_rows,
-        scaled_image,
-    };
-    *render_cache.borrow_mut() = Some(new_cache);
-
-    height_rows
+    let invocation_spans = vec![
+        Span::styled(invocation.server.clone(), Style::default().fg(Color::Blue)),
+        Span::raw("."),
+        Span::styled(invocation.tool.clone(), Style::default().fg(Color::Blue)),
+        Span::raw("("),
+        Span::styled(args_str, Style::default().fg(Color::Gray)),
+        Span::raw(")"),
+    ];
+    Line::from(invocation_spans)
 }

@@ -3,6 +3,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use bytes::Bytes;
+use codex_login::AuthMode;
+use codex_login::CodexAuth;
 use eventsource_stream::Eventsource;
 use futures::prelude::*;
 use reqwest::StatusCode;
@@ -41,6 +43,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct ModelClient {
     config: Arc<Config>,
+    auth: Option<CodexAuth>,
     client: reqwest::Client,
     provider: ModelProviderInfo,
     session_id: Uuid,
@@ -51,6 +54,7 @@ pub struct ModelClient {
 impl ModelClient {
     pub fn new(
         config: Arc<Config>,
+        auth: Option<CodexAuth>,
         provider: ModelProviderInfo,
         effort: ReasoningEffortConfig,
         summary: ReasoningSummaryConfig,
@@ -58,6 +62,7 @@ impl ModelClient {
     ) -> Self {
         Self {
             config,
+            auth,
             client: reqwest::Client::new(),
             provider,
             session_id,
@@ -76,8 +81,7 @@ impl ModelClient {
                 // Create the raw streaming connection first.
                 let response_stream = stream_chat_completions(
                     prompt,
-                    &self.config.model,
-                    self.config.include_plan_tool,
+                    &self.config.model_family,
                     &self.client,
                     &self.provider,
                 )
@@ -86,7 +90,11 @@ impl ModelClient {
                 // Wrap it with the aggregation adapter so callers see *only*
                 // the final assistant message per turn (matching the
                 // behaviour of the Responses API).
-                let mut aggregated = response_stream.aggregate();
+                let mut aggregated = if self.config.show_raw_agent_reasoning {
+                    crate::chat_completions::AggregatedChatStream::streaming_mode(response_stream)
+                } else {
+                    response_stream.aggregate()
+                };
 
                 // Bridge the aggregated stream back into a standard
                 // `ResponseStream` by forwarding events through a channel.
@@ -115,54 +123,79 @@ impl ModelClient {
             return stream_from_fixture(path, self.provider.clone()).await;
         }
 
-        let full_instructions = prompt.get_full_instructions(&self.config.model);
-        let tools_json = create_tools_json_for_responses_api(
-            prompt,
-            &self.config.model,
-            self.config.include_plan_tool,
-        )?;
-        let reasoning = create_reasoning_param_for_request(&self.config, self.effort, self.summary);
+        let auth = self.auth.clone();
+
+        let auth_mode = auth.as_ref().map(|a| a.mode);
+
+        let store = prompt.store && auth_mode != Some(AuthMode::ChatGPT);
+
+        let full_instructions = prompt.get_full_instructions(&self.config.model_family);
+        let tools_json = create_tools_json_for_responses_api(&prompt.tools)?;
+        let reasoning = create_reasoning_param_for_request(
+            &self.config.model_family,
+            self.effort,
+            self.summary,
+        );
 
         // Request encrypted COT if we are not storing responses,
         // otherwise reasoning items will be referenced by ID
-        let include = if !prompt.store && reasoning.is_some() {
+        let include: Vec<String> = if !store && reasoning.is_some() {
             vec!["reasoning.encrypted_content".to_string()]
         } else {
             vec![]
         };
 
+        let input_with_instructions = prompt.get_formatted_input();
+
         let payload = ResponsesApiRequest {
             model: &self.config.model,
             instructions: &full_instructions,
-            input: &prompt.input,
+            input: &input_with_instructions,
             tools: &tools_json,
             tool_choice: "auto",
             parallel_tool_calls: false,
             reasoning,
-            store: prompt.store,
-            // TODO: make this configurable
+            store,
             stream: true,
             include,
         };
 
+        let mut attempt = 0;
+        let max_retries = self.provider.request_max_retries();
+
         trace!(
             "POST to {}: {}",
-            self.provider.get_full_url(),
+            self.provider.get_full_url(&auth),
             serde_json::to_string(&payload)?
         );
 
-        let mut attempt = 0;
-        let max_retries = self.provider.request_max_retries();
         loop {
             attempt += 1;
 
-            let req_builder = self
+            let mut req_builder = self
                 .provider
-                .create_request_builder(&self.client)?
+                .create_request_builder(&self.client, &auth)
+                .await?;
+
+            req_builder = req_builder
                 .header("OpenAI-Beta", "responses=experimental")
                 .header("session_id", self.session_id.to_string())
                 .header(reqwest::header::ACCEPT, "text/event-stream")
                 .json(&payload);
+
+            if let Some(auth) = auth.as_ref()
+                && auth.mode == AuthMode::ChatGPT
+                && let Some(account_id) = auth.get_account_id().await
+            {
+                req_builder = req_builder.header("chatgpt-account-id", account_id);
+            }
+
+            let originator = self
+                .config
+                .internal_originator
+                .as_deref()
+                .unwrap_or("codex_cli_rs");
+            req_builder = req_builder.header("originator", originator);
 
             let res = req_builder.send().await;
             if let Ok(resp) = &res {
@@ -394,6 +427,14 @@ async fn process_sse<S>(
                     }
                 }
             }
+            "response.reasoning_text.delta" => {
+                if let Some(delta) = event.delta {
+                    let event = ResponseEvent::ReasoningContentDelta(delta);
+                    if tx_event.send(Ok(event)).await.is_err() {
+                        return;
+                    }
+                }
+            }
             "response.created" => {
                 if event.response.is_some() {
                     let _ = tx_event.send(Ok(ResponseEvent::Created {})).await;
@@ -572,7 +613,7 @@ mod tests {
 
         let provider = ModelProviderInfo {
             name: "test".to_string(),
-            base_url: "https://test.com".to_string(),
+            base_url: Some("https://test.com".to_string()),
             env_key: Some("TEST_API_KEY".to_string()),
             env_key_instructions: None,
             wire_api: WireApi::Responses,
@@ -582,6 +623,7 @@ mod tests {
             request_max_retries: Some(0),
             stream_max_retries: Some(0),
             stream_idle_timeout_ms: Some(1000),
+            requires_openai_auth: false,
         };
 
         let events = collect_events(
@@ -631,7 +673,7 @@ mod tests {
         let sse1 = format!("event: response.output_item.done\ndata: {item1}\n\n");
         let provider = ModelProviderInfo {
             name: "test".to_string(),
-            base_url: "https://test.com".to_string(),
+            base_url: Some("https://test.com".to_string()),
             env_key: Some("TEST_API_KEY".to_string()),
             env_key_instructions: None,
             wire_api: WireApi::Responses,
@@ -641,6 +683,7 @@ mod tests {
             request_max_retries: Some(0),
             stream_max_retries: Some(0),
             stream_idle_timeout_ms: Some(1000),
+            requires_openai_auth: false,
         };
 
         let events = collect_events(&[sse1.as_bytes()], provider).await;
@@ -733,7 +776,7 @@ mod tests {
 
             let provider = ModelProviderInfo {
                 name: "test".to_string(),
-                base_url: "https://test.com".to_string(),
+                base_url: Some("https://test.com".to_string()),
                 env_key: Some("TEST_API_KEY".to_string()),
                 env_key_instructions: None,
                 wire_api: WireApi::Responses,
@@ -743,6 +786,7 @@ mod tests {
                 request_max_retries: Some(0),
                 stream_max_retries: Some(0),
                 stream_idle_timeout_ms: Some(1000),
+                requires_openai_auth: false,
             };
 
             let out = run_sse(evs, provider).await;
