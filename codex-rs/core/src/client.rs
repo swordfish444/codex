@@ -127,6 +127,16 @@ impl ModelClient {
 
         let auth_mode = auth.as_ref().map(|a| a.mode);
 
+        if self.config.model_family.requires_chatgpt_auth && auth_mode != Some(AuthMode::ChatGPT) {
+            return Err(CodexErr::UnexpectedStatus(
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "{slug} is only supported with ChatGPT auth, run `codex login status` to check your auth status and `codex login` to login with ChatGPT",
+                    slug = self.config.model_family.slug
+                ),
+            ));
+        }
+
         let store = prompt.store && auth_mode != Some(AuthMode::ChatGPT);
 
         let full_instructions = prompt.get_full_instructions(&self.config.model_family);
