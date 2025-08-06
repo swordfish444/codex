@@ -647,6 +647,10 @@ pub struct SessionConfiguredEvent {
 
     /// Current number of entries in the history log.
     pub history_entry_count: usize,
+
+    /// Absolute path to the rollout file for this session, if recording is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rollout_path: Option<std::path::PathBuf>,
 }
 
 /// User's decision in response to an ExecApprovalRequest.
@@ -709,6 +713,7 @@ mod tests {
                 model: "codex-mini-latest".to_string(),
                 history_log_id: 0,
                 history_entry_count: 0,
+                rollout_path: None,
             }),
         };
         let serialized = serde_json::to_string(&event).unwrap();

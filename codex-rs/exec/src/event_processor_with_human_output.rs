@@ -490,10 +490,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             }
             EventMsg::SessionConfigured(session_configured_event) => {
                 let SessionConfiguredEvent {
-                    session_id,
-                    model,
-                    history_log_id: _,
-                    history_entry_count: _,
+                    session_id, model, ..
                 } = session_configured_event;
 
                 ts_println!(
