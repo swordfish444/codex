@@ -76,6 +76,8 @@ pub(crate) struct ChatWidget<'a> {
     current_stream: Option<StreamKind>,
     stream_header_emitted: bool,
     live_max_rows: u16,
+    /// Absolute path to the rollout file for the active session (if available).
+    rollout_path: Option<PathBuf>,
 }
 
 struct UserMessage {
@@ -192,6 +194,7 @@ impl ChatWidget<'_> {
             current_stream: None,
             stream_header_emitted: false,
             live_max_rows: 3,
+            rollout_path: None,
         }
     }
 
@@ -264,6 +267,8 @@ impl ChatWidget<'_> {
             EventMsg::SessionConfigured(event) => {
                 self.bottom_pane
                     .set_history_metadata(event.history_log_id, event.history_entry_count);
+                // Record rollout path for status reporting.
+                self.rollout_path = event.rollout_path.clone();
                 // Record session information at the top of the conversation.
                 self.add_to_history(HistoryCell::new_session_info(&self.config, event, true));
 
@@ -526,6 +531,7 @@ impl ChatWidget<'_> {
         self.add_to_history(HistoryCell::new_status_output(
             &self.config,
             &self.token_usage,
+            self.rollout_path.as_ref(),
         ));
     }
 

@@ -66,6 +66,8 @@ pub struct SavedSession {
 #[derive(Clone)]
 pub(crate) struct RolloutRecorder {
     tx: Sender<RolloutCmd>,
+    /// Absolute path to the rollout file for this session.
+    path: std::path::PathBuf,
 }
 
 enum RolloutCmd {
@@ -87,6 +89,7 @@ impl RolloutRecorder {
             file,
             session_id,
             timestamp,
+            path,
         } = create_log_file(config, uuid)?;
 
         let timestamp_format: &[FormatItem] = format_description!(
@@ -118,7 +121,7 @@ impl RolloutRecorder {
             cwd,
         ));
 
-        Ok(Self { tx })
+        Ok(Self { tx, path })
     }
 
     pub(crate) async fn record_items(&self, items: &[ResponseItem]) -> std::io::Result<()> {
@@ -223,7 +226,13 @@ impl RolloutRecorder {
             cwd,
         ));
         info!("Resumed rollout successfully from {path:?}");
-        Ok((Self { tx }, saved))
+        Ok((
+            Self {
+                tx,
+                path: path.to_path_buf(),
+            },
+            saved,
+        ))
     }
 
     pub async fn shutdown(&self) -> std::io::Result<()> {
@@ -240,6 +249,11 @@ impl RolloutRecorder {
             }
         }
     }
+
+    /// Return the absolute path to the rollout file recorded by this session.
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
 }
 
 struct LogFileInfo {
@@ -251,6 +265,9 @@ struct LogFileInfo {
 
     /// Timestamp for the start of the session.
     timestamp: OffsetDateTime,
+
+    /// Absolute path to the rollout file on disk.
+    path: std::path::PathBuf,
 }
 
 fn create_log_file(config: &Config, session_id: Uuid) -> std::io::Result<LogFileInfo> {
@@ -284,6 +301,7 @@ fn create_log_file(config: &Config, session_id: Uuid) -> std::io::Result<LogFile
         file,
         session_id,
         timestamp,
+        path,
     })
 }
 
