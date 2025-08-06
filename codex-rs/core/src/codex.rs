@@ -56,16 +56,21 @@ use crate::mcp_tool_call::handle_mcp_tool_call;
 use crate::models::ContentItem;
 use crate::models::FunctionCallOutputPayload;
 use crate::models::LocalShellAction;
+use crate::models::ReasoningItemContent;
 use crate::models::ReasoningItemReasoningSummary;
 use crate::models::ResponseInputItem;
 use crate::models::ResponseItem;
 use crate::models::ShellToolCallParams;
+use crate::openai_tools::ToolsConfig;
+use crate::openai_tools::get_openai_tools;
 use crate::plan_tool::handle_update_plan;
 use crate::project_doc::get_user_instructions;
 use crate::protocol::AgentMessageDeltaEvent;
 use crate::protocol::AgentMessageEvent;
 use crate::protocol::AgentReasoningDeltaEvent;
 use crate::protocol::AgentReasoningEvent;
+use crate::protocol::AgentReasoningRawContentDeltaEvent;
+use crate::protocol::AgentReasoningRawContentEvent;
 use crate::protocol::ApplyPatchApprovalRequestEvent;
 use crate::protocol::AskForApproval;
 use crate::protocol::BackgroundEventEvent;
@@ -85,11 +90,13 @@ use crate::protocol::SandboxPolicy;
 use crate::protocol::SessionConfiguredEvent;
 use crate::protocol::Submission;
 use crate::protocol::TaskCompleteEvent;
+use crate::protocol::TurnDiffEvent;
 use crate::rollout::RolloutRecorder;
 use crate::safety::SafetyCheck;
 use crate::safety::assess_command_safety;
 use crate::safety::assess_safety_for_untrusted_command;
 use crate::shell;
+use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::user_notification::UserNotification;
 use crate::util::backoff;
 
@@ -121,7 +128,7 @@ impl Codex {
         let resume_path = config.experimental_resume.clone();
         info!("resume_path: {resume_path:?}");
         let (tx_sub, rx_sub) = async_channel::bounded(64);
-        let (tx_event, rx_event) = async_channel::bounded(1600);
+        let (tx_event, rx_event) = async_channel::unbounded();
 
         let user_instructions = get_user_instructions(&config).await;
 
@@ -211,6 +218,7 @@ pub(crate) struct Session {
     shell_environment_policy: ShellEnvironmentPolicy,
     pub(crate) writable_roots: Mutex<Vec<PathBuf>>,
     disable_response_storage: bool,
+    tools_config: ToolsConfig,
 
     /// Manager for external MCP servers/tools.
     mcp_connection_manager: McpConnectionManager,
@@ -225,6 +233,7 @@ pub(crate) struct Session {
     state: Mutex<State>,
     codex_linux_sandbox_exe: Option<PathBuf>,
     user_shell: shell::Shell,
+    show_raw_agent_reasoning: bool,
 }
 
 impl Session {
@@ -362,7 +371,11 @@ impl Session {
         }
     }
 
-    async fn notify_exec_command_begin(&self, exec_command_context: ExecCommandContext) {
+    async fn on_exec_command_begin(
+        &self,
+        turn_diff_tracker: &mut TurnDiffTracker,
+        exec_command_context: ExecCommandContext,
+    ) {
         let ExecCommandContext {
             sub_id,
             call_id,
@@ -374,11 +387,15 @@ impl Session {
             Some(ApplyPatchCommandContext {
                 user_explicitly_approved_this_action,
                 changes,
-            }) => EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
-                call_id,
-                auto_approved: !user_explicitly_approved_this_action,
-                changes,
-            }),
+            }) => {
+                turn_diff_tracker.on_patch_begin(&changes);
+
+                EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
+                    call_id,
+                    auto_approved: !user_explicitly_approved_this_action,
+                    changes,
+                })
+            }
             None => EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
                 call_id,
                 command: command_for_display.clone(),
@@ -392,8 +409,10 @@ impl Session {
         let _ = self.tx_event.send(event).await;
     }
 
-    async fn notify_exec_command_end(
+    #[allow(clippy::too_many_arguments)]
+    async fn on_exec_command_end(
         &self,
+        turn_diff_tracker: &mut TurnDiffTracker,
         sub_id: &str,
         call_id: &str,
         output: &ExecToolCallOutput,
@@ -433,6 +452,20 @@ impl Session {
             msg,
         };
         let _ = self.tx_event.send(event).await;
+
+        // If this is an apply_patch, after we emit the end patch, emit a second event
+        // with the full turn diff if there is one.
+        if is_apply_patch {
+            let unified_diff = turn_diff_tracker.get_unified_diff();
+            if let Ok(Some(unified_diff)) = unified_diff {
+                let msg = EventMsg::TurnDiff(TurnDiffEvent { unified_diff });
+                let event = Event {
+                    id: sub_id.into(),
+                    msg,
+                };
+                let _ = self.tx_event.send(event).await;
+            }
+        }
     }
 
     /// Helper that emits a BackgroundEvent with the given message. This keeps
@@ -675,7 +708,7 @@ async fn submission_loop(
                 cwd,
                 resume_path,
             } => {
-                info!(
+                debug!(
                     "Configuring session: model={model}; provider={provider:?}; resume={resume_path:?}"
                 );
                 if !cwd.is_absolute() {
@@ -780,6 +813,12 @@ async fn submission_loop(
                 let default_shell = shell::default_user_shell().await;
                 sess = Some(Arc::new(Session {
                     client,
+                    tools_config: ToolsConfig::new(
+                        &config.model_family,
+                        approval_policy,
+                        sandbox_policy.clone(),
+                        config.include_plan_tool,
+                    ),
                     tx_event: tx_event.clone(),
                     ctrl_c: Arc::clone(&ctrl_c),
                     user_instructions,
@@ -796,6 +835,7 @@ async fn submission_loop(
                     codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
                     disable_response_storage,
                     user_shell: default_shell,
+                    show_raw_agent_reasoning: config.show_raw_agent_reasoning,
                 }));
 
                 // Patch restored state into the newly created session.
@@ -1006,6 +1046,10 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
         .await;
 
     let last_agent_message: Option<String>;
+    // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
+    // many turns, from the perspective of the user, it is a single turn.
+    let mut turn_diff_tracker = TurnDiffTracker::new();
+
     loop {
         // Note that pending_input would be something like a message the user
         // submitted through the UI while the model was running. Though the UI
@@ -1037,7 +1081,7 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
                 })
             })
             .collect();
-        match run_turn(&sess, sub_id.clone(), turn_input).await {
+        match run_turn(&sess, &mut turn_diff_tracker, sub_id.clone(), turn_input).await {
             Ok(turn_output) => {
                 let mut items_to_record_in_conversation_history = Vec::<ResponseItem>::new();
                 let mut responses = Vec::<ResponseInputItem>::new();
@@ -1102,6 +1146,7 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
                             ResponseItem::Reasoning {
                                 id,
                                 summary,
+                                content,
                                 encrypted_content,
                             },
                             None,
@@ -1109,6 +1154,7 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
                             items_to_record_in_conversation_history.push(ResponseItem::Reasoning {
                                 id: id.clone(),
                                 summary: summary.clone(),
+                                content: content.clone(),
                                 encrypted_content: encrypted_content.clone(),
                             });
                         }
@@ -1163,21 +1209,26 @@ async fn run_task(sess: Arc<Session>, sub_id: String, input: Vec<InputItem>) {
 
 async fn run_turn(
     sess: &Session,
+    turn_diff_tracker: &mut TurnDiffTracker,
     sub_id: String,
     input: Vec<ResponseItem>,
 ) -> CodexResult<Vec<ProcessedResponseItem>> {
-    let extra_tools = sess.mcp_connection_manager.list_all_tools();
+    let tools = get_openai_tools(
+        &sess.tools_config,
+        Some(sess.mcp_connection_manager.list_all_tools()),
+    );
+
     let prompt = Prompt {
         input,
         user_instructions: sess.user_instructions.clone(),
         store: !sess.disable_response_storage,
-        extra_tools,
+        tools,
         base_instructions_override: sess.base_instructions.clone(),
     };
 
     let mut retries = 0;
     loop {
-        match try_run_turn(sess, &sub_id, &prompt).await {
+        match try_run_turn(sess, turn_diff_tracker, &sub_id, &prompt).await {
             Ok(output) => return Ok(output),
             Err(CodexErr::Interrupted) => return Err(CodexErr::Interrupted),
             Err(CodexErr::EnvVar(var)) => return Err(CodexErr::EnvVar(var)),
@@ -1223,6 +1274,7 @@ struct ProcessedResponseItem {
 
 async fn try_run_turn(
     sess: &Session,
+    turn_diff_tracker: &mut TurnDiffTracker,
     sub_id: &str,
     prompt: &Prompt,
 ) -> CodexResult<Vec<ProcessedResponseItem>> {
@@ -1310,7 +1362,8 @@ async fn try_run_turn(
         match event {
             ResponseEvent::Created => {}
             ResponseEvent::OutputItemDone(item) => {
-                let response = handle_response_item(sess, sub_id, item.clone()).await?;
+                let response =
+                    handle_response_item(sess, turn_diff_tracker, sub_id, item.clone()).await?;
 
                 output.push(ProcessedResponseItem { item, response });
             }
@@ -1328,9 +1381,24 @@ async fn try_run_turn(
                         .ok();
                 }
 
+                let unified_diff = turn_diff_tracker.get_unified_diff();
+                if let Ok(Some(unified_diff)) = unified_diff {
+                    let msg = EventMsg::TurnDiff(TurnDiffEvent { unified_diff });
+                    let event = Event {
+                        id: sub_id.to_string(),
+                        msg,
+                    };
+                    let _ = sess.tx_event.send(event).await;
+                }
+
                 return Ok(output);
             }
             ResponseEvent::OutputTextDelta(delta) => {
+                {
+                    let mut st = sess.state.lock().unwrap();
+                    st.history.append_assistant_text(&delta);
+                }
+
                 let event = Event {
                     id: sub_id.to_string(),
                     msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }),
@@ -1343,6 +1411,17 @@ async fn try_run_turn(
                     msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }),
                 };
                 sess.tx_event.send(event).await.ok();
+            }
+            ResponseEvent::ReasoningContentDelta(delta) => {
+                if sess.show_raw_agent_reasoning {
+                    let event = Event {
+                        id: sub_id.to_string(),
+                        msg: EventMsg::AgentReasoningRawContentDelta(
+                            AgentReasoningRawContentDeltaEvent { delta },
+                        ),
+                    };
+                    sess.tx_event.send(event).await.ok();
+                }
             }
         }
     }
@@ -1370,7 +1449,7 @@ async fn run_compact_task(
         input: turn_input,
         user_instructions: None,
         store: !sess.disable_response_storage,
-        extra_tools: HashMap::new(),
+        tools: Vec::new(),
         base_instructions_override: Some(compact_instructions.clone()),
     };
 
@@ -1432,6 +1511,7 @@ async fn run_compact_task(
 
 async fn handle_response_item(
     sess: &Session,
+    turn_diff_tracker: &mut TurnDiffTracker,
     sub_id: &str,
     item: ResponseItem,
 ) -> CodexResult<Option<ResponseInputItem>> {
@@ -1449,7 +1529,12 @@ async fn handle_response_item(
             }
             None
         }
-        ResponseItem::Reasoning { summary, .. } => {
+        ResponseItem::Reasoning {
+            id: _,
+            summary,
+            content,
+            encrypted_content: _,
+        } => {
             for item in summary {
                 let text = match item {
                     ReasoningItemReasoningSummary::SummaryText { text } => text,
@@ -1460,6 +1545,21 @@ async fn handle_response_item(
                 };
                 sess.tx_event.send(event).await.ok();
             }
+            if sess.show_raw_agent_reasoning && content.is_some() {
+                let content = content.unwrap();
+                for item in content {
+                    let text = match item {
+                        ReasoningItemContent::ReasoningText { text } => text,
+                    };
+                    let event = Event {
+                        id: sub_id.to_string(),
+                        msg: EventMsg::AgentReasoningRawContent(AgentReasoningRawContentEvent {
+                            text,
+                        }),
+                    };
+                    sess.tx_event.send(event).await.ok();
+                }
+            }
             None
         }
         ResponseItem::FunctionCall {
@@ -1469,7 +1569,17 @@ async fn handle_response_item(
             ..
         } => {
             info!("FunctionCall: {arguments}");
-            Some(handle_function_call(sess, sub_id.to_string(), name, arguments, call_id).await)
+            Some(
+                handle_function_call(
+                    sess,
+                    turn_diff_tracker,
+                    sub_id.to_string(),
+                    name,
+                    arguments,
+                    call_id,
+                )
+                .await,
+            )
         }
         ResponseItem::LocalShellCall {
             id,
@@ -1483,6 +1593,8 @@ async fn handle_response_item(
                 command: action.command,
                 workdir: action.working_directory,
                 timeout_ms: action.timeout_ms,
+                with_escalated_permissions: None,
+                justification: None,
             };
             let effective_call_id = match (call_id, id) {
                 (Some(call_id), _) => call_id,
@@ -1504,6 +1616,7 @@ async fn handle_response_item(
                 handle_container_exec_with_params(
                     exec_params,
                     sess,
+                    turn_diff_tracker,
                     sub_id.to_string(),
                     effective_call_id,
                 )
@@ -1521,6 +1634,7 @@ async fn handle_response_item(
 
 async fn handle_function_call(
     sess: &Session,
+    turn_diff_tracker: &mut TurnDiffTracker,
     sub_id: String,
     name: String,
     arguments: String,
@@ -1534,7 +1648,8 @@ async fn handle_function_call(
                     return *output;
                 }
             };
-            handle_container_exec_with_params(params, sess, sub_id, call_id).await
+            handle_container_exec_with_params(params, sess, turn_diff_tracker, sub_id, call_id)
+                .await
         }
         "update_plan" => handle_update_plan(sess, arguments, sub_id, call_id).await,
         _ => {
@@ -1568,6 +1683,8 @@ fn to_exec_params(params: ShellToolCallParams, sess: &Session) -> ExecParams {
         cwd: sess.resolve_path(params.workdir.clone()),
         timeout_ms: params.timeout_ms,
         env: create_env(&sess.shell_environment_policy),
+        with_escalated_permissions: params.with_escalated_permissions,
+        justification: params.justification,
     }
 }
 
@@ -1608,6 +1725,7 @@ fn maybe_run_with_user_profile(params: ExecParams, sess: &Session) -> ExecParams
 async fn handle_container_exec_with_params(
     params: ExecParams,
     sess: &Session,
+    turn_diff_tracker: &mut TurnDiffTracker,
     sub_id: String,
     call_id: String,
 ) -> ResponseInputItem {
@@ -1667,13 +1785,19 @@ async fn handle_container_exec_with_params(
                 cwd: cwd.clone(),
                 timeout_ms: params.timeout_ms,
                 env: HashMap::new(),
+                with_escalated_permissions: params.with_escalated_permissions,
+                justification: params.justification.clone(),
             };
             let safety = if *user_explicitly_approved_this_action {
                 SafetyCheck::AutoApprove {
                     sandbox_type: SandboxType::None,
                 }
             } else {
-                assess_safety_for_untrusted_command(sess.approval_policy, &sess.sandbox_policy)
+                assess_safety_for_untrusted_command(
+                    sess.approval_policy,
+                    &sess.sandbox_policy,
+                    params.with_escalated_permissions.unwrap_or(false),
+                )
             };
             (
                 params,
@@ -1689,6 +1813,7 @@ async fn handle_container_exec_with_params(
                     sess.approval_policy,
                     &sess.sandbox_policy,
                     &state.approved_commands,
+                    params.with_escalated_permissions.unwrap_or(false),
                 )
             };
             let command_for_display = params.command.clone();
@@ -1705,7 +1830,7 @@ async fn handle_container_exec_with_params(
                     call_id.clone(),
                     params.command.clone(),
                     params.cwd.clone(),
-                    None,
+                    params.justification.clone(),
                 )
                 .await;
             match rx_approve.await.unwrap_or_default() {
@@ -1755,7 +1880,7 @@ async fn handle_container_exec_with_params(
             },
         ),
     };
-    sess.notify_exec_command_begin(exec_command_context.clone())
+    sess.on_exec_command_begin(turn_diff_tracker, exec_command_context.clone())
         .await;
 
     let params = maybe_run_with_user_profile(params, sess);
@@ -1782,7 +1907,8 @@ async fn handle_container_exec_with_params(
                 duration,
             } = &output;
 
-            sess.notify_exec_command_end(
+            sess.on_exec_command_end(
+                turn_diff_tracker,
                 &sub_id,
                 &call_id,
                 &output,
@@ -1806,7 +1932,15 @@ async fn handle_container_exec_with_params(
             }
         }
         Err(CodexErr::Sandbox(error)) => {
-            handle_sandbox_error(params, exec_command_context, error, sandbox_type, sess).await
+            handle_sandbox_error(
+                turn_diff_tracker,
+                params,
+                exec_command_context,
+                error,
+                sandbox_type,
+                sess,
+            )
+            .await
         }
         Err(e) => {
             // Handle non-sandbox errors
@@ -1822,6 +1956,7 @@ async fn handle_container_exec_with_params(
 }
 
 async fn handle_sandbox_error(
+    turn_diff_tracker: &mut TurnDiffTracker,
     params: ExecParams,
     exec_command_context: ExecCommandContext,
     error: SandboxErr,
@@ -1833,13 +1968,31 @@ async fn handle_sandbox_error(
     let cwd = exec_command_context.cwd.clone();
     let is_apply_patch = exec_command_context.apply_patch.is_some();
 
-    // Early out if the user never wants to be asked for approval; just return to the model immediately
-    if sess.approval_policy == AskForApproval::Never {
+    // Early out if either the user never wants to be asked for approval, or
+    // we're letting the model manage escalation requests. Otherwise, continue
+    match sess.approval_policy {
+        AskForApproval::Never | AskForApproval::OnRequest => {
+            return ResponseInputItem::FunctionCallOutput {
+                call_id,
+                output: FunctionCallOutputPayload {
+                    content: format!(
+                        "failed in sandbox {sandbox_type:?} with execution error: {error}"
+                    ),
+                    success: Some(false),
+                },
+            };
+        }
+        AskForApproval::UnlessTrusted | AskForApproval::OnFailure => (),
+    }
+
+    // similarly, if the command timed out, we can simply return this failure to the model
+    if matches!(error, SandboxErr::Timeout) {
         return ResponseInputItem::FunctionCallOutput {
             call_id,
             output: FunctionCallOutputPayload {
                 content: format!(
-                    "failed in sandbox {sandbox_type:?} with execution error: {error}"
+                    "command timed out after {} milliseconds",
+                    params.timeout_duration().as_millis()
                 ),
                 success: Some(false),
             },
@@ -1853,7 +2006,8 @@ async fn handle_sandbox_error(
     // include additional metadata on the command to indicate whether non-zero
     // exit codes merit a retry.
 
-    // For now, we categorically ask the user to retry without sandbox.
+    // For now, we categorically ask the user to retry without sandbox and
+    // emit the raw error as a background event.
     sess.notify_background_event(&sub_id, format!("Execution failed: {error}"))
         .await;
 
@@ -1878,7 +2032,8 @@ async fn handle_sandbox_error(
             sess.notify_background_event(&sub_id, "retrying command without sandbox")
                 .await;
 
-            sess.notify_exec_command_begin(exec_command_context).await;
+            sess.on_exec_command_begin(turn_diff_tracker, exec_command_context)
+                .await;
 
             // This is an escalated retry; the policy will not be
             // examined and the sandbox has been set to `None`.
@@ -1905,8 +2060,14 @@ async fn handle_sandbox_error(
                         duration,
                     } = &retry_output;
 
-                    sess.notify_exec_command_end(&sub_id, &call_id, &retry_output, is_apply_patch)
-                        .await;
+                    sess.on_exec_command_end(
+                        turn_diff_tracker,
+                        &sub_id,
+                        &call_id,
+                        &retry_output,
+                        is_apply_patch,
+                    )
+                    .await;
 
                     let is_success = *exit_code == 0;
                     let content = format_exec_output(

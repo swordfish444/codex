@@ -49,6 +49,14 @@ pub struct ExecParams {
     pub cwd: PathBuf,
     pub timeout_ms: Option<u64>,
     pub env: HashMap<String, String>,
+    pub with_escalated_permissions: Option<bool>,
+    pub justification: Option<String>,
+}
+
+impl ExecParams {
+    pub fn timeout_duration(&self) -> Duration {
+        Duration::from_millis(self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -83,11 +91,9 @@ pub async fn process_exec_tool_call(
     {
         SandboxType::None => exec(params, sandbox_policy, ctrl_c, stdout_stream.clone()).await,
         SandboxType::MacosSeatbelt => {
+            let timeout = params.timeout_duration();
             let ExecParams {
-                command,
-                cwd,
-                timeout_ms,
-                env,
+                command, cwd, env, ..
             } = params;
             let child = spawn_command_under_seatbelt(
                 command,
@@ -97,14 +103,12 @@ pub async fn process_exec_tool_call(
                 env,
             )
             .await?;
-            consume_truncated_output(child, ctrl_c, timeout_ms, stdout_stream.clone()).await
+            consume_truncated_output(child, ctrl_c, timeout, stdout_stream.clone()).await
         }
         SandboxType::LinuxSeccomp => {
+            let timeout = params.timeout_duration();
             let ExecParams {
-                command,
-                cwd,
-                timeout_ms,
-                env,
+                command, cwd, env, ..
             } = params;
 
             let codex_linux_sandbox_exe = codex_linux_sandbox_exe
@@ -120,7 +124,7 @@ pub async fn process_exec_tool_call(
             )
             .await?;
 
-            consume_truncated_output(child, ctrl_c, timeout_ms, stdout_stream).await
+            consume_truncated_output(child, ctrl_c, timeout, stdout_stream).await
         }
     };
     let duration = start.elapsed();
@@ -140,11 +144,7 @@ pub async fn process_exec_tool_call(
 
             let exit_code = raw_output.exit_status.code().unwrap_or(-1);
 
-            // NOTE(ragona): This is much less restrictive than the previous check. If we exec
-            // a command, and it returns anything other than success, we assume that it may have
-            // been a sandboxing error and allow the user to retry. (The user of course may choose
-            // not to retry, or in a non-interactive mode, would automatically reject the approval.)
-            if exit_code != 0 && sandbox_type != SandboxType::None {
+            if exit_code != 0 && is_likely_sandbox_denied(sandbox_type, exit_code) {
                 return Err(CodexErr::Sandbox(SandboxErr::Denied(
                     exit_code, stdout, stderr,
                 )));
@@ -223,6 +223,26 @@ fn create_linux_sandbox_command_args(
     linux_cmd
 }
 
+/// We don't have a fully deterministic way to tell if our command failed
+/// because of the sandbox - a command in the user's zshrc file might hit an
+/// error, but the command itself might fail or succeed for other reasons.
+/// For now, we conservatively check for 'command not found' (exit code 127),
+/// and can add additional cases as necessary.
+fn is_likely_sandbox_denied(sandbox_type: SandboxType, exit_code: i32) -> bool {
+    if sandbox_type == SandboxType::None {
+        return false;
+    }
+
+    // Quick rejects: well-known non-sandbox shell exit codes
+    // 127: command not found, 2: misuse of shell builtins
+    if exit_code == 127 {
+        return false;
+    }
+
+    // For all other cases, we assume the sandbox is the cause
+    true
+}
+
 #[derive(Debug)]
 pub struct RawExecToolCallOutput {
     pub exit_status: ExitStatus,
@@ -239,16 +259,16 @@ pub struct ExecToolCallOutput {
 }
 
 async fn exec(
-    ExecParams {
-        command,
-        cwd,
-        timeout_ms,
-        env,
-    }: ExecParams,
+    params: ExecParams,
     sandbox_policy: &SandboxPolicy,
     ctrl_c: Arc<Notify>,
     stdout_stream: Option<StdoutStream>,
 ) -> Result<RawExecToolCallOutput> {
+    let timeout = params.timeout_duration();
+    let ExecParams {
+        command, cwd, env, ..
+    } = params;
+
     let (program, args) = command.split_first().ok_or_else(|| {
         CodexErr::Io(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -266,7 +286,7 @@ async fn exec(
         env,
     )
     .await?;
-    consume_truncated_output(child, ctrl_c, timeout_ms, stdout_stream).await
+    consume_truncated_output(child, ctrl_c, timeout, stdout_stream).await
 }
 
 /// Consumes the output of a child process, truncating it so it is suitable for
@@ -274,7 +294,7 @@ async fn exec(
 pub(crate) async fn consume_truncated_output(
     mut child: Child,
     ctrl_c: Arc<Notify>,
-    timeout_ms: Option<u64>,
+    timeout: Duration,
     stdout_stream: Option<StdoutStream>,
 ) -> Result<RawExecToolCallOutput> {
     // Both stdout and stderr were configured with `Stdio::piped()`
@@ -308,7 +328,6 @@ pub(crate) async fn consume_truncated_output(
     ));
 
     let interrupted = ctrl_c.notified();
-    let timeout = Duration::from_millis(timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
     let exit_status = tokio::select! {
         result = tokio::time::timeout(timeout, child.wait()) => {
             match result {

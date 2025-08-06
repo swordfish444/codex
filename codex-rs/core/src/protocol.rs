@@ -150,6 +150,9 @@ pub enum AskForApproval {
     /// the user to approve execution without a sandbox.
     OnFailure,
 
+    /// The model decides when to ask the user for approval.
+    OnRequest,
+
     /// Never ask the user to approve commands. Failures are immediately returned
     /// to the model, and never escalated to the user for approval.
     Never,
@@ -359,6 +362,12 @@ pub enum EventMsg {
     /// Agent reasoning delta event from agent.
     AgentReasoningDelta(AgentReasoningDeltaEvent),
 
+    /// Raw chain-of-thought from agent.
+    AgentReasoningRawContent(AgentReasoningRawContentEvent),
+
+    /// Agent reasoning content delta event from agent.
+    AgentReasoningRawContentDelta(AgentReasoningRawContentDeltaEvent),
+
     /// Ack the client's configure message.
     SessionConfigured(SessionConfiguredEvent),
 
@@ -386,6 +395,8 @@ pub enum EventMsg {
 
     /// Notification that a patch application has finished.
     PatchApplyEnd(PatchApplyEndEvent),
+
+    TurnDiff(TurnDiffEvent),
 
     /// Response to GetHistoryEntryRequest.
     GetHistoryEntryResponse(GetHistoryEntryResponseEvent),
@@ -460,6 +471,16 @@ pub struct AgentMessageDeltaEvent {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentReasoningEvent {
     pub text: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AgentReasoningRawContentEvent {
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AgentReasoningRawContentDeltaEvent {
+    pub delta: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -596,6 +617,11 @@ pub struct PatchApplyEndEvent {
     pub stderr: String,
     /// Whether the patch was applied successfully.
     pub success: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TurnDiffEvent {
+    pub unified_diff: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

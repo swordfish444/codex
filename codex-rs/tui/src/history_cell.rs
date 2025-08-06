@@ -1,5 +1,4 @@
 use crate::exec_command::strip_bash_lc_and_escape;
-use crate::markdown::append_markdown;
 use crate::text_block::TextBlock;
 use crate::text_formatting::format_and_truncate_tool_result;
 use base64::Engine;
@@ -8,12 +7,12 @@ use codex_common::elapsed::format_duration;
 use codex_common::summarize_sandbox_policy;
 use codex_core::WireApi;
 use codex_core::config::Config;
-use codex_core::model_supports_reasoning_summaries;
 use codex_core::plan_tool::PlanItemArg;
 use codex_core::plan_tool::StepStatus;
 use codex_core::plan_tool::UpdatePlanArgs;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::McpInvocation;
+use codex_core::protocol::PatchApplyEndEvent;
 use codex_core::protocol::SessionConfiguredEvent;
 use image::DynamicImage;
 use image::ImageReader;
@@ -64,28 +63,35 @@ fn line_to_static(line: &Line) -> Line<'static> {
 /// scrollable list.
 pub(crate) enum HistoryCell {
     /// Welcome message.
-    WelcomeMessage { view: TextBlock },
+    WelcomeMessage {
+        view: TextBlock,
+    },
 
     /// Message from the user.
-    UserPrompt { view: TextBlock },
+    UserPrompt {
+        view: TextBlock,
+    },
 
-    /// Message from the agent.
-    AgentMessage { view: TextBlock },
-
-    /// Reasoning event from the agent.
-    AgentReasoning { view: TextBlock },
-
+    // AgentMessage and AgentReasoning variants were unused and have been removed.
     /// An exec tool call that has not finished yet.
-    ActiveExecCommand { view: TextBlock },
+    ActiveExecCommand {
+        view: TextBlock,
+    },
 
     /// Completed exec tool call.
-    CompletedExecCommand { view: TextBlock },
+    CompletedExecCommand {
+        view: TextBlock,
+    },
 
     /// An MCP tool call that has not finished yet.
-    ActiveMcpToolCall { view: TextBlock },
+    ActiveMcpToolCall {
+        view: TextBlock,
+    },
 
     /// Completed MCP tool call where we show the result serialized as JSON.
-    CompletedMcpToolCall { view: TextBlock },
+    CompletedMcpToolCall {
+        view: TextBlock,
+    },
 
     /// Completed MCP tool call where the result is an image.
     /// Admittedly, [mcp_types::CallToolResult] can have multiple content types,
@@ -95,28 +101,46 @@ pub(crate) enum HistoryCell {
     // resized version avoids doing the potentially expensive rescale twice
     // because the scroll-view first calls `height()` for layouting and then
     // `render_window()` for painting.
-    CompletedMcpToolCallWithImageOutput { _image: DynamicImage },
+    CompletedMcpToolCallWithImageOutput {
+        _image: DynamicImage,
+    },
 
     /// Background event.
-    BackgroundEvent { view: TextBlock },
+    BackgroundEvent {
+        view: TextBlock,
+    },
 
     /// Output from the `/diff` command.
-    GitDiffOutput { view: TextBlock },
+    GitDiffOutput {
+        view: TextBlock,
+    },
 
     /// Error event from the backend.
-    ErrorEvent { view: TextBlock },
+    ErrorEvent {
+        view: TextBlock,
+    },
 
     /// Info describing the newly-initialized session.
-    SessionInfo { view: TextBlock },
+    SessionInfo {
+        view: TextBlock,
+    },
 
     /// A pending code patch that is awaiting user approval. Mirrors the
     /// behaviour of `ActiveExecCommand` so the user sees *what* patch the
     /// model wants to apply before being prompted to approve or deny it.
-    PendingPatch { view: TextBlock },
+    PendingPatch {
+        view: TextBlock,
+    },
+
+    PatchEventEnd {
+        view: TextBlock,
+    },
 
     /// A human‑friendly rendering of the model's current plan and step
     /// statuses provided via the `update_plan` tool.
-    PlanUpdate { view: TextBlock },
+    PlanUpdate {
+        view: TextBlock,
+    },
 }
 
 const TOOL_CALL_MAX_LINES: usize = 5;
@@ -129,8 +153,6 @@ impl HistoryCell {
         match self {
             HistoryCell::WelcomeMessage { view }
             | HistoryCell::UserPrompt { view }
-            | HistoryCell::AgentMessage { view }
-            | HistoryCell::AgentReasoning { view }
             | HistoryCell::BackgroundEvent { view }
             | HistoryCell::GitDiffOutput { view }
             | HistoryCell::ErrorEvent { view }
@@ -138,6 +160,7 @@ impl HistoryCell {
             | HistoryCell::CompletedExecCommand { view }
             | HistoryCell::CompletedMcpToolCall { view }
             | HistoryCell::PendingPatch { view }
+            | HistoryCell::PatchEventEnd { view }
             | HistoryCell::PlanUpdate { view }
             | HistoryCell::ActiveExecCommand { view, .. }
             | HistoryCell::ActiveMcpToolCall { view, .. } => {
@@ -186,7 +209,7 @@ impl HistoryCell {
                 ("sandbox", summarize_sandbox_policy(&config.sandbox_policy)),
             ];
             if config.model_provider.wire_api == WireApi::Responses
-                && model_supports_reasoning_summaries(config)
+                && config.model_family.supports_reasoning_summaries
             {
                 entries.push((
                     "reasoning effort",
@@ -236,28 +259,6 @@ impl HistoryCell {
         lines.push(Line::from(""));
 
         HistoryCell::UserPrompt {
-            view: TextBlock::new(lines),
-        }
-    }
-
-    pub(crate) fn new_agent_message(config: &Config, message: String) -> Self {
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(Line::from("codex".magenta().bold()));
-        append_markdown(&message, &mut lines, config);
-        lines.push(Line::from(""));
-
-        HistoryCell::AgentMessage {
-            view: TextBlock::new(lines),
-        }
-    }
-
-    pub(crate) fn new_agent_reasoning(config: &Config, text: String) -> Self {
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(Line::from("thinking".magenta().italic()));
-        append_markdown(&text, &mut lines, config);
-        lines.push(Line::from(""));
-
-        HistoryCell::AgentReasoning {
             view: TextBlock::new(lines),
         }
     }
@@ -635,6 +636,28 @@ impl HistoryCell {
         lines.push(Line::from(""));
 
         HistoryCell::PendingPatch {
+            view: TextBlock::new(lines),
+        }
+    }
+
+    pub(crate) fn new_patch_end_event(patch_apply_end_event: PatchApplyEndEvent) -> Self {
+        let PatchApplyEndEvent {
+            call_id: _,
+            stdout: _,
+            stderr,
+            success,
+        } = patch_apply_end_event;
+
+        let mut lines: Vec<Line<'static>> = if success {
+            vec![Line::from("patch applied successfully".italic())]
+        } else {
+            let mut lines = vec![Line::from("patch failed".italic())];
+            lines.extend(stderr.lines().map(|l| Line::from(l.to_string())));
+            lines
+        };
+        lines.push(Line::from(""));
+
+        HistoryCell::PatchEventEnd {
             view: TextBlock::new(lines),
         }
     }
