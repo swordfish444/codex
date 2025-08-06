@@ -760,6 +760,10 @@ async fn submission_loop(
                     }
                 };
 
+                // Determine rollout path if available before moving the recorder.
+                let rollout_path: Option<std::path::PathBuf> =
+                    rollout_recorder.as_ref().map(|r| r.path().to_path_buf());
+
                 let client = ModelClient::new(
                     config.clone(),
                     auth.clone(),
@@ -859,6 +863,7 @@ async fn submission_loop(
                         model,
                         history_log_id,
                         history_entry_count,
+                        rollout_path,
                     }),
                 })
                 .chain(mcp_connection_errors.into_iter());

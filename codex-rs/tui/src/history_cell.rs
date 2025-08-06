@@ -183,10 +183,7 @@ impl HistoryCell {
         is_first_event: bool,
     ) -> Self {
         let SessionConfiguredEvent {
-            model,
-            session_id,
-            history_log_id: _,
-            history_entry_count: _,
+            model, session_id, ..
         } = event;
         if is_first_event {
             const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -463,13 +460,25 @@ impl HistoryCell {
         }
     }
 
-    pub(crate) fn new_status_output(config: &Config, usage: &TokenUsage) -> Self {
+    pub(crate) fn new_status_output(
+        config: &Config,
+        usage: &TokenUsage,
+        rollout_path: Option<&std::path::PathBuf>,
+    ) -> Self {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from("/status".magenta()));
 
         // Config
         for (key, value) in create_config_summary_entries(config) {
             lines.push(Line::from(vec![format!("{key}: ").bold(), value.into()]));
+        }
+
+        // Rollout file path (if available)
+        if let Some(p) = rollout_path {
+            lines.push(Line::from(vec![
+                "rollout: ".bold(),
+                p.display().to_string().into(),
+            ]));
         }
 
         // Token usage
