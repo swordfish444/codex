@@ -379,18 +379,35 @@ From `npm` (generally more readily available, but downloads binaries for all sup
 npm i -g @openai/codex
 ```
 
-Or go to the [latest GitHub Release](https://github.com/openai/codex/releases/latest) and download the appropriate binary for your platform.
+Or run the following script to download the appropriate pre-built binary from the
+[latest GitHub Release](https://github.com/openai/codex/releases/latest). It
+installs to `~/.local/bin` by default; set `INSTALL_DIR` to override:
 
-Admittedly, each GitHub Release contains many executables, but in practice, you likely want one of these:
+```bash
+set -euo pipefail
 
-- macOS
-  - Apple Silicon/arm64: `codex-aarch64-apple-darwin.tar.gz`
-  - x86_64 (older Mac hardware): `codex-x86_64-apple-darwin.tar.gz`
-- Linux
-  - x86_64: `codex-x86_64-unknown-linux-musl.tar.gz`
-  - arm64: `codex-aarch64-unknown-linux-musl.tar.gz`
+case "$(uname -s)" in
+  Darwin) os="apple-darwin" ;;
+  Linux) os="unknown-linux-musl" ;;
+  *) echo "unsupported OS" >&2; exit 1 ;;
+esac
 
-Each archive contains a single entry with the platform baked into the name (e.g., `codex-x86_64-unknown-linux-musl`), so you likely want to rename it to `codex` after extracting it.
+case "$(uname -m)" in
+  x86_64|amd64) arch="x86_64" ;;
+  arm64|aarch64) arch="aarch64" ;;
+  *) echo "unsupported architecture" >&2; exit 1 ;;
+esac
+
+tarball="codex-${arch}-${os}.tar.gz"
+tmpdir="$(mktemp -d)"
+curl -L "https://github.com/openai/codex/releases/latest/download/${tarball}" |
+  tar -xz -C "$tmpdir"
+install_dir="${INSTALL_DIR:-$HOME/.local/bin}"
+mkdir -p "$install_dir"
+install -m755 "$tmpdir/codex-${arch}-${os}" "$install_dir/codex"
+rm -r "$tmpdir"
+echo "Codex installed to $install_dir/codex"
+```
 
 ### DotSlash
 
