@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
+use tracing::trace;
 
 use crate::exec::SandboxType;
 use crate::is_safe_command::is_known_safe_command;
@@ -30,9 +31,17 @@ pub fn assess_patch_safety(
         };
     }
 
+    trace!("assessing patch safety: {:?}", policy);
     match policy {
-        AskForApproval::OnFailure | AskForApproval::Never | AskForApproval::OnRequest => {
+        AskForApproval::OnFailure | AskForApproval::Never => {
             // Continue to see if this can be auto-approved.
+        }
+        AskForApproval::OnRequest => {
+            // We don't want to ask the user for approval for this patch.
+            // Instead, we want to continue to the writable paths check before asking the user.
+            return SafetyCheck::AutoApprove {
+                sandbox_type: get_platform_sandbox().unwrap_or(SandboxType::None),
+            };
         }
         // TODO(ragona): I'm not sure this is actually correct? I believe in this case
         // we want to continue to the writable paths check before asking the user.
@@ -47,6 +56,7 @@ pub fn assess_patch_safety(
     // case.
     if is_write_patch_constrained_to_writable_paths(action, writable_roots, cwd)
         || policy == AskForApproval::OnFailure
+        || policy == AskForApproval::OnRequest
     {
         // Only auto‑approve when we can actually enforce a sandbox. Otherwise
         // fall back to asking the user because the patch may touch arbitrary
