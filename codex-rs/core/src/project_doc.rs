@@ -16,6 +16,11 @@ use std::path::Path;
 use std::path::PathBuf;
 use tokio::io::AsyncReadExt;
 use tracing::error;
+use tokio::io::BufReader;
+use std::fs;
+use std::io::Read as _;
+
+
 
 /// Currently, we only match the filename `AGENTS.md` exactly.
 const CANDIDATE_FILENAMES: &[&str] = &["AGENTS.md"];
@@ -48,7 +53,6 @@ pub(crate) async fn get_user_instructions(config: &Config) -> Option<String> {
 /// the function returns `Ok(None)`. Unexpected I/O failures bubble up as
 /// `Err` so callers can decide how to handle them.
 async fn find_project_doc(config: &Config) -> std::io::Result<Option<String>> {
-    use tokio::io::BufReader;
 
     let Some(path) = discover_project_doc_path(config)? else {
         return Ok(None);
@@ -93,7 +97,6 @@ fn discover_project_doc_path_from_dir(
     start_dir: &Path,
     names: &[&str],
 ) -> std::io::Result<Option<std::path::PathBuf>> {
-    use std::fs;
 
     // Canonicalize the path so that we do not end up in an infinite loop when
     // `cwd` contains `..` components.
@@ -182,7 +185,6 @@ fn first_nonempty_candidate_in_dir(dir: &Path, names: &[&str]) -> Option<PathBuf
             Ok(f) => f,
             Err(_) => continue,
         };
-        use std::io::Read as _;
         let mut buf = Vec::with_capacity(std::cmp::min(md.len() as usize, MAX_PEEK_BYTES));
         if std::io::Read::by_ref(&mut file)
             .take(MAX_PEEK_BYTES as u64)
