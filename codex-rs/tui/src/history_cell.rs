@@ -259,6 +259,7 @@ impl HistoryCell {
                 format!(" {cmd_index}. /new - {}", SlashCommand::New.description()).dim(),
             ));
             lines.push(Line::from("".dim()));
+
             HistoryCell::WelcomeMessage {
                 view: TextBlock::new(lines),
             }
