@@ -52,6 +52,7 @@ use crate::exec::SandboxType;
 use crate::exec::StdoutStream;
 use crate::exec::process_exec_tool_call;
 use crate::exec_env::create_env;
+use crate::git_info::GitInfo;
 use crate::git_info::collect_git_info;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::mcp_tool_call::handle_mcp_tool_call;
@@ -213,6 +214,7 @@ pub(crate) struct Session {
     /// the model as well as sandbox policies are resolved against this path
     /// instead of `std::env::current_dir()`.
     pub(crate) cwd: PathBuf,
+    git_info: Option<GitInfo>,
     base_instructions: Option<String>,
     user_instructions: Option<String>,
     pub(crate) approval_policy: AskForApproval,
@@ -725,11 +727,12 @@ async fn submission_loop(
                     }
                     return;
                 }
+                let git_info = collect_git_info(&cwd).await;
                 // Optionally resume an existing rollout.
                 let mut restored_items: Option<Vec<ResponseItem>> = None;
                 let rollout_recorder: Option<RolloutRecorder> =
                     if let Some(path) = resume_path.as_ref() {
-                        match RolloutRecorder::resume(path, cwd.clone()).await {
+                        match RolloutRecorder::resume(path, git_info.clone()).await {
                             Ok((rec, saved)) => {
                                 session_id = saved.session_id;
                                 if !saved.items.is_empty() {
@@ -749,8 +752,13 @@ async fn submission_loop(
                 let rollout_recorder = match rollout_recorder {
                     Some(rec) => Some(rec),
                     None => {
-                        match RolloutRecorder::new(&config, session_id, user_instructions.clone())
-                            .await
+                        match RolloutRecorder::new(
+                            &config,
+                            session_id,
+                            user_instructions.clone(),
+                            git_info.clone(),
+                        )
+                        .await
                         {
                             Ok(r) => Some(r),
                             Err(e) => {
@@ -829,6 +837,7 @@ async fn submission_loop(
                     sandbox_policy,
                     shell_environment_policy: config.shell_environment_policy.clone(),
                     cwd,
+                    git_info,
                     writable_roots,
                     mcp_connection_manager,
                     notify,
@@ -1228,7 +1237,7 @@ async fn run_turn(
         base_instructions_override: sess.base_instructions.clone(),
         environment_context: Some(EnvironmentContext {
             cwd: sess.cwd.clone(),
-            git_info: collect_git_info(&sess.cwd).await,
+            git_info: sess.git_info.clone(),
             approval_policy: sess.approval_policy,
             sandbox_policy: sess.sandbox_policy.clone(),
         }),

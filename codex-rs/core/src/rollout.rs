@@ -21,7 +21,6 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::git_info::GitInfo;
-use crate::git_info::collect_git_info;
 use crate::models::ResponseItem;
 
 const SESSIONS_SUBDIR: &str = "sessions";
@@ -82,6 +81,7 @@ impl RolloutRecorder {
         config: &Config,
         uuid: Uuid,
         instructions: Option<String>,
+        git_info: Option<GitInfo>,
     ) -> std::io::Result<Self> {
         let LogFileInfo {
             file,
@@ -95,9 +95,6 @@ impl RolloutRecorder {
         let timestamp = timestamp
             .format(timestamp_format)
             .map_err(|e| IoError::other(format!("failed to format timestamp: {e}")))?;
-
-        // Clone the cwd for the spawned task to collect git info asynchronously
-        let cwd = config.cwd.clone();
 
         // A reasonably-sized bounded channel. If the buffer fills up the send
         // future will yield, which is fine – we only need to ensure we do not
@@ -115,7 +112,7 @@ impl RolloutRecorder {
                 id: session_id,
                 instructions,
             }),
-            cwd,
+            git_info,
         ));
 
         Ok(Self { tx })
@@ -157,7 +154,7 @@ impl RolloutRecorder {
 
     pub async fn resume(
         path: &Path,
-        cwd: std::path::PathBuf,
+        git_info: Option<GitInfo>,
     ) -> std::io::Result<(Self, SavedSession)> {
         info!("Resuming rollout from {path:?}");
         let text = tokio::fs::read_to_string(path).await?;
@@ -220,7 +217,7 @@ impl RolloutRecorder {
             tokio::fs::File::from_std(file),
             rx,
             None,
-            cwd,
+            git_info,
         ));
         info!("Resumed rollout successfully from {path:?}");
         Ok((Self { tx }, saved))
@@ -291,13 +288,12 @@ async fn rollout_writer(
     file: tokio::fs::File,
     mut rx: mpsc::Receiver<RolloutCmd>,
     mut meta: Option<SessionMeta>,
-    cwd: std::path::PathBuf,
+    git_info: Option<GitInfo>,
 ) -> std::io::Result<()> {
     let mut writer = JsonlWriter { file };
 
     // If we have a meta, collect git info asynchronously and write meta first
     if let Some(session_meta) = meta.take() {
-        let git_info = collect_git_info(&cwd).await;
         let session_meta_with_git = SessionMetaWithGit {
             meta: session_meta,
             git: git_info,
