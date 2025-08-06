@@ -31,14 +31,12 @@ pub fn assess_patch_safety(
         };
     }
 
-    trace!("assessing patch safety: {:?}", policy);
     match policy {
         AskForApproval::OnFailure | AskForApproval::Never => {
             // Continue to see if this can be auto-approved.
         }
         AskForApproval::OnRequest => {
-            // We don't want to ask the user for approval for this patch.
-            // Instead, we want to continue to the writable paths check before asking the user.
+            // Delegate safety and approval handling to exec
             return SafetyCheck::AutoApprove {
                 sandbox_type: get_platform_sandbox().unwrap_or(SandboxType::None),
             };
@@ -56,7 +54,6 @@ pub fn assess_patch_safety(
     // case.
     if is_write_patch_constrained_to_writable_paths(action, writable_roots, cwd)
         || policy == AskForApproval::OnFailure
-        || policy == AskForApproval::OnRequest
     {
         // Only auto‑approve when we can actually enforce a sandbox. Otherwise
         // fall back to asking the user because the patch may touch arbitrary
