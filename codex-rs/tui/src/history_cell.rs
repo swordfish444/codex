@@ -211,10 +211,10 @@ impl HistoryCell {
 
                 let summary_line = match (user_path, project_path) {
                     (Some(u), Some(pr)) => {
-                        format!("Using user instructions ({u}) and project instructions ({pr})")
+                        format!(" Using user instructions ({u}) and project instructions ({pr})")
                     }
                     (Some(u), None) => format!("Using user instructions ({u})"),
-                    (None, Some(pr)) => format!("Using project instructions ({pr})"),
+                    (None, Some(pr)) => format!(" Using project instructions ({pr})"),
                     (None, None) => String::new(),
                 };
 
