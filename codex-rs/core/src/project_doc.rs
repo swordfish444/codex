@@ -32,10 +32,7 @@ pub fn discover_project_doc_path(config: &Config) -> std::io::Result<Option<std:
         return Ok(None);
     }
 
-    discover_project_doc_path_from_dir(
-        &config.cwd,
-        CANDIDATE_FILENAMES,
-    )
+    discover_project_doc_path_from_dir(&config.cwd, CANDIDATE_FILENAMES)
 }
 
 fn discover_project_doc_path_from_dir(

@@ -166,13 +166,8 @@ impl HistoryCell {
         event: SessionConfiguredEvent,
         is_first_event: bool,
     ) -> Self {
-        let SessionConfiguredEvent {
-            model,
-            session_id: _,
-            history_log_id: _,
-            history_entry_count: _,
-            ..
-        } = event;
+        let model = event.model.clone();
+        let agents_doc_path = event.agents_doc_path.clone();
         if is_first_event {
             let cwd_str = match relativize_to_home(&config.cwd) {
                 Some(rel) if !rel.as_os_str().is_empty() => format!("~/{}", rel.display()),
@@ -180,7 +175,7 @@ impl HistoryCell {
                 None => config.cwd.display().to_string(),
             };
 
-            let lines: Vec<Line<'static>> = vec![
+            let mut lines: Vec<Line<'static>> = vec![
                 Line::from(vec![
                     Span::raw(">_ ").dim(),
                     Span::styled(
@@ -190,14 +185,78 @@ impl HistoryCell {
                     Span::raw(format!(" {cwd_str}")).dim(),
                 ]),
                 Line::from("".dim()),
-                Line::from(" Try one of the following commands to get started:".dim()),
-                Line::from("".dim()),
-                Line::from(format!(" 1. /init - {}", SlashCommand::Init.description()).dim()),
-                Line::from(format!(" 2. /status - {}", SlashCommand::Status.description()).dim()),
-                Line::from(format!(" 3. /compact - {}", SlashCommand::Compact.description()).dim()),
-                Line::from(format!(" 4. /new - {}", SlashCommand::New.description()).dim()),
-                Line::from("".dim()),
             ];
+
+            // If AGENTS.md is configured (either user-level or project-level),
+            // show a concise summary and omit the /init hint, but still show the other onboarding commands.
+            let show_init = agents_doc_path.is_none();
+
+            if let Some(paths_str) = agents_doc_path {
+                let global_path = config.codex_home.join("AGENTS.md");
+                let parts: Vec<String> = paths_str
+                    .split(" + ")
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+
+                let mut user_path: Option<String> = None;
+                let mut project_path: Option<String> = None;
+                for p in parts {
+                    if p == global_path.display().to_string() {
+                        user_path = Some(p);
+                    } else {
+                        project_path = Some(p);
+                    }
+                }
+
+                let summary_line = match (user_path, project_path) {
+                    (Some(u), Some(pr)) => {
+                        format!("Using user instructions ({u}) and project instructions ({pr})")
+                    }
+                    (Some(u), None) => format!("Using user instructions ({u})"),
+                    (None, Some(pr)) => format!("Using project instructions ({pr})"),
+                    (None, None) => String::new(),
+                };
+
+                if !summary_line.is_empty() {
+                    lines.push(Line::from(summary_line.dim()));
+                    lines.push(Line::from("".dim()));
+                }
+            }
+
+            // Onboarding hints, with index based on whether /init is shown
+            lines.push(Line::from(
+                " Try one of the following commands to get started:".dim(),
+            ));
+            lines.push(Line::from("".dim()));
+
+            let mut cmd_index = 1;
+            if show_init {
+                lines.push(Line::from(
+                    format!(" {cmd_index}. /init - {}", SlashCommand::Init.description()).dim(),
+                ));
+                cmd_index += 1;
+            }
+            lines.push(Line::from(
+                format!(
+                    " {cmd_index}. /status - {}",
+                    SlashCommand::Status.description()
+                )
+                .dim(),
+            ));
+            cmd_index += 1;
+            lines.push(Line::from(
+                format!(
+                    " {cmd_index}. /compact - {}",
+                    SlashCommand::Compact.description()
+                )
+                .dim(),
+            ));
+            cmd_index += 1;
+            lines.push(Line::from(
+                format!(" {cmd_index}. /new - {}", SlashCommand::New.description()).dim(),
+            ));
+            lines.push(Line::from("".dim()));
             HistoryCell::WelcomeMessage {
                 view: TextBlock::new(lines),
             }
