@@ -11,6 +11,7 @@ use codex_core::config::Config;
 use codex_core::plan_tool::PlanItemArg;
 use codex_core::plan_tool::StepStatus;
 use codex_core::plan_tool::UpdatePlanArgs;
+use codex_core::project_doc::collect_instructions_info_sync;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::McpInvocation;
 use codex_core::protocol::SessionConfiguredEvent;
@@ -179,7 +180,7 @@ impl HistoryCell {
                 None => config.cwd.display().to_string(),
             };
 
-            let lines: Vec<Line<'static>> = vec![
+            let mut lines: Vec<Line<'static>> = vec![
                 Line::from(vec![
                     Span::raw(">_ ").dim(),
                     Span::styled(
@@ -191,12 +192,67 @@ impl HistoryCell {
                 Line::from("".dim()),
                 Line::from(" Try one of the following commands to get started:".dim()),
                 Line::from("".dim()),
-                Line::from(format!(" 1. /init - {}", SlashCommand::Init.description()).dim()),
-                Line::from(format!(" 2. /status - {}", SlashCommand::Status.description()).dim()),
-                Line::from(format!(" 3. /compact - {}", SlashCommand::Compact.description()).dim()),
-                Line::from(format!(" 4. /new - {}", SlashCommand::New.description()).dim()),
-                Line::from("".dim()),
             ];
+
+            // If user/project instructions are configured, show their paths and
+            // replace the '/init' hint; otherwise keep the original '/init'.
+            let info = collect_instructions_info_sync(config);
+            let render_path = |p: &std::path::PathBuf| -> String {
+                match relativize_to_home(p) {
+                    Some(rel) if !rel.as_os_str().is_empty() => format!("~/{}", rel.display()),
+                    _ => p.display().to_string(),
+                }
+            };
+            let mut command_number = 1;
+            if info.user_instructions_path.is_some() || info.project_instructions_path.is_some() {
+                let mut parts: Vec<String> = Vec::new();
+                if let Some(p) = info.user_instructions_path.as_ref() {
+                    parts.push(format!("user instructions ({})", render_path(p)));
+                }
+                if let Some(p) = info.project_instructions_path.as_ref() {
+                    parts.push(format!("project instructions ({})", render_path(p)));
+                }
+                let using_line = format!(" Using {}", parts.join(" and "));
+                lines.push(Line::from(using_line).dim());
+            } else {
+                lines.push(
+                    Line::from(format!(
+                        " {}. /init - {}",
+                        command_number,
+                        SlashCommand::Init.description()
+                    ))
+                    .dim(),
+                );
+                command_number += 1;
+            }
+            // Always keep the remaining suggestions.
+            lines.push(
+                Line::from(format!(
+                    " {}. /status - {}",
+                    command_number,
+                    SlashCommand::Status.description()
+                ))
+                .dim(),
+            );
+            command_number += 1;
+            lines.push(
+                Line::from(format!(
+                    " {}. /compact - {}",
+                    command_number,
+                    SlashCommand::Compact.description()
+                ))
+                .dim(),
+            );
+            command_number += 1;
+            lines.push(
+                Line::from(format!(
+                    " {}. /new - {}",
+                    command_number,
+                    SlashCommand::New.description()
+                ))
+                .dim(),
+            );
+            lines.push(Line::from("".dim()));
             HistoryCell::WelcomeMessage {
                 view: TextBlock::new(lines),
             }
@@ -453,6 +509,26 @@ impl HistoryCell {
     pub(crate) fn new_status_output(config: &Config, usage: &TokenUsage) -> Self {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from("/status".magenta()));
+
+        // If instructions are configured, show the source paths at the top.
+        let info = collect_instructions_info_sync(config);
+        if info.user_instructions_path.is_some() || info.project_instructions_path.is_some() {
+            let render_path = |p: &std::path::PathBuf| -> String {
+                match relativize_to_home(p) {
+                    Some(rel) if !rel.as_os_str().is_empty() => format!("~/{}", rel.display()),
+                    _ => p.display().to_string(),
+                }
+            };
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(p) = info.user_instructions_path.as_ref() {
+                parts.push(format!("user instructions ({})", render_path(p)));
+            }
+            if let Some(p) = info.project_instructions_path.as_ref() {
+                parts.push(format!("project instructions ({})", render_path(p)));
+            }
+            lines.push(Line::from(format!("Using {}", parts.join(" and "))));
+            lines.push(Line::from(""));
+        }
 
         // Config
         for (key, value) in create_config_summary_entries(config) {
