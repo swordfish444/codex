@@ -64,7 +64,8 @@ async fn find_project_doc(config: &Config) -> std::io::Result<Option<String>> {
     }
 
     // Walk up towards the filesystem root, stopping once we encounter the Git
-    // repository root. The presence of either a `.git` file or directory counts.
+    // repository root. The presence of **either** a `.git` *file* or
+    // *directory* counts.
     let mut dir = config.cwd.clone();
 
     // Canonicalize the path so that we do not end up in an infinite loop when
@@ -74,7 +75,7 @@ async fn find_project_doc(config: &Config) -> std::io::Result<Option<String>> {
     }
 
     while let Some(parent) = dir.parent() {
-        // `.git` can be a file (for worktrees or submodules) or a directory.
+        // `.git` can be a *file* (for worktrees or submodules) or a *dir*.
         let git_marker = dir.join(".git");
         let git_exists = match tokio::fs::metadata(&git_marker).await {
             Ok(_) => true,
@@ -87,7 +88,7 @@ async fn find_project_doc(config: &Config) -> std::io::Result<Option<String>> {
             if let Some(doc) = load_first_candidate(&dir, CANDIDATE_FILENAMES, max_bytes).await? {
                 return Ok(Some(doc));
             }
-            break; // do not walk past the Git root
+            break;
         }
 
         dir = parent.to_path_buf();
