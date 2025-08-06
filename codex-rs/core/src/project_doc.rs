@@ -40,7 +40,6 @@ pub(crate) async fn get_user_instructions(config: &Config) -> Option<String> {
     }
 }
 
-
 /// Attempt to locate and load the project documentation. Currently, the search
 /// starts from `Config::cwd`, but if we may want to consider other directories
 /// in the future, e.g., additional writable directories in the `SandboxPolicy`.
