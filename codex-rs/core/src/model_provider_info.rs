@@ -107,7 +107,30 @@ impl ModelProviderInfo {
         let mut builder = client.post(url);
 
         if let Some(auth) = auth.as_ref() {
-            builder = builder.bearer_auth(auth.get_token().await?);
+            // Determine the appropriate authentication header based on the
+            // provider's base URL and the style expected by the backend.  In
+            // particular, Azure OpenAI deployments reject the standard
+            // `Authorization: Bearer <key>` header and instead require
+            // `api-key: <key>`. Empirically these deployments can be
+            // identified by the presence of `.openai.azure.com` in the base
+            // URL. When such an endpoint is detected **and** the current
+            // authentication mode is [`AuthMode::ApiKey`], we send the key in
+            // an `api-key` header instead of the default bearer token.
+
+            let use_azure_header = self
+                .base_url
+                .as_deref()
+                .map(|u| u.contains(".openai.azure.com"))
+                .unwrap_or(false);
+
+            match auth.mode {
+                AuthMode::ApiKey if use_azure_header => {
+                    builder = builder.header("api-key", auth.get_token().await?);
+                }
+                _ => {
+                    builder = builder.bearer_auth(auth.get_token().await?);
+                }
+            }
         }
 
         Ok(self.apply_http_headers(builder))
