@@ -127,12 +127,13 @@ impl ModelClient {
 
         let auth_mode = auth.as_ref().map(|a| a.mode);
 
-        if self.config.model_family.family == "2025-08-06-model"
-            && auth_mode != Some(AuthMode::ChatGPT)
-        {
+        if self.config.model_family.requires_chatgpt_auth && auth_mode != Some(AuthMode::ChatGPT) {
             return Err(CodexErr::UnexpectedStatus(
                 StatusCode::BAD_REQUEST,
-                "2025-08-06-model is only supported with ChatGPT auth, run `codex login status` to check your auth status and `codex login` to login with ChatGPT".to_string(),
+                format!(
+                    "{slug} is only supported with ChatGPT auth, run `codex login status` to check your auth status and `codex login` to login with ChatGPT",
+                    slug = self.config.model_family.slug
+                ),
             ));
         }
 

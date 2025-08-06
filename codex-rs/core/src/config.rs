@@ -486,6 +486,7 @@ impl Config {
                 needs_special_apply_patch_instructions: false,
                 supports_reasoning_summaries,
                 uses_local_shell_tool: false,
+                requires_chatgpt_auth: false,
             }
         });
 
