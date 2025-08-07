@@ -618,30 +618,7 @@ impl HistoryCell {
         lines.push(Line::from(title.magenta().bold()));
 
         for line in summary_lines {
-            if line.starts_with('+') {
-                lines.push(line.green().into());
-            } else if line.starts_with('-') {
-                lines.push(line.red().into());
-            } else if let Some(space_idx) = line.find(' ') {
-                let kind_owned = line[..space_idx].to_string();
-                let rest_owned = line[space_idx + 1..].to_string();
-
-                let style_for = |fg: Color| Style::default().fg(fg).add_modifier(Modifier::BOLD);
-
-                let styled_kind = match kind_owned.as_str() {
-                    "A" => RtSpan::styled(kind_owned.clone(), style_for(Color::Green)),
-                    "D" => RtSpan::styled(kind_owned.clone(), style_for(Color::Red)),
-                    "M" => RtSpan::styled(kind_owned.clone(), style_for(Color::Yellow)),
-                    "R" | "C" => RtSpan::styled(kind_owned.clone(), style_for(Color::Cyan)),
-                    _ => RtSpan::raw(kind_owned.clone()),
-                };
-
-                let styled_line =
-                    RtLine::from(vec![styled_kind, RtSpan::raw(" "), RtSpan::raw(rest_owned)]);
-                lines.push(styled_line);
-            } else {
-                lines.push(Line::from(line));
-            }
+            lines.push(line);
         }
 
         lines.push(Line::from(""));
@@ -708,36 +685,233 @@ impl WidgetRef for &HistoryCell {
     }
 }
 
-fn create_diff_summary(changes: HashMap<PathBuf, FileChange>) -> Vec<String> {
+fn create_diff_summary(changes: HashMap<PathBuf, FileChange>) -> Vec<Line<'static>> {
     // Build a concise, human‑readable summary list similar to the
     // `git status` short format so the user can reason about the
     // patch without scrolling.
-    let mut summaries: Vec<String> = Vec::new();
+    let mut summaries: Vec<Line<'static>> = Vec::new();
     for (path, change) in &changes {
         use codex_core::protocol::FileChange::*;
         match change {
             Add { content } => {
                 let added = content.lines().count();
-                summaries.push(format!("A {} (+{added})", path.display()));
+                summaries.push(Line::from(vec![
+                    RtSpan::styled(
+                        "A",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    RtSpan::raw(" "),
+                    RtSpan::raw(format!("{} (+{added})", path.display())),
+                ]));
             }
             Delete => {
-                summaries.push(format!("D {}", path.display()));
+                summaries.push(Line::from(vec![
+                    RtSpan::styled(
+                        "D",
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    ),
+                    RtSpan::raw(" "),
+                    RtSpan::raw(format!("{}", path.display())),
+                ]));
             }
             Update {
                 unified_diff,
                 move_path,
             } => {
                 if let Some(new_path) = move_path {
-                    summaries.push(format!("R {} → {}", path.display(), new_path.display(),));
+                    summaries.push(Line::from(vec![
+                        RtSpan::styled(
+                            "R",
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        RtSpan::raw(" "),
+                        RtSpan::raw(format!("{} → {}", path.display(), new_path.display())),
+                    ]));
                 } else {
-                    summaries.push(format!("M {}", path.display(),));
+                    summaries.push(Line::from(vec![
+                        RtSpan::styled(
+                            "M",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        RtSpan::raw(" "),
+                        RtSpan::raw(format!("{}", path.display())),
+                    ]));
                 }
-                summaries.extend(unified_diff.lines().map(|s| s.to_string()));
+
+                // Render unified diff as inline diff with line numbers.
+                summaries.extend(format_inline_diff(unified_diff));
             }
         }
     }
 
     summaries
+}
+
+/// Convert a unified diff (only hunk bodies expected) into inline diff lines
+/// with old/new line numbers and colored +/- content.
+fn format_inline_diff(unified_diff: &str) -> Vec<Line<'static>> {
+    // First pass: compute max widths for old/new line numbers from hunk headers
+    let mut max_old: usize = 0;
+    let mut max_new: usize = 0;
+    for l in unified_diff.lines() {
+        if let Some(caps) = parse_hunk_header(l) {
+            let (o_start, o_count, n_start, n_count) = caps;
+            let o_end = o_start + o_count.saturating_sub(1);
+            let n_end = n_start + n_count.saturating_sub(1);
+            max_old = max_old.max(o_end as usize);
+            max_new = max_new.max(n_end as usize);
+        }
+    }
+    let old_w = std::cmp::max(2, num_width(max_old as u64));
+    let new_w = std::cmp::max(2, num_width(max_new as u64));
+
+    let mut old_ln: i64 = 0;
+    let mut new_ln: i64 = 0;
+    let mut out: Vec<Line<'static>> = Vec::new();
+
+    for raw in unified_diff.lines() {
+        if let Some((o_start, _o_count, n_start, _n_count)) = parse_hunk_header(raw) {
+            old_ln = o_start as i64;
+            new_ln = n_start as i64;
+            out.push(Line::from(RtSpan::styled(
+                raw.to_string(),
+                Style::default().fg(Color::Cyan),
+            )));
+            continue;
+        }
+
+        // Prepare number columns and content coloring based on first char
+        let (left_num, right_num, content_style, advance_old, advance_new):
+            (String, String, Style, i64, i64) = if raw.starts_with('+')
+        {
+            (
+                " ".repeat(old_w),
+                format!("{:>width$}", new_ln, width = new_w),
+                Style::default().fg(Color::Green),
+                0,
+                1,
+            )
+        } else if raw.starts_with('-') {
+            (
+                format!("{:>width$}", old_ln, width = old_w),
+                " ".repeat(new_w),
+                Style::default().fg(Color::Red),
+                1,
+                0,
+            )
+        } else {
+            (
+                format!("{:>width$}", old_ln, width = old_w),
+                format!("{:>width$}", new_ln, width = new_w),
+                Style::default(),
+                1,
+                1,
+            )
+        };
+
+        let num_style = Style::default().fg(Color::DarkGray);
+        let sep = RtSpan::styled(" | ", num_style);
+        let left = RtSpan::styled(left_num, num_style);
+        let right = RtSpan::styled(right_num, num_style);
+        let content = RtSpan::styled(raw.to_string(), content_style);
+        out.push(RtLine::from(vec![left, sep.clone(), right, sep, content]));
+
+        old_ln += advance_old;
+        new_ln += advance_new;
+    }
+
+    out
+}
+
+fn parse_hunk_header(line: &str) -> Option<(u64, u64, u64, u64)> {
+    // @@ -oldStart,oldCount +newStart,newCount @@
+    // counts may be omitted which implies 1
+    if !line.starts_with("@@") {
+        return None;
+    }
+    let mut old_start: u64 = 0;
+    let mut old_count: u64 = 1;
+    let mut new_start: u64 = 0;
+    let mut new_count: u64 = 1;
+    // A simple, robust parse without regex
+    // Find "-" then space then "+" then space then "@@"
+    let bytes = line.as_bytes();
+    // Find first '-' after '@@'
+    let mut i = 2;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] != b'-' {
+        return None;
+    }
+    i += 1;
+    // parse oldStart
+    let (n, consumed) = parse_uint(&bytes[i..]);
+    if consumed == 0 {
+        return None;
+    }
+    old_start = n;
+    i += consumed;
+    // optional ,oldCount
+    if i < bytes.len() && bytes[i] == b',' {
+        i += 1;
+        let (n2, c2) = parse_uint(&bytes[i..]);
+        if c2 == 0 {
+            return None;
+        }
+        old_count = n2;
+        i += c2;
+    }
+    // skip spaces
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] != b'+' {
+        return None;
+    }
+    i += 1;
+    let (n3, c3) = parse_uint(&bytes[i..]);
+    if c3 == 0 {
+        return None;
+    }
+    new_start = n3;
+    i += c3;
+    if i < bytes.len() && bytes[i] == b',' {
+        i += 1;
+        let (n4, c4) = parse_uint(&bytes[i..]);
+        if c4 == 0 {
+            return None;
+        }
+        new_count = n4;
+        i += c4;
+    }
+    Some((old_start, old_count, new_start, new_count))
+}
+
+fn parse_uint(s: &[u8]) -> (u64, usize) {
+    let mut i = 0usize;
+    let mut n: u64 = 0;
+    while i < s.len() {
+        let b = s[i];
+        if b.is_ascii_digit() {
+            n = n * 10 + (b - b'0') as u64;
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    (n, i)
+}
+
+fn num_width(n: u64) -> usize {
+    // Simple and exact decimal width
+    n.to_string().len()
 }
 
 fn format_mcp_invocation<'a>(invocation: McpInvocation) -> Line<'a> {
