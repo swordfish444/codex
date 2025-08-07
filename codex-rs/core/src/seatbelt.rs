@@ -145,12 +145,13 @@ mod tests {
             root_without_git_canon,
         } = populate_tmpdir(tmp.path());
 
-        // Build a policy that only includes the two test roots as writable and
-        // does not automatically include defaults like cwd or TMPDIR.
+        // Build a policy that includes the two test roots as writable and also
+        // includes default writable roots (cwd, /tmp, and possibly TMPDIR).
         let policy = SandboxPolicy::WorkspaceWrite {
             writable_roots: vec![root_with_git.clone(), root_without_git.clone()],
             network_access: false,
-            include_default_writable_roots: false,
+            exclude_tmpdir_env_var: false,
+            exclude_slash_tmp: false,
         };
 
         let args = create_seatbelt_command_args(
@@ -159,22 +160,50 @@ mod tests {
             tmp.path(),
         );
 
+        // Compute dynamic expected bits for defaults.
+        let cwd_canon = tmp
+            .path()
+            .canonicalize()
+            .expect("canonicalize tmp cwd")
+            .to_string_lossy()
+            .to_string();
+        let slash_tmp_canon = PathBuf::from("/tmp")
+            .canonicalize()
+            .expect("canonicalize /tmp")
+            .to_string_lossy()
+            .to_string();
+        let tmpdir_env_var = if cfg!(target_os = "macos") {
+            std::env::var("TMPDIR")
+                .ok()
+                .map(PathBuf::from)
+                .and_then(|p| p.canonicalize().ok())
+                .map(|p| p.to_string_lossy().to_string())
+        } else {
+            None
+        };
+        let tmpdir_policy_entry = if tmpdir_env_var.is_some() {
+            " (subpath (param \"WRITABLE_ROOT_4\"))"
+        } else {
+            ""
+        };
+
         // Build the expected policy text using a raw string for readability.
         // Note that the policy includes:
         // - the base policy,
         // - read-only access to the filesystem,
-        // - write access to WRITABLE_ROOT_0 (but not its .git) and WRITABLE_ROOT_1.
+        // - write access to WRITABLE_ROOT_0 (but not its .git), WRITABLE_ROOT_1,
+        //   WRITABLE_ROOT_2 (cwd), WRITABLE_ROOT_3 (/tmp), and optionally WRITABLE_ROOT_4 (TMPDIR).
         let expected_policy = format!(
             r#"{MACOS_SEATBELT_BASE_POLICY}
 ; allow read-only file operations
 (allow file-read*)
 (allow file-write*
-(require-all (subpath (param "WRITABLE_ROOT_0")) (require-not (subpath (param "WRITABLE_ROOT_0_RO_0"))) ) (subpath (param "WRITABLE_ROOT_1"))
+(require-all (subpath (param "WRITABLE_ROOT_0")) (require-not (subpath (param "WRITABLE_ROOT_0_RO_0"))) ) (subpath (param "WRITABLE_ROOT_1")) (subpath (param "WRITABLE_ROOT_2")) (subpath (param "WRITABLE_ROOT_3")){tmpdir_policy_entry}
 )
 "#,
         );
 
-        let expected_args = vec![
+        let mut expected_args = vec![
             "-p".to_string(),
             expected_policy,
             format!(
@@ -189,12 +218,21 @@ mod tests {
                 "-DWRITABLE_ROOT_1={}",
                 root_without_git_canon.to_string_lossy()
             ),
+            format!("-DWRITABLE_ROOT_2={cwd_canon}"),
+            format!("-DWRITABLE_ROOT_3={slash_tmp_canon}"),
+        ];
+
+        if let Some(p) = tmpdir_env_var {
+            expected_args.push(format!("-DWRITABLE_ROOT_4={p}"));
+        }
+
+        expected_args.extend(vec![
             "--".to_string(),
             "/bin/echo".to_string(),
             "hello".to_string(),
-        ];
+        ]);
 
-        assert_eq!(args, expected_args);
+        assert_eq!(expected_args, args);
     }
 
     #[test]
@@ -215,7 +253,8 @@ mod tests {
         let policy = SandboxPolicy::WorkspaceWrite {
             writable_roots: vec![],
             network_access: false,
-            include_default_writable_roots: true,
+            exclude_tmpdir_env_var: false,
+            exclude_slash_tmp: false,
         };
 
         let args = create_seatbelt_command_args(
@@ -233,10 +272,22 @@ mod tests {
         } else {
             None
         };
-        let tempdir_policy_entry = if tmpdir_env_var.is_some() {
-            " (subpath (param \"WRITABLE_ROOT_1\"))"
+
+        let tmp = PathBuf::from("/tmp");
+        // We do not expect /tmp to exist on Windows, but we want Windows devs
+        // to be able to run this test.
+        let include_tmp = tmp.is_dir();
+        let slash_tmp_entry = if include_tmp {
+            r#" (subpath (param "WRITABLE_ROOT_1"))"#
         } else {
             ""
+        };
+
+        let tempdir_policy_entry = if tmpdir_env_var.is_some() {
+            let index = if include_tmp { "2" } else { "1" };
+            format!(" (subpath (param \"WRITABLE_ROOT_{index}\"))")
+        } else {
+            "".to_string()
         };
 
         // Build the expected policy text using a raw string for readability.
@@ -249,7 +300,7 @@ mod tests {
 ; allow read-only file operations
 (allow file-read*)
 (allow file-write*
-(require-all (subpath (param "WRITABLE_ROOT_0")) (require-not (subpath (param "WRITABLE_ROOT_0_RO_0"))) ){tempdir_policy_entry}
+(require-all (subpath (param "WRITABLE_ROOT_0")) (require-not (subpath (param "WRITABLE_ROOT_0_RO_0"))) ){slash_tmp_entry}{tempdir_policy_entry}
 )
 "#,
         );
@@ -267,8 +318,17 @@ mod tests {
             ),
         ];
 
+        if include_tmp {
+            expected_args.push(format!(
+                "-DWRITABLE_ROOT_1={}",
+                tmp.canonicalize()
+                    .expect("canonicalize /tmp")
+                    .to_string_lossy()
+            ));
+        }
+
         if let Some(p) = tmpdir_env_var {
-            expected_args.push(format!("-DWRITABLE_ROOT_1={p}"));
+            expected_args.push(format!("-DWRITABLE_ROOT_2={p}"));
         }
 
         expected_args.extend(vec![
@@ -277,7 +337,7 @@ mod tests {
             "hello".to_string(),
         ]);
 
-        assert_eq!(args, expected_args);
+        assert_eq!(expected_args, args);
     }
 
     struct PopulatedTmp {
