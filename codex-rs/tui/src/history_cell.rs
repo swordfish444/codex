@@ -549,6 +549,25 @@ impl HistoryCell {
         lines.push(Line::from("/status".magenta()));
         lines.push(Line::from(""));
 
+        let config_entries = create_config_summary_entries(config);
+        let lookup = |k: &str| -> String {
+            config_entries
+                .iter()
+                .find(|(key, _)| *key == k)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default()
+        };
+
+        // 📂 Workspace
+        lines.push(Line::from(vec!["📂 ".into(), "Workspace".bold()]));
+        // Path (home-relative, e.g., ~/code/project)
+        let cwd_str = match relativize_to_home(&config.cwd) {
+            Some(rel) if !rel.as_os_str().is_empty() => format!("~/{}", rel.display()),
+            Some(_) => "~".to_string(),
+            None => config.cwd.display().to_string(),
+        };
+        lines.push(Line::from(vec!["  • Path: ".into(), cwd_str.into()]));
+
         // If instructions are configured, show the source paths at the top.
         let info = collect_instructions_info_sync(config);
         if info.user_instructions_path.is_some() || info.project_instructions_path.is_some() {
@@ -571,29 +590,11 @@ impl HistoryCell {
                 parts.join("")
             };
             lines.push(Line::from(vec![
-                "agents.md: ".white().bold(),
-                joined.white(),
+                "  • AGENTS.md: ".into(),
+                joined.into(),
             ]));
         }
 
-        let config_entries = create_config_summary_entries(config);
-        let lookup = |k: &str| -> String {
-            config_entries
-                .iter()
-                .find(|(key, _)| *key == k)
-                .map(|(_, v)| v.clone())
-                .unwrap_or_default()
-        };
-
-        // 📂 Workspace
-        lines.push(Line::from(vec!["📂 ".into(), "Workspace".bold()]));
-        // Path (home-relative, e.g., ~/code/project)
-        let cwd_str = match relativize_to_home(&config.cwd) {
-            Some(rel) if !rel.as_os_str().is_empty() => format!("~/{}", rel.display()),
-            Some(_) => "~".to_string(),
-            None => config.cwd.display().to_string(),
-        };
-        lines.push(Line::from(vec!["  • Path: ".into(), cwd_str.into()]));
         // Approval mode (as-is)
         lines.push(Line::from(vec![
             "  • Approval Mode: ".into(),
