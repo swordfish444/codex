@@ -197,8 +197,6 @@ impl HistoryCell {
                     Span::raw(format!(" {cwd_str}")).dim(),
                 ]),
                 Line::from("".dim()),
-                Line::from(" To get started, describe a task or try one of these commands:".dim()),
-                Line::from("".dim()),
             ];
 
             // If AGENTS.md is configured (either user-level or project-level),
@@ -241,10 +239,8 @@ impl HistoryCell {
                 }
             }
 
-            // Onboarding hints, without index, and /init only if show_init is true
-            lines.push(Line::from(
-                " Try one of the following commands to get started:".dim(),
-            ));
+            // this needs to happen after the agents.md summary, if it's shown (as its not a /command)
+            lines.push(Line::from(" To get started, describe a task or try one of these commands:".dim()));
             lines.push(Line::from("".dim()));
 
             if show_init {
