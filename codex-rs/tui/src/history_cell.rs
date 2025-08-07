@@ -1,3 +1,4 @@
+use crate::bash_highlight::highlight_shell_command_line;
 use crate::exec_command::relativize_to_home;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::slash_command::SlashCommand;
@@ -226,11 +227,21 @@ impl HistoryCell {
     pub(crate) fn new_active_exec_command(command: Vec<String>) -> Self {
         let command_escaped = strip_bash_lc_and_escape(&command);
 
-        let lines: Vec<Line<'static>> = vec![
-            Line::from(vec!["command".magenta(), " running...".dim()]),
-            Line::from(format!("$ {command_escaped}")),
-            Line::from(""),
-        ];
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(vec!["command".magenta(), " running...".dim()]));
+        // Render the command with basic shell syntax highlighting.
+        let mut cmd_line = highlight_shell_command_line(&command_escaped);
+        // Prepend the prompt marker dimmed.
+        let spans = std::mem::take(&mut cmd_line.spans);
+        if spans.is_empty() {
+            lines.push(Line::from(format!("$ {command_escaped}")));
+        } else {
+            let mut new_spans = Vec::with_capacity(spans.len() + 1);
+            new_spans.push(Span::raw("$ ").dim());
+            new_spans.extend(spans);
+            lines.push(Line::from(new_spans));
+        }
+        lines.push(Line::from(""));
 
         HistoryCell::ActiveExecCommand {
             view: TextBlock::new(lines),
@@ -262,7 +273,17 @@ impl HistoryCell {
         let src = if exit_code == 0 { stdout } else { stderr };
 
         let cmdline = strip_bash_lc_and_escape(&command);
-        lines.push(Line::from(format!("$ {cmdline}")));
+        // Render the command with basic shell syntax highlighting.
+        let mut cmd_line = highlight_shell_command_line(&cmdline);
+        let spans = std::mem::take(&mut cmd_line.spans);
+        if spans.is_empty() {
+            lines.push(Line::from(format!("$ {cmdline}")));
+        } else {
+            let mut new_spans = Vec::with_capacity(spans.len() + 1);
+            new_spans.push(Span::raw("$ ").dim());
+            new_spans.extend(spans);
+            lines.push(Line::from(new_spans));
+        }
         let mut lines_iter = src.lines();
         for raw in lines_iter.by_ref().take(TOOL_CALL_MAX_LINES) {
             lines.push(ansi_escape_line(raw).dim());
