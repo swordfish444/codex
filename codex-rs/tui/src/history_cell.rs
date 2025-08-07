@@ -560,7 +560,7 @@ impl HistoryCell {
             };
             lines.push(Line::from(vec![
                 "agents.md: ".white().bold(),
-                joined.dim().white(),
+                joined.white(),
             ]));
         }
 
