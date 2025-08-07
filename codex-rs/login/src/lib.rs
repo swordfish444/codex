@@ -51,7 +51,7 @@ impl PartialEq for CodexAuth {
 }
 
 impl CodexAuth {
-    pub fn new(
+    pub fn create_dummy_codex_auth_for_testing(
         api_key: Option<String>,
         mode: AuthMode,
         auth_file: PathBuf,

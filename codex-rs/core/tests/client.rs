@@ -556,7 +556,7 @@ async fn env_var_overrides_loaded_auth() {
 }
 
 fn create_dummy_codex_auth() -> CodexAuth {
-    CodexAuth::new(
+    CodexAuth::create_dummy_codex_auth_for_testing(
         None,
         AuthMode::ChatGPT,
         PathBuf::new(),
