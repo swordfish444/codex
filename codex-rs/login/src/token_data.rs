@@ -17,6 +17,22 @@ pub struct TokenData {
     pub account_id: Option<String>,
 }
 
+impl TokenData {
+    /// Returns true if this is a plan that should use the traditional
+    /// "metered" billing via an API key.
+    pub(crate) fn is_plan_that_should_use_api_key(&self) -> bool {
+        match self.id_token.chatgpt_plan_type {
+            // TODO: Verify this is a comprehensive list of plans that
+            // should NOT use the API key.
+            Some(ChatGPTPlanType::Free)
+            | Some(ChatGPTPlanType::Plus)
+            | Some(ChatGPTPlanType::Pro)
+            | Some(ChatGPTPlanType::Team) => false,
+            _ => true,
+        }
+    }
+}
+
 /// Flat subset of useful claims in id_token from auth.json.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct IdTokenInfo {
@@ -24,7 +40,52 @@ pub struct IdTokenInfo {
     /// The ChatGPT subscription plan type
     /// (e.g., "free", "plus", "pro", "business", "enterprise", "edu").
     /// (Note: ae has not verified that those are the exact values.)
-    pub chatgpt_plan_type: Option<String>,
+    pub chatgpt_plan_type: Option<ChatGPTPlanType>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChatGPTPlanType {
+    Free,
+    Plus,
+    Pro,
+    Team,
+    Business,
+    Enterprise,
+    Edu,
+    Unknown(String),
+}
+
+impl Serialize for ChatGPTPlanType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            ChatGPTPlanType::Free => serializer.serialize_str("free"),
+            ChatGPTPlanType::Plus => serializer.serialize_str("plus"),
+            ChatGPTPlanType::Pro => serializer.serialize_str("pro"),
+            ChatGPTPlanType::Team => serializer.serialize_str("team"),
+            ChatGPTPlanType::Business => serializer.serialize_str("business"),
+            ChatGPTPlanType::Enterprise => serializer.serialize_str("enterprise"),
+            ChatGPTPlanType::Edu => serializer.serialize_str("edu"),
+            ChatGPTPlanType::Unknown(s) => serializer.serialize_str(s),
+        }
+    }
+}
+
+impl From<String> for ChatGPTPlanType {
+    fn from(plan: String) -> Self {
+        match plan.as_str() {
+            "free" => ChatGPTPlanType::Free,
+            "plus" => ChatGPTPlanType::Plus,
+            "pro" => ChatGPTPlanType::Pro,
+            "team" => ChatGPTPlanType::Team,
+            "business" => ChatGPTPlanType::Business,
+            "enterprise" => ChatGPTPlanType::Enterprise,
+            "edu" => ChatGPTPlanType::Edu,
+            other => ChatGPTPlanType::Unknown(other.to_string()),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -64,7 +125,10 @@ pub(crate) fn parse_id_token(id_token: &str) -> Result<IdTokenInfo, IdTokenInfoE
 
     Ok(IdTokenInfo {
         email: claims.email,
-        chatgpt_plan_type: claims.auth.and_then(|a| a.chatgpt_plan_type),
+        chatgpt_plan_type: claims
+            .auth
+            .and_then(|a| a.chatgpt_plan_type)
+            .map(ChatGPTPlanType::from),
     })
 }
 
@@ -112,6 +176,6 @@ mod tests {
 
         let info = parse_id_token(&fake_jwt).expect("should parse");
         assert_eq!(info.email.as_deref(), Some("user@example.com"));
-        assert_eq!(info.chatgpt_plan_type.as_deref(), Some("pro"));
+        assert_eq!(info.chatgpt_plan_type, Some(ChatGPTPlanType::Pro));
     }
 }
