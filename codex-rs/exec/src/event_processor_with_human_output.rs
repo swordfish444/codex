@@ -397,6 +397,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                         FileChange::Update {
                             unified_diff,
                             move_path,
+                            ..
                         } => {
                             let header = if let Some(dest) = move_path {
                                 format!(

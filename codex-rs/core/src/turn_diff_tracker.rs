@@ -546,6 +546,7 @@ index {ZERO_OID}..{right_oid}
             FileChange::Update {
                 unified_diff: "".to_owned(),
                 move_path: None,
+                hunks: None,
             },
         )]);
         acc.on_patch_begin(&update_changes);
@@ -616,6 +617,7 @@ index {left_oid}..{ZERO_OID}
             FileChange::Update {
                 unified_diff: "".to_owned(),
                 move_path: Some(dest.clone()),
+                hunks: None,
             },
         )]);
         acc.on_patch_begin(&mv_changes);
@@ -656,6 +658,7 @@ index {left_oid}..{right_oid}
             FileChange::Update {
                 unified_diff: "".to_owned(),
                 move_path: Some(dest.clone()),
+                hunks: None,
             },
         )]);
         acc.on_patch_begin(&mv_changes);
@@ -678,6 +681,7 @@ index {left_oid}..{right_oid}
             FileChange::Update {
                 unified_diff: "".into(),
                 move_path: Some(dest.clone()),
+                hunks: None,
             },
         )]);
         acc.on_patch_begin(&mv);
@@ -718,6 +722,7 @@ index {ZERO_OID}..{right_oid}
             FileChange::Update {
                 unified_diff: "".to_owned(),
                 move_path: None,
+                hunks: None,
             },
         )]);
         acc.on_patch_begin(&update_a);
@@ -793,6 +798,7 @@ index {left_oid_b}..{ZERO_OID}
             FileChange::Update {
                 unified_diff: "".to_owned(),
                 move_path: None,
+                hunks: None,
             },
         )]);
         acc.on_patch_begin(&update_changes);
@@ -859,6 +865,7 @@ index {ZERO_OID}..{right_oid}
             FileChange::Update {
                 unified_diff: "".to_owned(),
                 move_path: None,
+                hunks: None,
             },
         )]);
         acc.on_patch_begin(&update_changes);
