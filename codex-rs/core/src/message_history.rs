@@ -14,7 +14,6 @@
 //! the file descriptor is opened with the `O_APPEND` flag. POSIX guarantees
 //! that writes up to `PIPE_BUF` bytes are atomic in that case.
 
-use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Result;
 use std::io::Write;
@@ -168,6 +167,7 @@ pub(crate) async fn history_metadata(config: &Config) -> (u64, usize) {
 #[cfg(unix)]
 pub(crate) fn lookup(log_id: u64, offset: usize, config: &Config) -> Option<HistoryEntry> {
     use crate::util::acquire_shared_lock_with_retry;
+    use std::fs::File;
     use std::io::BufRead;
     use std::io::BufReader;
     use std::os::unix::fs::MetadataExt;

@@ -137,6 +137,7 @@ pub async fn lookup_project(_config: &Config) -> Result<Project> {
 /// Update the project state for the given project. This function will
 /// (currently) read and write the entire file, which does not scale well.
 /// Use this function sparingly until we implement a more efficient solution.
+#[cfg(unix)]
 pub async fn update_project(config: &Config, project: &Project) -> Result<()> {
     let mut file = open_or_create_codex_state_file(config).await?;
 
