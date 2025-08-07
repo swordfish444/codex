@@ -197,6 +197,8 @@ impl HistoryCell {
                     Span::raw(format!(" {cwd_str}")).dim(),
                 ]),
                 Line::from("".dim()),
+                Line::from(" To get started, describe a task or try one of these commands:".dim()),
+                Line::from("".dim()),
             ];
 
             // If AGENTS.md is configured (either user-level or project-level),
@@ -239,37 +241,25 @@ impl HistoryCell {
                 }
             }
 
-            // Onboarding hints, with index based on whether /init is shown
+            // Onboarding hints, without index, and /init only if show_init is true
             lines.push(Line::from(
                 " Try one of the following commands to get started:".dim(),
             ));
             lines.push(Line::from("".dim()));
 
-            let mut cmd_index = 1;
             if show_init {
                 lines.push(Line::from(
-                    format!(" {cmd_index}. /init - {}", SlashCommand::Init.description()).dim(),
+                    format!(" /init - {}", SlashCommand::Init.description()).dim(),
                 ));
-                cmd_index += 1;
             }
             lines.push(Line::from(
-                format!(
-                    " {cmd_index}. /status - {}",
-                    SlashCommand::Status.description()
-                )
-                .dim(),
+                format!(" /status - {}", SlashCommand::Status.description()).dim(),
             ));
-            cmd_index += 1;
             lines.push(Line::from(
-                format!(
-                    " {cmd_index}. /compact - {}",
-                    SlashCommand::Compact.description()
-                )
-                .dim(),
+                format!(" /compact - {}", SlashCommand::Compact.description()).dim(),
             ));
-            cmd_index += 1;
             lines.push(Line::from(
-                format!(" {cmd_index}. /new - {}", SlashCommand::New.description()).dim(),
+                format!(" /new - {}", SlashCommand::New.description()).dim(),
             ));
             lines.push(Line::from("".dim()));
 
