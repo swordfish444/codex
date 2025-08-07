@@ -1,3 +1,5 @@
+use crate::app_event::AppEvent;
+use crate::app_event_sender::AppEventSender;
 use crate::exec_command::relativize_to_home;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::slash_command::SlashCommand;
@@ -32,6 +34,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::time::Duration;
+use std::time::Instant;
 use tracing::error;
 
 pub(crate) struct CommandOutput {
@@ -65,7 +68,10 @@ fn line_to_static(line: &Line) -> Line<'static> {
 /// scrollable list.
 pub(crate) enum HistoryCell {
     /// Welcome message.
-    WelcomeMessage { view: TextBlock },
+    WelcomeMessage {
+        view: TextBlock,
+        animation_start: Instant,
+    },
 
     /// Message from the user.
     UserPrompt { view: TextBlock },
@@ -122,6 +128,9 @@ pub(crate) enum HistoryCell {
 }
 
 const TOOL_CALL_MAX_LINES: usize = 3;
+const WELCOME_ANIMATION_FRAMES: [&str; 10] =
+    [">_", ">_", ">_", "-_", ">_", "-_", ">_", ">_", ">_", ">_"];
+const WELCOME_ANIMATION_FRAME_MS: u64 = 200;
 
 impl HistoryCell {
     /// Return a cloned, plain representation of the cell's lines suitable for
@@ -129,7 +138,7 @@ impl HistoryCell {
     /// represented with a simple placeholder for now.
     pub(crate) fn plain_lines(&self) -> Vec<Line<'static>> {
         match self {
-            HistoryCell::WelcomeMessage { view }
+            HistoryCell::WelcomeMessage { view, .. }
             | HistoryCell::UserPrompt { view }
             | HistoryCell::BackgroundEvent { view }
             | HistoryCell::GitDiffOutput { view }
@@ -164,6 +173,7 @@ impl HistoryCell {
         config: &Config,
         event: SessionConfiguredEvent,
         is_first_event: bool,
+        app_event_tx: AppEventSender,
     ) -> Self {
         let SessionConfiguredEvent {
             model,
@@ -196,8 +206,17 @@ impl HistoryCell {
                 Line::from(format!(" 4. /new - {}", SlashCommand::New.description()).dim()),
                 Line::from("".dim()),
             ];
+            let start = Instant::now();
+            let tx_clone = app_event_tx.clone();
+            std::thread::spawn(move || {
+                for _ in 1..WELCOME_ANIMATION_FRAMES.len() {
+                    std::thread::sleep(Duration::from_millis(WELCOME_ANIMATION_FRAME_MS));
+                    tx_clone.send(AppEvent::RequestRedraw);
+                }
+            });
             HistoryCell::WelcomeMessage {
                 view: TextBlock::new(lines),
+                animation_start: start,
             }
         } else if config.model == model {
             HistoryCell::SessionInfo {
@@ -706,9 +725,34 @@ impl HistoryCell {
 
 impl WidgetRef for &HistoryCell {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        Paragraph::new(Text::from(self.plain_lines()))
-            .wrap(Wrap { trim: false })
-            .render(area, buf);
+        match self {
+            HistoryCell::WelcomeMessage {
+                view,
+                animation_start,
+            } => {
+                let mut lines = view.lines.clone();
+                if let Some(line) = lines.get_mut(0) {
+                    if let Some(span) = line.spans.get_mut(0) {
+                        let elapsed = animation_start.elapsed().as_millis() as usize;
+                        let idx = elapsed / (WELCOME_ANIMATION_FRAME_MS as usize);
+                        let frame = if idx < WELCOME_ANIMATION_FRAMES.len() {
+                            WELCOME_ANIMATION_FRAMES[idx]
+                        } else {
+                            WELCOME_ANIMATION_FRAMES[WELCOME_ANIMATION_FRAMES.len() - 1]
+                        };
+                        *span = Span::raw(format!("{} ", frame)).dim();
+                    }
+                }
+                Paragraph::new(Text::from(lines))
+                    .wrap(Wrap { trim: false })
+                    .render(area, buf);
+            }
+            _ => {
+                Paragraph::new(Text::from(self.plain_lines()))
+                    .wrap(Wrap { trim: false })
+                    .render(area, buf);
+            }
+        }
     }
 }
 
