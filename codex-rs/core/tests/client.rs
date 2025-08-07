@@ -556,19 +556,14 @@ async fn env_var_overrides_loaded_auth() {
 }
 
 fn create_dummy_codex_auth() -> CodexAuth {
-    CodexAuth::new(
-        None,
-        AuthMode::ChatGPT,
-        PathBuf::new(),
-        Some(AuthDotJson {
-            openai_api_key: None,
-            tokens: Some(TokenData {
-                id_token: Default::default(),
-                access_token: "Access Token".to_string(),
-                refresh_token: "test".to_string(),
-                account_id: Some("account_id".to_string()),
-            }),
-            last_refresh: Some(Utc::now()),
+    CodexAuth::create_dummy_codex_auth_for_testing(Some(AuthDotJson {
+        openai_api_key: None,
+        tokens: Some(TokenData {
+            id_token: Default::default(),
+            access_token: "Access Token".to_string(),
+            refresh_token: "test".to_string(),
+            account_id: Some("account_id".to_string()),
         }),
-    )
+        last_refresh: Some(Utc::now()),
+    }))
 }
