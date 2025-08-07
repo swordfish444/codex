@@ -15,7 +15,6 @@ use ratatui::widgets::WidgetRef;
 use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
 
-const MAX_POPUP_ROWS: usize = 5;
 /// Ideally this is enough to show the longest command name.
 const FIRST_COLUMN_WIDTH: u16 = 20;
 
@@ -69,10 +68,10 @@ impl CommandPopup {
     }
 
     /// Determine the preferred height of the popup. This is the number of
-    /// rows required to show **at most** `MAX_POPUP_ROWS` commands plus the
-    /// table/border overhead (one line at the top and one at the bottom).
+    /// rows required to show all matching commands, clamped to at least one so
+    /// that the popup remains visible when there are no matches.
     pub(crate) fn calculate_required_height(&self) -> u16 {
-        self.filtered_commands().len().clamp(1, MAX_POPUP_ROWS) as u16
+        self.filtered_commands().len().max(1) as u16
     }
 
     /// Return the list of commands that match the current filter. Matching is
@@ -142,10 +141,7 @@ impl WidgetRef for CommandPopup {
         let matches = self.filtered_commands();
 
         let mut rows: Vec<Row> = Vec::new();
-        let visible_matches: Vec<&SlashCommand> =
-            matches.into_iter().take(MAX_POPUP_ROWS).collect();
-
-        if visible_matches.is_empty() {
+        if matches.is_empty() {
             rows.push(Row::new(vec![
                 Cell::from(""),
                 Cell::from("No matching commands").add_modifier(Modifier::ITALIC),
@@ -153,7 +149,7 @@ impl WidgetRef for CommandPopup {
         } else {
             let default_style = Style::default();
             let command_style = Style::default().fg(Color::LightBlue);
-            for (idx, cmd) in visible_matches.iter().enumerate() {
+            for (idx, cmd) in matches.iter().enumerate() {
                 rows.push(Row::new(vec![
                     Cell::from(Line::from(vec![
                         if Some(idx) == self.selected_idx {
