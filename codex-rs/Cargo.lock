@@ -895,6 +895,8 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "tree-sitter",
+ "tree-sitter-bash",
  "tui-input",
  "tui-markdown",
  "unicode-segmentation",
