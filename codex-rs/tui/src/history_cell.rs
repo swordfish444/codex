@@ -213,7 +213,7 @@ impl HistoryCell {
                 None => config.cwd.display().to_string(),
             };
 
-            let mut lines: Vec<Line<'static>> = vec![
+            let lines: Vec<Line<'static>> = vec![
                 Line::from(vec![
                     Span::raw(">_ ").dim(),
                     Span::styled(
@@ -223,70 +223,14 @@ impl HistoryCell {
                     Span::raw(format!(" {cwd_str}")).dim(),
                 ]),
                 Line::from("".dim()),
+                Line::from(" To get started, describe a task or try one of these commands:".dim()),
+                Line::from("".dim()),
+                Line::from(format!(" /init - {}", SlashCommand::Init.description()).dim()),
+                Line::from(format!(" /status - {}", SlashCommand::Status.description()).dim()),
+                Line::from(format!(" /diff - {}", SlashCommand::Diff.description()).dim()),
+                Line::from(format!(" /prompts - {}", SlashCommand::Prompts.description()).dim()),
+                Line::from("".dim()),
             ];
-
-            // If AGENTS.md is configured (either user-level or project-level),
-            // show a concise summary and omit the /init hint, but still show the other onboarding commands.
-            let mut show_init = true;
-            let instructions_info = collect_instructions_info_sync(config);
-
-            if instructions_info.user_instructions_path.is_some()
-                || instructions_info.project_instructions_path.is_some()
-            {
-                let user_path: Option<String> = instructions_info
-                    .user_instructions_path
-                    .as_ref()
-                    .map(|p| match relativize_to_home(p) {
-                        Some(rel) if !rel.as_os_str().is_empty() => format!("~/{}", rel.display()),
-                        _ => p.display().to_string(),
-                    });
-                let project_path: Option<String> = instructions_info
-                    .project_instructions_path
-                    .as_ref()
-                    .map(|p| match relativize_to_home(p) {
-                        Some(rel) if !rel.as_os_str().is_empty() => format!("~/{}", rel.display()),
-                        _ => p.display().to_string(),
-                    });
-
-                show_init = false;
-
-                let summary_line = match (user_path, project_path) {
-                    (Some(u), Some(pr)) => {
-                        format!(" Using user instructions ({u}) and project instructions ({pr})")
-                    }
-                    (Some(u), None) => format!("Using user instructions ({u})"),
-                    (None, Some(pr)) => format!(" Using project instructions ({pr})"),
-                    (None, None) => String::new(),
-                };
-
-                if !summary_line.is_empty() {
-                    lines.push(Line::from(summary_line.dim()));
-                    lines.push(Line::from("".dim()));
-                }
-            }
-
-            // this needs to happen after the agents.md summary, if it's shown (as its not a /command)
-            lines.push(Line::from(
-                " To get started, describe a task or try one of these commands:".dim(),
-            ));
-            lines.push(Line::from("".dim()));
-
-            if show_init {
-                lines.push(Line::from(
-                    format!(" /init - {}", SlashCommand::Init.description()).dim(),
-                ));
-            }
-            lines.push(Line::from(
-                format!(" /status - {}", SlashCommand::Status.description()).dim(),
-            ));
-            lines.push(Line::from(
-                format!(" /diff - {}", SlashCommand::Diff.description()).dim(),
-            ));
-            lines.push(Line::from(
-                format!(" /prompts - {}", SlashCommand::Prompts.description()).dim(),
-            ));
-            lines.push(Line::from("".dim()));
-
             HistoryCell::WelcomeMessage {
                 view: TextBlock::new(lines),
             }
@@ -549,7 +493,6 @@ impl HistoryCell {
     pub(crate) fn new_status_output(config: &Config, usage: &TokenUsage) -> Self {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from("/status".magenta()));
-        lines.push(Line::from(""));
 
         let config_entries = create_config_summary_entries(config);
         let lookup = |k: &str| -> String {
