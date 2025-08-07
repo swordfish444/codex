@@ -52,9 +52,9 @@ impl PartialEq for CodexAuth {
 }
 
 impl CodexAuth {
-    pub fn from_api_key(api_key: String) -> Self {
+    pub fn from_api_key(api_key: &str) -> Self {
         Self {
-            api_key: Some(api_key),
+            api_key: Some(api_key.to_owned()),
             mode: AuthMode::ApiKey,
             auth_file: PathBuf::new(),
             auth_dot_json: Arc::new(Mutex::new(None)),
@@ -160,44 +160,68 @@ impl CodexAuth {
 
 fn load_auth(codex_home: &Path, include_env_var: bool) -> std::io::Result<Option<CodexAuth>> {
     let auth_file = get_auth_file(codex_home);
-
-    let auth_dot_json = try_read_auth_json(&auth_file).ok();
-
-    let auth_json_api_key = auth_dot_json
-        .as_ref()
-        .and_then(|a| a.openai_api_key.clone())
-        .filter(|s| !s.is_empty());
-
-    let openai_api_key = if include_env_var {
-        env::var(OPENAI_API_KEY_ENV_VAR)
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or(auth_json_api_key)
-    } else {
-        auth_json_api_key
+    let auth_dot_json = match try_read_auth_json(&auth_file) {
+        Ok(auth) => auth,
+        // If auth.json does not exist, try to read the OPENAI_API_KEY from the
+        // environment variable.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && include_env_var => {
+            return match read_openai_api_key_from_env() {
+                Some(api_key) => Ok(Some(CodexAuth::from_api_key(&api_key))),
+                None => Ok(None),
+            };
+        }
+        // Though if auth.json exists but is malformed, do not fall back to the
+        // env var because the user may be expecting to use AuthMode::ChatGPT.
+        Err(e) => {
+            return Err(e);
+        }
     };
 
-    let has_tokens = auth_dot_json
-        .as_ref()
-        .and_then(|a| a.tokens.as_ref())
-        .is_some();
+    let AuthDotJson {
+        openai_api_key: auth_json_api_key,
+        tokens,
+        last_refresh,
+    } = auth_dot_json;
 
-    if openai_api_key.is_none() && !has_tokens {
-        return Ok(None);
+    // If the auth.json has an API key AND does not appear to be on a plan that
+    // should use prefer AuthMode::ChatGPT, use AuthMode::ApiKey.
+    if let Some(api_key) = &auth_json_api_key {
+        // Should any of these by AuthMode::ChatGPT with the api_key set?
+        match &tokens {
+            Some(tokens) => {
+                if tokens.is_plan_that_should_use_api_key() {
+                    return Ok(Some(CodexAuth::from_api_key(api_key)));
+                } else {
+                    // Ignore the API key and fall through to ChatGPT auth.
+                }
+            }
+            None => {
+                // This is a bit suspicious because we have an API key but no
+                // tokens. Perhaps the user updated auth.json by hand, so let's
+                // assume they are trying to use their API key.
+                return Ok(Some(CodexAuth::from_api_key(api_key)));
+            }
+        }
     }
 
-    let mode = if openai_api_key.is_some() {
-        AuthMode::ApiKey
-    } else {
-        AuthMode::ChatGPT
-    };
-
+    // For the AuthMode::ChatGPT variant, perhaps neither api_key should not
+    // exist?
     Ok(Some(CodexAuth {
-        api_key: openai_api_key,
-        mode,
+        api_key: None,
+        mode: AuthMode::ChatGPT,
         auth_file,
-        auth_dot_json: Arc::new(Mutex::new(auth_dot_json)),
+        auth_dot_json: Arc::new(Mutex::new(Some(AuthDotJson {
+            openai_api_key: None,
+            tokens,
+            last_refresh,
+        }))),
     }))
+}
+
+fn read_openai_api_key_from_env() -> Option<String> {
+    env::var(OPENAI_API_KEY_ENV_VAR)
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 pub fn get_auth_file(codex_home: &Path) -> PathBuf {

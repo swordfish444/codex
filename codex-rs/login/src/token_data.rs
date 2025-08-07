@@ -17,6 +17,19 @@ pub struct TokenData {
     pub account_id: Option<String>,
 }
 
+impl TokenData {
+    /// Returns true if this is a plan that should use the traditional
+    /// "metered" billing via an API key.
+    pub(crate) fn is_plan_that_should_use_api_key(&self) -> bool {
+        match self.id_token.chatgpt_plan_type.as_deref() {
+            // TODO: Verify this is a comprehensive list of plans that
+            // should NOT use the API key.
+            Some("free") | Some("plus") | Some("pro") | Some("team") => false,
+            _ => true,
+        }
+    }
+}
+
 /// Flat subset of useful claims in id_token from auth.json.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct IdTokenInfo {
