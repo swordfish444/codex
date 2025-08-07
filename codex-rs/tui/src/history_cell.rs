@@ -266,7 +266,9 @@ impl HistoryCell {
             }
 
             // this needs to happen after the agents.md summary, if it's shown (as its not a /command)
-            lines.push(Line::from(" To get started, describe a task or try one of these commands:".dim()));
+            lines.push(Line::from(
+                " To get started, describe a task or try one of these commands:".dim(),
+            ));
             lines.push(Line::from("".dim()));
 
             if show_init {
@@ -589,10 +591,7 @@ impl HistoryCell {
             } else {
                 parts.join("")
             };
-            lines.push(Line::from(vec![
-                "  • AGENTS.md: ".into(),
-                joined.into(),
-            ]));
+            lines.push(Line::from(vec!["  • AGENTS.md: ".into(), joined.into()]));
         }
 
         // Approval mode (as-is)
