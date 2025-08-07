@@ -1,3 +1,5 @@
+use crate::app_event::AppEvent;
+use crate::app_event_sender::AppEventSender;
 use crate::exec_command::relativize_to_home;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::slash_command::SlashCommand;
@@ -32,6 +34,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::time::Duration;
+use std::time::Instant;
 use tracing::error;
 
 pub(crate) struct CommandOutput {
@@ -39,6 +42,10 @@ pub(crate) struct CommandOutput {
     pub(crate) stdout: String,
     pub(crate) stderr: String,
 }
+
+const WELCOME_FRAMES: [&str; 10] = [">_", ">_", ">_", "-_", ">_", "-_", ">_", ">_", ">_", ">_"];
+
+const WELCOME_FRAME_DURATION_MS: u64 = 200;
 
 pub(crate) enum PatchEventType {
     ApprovalRequest,
@@ -65,7 +72,10 @@ fn line_to_static(line: &Line) -> Line<'static> {
 /// scrollable list.
 pub(crate) enum HistoryCell {
     /// Welcome message.
-    WelcomeMessage { view: TextBlock },
+    WelcomeMessage {
+        view: TextBlock,
+        start_time: Instant,
+    },
 
     /// Message from the user.
     UserPrompt { view: TextBlock },
@@ -129,7 +139,7 @@ impl HistoryCell {
     /// represented with a simple placeholder for now.
     pub(crate) fn plain_lines(&self) -> Vec<Line<'static>> {
         match self {
-            HistoryCell::WelcomeMessage { view }
+            HistoryCell::WelcomeMessage { view, .. }
             | HistoryCell::UserPrompt { view }
             | HistoryCell::BackgroundEvent { view }
             | HistoryCell::GitDiffOutput { view }
@@ -164,6 +174,7 @@ impl HistoryCell {
         config: &Config,
         event: SessionConfiguredEvent,
         is_first_event: bool,
+        app_event_tx: AppEventSender,
     ) -> Self {
         let SessionConfiguredEvent {
             model,
@@ -196,8 +207,19 @@ impl HistoryCell {
                 Line::from(format!(" 4. /new - {}", SlashCommand::New.description()).dim()),
                 Line::from("".dim()),
             ];
+            let start_time = Instant::now();
+            {
+                let tx = app_event_tx.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..WELCOME_FRAMES.len() {
+                        std::thread::sleep(Duration::from_millis(WELCOME_FRAME_DURATION_MS));
+                        tx.send(AppEvent::RequestRedraw);
+                    }
+                });
+            }
             HistoryCell::WelcomeMessage {
                 view: TextBlock::new(lines),
+                start_time,
             }
         } else if config.model == model {
             HistoryCell::SessionInfo {
@@ -706,9 +728,30 @@ impl HistoryCell {
 
 impl WidgetRef for &HistoryCell {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        Paragraph::new(Text::from(self.plain_lines()))
-            .wrap(Wrap { trim: false })
-            .render(area, buf);
+        match self {
+            HistoryCell::WelcomeMessage { view, start_time } => {
+                let mut lines = view.lines.clone();
+                if let Some(first_line) = lines.get_mut(0) {
+                    if let Some(span0) = first_line.spans.get_mut(0) {
+                        let style = span0.style.clone();
+                        let elapsed = start_time.elapsed().as_millis();
+                        let idx = (elapsed / WELCOME_FRAME_DURATION_MS as u128) as usize;
+                        let frame = *WELCOME_FRAMES
+                            .get(idx)
+                            .unwrap_or_else(|| WELCOME_FRAMES.last().unwrap());
+                        *span0 = Span::styled(format!("{frame} "), style);
+                    }
+                }
+                Paragraph::new(Text::from(lines))
+                    .wrap(Wrap { trim: false })
+                    .render(area, buf);
+            }
+            _ => {
+                Paragraph::new(Text::from(self.plain_lines()))
+                    .wrap(Wrap { trim: false })
+                    .render(area, buf);
+            }
+        }
     }
 }
 

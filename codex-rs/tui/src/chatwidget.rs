@@ -300,7 +300,12 @@ impl ChatWidget<'_> {
                 self.bottom_pane
                     .set_history_metadata(event.history_log_id, event.history_entry_count);
                 // Record session information at the top of the conversation.
-                self.add_to_history(HistoryCell::new_session_info(&self.config, event, true));
+                self.add_to_history(HistoryCell::new_session_info(
+                    &self.config,
+                    event,
+                    true,
+                    self.app_event_tx.clone(),
+                ));
 
                 if let Some(user_message) = self.initial_user_message.take() {
                     // If the user provided an initial message, add it to the
