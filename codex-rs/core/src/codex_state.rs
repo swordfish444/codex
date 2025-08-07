@@ -39,13 +39,13 @@ use crate::util::ensure_owner_only_permissions;
 /// Filename that stores the project state inside `~/.codex`.
 const CODEX_STATE_FILENAME: &str = "codex-state.json";
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
     pub trusted: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[derive(Default)]
 pub struct CodexState {

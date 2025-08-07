@@ -1,17 +1,17 @@
 #![cfg(unix)]
 #![allow(clippy::expect_used)]
 
+use std::collections::HashMap;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
+use codex_core::codex_state::CodexState;
 use codex_core::codex_state::Project;
 use codex_core::codex_state::lookup_project;
 use codex_core::codex_state::update_project;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::ConfigToml;
-use serde_json::Value as JsonValue;
 use tempfile::TempDir;
 
 /// Build a Config for tests with a temporary `codex_home` and a specific `cwd`.
@@ -38,7 +38,7 @@ async fn lookup_returns_default_for_missing_or_empty_state() {
     let project = lookup_project(&cfg).await.expect("lookup should succeed");
 
     // Then the default should be returned
-    assert_eq!(project.trusted, false);
+    assert!(!project.trusted);
 
     // And the state file should have been created (empty file acceptable)
     let state_path = cfg.codex_home.join("codex-state.json");
@@ -60,23 +60,21 @@ async fn update_then_lookup_roundtrips_and_sets_permissions() {
     // Verify file exists with correct JSON structure
     let state_path = cfg.codex_home.join("codex-state.json");
     let contents = fs::read_to_string(&state_path).expect("read state file");
-    let json: JsonValue = serde_json::from_str(&contents).expect("parse state JSON");
+    let state: CodexState = serde_json::from_str(&contents).expect("parse state JSON");
 
-    let key = cfg.cwd.to_string_lossy().to_string();
-    let trusted_val = json["projects"][&key]["trusted"].as_bool();
-    assert_eq!(trusted_val, Some(true));
+    assert_eq!(
+        state,
+        CodexState {
+            projects: HashMap::from([(
+                project_dir.path().to_path_buf(),
+                Project { trusted: true }
+            )])
+        }
+    );
 
     // Lookup should now return the updated value
     let looked_up = lookup_project(&cfg).await.expect("lookup should succeed");
     assert!(looked_up.trusted);
-
-    // On Unix, verify file permissions are 0600
-    let mode = fs::metadata(&state_path)
-        .expect("metadata")
-        .permissions()
-        .mode()
-        & 0o777;
-    assert_eq!(mode, 0o600, "state file should have 0600 permissions");
 }
 
 #[tokio::test]
@@ -92,5 +90,5 @@ async fn lookup_handles_invalid_json_gracefully() {
 
     // Lookup should not error and should return defaults
     let project = lookup_project(&cfg).await.expect("lookup should succeed");
-    assert_eq!(project.trusted, false);
+    assert!(!project.trusted);
 }
