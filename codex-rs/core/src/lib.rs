@@ -11,6 +11,7 @@ mod chat_completions;
 mod client;
 mod client_common;
 pub mod codex;
+pub mod codex_state;
 pub use codex::Codex;
 pub use codex::CodexSpawnOk;
 pub mod codex_wrapper;

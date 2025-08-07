@@ -79,6 +79,11 @@ pub enum Op {
         /// operate deterministically.
         cwd: std::path::PathBuf,
 
+        // Whether the user has indicated the current repo is trusted.
+        // If true, we persist this state to CodexState, so they don't get
+        // asked again.
+        trust_cwd: Option<bool>,
+
         /// Path to a rollout file to resume from.
         #[serde(skip_serializing_if = "Option::is_none")]
         resume_path: Option<std::path::PathBuf>,

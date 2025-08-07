@@ -4,6 +4,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -145,6 +146,7 @@ impl Codex {
             disable_response_storage: config.disable_response_storage,
             notify: config.notify.clone(),
             cwd: config.cwd.clone(),
+            trust_cwd: config.trust_cwd,
             resume_path: resume_path.clone(),
         };
 
@@ -707,6 +709,7 @@ async fn submission_loop(
                 disable_response_storage,
                 notify,
                 cwd,
+                trust_cwd,
                 resume_path,
             } => {
                 debug!(
@@ -724,6 +727,37 @@ async fn submission_loop(
                     }
                     return;
                 }
+
+                // clone the config and update trust_cwd to match Op::ConfigureSession
+                let mut updated_config = config.deref().clone();
+                updated_config.trust_cwd = trust_cwd;
+                let updated_config = Arc::new(updated_config);
+
+                // sync trust_cwd to codex_state, and update config accordingly
+                if let Some(trust_cwd) = trust_cwd {
+                    if trust_cwd {
+                        match crate::codex_state::lookup_project(&updated_config).await {
+                            Ok(mut project) => {
+                                project.trusted = trust_cwd;
+                                trace!(
+                                    "set cwd {} trust to {}",
+                                    updated_config.cwd.to_string_lossy(),
+                                    trust_cwd
+                                );
+                                if let Err(e) =
+                                    crate::codex_state::update_project(&updated_config, &project)
+                                        .await
+                                {
+                                    warn!("failed to persist project state: {e}");
+                                }
+                            }
+                            Err(e) => {
+                                warn!("failed to persist project state: {e}");
+                            }
+                        }
+                    }
+                }
+
                 // Optionally resume an existing rollout.
                 let mut restored_items: Option<Vec<ResponseItem>> = None;
                 let rollout_recorder: Option<RolloutRecorder> =
@@ -748,8 +782,12 @@ async fn submission_loop(
                 let rollout_recorder = match rollout_recorder {
                     Some(rec) => Some(rec),
                     None => {
-                        match RolloutRecorder::new(&config, session_id, user_instructions.clone())
-                            .await
+                        match RolloutRecorder::new(
+                            &updated_config,
+                            session_id,
+                            user_instructions.clone(),
+                        )
+                        .await
                         {
                             Ok(r) => Some(r),
                             Err(e) => {
@@ -761,7 +799,7 @@ async fn submission_loop(
                 };
 
                 let client = ModelClient::new(
-                    config.clone(),
+                    updated_config.clone(),
                     auth.clone(),
                     provider.clone(),
                     model_reasoning_effort,
@@ -786,7 +824,7 @@ async fn submission_loop(
                 // Error messages to dispatch after SessionConfigured is sent.
                 let mut mcp_connection_errors = Vec::<Event>::new();
                 let (mcp_connection_manager, failed_clients) =
-                    match McpConnectionManager::new(config.mcp_servers.clone()).await {
+                    match McpConnectionManager::new(updated_config.mcp_servers.clone()).await {
                         Ok((mgr, failures)) => (mgr, failures),
                         Err(e) => {
                             let message = format!("Failed to create MCP connection manager: {e:#}");
@@ -815,10 +853,10 @@ async fn submission_loop(
                 sess = Some(Arc::new(Session {
                     client,
                     tools_config: ToolsConfig::new(
-                        &config.model_family,
+                        &updated_config.model_family,
                         approval_policy,
                         sandbox_policy.clone(),
-                        config.include_plan_tool,
+                        updated_config.include_plan_tool,
                     ),
                     tx_event: tx_event.clone(),
                     ctrl_c: Arc::clone(&ctrl_c),
@@ -826,17 +864,17 @@ async fn submission_loop(
                     base_instructions,
                     approval_policy,
                     sandbox_policy,
-                    shell_environment_policy: config.shell_environment_policy.clone(),
+                    shell_environment_policy: updated_config.shell_environment_policy.clone(),
                     cwd,
                     writable_roots,
                     mcp_connection_manager,
                     notify,
                     state: Mutex::new(state),
                     rollout: Mutex::new(rollout_recorder),
-                    codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
+                    codex_linux_sandbox_exe: updated_config.codex_linux_sandbox_exe.clone(),
                     disable_response_storage,
                     user_shell: default_shell,
-                    show_raw_agent_reasoning: config.show_raw_agent_reasoning,
+                    show_raw_agent_reasoning: updated_config.show_raw_agent_reasoning,
                 }));
 
                 // Patch restored state into the newly created session.
@@ -849,7 +887,7 @@ async fn submission_loop(
 
                 // Gather history metadata for SessionConfiguredEvent.
                 let (history_log_id, history_entry_count) =
-                    crate::message_history::history_metadata(&config).await;
+                    crate::message_history::history_metadata(&updated_config).await;
 
                 // ack
                 let events = std::iter::once(Event {

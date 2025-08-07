@@ -22,24 +22,20 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
 use crate::config::Config;
 use crate::config_types::HistoryPersistence;
+use crate::util::acquire_exclusive_lock_with_retry;
+use crate::util::ensure_owner_only_permissions;
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 
 /// Filename that stores the message history inside `~/.codex`.
 const HISTORY_FILENAME: &str = "history.jsonl";
-
-const MAX_RETRIES: usize = 10;
-const RETRY_SLEEP: Duration = Duration::from_millis(100);
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HistoryEntry {
@@ -121,29 +117,6 @@ pub(crate) async fn append_entry(text: &str, session_id: &Uuid, config: &Config)
     Ok(())
 }
 
-/// Attempt to acquire an exclusive advisory lock on `file`, retrying up to 10
-/// times if the lock is currently held by another process. This prevents a
-/// potential indefinite wait while still giving other writers some time to
-/// finish their operation.
-async fn acquire_exclusive_lock_with_retry(file: &std::fs::File) -> Result<()> {
-    use tokio::time::sleep;
-
-    for _ in 0..MAX_RETRIES {
-        match fs2::FileExt::try_lock_exclusive(file) {
-            Ok(()) => return Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                sleep(RETRY_SLEEP).await;
-            }
-            Err(e) => return Err(e),
-        }
-    }
-
-    Err(std::io::Error::new(
-        std::io::ErrorKind::WouldBlock,
-        "could not acquire exclusive lock on history file after multiple attempts",
-    ))
-}
-
 /// Asynchronously fetch the history file's *identifier* (inode on Unix) and
 /// the current number of entries by counting newline characters.
 pub(crate) async fn history_metadata(config: &Config) -> (u64, usize) {
@@ -194,6 +167,7 @@ pub(crate) async fn history_metadata(config: &Config) -> (u64, usize) {
 /// locking API.
 #[cfg(unix)]
 pub(crate) fn lookup(log_id: u64, offset: usize, config: &Config) -> Option<HistoryEntry> {
+    use crate::util::acquire_shared_lock_with_retry;
     use std::io::BufRead;
     use std::io::BufReader;
     use std::os::unix::fs::MetadataExt;
@@ -254,44 +228,4 @@ pub(crate) fn lookup(log_id: u64, offset: usize, config: &Config) -> Option<Hist
 pub(crate) fn lookup(log_id: u64, offset: usize, config: &Config) -> Option<HistoryEntry> {
     let _ = (log_id, offset, config);
     None
-}
-
-#[cfg(unix)]
-fn acquire_shared_lock_with_retry(file: &File) -> Result<()> {
-    for _ in 0..MAX_RETRIES {
-        match fs2::FileExt::try_lock_shared(file) {
-            Ok(()) => return Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(RETRY_SLEEP);
-            }
-            Err(e) => return Err(e),
-        }
-    }
-
-    Err(std::io::Error::new(
-        std::io::ErrorKind::WouldBlock,
-        "could not acquire shared lock on history file after multiple attempts",
-    ))
-}
-
-/// On Unix systems ensure the file permissions are `0o600` (rw-------). If the
-/// permissions cannot be changed the error is propagated to the caller.
-#[cfg(unix)]
-async fn ensure_owner_only_permissions(file: &File) -> Result<()> {
-    let metadata = file.metadata()?;
-    let current_mode = metadata.permissions().mode() & 0o777;
-    if current_mode != 0o600 {
-        let mut perms = metadata.permissions();
-        perms.set_mode(0o600);
-        let perms_clone = perms.clone();
-        let file_clone = file.try_clone()?;
-        tokio::task::spawn_blocking(move || file_clone.set_permissions(perms_clone)).await??;
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-async fn ensure_owner_only_permissions(_file: &File) -> Result<()> {
-    // For now, on non-Unix, simply succeed.
-    Ok(())
 }

@@ -103,6 +103,9 @@ pub struct Config {
     /// resolved against this path.
     pub cwd: PathBuf,
 
+    /// Whether the current repo is trusted.
+    pub trust_cwd: Option<bool>,
+
     /// Definition for MCP servers that Codex can reach out to for tool calls.
     pub mcp_servers: HashMap<String, McpServerConfig>,
 
@@ -520,6 +523,7 @@ impl Config {
             model_provider_id,
             model_provider,
             cwd: resolved_cwd,
+            trust_cwd: None,
             approval_policy: approval_policy
                 .or(config_profile.approval_policy)
                 .or(cfg.approval_policy)
@@ -909,6 +913,7 @@ disable_response_storage = true
                 user_instructions: None,
                 notify: None,
                 cwd: fixture.cwd(),
+                trust_cwd: None,
                 mcp_servers: HashMap::new(),
                 model_providers: fixture.model_provider_map.clone(),
                 project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
@@ -960,6 +965,7 @@ disable_response_storage = true
             user_instructions: None,
             notify: None,
             cwd: fixture.cwd(),
+            trust_cwd: None,
             mcp_servers: HashMap::new(),
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
@@ -1026,6 +1032,7 @@ disable_response_storage = true
             user_instructions: None,
             notify: None,
             cwd: fixture.cwd(),
+            trust_cwd: None,
             mcp_servers: HashMap::new(),
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
