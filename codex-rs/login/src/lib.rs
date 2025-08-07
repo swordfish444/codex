@@ -449,14 +449,17 @@ pub struct AuthDotJson {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::token_data::IdTokenInfo;
     use base64::Engine;
     use pretty_assertions::assert_eq;
+    use serde_json::json;
     use tempfile::tempdir;
 
+    const LAST_REFRESH: &str = "2025-08-06T20:41:36.232376Z";
+
     #[test]
-    #[expect(clippy::unwrap_used)]
     fn writes_api_key_and_loads_auth() {
         let dir = tempdir().unwrap();
         login_with_api_key(dir.path(), "sk-test-key").unwrap();
@@ -466,7 +469,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::unwrap_used)]
     fn loads_from_env_var_if_env_var_exists() {
         let dir = tempdir().unwrap();
 
@@ -480,10 +482,57 @@ mod tests {
     }
 
     #[tokio::test]
-    #[expect(clippy::expect_used, clippy::unwrap_used)]
     async fn loads_token_data_from_auth_json() {
-        let dir = tempdir().unwrap();
-        let auth_file = dir.path().join("auth.json");
+        let codex_home = tempdir().unwrap();
+        write_auth_file(
+            AuthFileParams {
+                openai_api_key: None,
+                chatgpt_plan_type: "pro".to_string(),
+            },
+            codex_home.path(),
+        )
+        .expect("failed to write auth file");
+
+        let CodexAuth {
+            api_key,
+            mode,
+            auth_dot_json,
+            auth_file: _,
+        } = load_auth(codex_home.path(), false).unwrap().unwrap();
+        assert_eq!(None, api_key);
+        assert_eq!(AuthMode::ChatGPT, mode);
+
+        let guard = auth_dot_json.lock().unwrap();
+        let auth_dot_json = guard.as_ref().expect("AuthDotJson should exist");
+        assert_eq!(
+            &AuthDotJson {
+                openai_api_key: None,
+                tokens: Some(TokenData {
+                    id_token: IdTokenInfo {
+                        email: Some("user@example.com".to_string()),
+                        chatgpt_plan_type: Some("pro".to_string()),
+                    },
+                    access_token: "test-access-token".to_string(),
+                    refresh_token: "test-refresh-token".to_string(),
+                    account_id: None,
+                }),
+                last_refresh: Some(
+                    DateTime::parse_from_rfc3339(LAST_REFRESH)
+                        .unwrap()
+                        .with_timezone(&Utc)
+                ),
+            },
+            auth_dot_json
+        )
+    }
+
+    struct AuthFileParams {
+        openai_api_key: Option<String>,
+        chatgpt_plan_type: String,
+    }
+
+    fn write_auth_file(params: AuthFileParams, codex_home: &Path) -> std::io::Result<()> {
+        let auth_file = get_auth_file(codex_home);
         // Create a minimal valid JWT for the id_token field.
         #[derive(Serialize)]
         struct Header {
@@ -499,71 +548,31 @@ mod tests {
             "email_verified": true,
             "https://api.openai.com/auth": {
                 "chatgpt_account_id": "bc3618e3-489d-4d49-9362-1561dc53ba53",
-                "chatgpt_plan_type": "pro",
+                "chatgpt_plan_type": params.chatgpt_plan_type,
                 "chatgpt_user_id": "user-12345",
                 "user_id": "user-12345",
             }
         });
         let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
-        let header_b64 = b64(&serde_json::to_vec(&header).unwrap());
-        let payload_b64 = b64(&serde_json::to_vec(&payload).unwrap());
+        let header_b64 = b64(&serde_json::to_vec(&header)?);
+        let payload_b64 = b64(&serde_json::to_vec(&payload)?);
         let signature_b64 = b64(b"sig");
         let fake_jwt = format!("{header_b64}.{payload_b64}.{signature_b64}");
-        std::fs::write(
-            auth_file,
-            format!(
-                r#"
-        {{
-            "OPENAI_API_KEY": null,
-            "tokens": {{
-                "id_token": "{fake_jwt}",
+
+        let auth_json_data = json!({
+            "OPENAI_API_KEY": params.openai_api_key,
+            "tokens": {
+                "id_token": fake_jwt,
                 "access_token": "test-access-token",
                 "refresh_token": "test-refresh-token"
-            }},
-            "last_refresh": "2025-08-06T20:41:36.232376Z"
-        }}
-        "#,
-            ),
-        )
-        .unwrap();
-
-        let CodexAuth {
-            api_key,
-            mode,
-            auth_dot_json,
-            auth_file,
-        } = load_auth(dir.path(), false).unwrap().unwrap();
-        assert_eq!(None, api_key);
-        assert_eq!(AuthMode::ChatGPT, mode);
-        assert_eq!(dir.path().join("auth.json"), auth_file);
-
-        let guard = auth_dot_json.lock().unwrap();
-        let auth_dot_json = guard.as_ref().expect("AuthDotJson should exist");
-
-        assert_eq!(
-            &AuthDotJson {
-                openai_api_key: None,
-                tokens: Some(TokenData {
-                    id_token: IdTokenInfo {
-                        email: Some("user@example.com".to_string()),
-                        chatgpt_plan_type: Some("pro".to_string()),
-                    },
-                    access_token: "test-access-token".to_string(),
-                    refresh_token: "test-refresh-token".to_string(),
-                    account_id: None,
-                }),
-                last_refresh: Some(
-                    DateTime::parse_from_rfc3339("2025-08-06T20:41:36.232376Z")
-                        .unwrap()
-                        .with_timezone(&Utc)
-                ),
             },
-            auth_dot_json
-        )
+            "last_refresh": LAST_REFRESH,
+        });
+        let auth_json = serde_json::to_string_pretty(&auth_json_data)?;
+        std::fs::write(auth_file, auth_json)
     }
 
     #[test]
-    #[expect(clippy::expect_used, clippy::unwrap_used)]
     fn id_token_info_handles_missing_fields() {
         // Payload without email or plan should yield None values.
         let header = serde_json::json!({"alg": "none", "typ": "JWT"});
@@ -581,7 +590,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[expect(clippy::unwrap_used)]
     async fn loads_api_key_from_auth_json() {
         let dir = tempdir().unwrap();
         let auth_file = dir.path().join("auth.json");
