@@ -51,17 +51,12 @@ impl PartialEq for CodexAuth {
 }
 
 impl CodexAuth {
-    pub fn new(
-        api_key: Option<String>,
-        mode: AuthMode,
-        auth_file: PathBuf,
-        auth_dot_json: Option<AuthDotJson>,
-    ) -> Self {
-        let auth_dot_json = Arc::new(Mutex::new(auth_dot_json));
+    pub fn create_dummy_chatgpt_auth_for_testing(auth_dot_json: AuthDotJson) -> Self {
+        let auth_dot_json = Arc::new(Mutex::new(Some(auth_dot_json)));
         Self {
-            api_key,
-            mode,
-            auth_file,
+            api_key: None,
+            mode: AuthMode::ChatGPT,
+            auth_file: PathBuf::new(),
             auth_dot_json,
         }
     }
