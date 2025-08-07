@@ -1,3 +1,4 @@
+use crate::colors::LIGHT_BLUE;
 use crate::exec_command::relativize_to_home;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::slash_command::SlashCommand;
@@ -8,6 +9,7 @@ use codex_ansi_escape::ansi_escape_line;
 use codex_common::create_config_summary_entries;
 use codex_common::elapsed::format_duration;
 use codex_core::config::Config;
+use codex_core::parse_command::ParsedCommand;
 use codex_core::plan_tool::PlanItemArg;
 use codex_core::plan_tool::StepStatus;
 use codex_core::plan_tool::UpdatePlanArgs;
@@ -32,6 +34,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -278,13 +281,121 @@ impl HistoryCell {
         }
     }
 
-    pub(crate) fn new_completed_exec_command(command: Vec<String>, output: CommandOutput) -> Self {
+    pub(crate) fn new_completed_exec_command(
+        command: Vec<String>,
+        parsed: Vec<ParsedCommand>,
+        output: CommandOutput,
+    ) -> Self {
+        let is_read_command = parsed
+            .iter()
+            .all(|c| matches!(c, ParsedCommand::Read { .. }));
+
+        let is_list_command = parsed.iter().all(|c| matches!(c, ParsedCommand::Ls { .. }));
+        let is_search_command = parsed.iter().all(|c| matches!(c, ParsedCommand::Rg { .. }));
+
+        if is_read_command {
+            return HistoryCell::new_read_command(parsed);
+        } else if is_list_command {
+            return HistoryCell::new_list_command(parsed);
+        } else if is_search_command {
+            return HistoryCell::new_search_command(parsed);
+        }
+        HistoryCell::new_completed_exec_command_generic(command, output)
+    }
+
+    fn new_read_command(read_commands: Vec<ParsedCommand>) -> Self {
+        let file_names: HashSet<&String> = read_commands
+            .iter()
+            .flat_map(|c| match c {
+                ParsedCommand::Read { name, .. } => Some(name),
+                _ => None,
+            })
+            .collect();
+
+        let count = file_names.len();
+        let mut lines: Vec<Line> = vec![match count {
+            0 => Line::from("📖 Reading files"),
+            1 => Line::from("📖 Reading 1 file"),
+            _ => Line::from(format!("📖 Reading {count} files")),
+        }];
+
+        for name in file_names {
+            lines.push(Line::from(vec![
+                Span::styled("  L ", Style::default().fg(Color::Gray)),
+                Span::styled(name.clone(), Style::default().fg(LIGHT_BLUE)),
+            ]));
+        }
+        lines.push(Line::from(""));
+
+        HistoryCell::CompletedExecCommand {
+            view: TextBlock::new(lines),
+        }
+    }
+
+    fn new_list_command(list_commands: Vec<ParsedCommand>) -> Self {
+        let paths: HashSet<&String> = list_commands
+            .iter()
+            .flat_map(|c| match c {
+                ParsedCommand::Ls { path, .. } => path.as_ref(),
+                _ => None,
+            })
+            .collect();
+
+        let count = paths.len();
+        let mut lines: Vec<Line> = vec![match count {
+            0 => Line::from("📖 Exploring files"),
+            1 => Line::from("📖 Exploring 1 folder"),
+            _ => Line::from(format!("📖 Exploring {count} folders")),
+        }];
+
+        for name in paths {
+            lines.push(Line::from(vec![
+                Span::styled("  L ", Style::default().fg(Color::Gray)),
+                Span::styled(name.clone(), Style::default().fg(LIGHT_BLUE)),
+            ]));
+        }
+        lines.push(Line::from(""));
+
+        HistoryCell::CompletedExecCommand {
+            view: TextBlock::new(lines),
+        }
+    }
+
+    fn new_search_command(search_commands: Vec<ParsedCommand>) -> Self {
+        let file_names: HashSet<&String> = search_commands
+            .iter()
+            .flat_map(|c| match c {
+                ParsedCommand::Read { name, .. } => Some(name),
+                _ => None,
+            })
+            .collect();
+
+        let count = file_names.len();
+        let mut lines: Vec<Line> = vec![match count {
+            0 => Line::from("🔎 Searching files"),
+            1 => Line::from("🔎 Searching 1 file"),
+            _ => Line::from(format!("🔎 Searching {count} files")),
+        }];
+
+        for name in file_names {
+            lines.push(Line::from(vec![
+                Span::styled("  L ", Style::default().fg(Color::Gray)),
+                Span::styled(name.clone(), Style::default().fg(LIGHT_BLUE)),
+            ]));
+        }
+        lines.push(Line::from(""));
+
+        HistoryCell::CompletedExecCommand {
+            view: TextBlock::new(lines),
+        }
+    }
+
+    fn new_completed_exec_command_generic(command: Vec<String>, output: CommandOutput) -> Self {
         let CommandOutput {
             exit_code,
             stdout,
             stderr,
         } = output;
-
         let mut lines: Vec<Line<'static>> = Vec::new();
         let command_escaped = strip_bash_lc_and_escape(&command);
         lines.push(Line::from(vec![
