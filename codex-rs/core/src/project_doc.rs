@@ -12,6 +12,7 @@
 //!     exists, the search stops – we do **not** walk past the Git root.
 
 use crate::config::Config;
+use crate::config::find_user_instructions_path;
 use std::path::Path;
 use std::path::PathBuf;
 use tokio::io::AsyncReadExt;
@@ -51,41 +52,12 @@ pub(crate) async fn get_user_instructions(config: &Config) -> Option<String> {
 /// `Err` so callers can decide how to handle them.
 async fn find_project_doc(config: &Config) -> std::io::Result<Option<String>> {
     let max_bytes = config.project_doc_max_bytes;
-
-    // Attempt to load from the working directory first.
-    if let Some(doc) = load_first_candidate(&config.cwd, CANDIDATE_FILENAMES, max_bytes).await? {
-        return Ok(Some(doc));
+    if max_bytes == 0 {
+        return Ok(None);
     }
 
-    // Walk up towards the filesystem root, stopping once we encounter the Git
-    // repository root. The presence of **either** a `.git` *file* or
-    // *directory* counts.
-    let mut dir = config.cwd.clone();
-
-    // Canonicalize the path so that we do not end up in an infinite loop when
-    // `cwd` contains `..` components.
-    if let Ok(canon) = dir.canonicalize() {
-        dir = canon;
-    }
-
-    while let Some(parent) = dir.parent() {
-        // `.git` can be a *file* (for worktrees or submodules) or a *dir*.
-        let git_marker = dir.join(".git");
-        let git_exists = match tokio::fs::metadata(&git_marker).await {
-            Ok(_) => true,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-            Err(e) => return Err(e),
-        };
-
-        if git_exists {
-            // We are at the repo root – attempt one final load.
-            if let Some(doc) = load_first_candidate(&dir, CANDIDATE_FILENAMES, max_bytes).await? {
-                return Ok(Some(doc));
-            }
-            break;
-        }
-
-        dir = parent.to_path_buf();
+    if let Some(path) = find_project_doc_path_async(config).await {
+        return read_file_with_limit(&path, max_bytes).await;
     }
 
     Ok(None)
@@ -108,14 +80,7 @@ pub struct InstructionsInfo {
 ///   path will be `None` even if a file exists.
 /// - Empty files are treated as "not set".
 pub async fn collect_instructions_info(config: &Config) -> InstructionsInfo {
-    let user_instructions_path = {
-        let mut p = config.codex_home.clone();
-        p.push("AGENTS.md");
-        match tokio::fs::read_to_string(&p).await {
-            Ok(s) if !s.trim().is_empty() => Some(p),
-            _ => None,
-        }
-    };
+    let user_instructions_path = find_user_instructions_path(&config.codex_home);
 
     let project_instructions_path = if config.project_doc_max_bytes == 0 {
         None
@@ -171,14 +136,7 @@ async fn find_first_candidate_path_async(dir: &Path, names: &[&str]) -> Option<P
 /// Synchronous variant for UI code that isn't async-aware. Mirrors
 /// [`collect_instructions_info`] using blocking filesystem APIs.
 pub fn collect_instructions_info_sync(config: &Config) -> InstructionsInfo {
-    let user_instructions_path = {
-        let mut p = config.codex_home.clone();
-        p.push("AGENTS.md");
-        match std::fs::read_to_string(&p) {
-            Ok(s) if !s.trim().is_empty() => Some(p),
-            _ => None,
-        }
-    };
+    let user_instructions_path = find_user_instructions_path(&config.codex_home);
 
     let project_instructions_path = if config.project_doc_max_bytes == 0 {
         None
@@ -228,46 +186,32 @@ fn find_first_candidate_path_sync(dir: &Path, names: &[&str]) -> Option<PathBuf>
     None
 }
 
-/// Attempt to load the first candidate file found in `dir`. Returns the file
-/// contents (truncated if it exceeds `max_bytes`) when successful.
-async fn load_first_candidate(
-    dir: &Path,
-    names: &[&str],
-    max_bytes: usize,
-) -> std::io::Result<Option<String>> {
-    for name in names {
-        let candidate = dir.join(name);
+/// Read a file with a maximum byte limit; empty content returns None.
+async fn read_file_with_limit(path: &Path, max_bytes: usize) -> std::io::Result<Option<String>> {
+    let file = match tokio::fs::File::open(path).await {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+        Ok(f) => f,
+    };
 
-        let file = match tokio::fs::File::open(&candidate).await {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e),
-            Ok(f) => f,
-        };
+    let size = file.metadata().await?.len();
+    let reader = tokio::io::BufReader::new(file);
+    let mut data = Vec::with_capacity(std::cmp::min(size as usize, max_bytes));
+    let mut limited = reader.take(max_bytes as u64);
+    limited.read_to_end(&mut data).await?;
 
-        let size = file.metadata().await?.len();
-
-        let reader = tokio::io::BufReader::new(file);
-        let mut data = Vec::with_capacity(std::cmp::min(size as usize, max_bytes));
-        let mut limited = reader.take(max_bytes as u64);
-        limited.read_to_end(&mut data).await?;
-
-        if size as usize > max_bytes {
-            tracing::warn!(
-                "Project doc `{}` exceeds {max_bytes} bytes - truncating.",
-                candidate.display(),
-            );
-        }
-
-        let contents = String::from_utf8_lossy(&data).to_string();
-        if contents.trim().is_empty() {
-            // Empty file – treat as not found.
-            continue;
-        }
-
-        return Ok(Some(contents));
+    if size as usize > max_bytes {
+        tracing::warn!(
+            "Project doc `{}` exceeds {max_bytes} bytes - truncating.",
+            path.display(),
+        );
     }
 
-    Ok(None)
+    let contents = String::from_utf8_lossy(&data).to_string();
+    if contents.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(contents))
 }
 
 #[cfg(test)]
