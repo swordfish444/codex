@@ -8,12 +8,10 @@ use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config_types::SandboxMode;
 use codex_core::protocol::AskForApproval;
-use codex_core::util::is_inside_git_repo;
 use codex_login::load_auth;
 use codex_ollama::DEFAULT_OSS_MODEL;
 use log_layer::TuiLogLayer;
 use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::PathBuf;
 use tracing::error;
 use tracing_appender::non_blocking;
@@ -27,16 +25,18 @@ mod bottom_pane;
 mod chatwidget;
 mod citation_regex;
 mod cli;
+mod colors;
 pub mod custom_terminal;
 mod exec_command;
 mod file_search;
 mod get_git_diff;
-mod git_warning_screen;
 mod history_cell;
 pub mod insert_history;
 pub mod live_wrap;
 mod log_layer;
 mod markdown;
+pub mod onboarding;
+mod shimmer;
 mod slash_command;
 mod status_indicator_widget;
 mod text_block;
@@ -204,38 +204,12 @@ pub async fn run_main(
         eprintln!("");
     }
 
-    let show_login_screen = should_show_login_screen(&config);
-    if show_login_screen {
-        std::io::stdout()
-            .write_all(b"No API key detected.\nLogin with your ChatGPT account? [Yn] ")?;
-        std::io::stdout().flush()?;
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        let trimmed = input.trim();
-        if !(trimmed.is_empty() || trimmed.eq_ignore_ascii_case("y")) {
-            std::process::exit(1);
-        }
-        // Spawn a task to run the login command.
-        // Block until the login command is finished.
-        codex_login::login_with_chatgpt(&config.codex_home, false).await?;
-
-        std::io::stdout().write_all(b"Login successful.\n")?;
-    }
-
-    // Determine whether we need to display the "not a git repo" warning
-    // modal. The flag is shown when the current working directory is *not*
-    // inside a Git repository **and** the user did *not* pass the
-    // `--allow-no-git-exec` flag.
-    let show_git_warning = !cli.skip_git_repo_check && !is_inside_git_repo(&config);
-
-    run_ratatui_app(cli, config, show_git_warning, log_rx)
-        .map_err(|err| std::io::Error::other(err.to_string()))
+    run_ratatui_app(cli, config, log_rx).map_err(|err| std::io::Error::other(err.to_string()))
 }
 
 fn run_ratatui_app(
     cli: Cli,
     config: Config,
-    show_git_warning: bool,
     mut log_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
 ) -> color_eyre::Result<codex_core::protocol::TokenUsage> {
     color_eyre::install()?;
@@ -253,7 +227,7 @@ fn run_ratatui_app(
     terminal.clear()?;
 
     let Cli { prompt, images, .. } = cli;
-    let mut app = App::new(config.clone(), prompt, show_git_warning, images);
+    let mut app = App::new(config.clone(), prompt, cli.skip_git_repo_check, images);
 
     // Bridge log receiver into the AppEvent channel so latest log lines update the UI.
     {
