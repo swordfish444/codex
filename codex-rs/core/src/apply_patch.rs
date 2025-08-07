@@ -1,6 +1,9 @@
 use crate::codex::Session;
 use crate::models::FunctionCallOutputPayload;
 use crate::models::ResponseInputItem;
+use crate::protocol::DiffHunk;
+use crate::protocol::DiffLine;
+use crate::protocol::DiffLineKind;
 use crate::protocol::FileChange;
 use crate::protocol::ReviewDecision;
 use crate::safety::SafetyCheck;
@@ -119,14 +122,141 @@ pub(crate) fn convert_apply_patch_to_protocol(
                 unified_diff,
                 move_path,
                 new_content: _new_content,
-            } => FileChange::Update {
-                unified_diff: unified_diff.clone(),
-                move_path: move_path.clone(),
-            },
+            } => {
+                let hunks = parse_unified_diff_to_hunks(unified_diff).unwrap_or_default();
+                FileChange::Update {
+                    unified_diff: unified_diff.clone(),
+                    move_path: move_path.clone(),
+                    hunks: if hunks.is_empty() { None } else { Some(hunks) },
+                }
+            }
         };
         result.insert(path.clone(), protocol_change);
     }
     result
+}
+
+/// Parse a unified diff string into structured hunks. The input is expected to
+/// contain one or more hunk headers (lines starting with "@@") followed by hunk
+/// bodies. Lines starting with '+++', '---' (file headers) are ignored.
+fn parse_unified_diff_to_hunks(src: &str) -> Option<Vec<DiffHunk>> {
+    let mut hunks: Vec<DiffHunk> = Vec::new();
+    let mut cur: Option<DiffHunk> = None;
+
+    for line in src.lines() {
+        if line.starts_with("---") || line.starts_with("+++") {
+            // File headers: ignore.
+            continue;
+        }
+
+        if let Some((old_start, old_count, new_start, new_count)) = parse_hunk_header(line) {
+            // Flush previous hunk
+            if let Some(h) = cur.take() {
+                hunks.push(h);
+            }
+            cur = Some(DiffHunk {
+                old_start: old_start as u32,
+                old_count: old_count as u32,
+                new_start: new_start as u32,
+                new_count: new_count as u32,
+                lines: Vec::new(),
+            });
+            continue;
+        }
+
+        if let Some(h) = cur.as_mut() {
+            // Classify by prefix; store text without the prefix when present.
+            let (kind, text) = if let Some(rest) = line.strip_prefix('+') {
+                (DiffLineKind::Add, rest.to_string())
+            } else if let Some(rest) = line.strip_prefix('-') {
+                (DiffLineKind::Delete, rest.to_string())
+            } else if let Some(rest) = line.strip_prefix(' ') {
+                (DiffLineKind::Context, rest.to_string())
+            } else {
+                // Non-standard line inside hunk; keep as context with full text.
+                (DiffLineKind::Context, line.to_string())
+            };
+            h.lines.push(DiffLine { kind, text });
+        }
+    }
+
+    if let Some(h) = cur.take() {
+        hunks.push(h);
+    }
+
+    Some(hunks)
+}
+
+// Lightweight parsing of a unified diff hunk header of the form:
+// @@ -oldStart,oldCount +newStart,newCount @@
+// Counts may be omitted which implies 1.
+fn parse_hunk_header(line: &str) -> Option<(u64, u64, u64, u64)> {
+    if !line.starts_with("@@") {
+        return None;
+    }
+    let bytes = line.as_bytes();
+    let mut i = 2usize;
+    // skip spaces
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] != b'-' {
+        return None;
+    }
+    i += 1;
+    let (old_start, c1) = parse_uint(&bytes[i..]);
+    if c1 == 0 {
+        return None;
+    }
+    i += c1;
+    let mut old_count = 1u64;
+    if i < bytes.len() && bytes[i] == b',' {
+        i += 1;
+        let (n, c) = parse_uint(&bytes[i..]);
+        if c == 0 {
+            return None;
+        }
+        old_count = n;
+        i += c;
+    }
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] != b'+' {
+        return None;
+    }
+    i += 1;
+    let (new_start, c2) = parse_uint(&bytes[i..]);
+    if c2 == 0 {
+        return None;
+    }
+    i += c2;
+    let mut new_count = 1u64;
+    if i < bytes.len() && bytes[i] == b',' {
+        i += 1;
+        let (n, c) = parse_uint(&bytes[i..]);
+        if c == 0 {
+            return None;
+        }
+        new_count = n;
+        i += c;
+    }
+    Some((old_start, old_count, new_start, new_count))
+}
+
+fn parse_uint(s: &[u8]) -> (u64, usize) {
+    let mut i = 0usize;
+    let mut n: u64 = 0;
+    while i < s.len() {
+        let b = s[i];
+        if b.is_ascii_digit() {
+            n = n * 10 + (b - b'0') as u64;
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    (n, i)
 }
 
 pub(crate) fn get_writable_roots(cwd: &Path) -> Vec<PathBuf> {
