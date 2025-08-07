@@ -626,6 +626,41 @@ pub struct PatchApplyEndEvent {
     pub success: bool,
 }
 
+/// Kind of a single line in a diff hunk body.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffLineKind {
+    /// Line was inserted (prefixed with '+').
+    Add,
+    /// Line was deleted (prefixed with '-').
+    Delete,
+    /// Context line (no prefix or a single space in unified diff output).
+    Context,
+}
+
+/// A single line within a diff hunk.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DiffLine {
+    pub kind: DiffLineKind,
+    /// Text content of the line without the unified diff prefix character.
+    pub text: String,
+}
+
+/// Structured representation of a unified diff hunk.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DiffHunk {
+    /// 1-based starting line number in the original file.
+    pub old_start: u32,
+    /// Number of lines in the original file that the hunk covers.
+    pub old_count: u32,
+    /// 1-based starting line number in the new file.
+    pub new_start: u32,
+    /// Number of lines in the new file that the hunk covers.
+    pub new_count: u32,
+    /// Lines within this hunk in unified diff order.
+    pub lines: Vec<DiffLine>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TurnDiffEvent {
     pub unified_diff: String,
@@ -685,8 +720,14 @@ pub enum FileChange {
     },
     Delete,
     Update {
+        /// Unified diff for this file change. Retained for compatibility with
+        /// older clients that do not support structured hunks.
         unified_diff: String,
         move_path: Option<PathBuf>,
+        /// Optional structured representation of the diff hunks to avoid
+        /// requiring clients to parse unified diff syntax.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        hunks: Option<Vec<DiffHunk>>,
     },
 }
 

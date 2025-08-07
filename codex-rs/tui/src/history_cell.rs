@@ -11,6 +11,8 @@ use codex_core::config::Config;
 use codex_core::plan_tool::PlanItemArg;
 use codex_core::plan_tool::StepStatus;
 use codex_core::plan_tool::UpdatePlanArgs;
+use codex_core::protocol::DiffHunk;
+use codex_core::protocol::DiffLineKind;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::McpInvocation;
 use codex_core::protocol::SessionConfiguredEvent;
@@ -719,6 +721,7 @@ fn create_diff_summary(changes: HashMap<PathBuf, FileChange>) -> Vec<Line<'stati
             Update {
                 unified_diff,
                 move_path,
+                hunks,
             } => {
                 if let Some(new_path) = move_path {
                     summaries.push(Line::from(vec![
@@ -744,8 +747,13 @@ fn create_diff_summary(changes: HashMap<PathBuf, FileChange>) -> Vec<Line<'stati
                     ]));
                 }
 
-                // Render unified diff as inline diff with line numbers.
-                summaries.extend(format_inline_diff(unified_diff));
+                // Prefer structured hunks if provided; otherwise, fall back
+                // to parsing the unified diff string.
+                if let Some(hunks) = hunks {
+                    summaries.extend(format_inline_hunks(hunks));
+                } else {
+                    summaries.extend(format_inline_diff(unified_diff));
+                }
             }
         }
     }
@@ -787,9 +795,13 @@ fn format_inline_diff(unified_diff: &str) -> Vec<Line<'static>> {
         }
 
         // Prepare number columns and content coloring based on first char
-        let (left_num, right_num, content_style, advance_old, advance_new):
-            (String, String, Style, i64, i64) = if raw.starts_with('+')
-        {
+        let (left_num, right_num, content_style, advance_old, advance_new): (
+            String,
+            String,
+            Style,
+            i64,
+            i64,
+        ) = if raw.starts_with('+') {
             (
                 " ".repeat(old_w),
                 format!("{:>width$}", new_ln, width = new_w),
@@ -824,6 +836,81 @@ fn format_inline_diff(unified_diff: &str) -> Vec<Line<'static>> {
 
         old_ln += advance_old;
         new_ln += advance_new;
+    }
+
+    out
+}
+
+/// Render structured hunks into inline diff with numbered columns, similar to
+/// `format_inline_diff` but without parsing unified diff text.
+fn format_inline_hunks(hunks: &[DiffHunk]) -> Vec<Line<'static>> {
+    // Compute max widths for columns based on hunk ranges.
+    let mut max_old_end: u32 = 0;
+    let mut max_new_end: u32 = 0;
+    for h in hunks {
+        let o_end = h.old_start.saturating_add(h.old_count.saturating_sub(1));
+        let n_end = h.new_start.saturating_add(h.new_count.saturating_sub(1));
+        max_old_end = max_old_end.max(o_end);
+        max_new_end = max_new_end.max(n_end);
+    }
+    let old_w = std::cmp::max(2, num_width(max_old_end as u64));
+    let new_w = std::cmp::max(2, num_width(max_new_end as u64));
+
+    let mut out: Vec<Line<'static>> = Vec::new();
+    let num_style = Style::default().fg(Color::DarkGray);
+
+    for h in hunks {
+        // Hunk header line
+        let header = format!(
+            "@@ -{},{} +{},{} @@",
+            h.old_start, h.old_count, h.new_start, h.new_count
+        );
+        out.push(Line::from(RtSpan::styled(header, Style::default().fg(Color::Cyan))));
+
+        let mut old_ln = h.old_start as i64;
+        let mut new_ln = h.new_start as i64;
+
+        for l in &h.lines {
+            let (left_num, right_num, content_style, advance_old, advance_new, prefix) =
+                match l.kind {
+                    DiffLineKind::Add => (
+                        " ".repeat(old_w),
+                        format!("{:>width$}", new_ln, width = new_w),
+                        Style::default().fg(Color::Green),
+                        0,
+                        1,
+                        '+',
+                    ),
+                    DiffLineKind::Delete => (
+                        format!("{:>width$}", old_ln, width = old_w),
+                        " ".repeat(new_w),
+                        Style::default().fg(Color::Red),
+                        1,
+                        0,
+                        '-',
+                    ),
+                    DiffLineKind::Context => (
+                        format!("{:>width$}", old_ln, width = old_w),
+                        format!("{:>width$}", new_ln, width = new_w),
+                        Style::default(),
+                        1,
+                        1,
+                        ' ',
+                    ),
+                };
+
+            let sep = RtSpan::styled(" | ", num_style);
+            let left = RtSpan::styled(left_num, num_style);
+            let right = RtSpan::styled(right_num, num_style);
+            let mut content = String::with_capacity(l.text.len() + 1);
+            content.push(prefix);
+            content.push_str(&l.text);
+            let content = RtSpan::styled(content, content_style);
+            out.push(RtLine::from(vec![left, sep.clone(), right, sep, content]));
+
+            old_ln += advance_old;
+            new_ln += advance_new;
+        }
     }
 
     out

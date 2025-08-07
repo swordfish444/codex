@@ -236,6 +236,7 @@ async fn patch_approval_triggers_elicitation() -> anyhow::Result<()> {
         FileChange::Update {
             unified_diff: "@@ -1 +1 @@\n-original content\n+modified content\n".to_string(),
             move_path: None,
+            hunks: None,
         },
     );
 
