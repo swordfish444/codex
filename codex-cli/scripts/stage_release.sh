@@ -95,6 +95,7 @@ pushd "$CODEX_CLI_ROOT" >/dev/null
 mkdir -p "$TMPDIR/bin"
 
 cp -r bin/codex.js "$TMPDIR/bin/codex.js"
+mkdir -p "$TMPDIR/dist"
 cp -r dist "$TMPDIR/dist"
 cp -r src "$TMPDIR/src" # keep source for TS sourcemaps
 cp ../README.md "$TMPDIR" || true # README is one level up - ignore if missing
