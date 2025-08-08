@@ -9,9 +9,6 @@
 #   --tmp <dir>  : Use <dir> instead of a freshly created temp directory.
 #   -h|--help    : Print usage.
 #
-# NOTE: This script is intended to be run from the repository root via
-#       `pnpm --filter codex-cli stage-release ...` or inside codex-cli with the
-#       helper script entry in package.json (`pnpm stage-release ...`).
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
@@ -93,9 +90,6 @@ CODEX_CLI_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 pushd "$CODEX_CLI_ROOT" >/dev/null
 
 # 1. Build the JS artifacts ---------------------------------------------------
-
-pnpm install
-pnpm build
 
 # Paths inside the staged package
 mkdir -p "$TMPDIR/bin"
