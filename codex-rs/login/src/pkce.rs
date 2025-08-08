@@ -1,6 +1,7 @@
 use base64::Engine as _;
 use rand::RngCore;
-use sha2::{Digest, Sha256};
+use sha2::Digest;
+use sha2::Sha256;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PkceCodes {
@@ -19,5 +20,3 @@ pub(crate) fn generate_pkce() -> PkceCodes {
         code_challenge,
     }
 }
-
-

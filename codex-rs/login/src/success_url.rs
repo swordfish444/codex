@@ -8,8 +8,8 @@ pub(crate) fn build_success_url(
     plan_type: Option<&str>,
     needs_setup: bool,
     platform_url: &str,
-) -> Url {
-    let mut success_url = Url::parse(&format!("{}/success", url_base)).expect("valid base url");
+) -> Result<Url, url::ParseError> {
+    let mut success_url = Url::parse(&format!("{url_base}/success"))?;
     if let Some(id) = id_token {
         success_url.query_pairs_mut().append_pair("id_token", id);
     }
@@ -17,7 +17,9 @@ pub(crate) fn build_success_url(
         success_url.query_pairs_mut().append_pair("org_id", org);
     }
     if let Some(proj) = project_id {
-        success_url.query_pairs_mut().append_pair("project_id", proj);
+        success_url
+            .query_pairs_mut()
+            .append_pair("project_id", proj);
     }
     if let Some(pt) = plan_type {
         success_url.query_pairs_mut().append_pair("plan_type", pt);
@@ -26,7 +28,5 @@ pub(crate) fn build_success_url(
         .query_pairs_mut()
         .append_pair("needs_setup", if needs_setup { "true" } else { "false" })
         .append_pair("platform_url", platform_url);
-    success_url
+    Ok(success_url)
 }
-
-

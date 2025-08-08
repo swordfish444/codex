@@ -43,5 +43,3 @@ pub(crate) fn write_auth_file(
     f.write_all(contents.as_bytes())?;
     f.flush()
 }
-
-

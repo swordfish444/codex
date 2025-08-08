@@ -7,8 +7,10 @@ use std::env;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::fs::remove_file;
+use std::io;
 use std::io::Read;
 use std::io::Write;
+use std::net::TcpListener;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
@@ -23,21 +25,22 @@ use std::time::Duration;
 pub use crate::token_data::TokenData;
 use crate::token_data::parse_id_token;
 
-mod token_data;
-mod server;
-mod pkce;
-mod jwt_utils;
 mod auth_file;
-mod success_url;
+mod jwt_utils;
+mod pkce;
 mod redeem;
-pub use server::LoginServerOptions;
-pub use server::run_local_login_server_with_options;
-pub use server::process_callback_headless;
+mod server;
+mod success_url;
+mod token_data;
 pub use server::HeadlessOutcome;
 pub use server::Http;
+pub use server::LoginServerOptions;
+pub use server::process_callback_headless;
+pub use server::run_local_login_server_with_options;
 
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 pub const OPENAI_API_KEY_ENV_VAR: &str = "OPENAI_API_KEY";
+pub const EXIT_CODE_WHEN_ADDRESS_ALREADY_IN_USE: i32 = 13;
 
 #[derive(Clone, Debug, PartialEq, Copy)]
 pub enum AuthMode {
@@ -322,11 +325,48 @@ pub fn spawn_login_with_chatgpt(codex_home: &Path) -> std::io::Result<SpawnedLog
 /// If `capture_output` is true, the subprocess's output will be captured and
 /// recorded in memory. Otherwise, the subprocess's output will be sent to the
 /// current process's stdout/stderr.
-pub async fn login_with_chatgpt(codex_home: &Path, _capture_output: bool) -> std::io::Result<()> {
+pub async fn login_with_chatgpt(
+    codex_home: &Path,
+    open_browser: bool,
+    verbose: bool,
+) -> std::io::Result<()> {
+    // Prefer env override to match Python flow expectations.
+    let client_id = std::env::var("CODEX_CLIENT_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| CLIENT_ID.to_string());
+
+    // Mirror Python's special-case exit for address-in-use by pre-binding the port.
+    // Tiny race window is acceptable for UX parity.
+    match TcpListener::bind(("127.0.0.1", server::DEFAULT_PORT)) {
+        Ok(_sock) => {
+            // release immediately; server will bind next
+        }
+        Err(e) => {
+            if e.kind() == io::ErrorKind::AddrInUse {
+                return Err(io::Error::new(io::ErrorKind::AddrInUse, e));
+            }
+        }
+    }
+
     let codex_home = codex_home.to_path_buf();
-    tokio::task::spawn_blocking(move || server::run_local_login_server(&codex_home, CLIENT_ID))
-        .await
-        .map_err(|e| std::io::Error::other(format!("task join error: {e}")))??;
+    let client_id_cloned = client_id.clone();
+    tokio::task::spawn_blocking(move || {
+        let opts = server::LoginServerOptions {
+            codex_home: codex_home.clone(),
+            client_id: client_id_cloned,
+            issuer: server::DEFAULT_ISSUER.to_string(),
+            port: server::DEFAULT_PORT,
+            open_browser,
+            redeem_credits: true,
+            expose_state_endpoint: false,
+            testing_timeout_secs: None,
+            verbose,
+        };
+        server::run_local_login_server_with_options(opts)
+    })
+    .await
+    .map_err(|e| std::io::Error::other(format!("task join error: {e}")))??;
     Ok(())
 }
 

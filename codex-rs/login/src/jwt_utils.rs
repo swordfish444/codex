@@ -19,5 +19,3 @@ fn decode_jwt_payload_segment(segment_b64: &str) -> serde_json::Value {
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
         .unwrap_or(serde_json::Value::Object(Default::default()))
 }
-
-

@@ -1,12 +1,16 @@
-use codex_login::{process_callback_headless, HeadlessOutcome, LoginServerOptions};
+#![expect(clippy::unwrap_used)]
+use codex_login::LoginServerOptions;
+use codex_login::process_callback_headless;
 use serde_json::json;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use tempfile::TempDir;
 
+type FormCapture = (String, Vec<(String, String)>);
+
 #[derive(Default)]
 struct MockHttp {
-    forms: RefCell<Vec<(String, Vec<(String, String)>)>>,
+    forms: RefCell<Vec<FormCapture>>,
     jsons: RefCell<Vec<(String, serde_json::Value)>>,
     replies: RefCell<VecDeque<serde_json::Value>>,
 }
@@ -29,21 +33,17 @@ impl codex_login::Http for MockHttp {
         self.replies
             .borrow_mut()
             .pop_front()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "no reply"))
+            .ok_or_else(|| std::io::Error::other("no reply"))
     }
 
-    fn post_json(
-        &self,
-        url: &str,
-        body: &serde_json::Value,
-    ) -> std::io::Result<serde_json::Value> {
+    fn post_json(&self, url: &str, body: &serde_json::Value) -> std::io::Result<serde_json::Value> {
         self.jsons
             .borrow_mut()
             .push((url.to_string(), body.clone()));
         self.replies
             .borrow_mut()
             .pop_front()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "no reply"))
+            .ok_or_else(|| std::io::Error::other("no reply"))
     }
 }
 
@@ -67,6 +67,7 @@ fn default_opts(tmp: &TempDir) -> LoginServerOptions {
         redeem_credits: true,
         expose_state_endpoint: false,
         testing_timeout_secs: None,
+        verbose: false,
     }
 }
 
@@ -87,7 +88,8 @@ fn headless_success_writes_auth_and_url() {
     // Credits redeem
     http.queue(json!({"granted_chatgpt_subscriber_api_credits": 5}));
 
-    let outcome = process_callback_headless(&opts, "state", "state", Some("code"), "ver", &http).unwrap();
+    let outcome =
+        process_callback_headless(&opts, "state", "state", Some("code"), "ver", &http).unwrap();
     assert!(outcome.success_url.contains("/success"));
     let contents = std::fs::read_to_string(tmp.path().join("auth.json")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&contents).unwrap();
@@ -147,9 +149,43 @@ fn headless_credit_redemption_best_effort() {
     // Token exchange -> API key
     http.queue(json!({"access_token": "sk-xyz"}));
     // Credits redeem: simulate error by not queuing a third response; the mock will error internally
-    let outcome = process_callback_headless(&opts, "state", "state", Some("code"), "ver", &http).unwrap();
+    let outcome =
+        process_callback_headless(&opts, "state", "state", Some("code"), "ver", &http).unwrap();
     assert!(outcome.success_url.contains("needs_setup=true"));
     assert!(tmp.path().join("auth.json").exists());
 }
 
+// 6) ID-token fallback for org/project/flags
+#[test]
+fn headless_id_token_fallback_for_org_and_project() {
+    let tmp = TempDir::new().unwrap();
+    let opts = default_opts(&tmp);
+    let http = MockHttp::default();
+    // Code exchange: put org/project/flags into ID token; plan_type into access
+    http.queue(json!({
+        "id_token": make_fake_jwt(json!({
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "acc",
+                "organization_id": "id-org",
+                "project_id": "id-proj",
+                "completed_platform_onboarding": true,
+                "is_org_owner": false
+            }
+        })),
+        "access_token": make_fake_jwt(json!({
+            "https://api.openai.com/auth": {
+                "chatgpt_plan_type": "plus"
+            }
+        })),
+        "refresh_token": "r1"
+    }));
+    // Token exchange -> API key
+    http.queue(json!({"access_token": "sk-xyz"}));
+    // Credits redeem
+    http.queue(json!({"granted_chatgpt_subscriber_api_credits": 0}));
 
+    let outcome =
+        process_callback_headless(&opts, "state", "state", Some("code"), "ver", &http).unwrap();
+    assert!(outcome.success_url.contains("org_id=id-org"));
+    assert!(outcome.success_url.contains("project_id=id-proj"));
+}

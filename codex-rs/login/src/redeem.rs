@@ -1,6 +1,8 @@
 use crate::auth_file::now_rfc3339_z;
 use crate::jwt_utils::parse_jwt_claims;
-use chrono::{DateTime, Duration, Utc};
+use chrono::DateTime;
+use chrono::Duration;
+use chrono::Utc;
 use reqwest::blocking::Client;
 use serde_json::json;
 use std::time::Duration as StdDuration;
@@ -25,7 +27,7 @@ pub(crate) fn maybe_redeem_credits(
 
     let mut token_expired = true;
     if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64()) {
-        let now_ms = (Utc::now().timestamp_millis()) as i64;
+        let now_ms = Utc::now().timestamp_millis();
         token_expired = now_ms >= exp * 1000;
     }
 
@@ -49,8 +51,13 @@ pub(crate) fn maybe_redeem_credits(
             .json(&body)
             .send();
         let Ok(resp) = resp else { return };
-        let Ok(val) = resp.json::<serde_json::Value>() else { return };
-        let new_id_token = val.get("id_token").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let Ok(val) = resp.json::<serde_json::Value>() else {
+            return;
+        };
+        let new_id_token = val
+            .get("id_token")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let new_refresh_token = val
             .get("refresh_token")
             .and_then(|v| v.as_str())
@@ -87,8 +94,8 @@ pub(crate) fn maybe_redeem_credits(
         .get("chatgpt_subscription_active_start")
         .and_then(|v| v.as_str())
     {
-        if let Ok(sub_start) = DateTime::parse_from_rfc3339(sub_start_str)
-            .map(|dt| dt.with_timezone(&Utc))
+        if let Ok(sub_start) =
+            DateTime::parse_from_rfc3339(sub_start_str).map(|dt| dt.with_timezone(&Utc))
         {
             if Utc::now() - sub_start < Duration::days(7) {
                 eprintln!(
@@ -148,10 +155,8 @@ pub(crate) fn maybe_redeem_credits(
                     amount
                 );
             } else {
-                eprintln!("It looks like no credits were granted: {}", val);
+                eprintln!("It looks like no credits were granted: {val}");
             }
         }
     }
 }
-
-
