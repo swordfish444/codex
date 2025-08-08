@@ -18,14 +18,18 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
-use tokio::process::Command;
+// use tokio::process::Command; // no longer used
 
 pub use crate::token_data::TokenData;
 use crate::token_data::parse_id_token;
 
 mod token_data;
-
-const SOURCE_FOR_PYTHON_SERVER: &str = include_str!("./login_with_chatgpt.py");
+mod server;
+pub use server::LoginServerOptions;
+pub use server::run_local_login_server_with_options;
+pub use server::process_callback_headless;
+pub use server::HeadlessOutcome;
+pub use server::Http;
 
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 pub const OPENAI_API_KEY_ENV_VAR: &str = "OPENAI_API_KEY";
@@ -261,13 +265,12 @@ pub struct SpawnedLogin {
     pub stderr: Arc<Mutex<Vec<u8>>>,
 }
 
-/// Spawn the ChatGPT login Python server as a child process and return a handle to its process.
+/// Spawn the Rust login server via the current executable ("codex login") and return a handle to its process.
 pub fn spawn_login_with_chatgpt(codex_home: &Path) -> std::io::Result<SpawnedLogin> {
-    let mut cmd = std::process::Command::new("python3");
-    cmd.arg("-c")
-        .arg(SOURCE_FOR_PYTHON_SERVER)
+    let current_exe = std::env::current_exe()?;
+    let mut cmd = std::process::Command::new(current_exe);
+    cmd.arg("login")
         .env("CODEX_HOME", codex_home)
-        .env("CODEX_CLIENT_ID", CLIENT_ID)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -314,34 +317,12 @@ pub fn spawn_login_with_chatgpt(codex_home: &Path) -> std::io::Result<SpawnedLog
 /// If `capture_output` is true, the subprocess's output will be captured and
 /// recorded in memory. Otherwise, the subprocess's output will be sent to the
 /// current process's stdout/stderr.
-pub async fn login_with_chatgpt(codex_home: &Path, capture_output: bool) -> std::io::Result<()> {
-    let child = Command::new("python3")
-        .arg("-c")
-        .arg(SOURCE_FOR_PYTHON_SERVER)
-        .env("CODEX_HOME", codex_home)
-        .env("CODEX_CLIENT_ID", CLIENT_ID)
-        .stdin(Stdio::null())
-        .stdout(if capture_output {
-            Stdio::piped()
-        } else {
-            Stdio::inherit()
-        })
-        .stderr(if capture_output {
-            Stdio::piped()
-        } else {
-            Stdio::inherit()
-        })
-        .spawn()?;
-
-    let output = child.wait_with_output().await?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(std::io::Error::other(format!(
-            "login_with_chatgpt subprocess failed: {stderr}"
-        )))
-    }
+pub async fn login_with_chatgpt(codex_home: &Path, _capture_output: bool) -> std::io::Result<()> {
+    let codex_home = codex_home.to_path_buf();
+    tokio::task::spawn_blocking(move || server::run_local_login_server(&codex_home, CLIENT_ID))
+        .await
+        .map_err(|e| std::io::Error::other(format!("task join error: {e}")))??;
+    Ok(())
 }
 
 pub fn login_with_api_key(codex_home: &Path, api_key: &str) -> std::io::Result<()> {
