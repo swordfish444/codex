@@ -66,6 +66,7 @@ fn default_opts(tmp: &TempDir) -> LoginServerOptions {
         open_browser: false,
         redeem_credits: true,
         expose_state_endpoint: false,
+        testing_timeout_secs: None,
     }
 }
 
