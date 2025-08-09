@@ -585,13 +585,10 @@ mod tests {
     use ratatui::layout::Rect;
 
     #[test]
-    fn ctrl_l_clear_reanchors_viewport_and_moves_cursor() {
+    fn ctrl_l_clear_reanchors_viewport_and_moves_cursor() -> std::io::Result<()> {
         // Build a test terminal with a small screen and a viewport offset.
         let backend = TestBackend::new(20, 6);
-        let mut term = match crate::custom_terminal::Terminal::with_options(backend) {
-            Ok(t) => t,
-            Err(e) => panic!("failed to construct terminal: {e}"),
-        };
+        let mut term = crate::custom_terminal::Terminal::with_options(backend)?;
 
         // Simulate a viewport not at the top (e.g., after history insertions).
         term.set_viewport_area(Rect::new(0, 3, 20, 2));
@@ -602,10 +599,9 @@ mod tests {
 
         // Viewport should be re-anchored at the top and cursor at (0,0).
         assert_eq!(term.viewport_area.y, 0);
-        let pos = term
-            .get_cursor_position()
-            .expect("backend should provide cursor position");
+        let pos = term.get_cursor_position()?;
         assert_eq!(pos.x, 0);
         assert_eq!(pos.y, 0);
+        Ok(())
     }
 }
