@@ -712,19 +712,21 @@ impl ChatComposer {
     /// Synchronize `self.file_search_popup` with the current text in the textarea.
     /// Note this is only called when self.active_popup is NOT Command.
     fn sync_file_search_popup(&mut self) {
-        // Determine current query (may be empty if user just selected @file and hasn't typed yet).
-        let query_opt = Self::current_at_token(&self.textarea);
-        let Some(query) = query_opt else {
-            // Token removed – end session.
-            self.active_popup = ActivePopup::None;
-            self.dismissed_file_popup_token = None;
-            return;
+        // Determine if there is an @token underneath the cursor.
+        let query = match Self::current_at_token(&self.textarea) {
+            Some(token) => token,
+            None => {
+                self.active_popup = ActivePopup::None;
+                self.dismissed_file_popup_token = None;
+                return;
+            }
         };
 
         // If user dismissed popup for this exact query, don't reopen until text changes.
         if self.dismissed_file_popup_token.as_ref() == Some(&query) {
             return;
         }
+
         if !query.is_empty() {
             self.app_event_tx
                 .send(AppEvent::StartFileSearch(query.clone()));

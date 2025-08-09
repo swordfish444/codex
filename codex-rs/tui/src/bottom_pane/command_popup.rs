@@ -38,6 +38,7 @@ impl CommandPopup {
             // shows the help for `/clear`.
             let token = stripped.trim_start();
             let cmd_token = token.split_whitespace().next().unwrap_or("");
+
             // Update the filter keeping the original case (commands are all
             // lower-case for now but this may change in the future).
             self.command_filter = cmd_token.to_string();

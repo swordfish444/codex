@@ -2,7 +2,6 @@ use codex_file_search::FileMatch;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::WidgetRef;
-use std::fs;
 
 use super::popup_consts::MAX_POPUP_ROWS;
 use super::scroll_state::ScrollState;
@@ -26,16 +25,13 @@ pub(crate) struct FileSearchPopup {
 
 impl FileSearchPopup {
     pub(crate) fn new() -> Self {
-        // If pending_query is empty, pre-populate matches with files in current dir.
-        let mut popup = Self {
+        Self {
             display_query: String::new(),
             pending_query: String::new(),
             waiting: true,
             matches: Vec::new(),
             state: ScrollState::new(),
-        };
-        popup.populate_current_dir_if_empty_query();
-        popup
+        }
     }
 
     /// Update the query and reset state to *waiting*.
@@ -55,12 +51,6 @@ impl FileSearchPopup {
         if !keep_existing {
             self.matches.clear();
             self.state.reset();
-        }
-
-        // If query is empty, show files in current directory.
-        if query.is_empty() {
-            self.populate_current_dir_if_empty_query();
-            self.waiting = false;
         }
     }
 
@@ -119,42 +109,6 @@ impl FileSearchPopup {
         // remains stable while a newer search is in-flight.
 
         self.matches.len().clamp(1, MAX_POPUP_ROWS) as u16
-    }
-
-    /// Populate matches with files in the current directory if the query is empty.
-    fn populate_current_dir_if_empty_query(&mut self) {
-        if !self.pending_query.is_empty() {
-            return;
-        }
-        // Only populate if matches is empty (avoid overwriting search results).
-        if !self.matches.is_empty() {
-            return;
-        }
-        let mut entries: Vec<FileMatch> = Vec::new();
-        if let Ok(read_dir) = fs::read_dir(".") {
-            for entry in read_dir.flatten().take(MAX_POPUP_ROWS) {
-                if let Ok(file_type) = entry.file_type() {
-                    // Skip hidden files (dotfiles) for a cleaner popup.
-                    let file_name = entry.file_name();
-                    let file_name_str = file_name.to_string_lossy();
-                    if file_name_str.starts_with('.') {
-                        continue;
-                    }
-                    // Only show files and directories (not symlinks, etc).
-                    if file_type.is_file() || file_type.is_dir() {
-                        entries.push(FileMatch {
-                            path: file_name_str.to_string(),
-                            indices: Some(Vec::new()), // No highlights for empty query.
-                            score: 0,
-                        });
-                    }
-                }
-            }
-        }
-        self.matches = entries;
-        self.state.clamp_selection(self.matches.len());
-        self.state
-            .ensure_visible(self.matches.len(), self.matches.len().min(MAX_POPUP_ROWS));
     }
 }
 
