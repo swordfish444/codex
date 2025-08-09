@@ -223,7 +223,7 @@ impl ChatComposer {
     /// Handle a key event coming from the main UI.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
         let result = match &mut self.active_popup {
-            ActivePopup::Command(_) => self.handle_key_event_with_command_popup(key_event),
+            ActivePopup::Command(_) => self.handle_key_event_with_slash_popup(key_event),
             ActivePopup::File(_) => self.handle_key_event_with_file_popup(key_event),
             ActivePopup::None => self.handle_key_event_without_popup(key_event),
         };
@@ -240,7 +240,7 @@ impl ChatComposer {
     }
 
     /// Handle key event when the slash-command popup is visible.
-    fn handle_key_event_with_command_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+    fn handle_key_event_with_slash_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
         let ActivePopup::Command(popup) = &mut self.active_popup else {
             unreachable!();
         };
@@ -522,7 +522,10 @@ impl ChatComposer {
     }
 
     /// Replace the active `@token` (the one under the cursor) with `path`.
-    /// Mirrors legacy logic using new shared helpers.
+    ///
+    /// The algorithm mirrors `current_at_token` so replacement works no matter
+    /// where the cursor is within the token and regardless of how many
+    /// `@tokens` exist in the line.
     fn insert_selected_path(&mut self, path: &str) {
         let cursor_offset = self.textarea.cursor();
         let text = self.textarea.text();
