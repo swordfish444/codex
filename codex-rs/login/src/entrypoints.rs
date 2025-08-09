@@ -1,5 +1,4 @@
-use std::io;
-use std::net::TcpListener;
+ 
 use std::path::Path;
 use std::process::Child;
 use std::process::Stdio;
@@ -71,17 +70,6 @@ pub async fn login_with_chatgpt(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| crate::CLIENT_ID.to_string());
 
-    match TcpListener::bind(("127.0.0.1", server::DEFAULT_PORT)) {
-        Ok(_sock) => {
-            // release immediately; server will bind next
-        }
-        Err(e) => {
-            if e.kind() == io::ErrorKind::AddrInUse {
-                return Err(io::Error::new(io::ErrorKind::AddrInUse, e));
-            }
-        }
-    }
-
     let codex_home = codex_home.to_path_buf();
     let client_id_cloned = client_id.clone();
     tokio::task::spawn_blocking(move || {
@@ -95,6 +83,8 @@ pub async fn login_with_chatgpt(
             expose_state_endpoint: false,
             testing_timeout_secs: None,
             verbose,
+            #[cfg(feature = "http-e2e-tests")]
+            port_sender: None,
         };
         server::run_local_login_server_with_options(opts)
     })

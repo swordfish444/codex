@@ -3,6 +3,7 @@ use rand::RngCore;
 use reqwest::blocking::Client;
 use serde_json::json;
 use std::collections::HashMap;
+use std::net::TcpListener;
 use std::path::Path;
 use std::path::PathBuf;
 #[cfg(feature = "http-e2e-tests")]
@@ -36,6 +37,8 @@ pub struct LoginServerOptions {
     /// timeout after x secs for e2e tests
     pub testing_timeout_secs: Option<u64>,
     pub verbose: bool,
+    #[cfg(feature = "http-e2e-tests")]
+    pub port_sender: Option<std::sync::mpsc::Sender<u16>>, 
 }
 
 // Only default issuer supported for platform/api bases
@@ -58,13 +61,28 @@ pub fn run_local_login_server(codex_home: &Path, client_id: &str) -> std::io::Re
         expose_state_endpoint: false,
         testing_timeout_secs: None,
         verbose: false,
+        #[cfg(feature = "http-e2e-tests")]
+        port_sender: None,
     };
     run_local_login_server_with_options(opts)
 }
 
-pub fn run_local_login_server_with_options(opts: LoginServerOptions) -> std::io::Result<()> {
-    let addr = format!("127.0.0.1:{}", opts.port);
-    let server = Server::http(&addr).map_err(|e| std::io::Error::other(e.to_string()))?;
+pub fn run_local_login_server_with_options(mut opts: LoginServerOptions) -> std::io::Result<()> {
+    let listener = TcpListener::bind(("127.0.0.1", opts.port))
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let actual_port = listener
+        .local_addr()
+        .map_err(|e| std::io::Error::other(e.to_string()))?
+        .port();
+    opts.port = actual_port;
+
+    #[cfg(feature = "http-e2e-tests")]
+    if let Some(tx) = &opts.port_sender {
+        let _ = tx.send(actual_port);
+    }
+
+    let server = Server::from_listener(listener, None)
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
 
     let issuer = opts.issuer.clone();
     let url_base = default_url_base(opts.port);

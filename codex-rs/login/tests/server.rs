@@ -9,17 +9,11 @@ use std::thread;
 use std::time::Duration;
 use tempfile::TempDir;
 
-fn find_free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
-fn start_mock_oauth_server(port: u16, behavior: MockBehavior) {
+fn start_mock_oauth_server(behavior: MockBehavior) -> u16 {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
-        let server = tiny_http::Server::http(format!("127.0.0.1:{port}")).unwrap();
+        let server = tiny_http::Server::from_listener(listener, None).unwrap();
         for mut request in server.incoming_requests() {
             let url = request.url().to_string();
             if request.method() == &tiny_http::Method::Post && url.starts_with("/oauth/token") {
@@ -273,6 +267,7 @@ fn start_mock_oauth_server(port: u16, behavior: MockBehavior) {
             }
         }
     });
+    port
 }
 
 #[derive(Clone, Copy)]
@@ -315,26 +310,30 @@ fn http_get_follow_redirect(url: &str) -> (u16, String) {
 // 1) Happy path: writes auth.json and exits after /success
 #[test]
 fn login_server_happy_path() {
-    let oauth_port = find_free_port();
-    start_mock_oauth_server(oauth_port, MockBehavior::Success);
+    let oauth_port = start_mock_oauth_server(MockBehavior::Success);
 
     let codex_home = TempDir::new().unwrap();
-    let port = find_free_port();
+    let (tx, rx) = std::sync::mpsc::channel();
     let issuer = format!("http://127.0.0.1:{oauth_port}");
 
     let opts = LoginServerOptions {
         codex_home: codex_home.path().to_path_buf(),
         client_id: "test-client".to_string(),
         issuer: issuer.clone(),
-        port,
+        port: 0,
         open_browser: false,
         redeem_credits: true,
         expose_state_endpoint: true,
         testing_timeout_secs: Some(5),
         verbose: false,
+        #[cfg(feature = "http-e2e-tests")]
+        port_sender: Some(tx),
     };
 
     let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
+
+    // Receive the bound port from the server
+    let port = rx.recv().unwrap();
 
     // Wait for server to bind
     wait_for_state_endpoint(port, Duration::from_secs(5));
@@ -372,26 +371,28 @@ fn login_server_happy_path() {
 // 1b) needs_setup=true when onboarding incomplete and is_org_owner=true
 #[test]
 fn login_server_needs_setup_true_and_params_present() {
-    let oauth_port = find_free_port();
-    start_mock_oauth_server(oauth_port, MockBehavior::SuccessNeedsSetup);
+    let oauth_port = start_mock_oauth_server(MockBehavior::SuccessNeedsSetup);
 
     let codex_home = TempDir::new().unwrap();
-    let port = find_free_port();
+    let (tx, rx) = std::sync::mpsc::channel();
     let issuer = format!("http://127.0.0.1:{oauth_port}");
 
     let opts = LoginServerOptions {
         codex_home: codex_home.path().to_path_buf(),
         client_id: "test-client".to_string(),
         issuer: issuer.clone(),
-        port,
+        port: 0,
         open_browser: false,
         redeem_credits: true,
         expose_state_endpoint: true,
         testing_timeout_secs: Some(5),
         verbose: false,
+        #[cfg(feature = "http-e2e-tests")]
+        port_sender: Some(tx),
     };
 
     let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
+    let port = rx.recv().unwrap();
     wait_for_state_endpoint(port, Duration::from_secs(5));
     let state_url = format!("http://127.0.0.1:{port}/__test/state");
     let (_s, state, _) = http_get(&state_url);
@@ -411,26 +412,28 @@ fn login_server_needs_setup_true_and_params_present() {
 // 1c) org/project from ID token only should appear in redirect (fallback logic)
 #[test]
 fn login_server_id_token_fallback_for_org_and_project() {
-    let oauth_port = find_free_port();
-    start_mock_oauth_server(oauth_port, MockBehavior::SuccessIdClaimsOrgProject);
+    let oauth_port = start_mock_oauth_server(MockBehavior::SuccessIdClaimsOrgProject);
 
     let codex_home = TempDir::new().unwrap();
-    let port = find_free_port();
+    let (tx, rx) = std::sync::mpsc::channel();
     let issuer = format!("http://127.0.0.1:{oauth_port}");
 
     let opts = LoginServerOptions {
         codex_home: codex_home.path().to_path_buf(),
         client_id: "test-client".to_string(),
         issuer: issuer.clone(),
-        port,
+        port: 0,
         open_browser: false,
         redeem_credits: true,
         expose_state_endpoint: true,
         testing_timeout_secs: Some(5),
         verbose: false,
+        #[cfg(feature = "http-e2e-tests")]
+        port_sender: Some(tx),
     };
 
     let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
+    let port = rx.recv().unwrap();
     wait_for_state_endpoint(port, Duration::from_secs(5));
     let state_url = format!("http://127.0.0.1:{port}/__test/state");
     let (_s, state, _) = http_get(&state_url);
@@ -447,26 +450,28 @@ fn login_server_id_token_fallback_for_org_and_project() {
 // 1d) Missing org/project in claims -> skip token-exchange, persist tokens without API key, still success
 #[test]
 fn login_server_skips_exchange_when_no_org_or_project() {
-    let oauth_port = find_free_port();
-    start_mock_oauth_server(oauth_port, MockBehavior::MissingOrgSkipExchange);
+    let oauth_port = start_mock_oauth_server(MockBehavior::MissingOrgSkipExchange);
 
     let codex_home = TempDir::new().unwrap();
-    let port = find_free_port();
+    let (tx, rx) = std::sync::mpsc::channel();
     let issuer = format!("http://127.0.0.1:{oauth_port}");
 
     let opts = LoginServerOptions {
         codex_home: codex_home.path().to_path_buf(),
         client_id: "test-client".to_string(),
         issuer: issuer.clone(),
-        port,
+        port: 0,
         open_browser: false,
         redeem_credits: true,
         expose_state_endpoint: true,
         testing_timeout_secs: Some(5),
         verbose: false,
+        #[cfg(feature = "http-e2e-tests")]
+        port_sender: Some(tx),
     };
 
     let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
+    let port = rx.recv().unwrap();
     wait_for_state_endpoint(port, Duration::from_secs(5));
     let state_url = format!("http://127.0.0.1:{port}/__test/state");
     let (_s, state, _) = http_get(&state_url);
@@ -491,9 +496,8 @@ fn login_server_skips_exchange_when_no_org_or_project() {
 // 2) State mismatch returns 400 and server stays up
 #[test]
 fn login_server_state_mismatch() {
-    let oauth_port = find_free_port();
-    start_mock_oauth_server(oauth_port, MockBehavior::Success);
-    let port = find_free_port();
+    let oauth_port = start_mock_oauth_server(MockBehavior::Success);
+    let (tx, rx) = std::sync::mpsc::channel();
     let codex_home = TempDir::new().unwrap();
     let issuer = format!("http://127.0.0.1:{oauth_port}");
 
@@ -501,14 +505,17 @@ fn login_server_state_mismatch() {
         codex_home: codex_home.path().into(),
         client_id: "test-client".into(),
         issuer,
-        port,
+        port: 0,
         open_browser: false,
         redeem_credits: false,
         expose_state_endpoint: true,
         testing_timeout_secs: Some(5),
         verbose: false,
+        #[cfg(feature = "http-e2e-tests")]
+        port_sender: Some(tx),
     };
     let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
+    let port = rx.recv().unwrap();
     wait_for_state_endpoint(port, Duration::from_secs(5));
 
     let cb_url = format!("http://127.0.0.1:{port}/auth/callback?code=abc&state=wrong");
@@ -524,23 +531,25 @@ fn login_server_state_mismatch() {
 // 3) Missing code returns 400
 #[test]
 fn login_server_missing_code() {
-    let oauth_port = find_free_port();
-    start_mock_oauth_server(oauth_port, MockBehavior::Success);
-    let port = find_free_port();
+    let oauth_port = start_mock_oauth_server(MockBehavior::Success);
+    let (tx, rx) = std::sync::mpsc::channel();
     let codex_home = TempDir::new().unwrap();
     let issuer = format!("http://127.0.0.1:{oauth_port}");
     let opts = LoginServerOptions {
         codex_home: codex_home.path().into(),
         client_id: "test-client".into(),
         issuer,
-        port,
+        port: 0,
         open_browser: false,
         redeem_credits: false,
         expose_state_endpoint: true,
         testing_timeout_secs: Some(5),
         verbose: false,
+        #[cfg(feature = "http-e2e-tests")]
+        port_sender: Some(tx),
     };
     let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
+    let port = rx.recv().unwrap();
     wait_for_state_endpoint(port, Duration::from_secs(5));
 
     // Fetch state
@@ -560,23 +569,25 @@ fn login_server_missing_code() {
 // 4) Token endpoint error returns 500 (on code exchange) and server stays up
 #[test]
 fn login_server_token_exchange_error() {
-    let oauth_port = find_free_port();
-    start_mock_oauth_server(oauth_port, MockBehavior::TokenError);
-    let port = find_free_port();
+    let oauth_port = start_mock_oauth_server(MockBehavior::TokenError);
+    let (tx, rx) = std::sync::mpsc::channel();
     let codex_home = TempDir::new().unwrap();
     let issuer = format!("http://127.0.0.1:{oauth_port}");
     let opts = LoginServerOptions {
         codex_home: codex_home.path().into(),
         client_id: "test-client".into(),
         issuer,
-        port,
+        port: 0,
         open_browser: false,
         redeem_credits: false,
         expose_state_endpoint: true,
         testing_timeout_secs: Some(5),
         verbose: false,
+        #[cfg(feature = "http-e2e-tests")]
+        port_sender: Some(tx),
     };
     let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
+    let port = rx.recv().unwrap();
     wait_for_state_endpoint(port, Duration::from_secs(5));
     let state = ureq::get(&format!("http://127.0.0.1:{port}/__test/state"))
         .call()
@@ -594,23 +605,25 @@ fn login_server_token_exchange_error() {
 #[test]
 fn login_server_credit_redemption_best_effort() {
     // Mock behavior success for token endpoints, but have redeem endpoint return 500 by not matching path (using different port)
-    let oauth_port = find_free_port();
-    start_mock_oauth_server(oauth_port, MockBehavior::Success);
-    let port = find_free_port();
+    let oauth_port = start_mock_oauth_server(MockBehavior::Success);
+    let (tx, rx) = std::sync::mpsc::channel();
     let codex_home = TempDir::new().unwrap();
     let issuer = format!("http://127.0.0.1:{oauth_port}");
     let opts = LoginServerOptions {
         codex_home: codex_home.path().into(),
         client_id: "test-client".into(),
         issuer,
-        port,
+        port: 0,
         open_browser: false,
         redeem_credits: true,
         expose_state_endpoint: true,
         testing_timeout_secs: Some(5),
         verbose: false,
+        #[cfg(feature = "http-e2e-tests")]
+        port_sender: Some(tx),
     };
     let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
+    let port = rx.recv().unwrap();
     wait_for_state_endpoint(port, Duration::from_secs(5));
     let state = ureq::get(&format!("http://127.0.0.1:{port}/__test/state"))
         .call()

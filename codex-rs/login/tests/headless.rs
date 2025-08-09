@@ -68,6 +68,8 @@ fn default_opts(tmp: &TempDir) -> LoginServerOptions {
         expose_state_endpoint: false,
         testing_timeout_secs: None,
         verbose: false,
+        #[cfg(feature = "http-e2e-tests")]
+        port_sender: None,
     }
 }
 
