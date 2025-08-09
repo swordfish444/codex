@@ -626,12 +626,6 @@ impl ChatComposer {
         self.textarea.input(input);
         let text_after = self.textarea.text();
 
-        // Start/continue an explicit file-search session when the cursor is on an @token.
-        if Self::current_at_token(&self.textarea).is_some() {
-            // Allow popup to show for this token.
-            self.dismissed_file_popup_token = None;
-        }
-
         // Check if any placeholders were removed and remove their corresponding pending pastes
         self.pending_pastes
             .retain(|(placeholder, _)| text_after.contains(placeholder));
