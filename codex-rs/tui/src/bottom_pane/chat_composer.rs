@@ -369,9 +369,8 @@ impl ChatComposer {
                                     .unwrap_or(after_cursor.len());
                                 let end_idx = cursor_offset + end_rel_idx;
 
-                                // Remove the token slice; keep a single trailing space for flow.
                                 self.textarea.replace_range(start_idx..end_idx, "");
-                                self.textarea.insert_str(" ");
+                                self.textarea.set_cursor(start_idx);
 
                                 let format_label = match Path::new(&sel_path)
                                     .extension()
@@ -383,7 +382,7 @@ impl ChatComposer {
                                     _ => "IMG",
                                 };
                                 let _ = self.attach_image(path_buf.clone(), w, h, format_label);
-                                // Optionally add a trailing space to keep typing fluid.
+                                // Add a trailing space to keep typing fluid.
                                 self.textarea.insert_str(" ");
                             }
                             Err(_) => {
