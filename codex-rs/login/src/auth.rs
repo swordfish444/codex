@@ -43,8 +43,7 @@ impl CodexAuth {
         }
     }
 
-    /// Loads the available auth information from the auth.json or
-    /// OPENAI_API_KEY environment variable.
+    /// Loads from auth.json or OPENAI_API_KEY
     pub fn from_codex_home(codex_home: &Path) -> std::io::Result<Option<CodexAuth>> {
         load_auth(codex_home, true)
     }
@@ -152,12 +151,9 @@ pub(crate) fn load_auth(
 ) -> std::io::Result<Option<CodexAuth>> {
     // First, check to see if there is a valid auth.json file. If not, we fall
     // back to AuthMode::ApiKey using the OPENAI_API_KEY environment variable
-    // (if it is set).
     let auth_file = get_auth_file(codex_home);
     let auth_dot_json = match try_read_auth_json(&auth_file) {
         Ok(auth) => auth,
-        // If auth.json does not exist, try to read the OPENAI_API_KEY from the
-        // environment variable.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && include_env_var => {
             return match read_openai_api_key_from_env() {
                 Some(api_key) => Ok(Some(CodexAuth::from_api_key(&api_key))),
@@ -180,29 +176,19 @@ pub(crate) fn load_auth(
     // If the auth.json has an API key AND does not appear to be on a plan that
     // should prefer AuthMode::ChatGPT, use AuthMode::ApiKey.
     if let Some(api_key) = &auth_json_api_key {
-        // Should any of these be AuthMode::ChatGPT with the api_key set?
-        // Does AuthMode::ChatGPT indicate that there is an auth.json that is
-        // "refreshable" even if we are using the API key for auth?
         match &tokens {
             Some(tokens) => {
                 if tokens.is_plan_that_should_use_api_key() {
                     return Ok(Some(CodexAuth::from_api_key(api_key)));
-                } else {
-                    // Ignore the API key and fall through to ChatGPT auth.
                 }
             }
             None => {
-                // We have an API key but no tokens in the auth.json file.
-                // Perhaps the user ran `codex login --api-key <KEY>` or updated
-                // auth.json by hand. Either way, let's assume they are trying
-                // to use their API key.
+                // Let's assume they are trying to use their API key.
                 return Ok(Some(CodexAuth::from_api_key(api_key)));
             }
         }
     }
 
-    // For the AuthMode::ChatGPT variant, perhaps neither api_key nor
-    // openai_api_key should exist?
     Ok(Some(CodexAuth {
         api_key: None,
         mode: AuthMode::ChatGPT,
