@@ -73,7 +73,7 @@ enum Subcommand {
     #[clap(visible_alias = "a")]
     Apply(ApplyCommand),
 
-    /// Check for a newer Codex release.
+    /// Check for a newer Codex release and upgrade automatically when possible.
     Update,
 }
 
@@ -226,6 +226,7 @@ fn print_completion(cmd: CompletionCommand) {
 async fn run_update() -> anyhow::Result<()> {
     use codex_tui::updates::check_for_update;
     use codex_tui::updates::get_upgrade_version;
+    use std::process::Command;
 
     let overrides = ConfigOverrides {
         model: None,
@@ -256,11 +257,42 @@ async fn run_update() -> anyhow::Result<()> {
         let exe = std::env::current_exe()?;
         let managed_by_npm = std::env::var_os("CODEX_MANAGED_BY_NPM").is_some();
         if managed_by_npm {
-            println!("Run `npm install -g @openai/codex@latest` to update.");
+            println!("Updating via npm...");
+            match Command::new("npm")
+                .args(["install", "-g", "@openai/codex@latest"])
+                .status()
+            {
+                Ok(status) if status.success() => {
+                    println!("Codex updated successfully.");
+                }
+                Ok(status) => {
+                    println!(
+                        "`npm install` exited with status {status}. Run `npm install -g @openai/codex@latest` manually if needed."
+                    );
+                }
+                Err(err) => {
+                    println!(
+                        "Failed to run npm: {err}. Run `npm install -g @openai/codex@latest` manually."
+                    );
+                }
+            }
         } else if cfg!(target_os = "macos")
             && (exe.starts_with("/opt/homebrew") || exe.starts_with("/usr/local"))
         {
-            println!("Run `brew upgrade codex` to update.");
+            println!("Updating via Homebrew...");
+            match Command::new("brew").args(["upgrade", "codex"]).status() {
+                Ok(status) if status.success() => {
+                    println!("Codex updated successfully.");
+                }
+                Ok(status) => {
+                    println!(
+                        "`brew upgrade` exited with status {status}. Run `brew upgrade codex` manually if needed."
+                    );
+                }
+                Err(err) => {
+                    println!("Failed to run Homebrew: {err}. Run `brew upgrade codex` manually.");
+                }
+            }
         } else {
             println!(
                 "See https://github.com/openai/codex/releases/latest for the latest releases and installation options."
