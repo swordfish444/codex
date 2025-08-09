@@ -11,7 +11,6 @@ use std::path::PathBuf;
 
 use crate::token_data::TokenData;
 
-/// Expected structure for $CODEX_HOME/auth.json.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub struct AuthDotJson {
     #[serde(rename = "OPENAI_API_KEY")]

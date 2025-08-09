@@ -1,278 +1,190 @@
 #![cfg(feature = "http-e2e-tests")]
-use base64::Engine;
+mod common;
 use codex_login::LoginServerOptions;
 use codex_login::run_local_login_server_with_options;
-use std::io::Read;
-use std::net::TcpListener;
-// use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 use tempfile::TempDir;
+use wiremock::matchers::method;
+use wiremock::matchers::path;
+use wiremock::Mock;
+use wiremock::MockServer;
+use wiremock::ResponseTemplate;
 
-fn start_mock_oauth_server(behavior: MockBehavior) -> u16 {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    let port = listener.local_addr().unwrap().port();
-    thread::spawn(move || {
-        let server = tiny_http::Server::from_listener(listener, None).unwrap();
-        for mut request in server.incoming_requests() {
-            let url = request.url().to_string();
-            if request.method() == &tiny_http::Method::Post && url.starts_with("/oauth/token") {
-                // Read body
-                let mut body = String::new();
-                request.as_reader().read_to_string(&mut body).ok();
-                let content_type = request
-                    .headers()
-                    .iter()
-                    .find(|h| h.field.equiv("Content-Type"))
-                    .map(|h| h.value.as_str().to_string())
-                    .unwrap_or_default();
+async fn start_mock_oauth_server(behavior: MockBehavior) -> MockServer {
+    let server = MockServer::start().await;
 
-                // Parse either x-www-form-urlencoded or JSON
-                let mut form = std::collections::HashMap::<String, String>::new();
-                if content_type.starts_with("application/x-www-form-urlencoded") {
-                    for kv in body.split('&') {
-                        if let Some((k, v)) = kv.split_once('=') {
-                            let k = urlencoding::decode(k).unwrap().into_owned();
-                            let v = urlencoding::decode(v).unwrap().into_owned();
-                            form.insert(k, v);
-                        }
-                    }
-                } else if content_type.starts_with("application/json") {
-                    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
-                    if let Some(obj) = v.as_object() {
-                        for (k, vv) in obj.iter() {
-                            form.insert(k.clone(), vv.as_str().unwrap_or_default().to_string());
-                        }
-                    }
+    match behavior {
+        MockBehavior::Noop => {}
+        MockBehavior::Success => {
+            let id_token = make_fake_jwt(serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_account_id": "acc-1",
                 }
-
-                match behavior {
-                    MockBehavior::Success => {
-                        if form.get("grant_type").map(|s| s.as_str()) == Some("authorization_code")
-                        {
-                            // Return tokens
-                            let id_token = make_fake_jwt(serde_json::json!({
-                                "https://api.openai.com/auth": {
-                                    "chatgpt_account_id": "acc-1",
-                                }
-                            }));
-                            let access_token = make_fake_jwt(serde_json::json!({
-                                "https://api.openai.com/auth": {
-                                    "organization_id": "org-1",
-                                    "project_id": "proj-1",
-                                    "completed_platform_onboarding": true,
-                                    "is_org_owner": false,
-                                    "chatgpt_plan_type": "plus"
-                                }
-                            }));
-                            let payload = serde_json::json!({
-                                "id_token": id_token,
-                                "access_token": access_token,
-                                "refresh_token": "refresh-1"
-                            });
-                            let _ = request.respond(
-                                tiny_http::Response::from_string(payload.to_string())
-                                    .with_status_code(200)
-                                    .with_header(
-                                        tiny_http::Header::from_bytes(
-                                            &b"Content-Type"[..],
-                                            &b"application/json"[..],
-                                        )
-                                        .unwrap(),
-                                    ),
-                            );
-                        } else {
-                            // token-exchange → API key
-                            let payload = serde_json::json!({
-                                "access_token": "sk-test-123"
-                            });
-                            let _ = request.respond(
-                                tiny_http::Response::from_string(payload.to_string())
-                                    .with_status_code(200)
-                                    .with_header(
-                                        tiny_http::Header::from_bytes(
-                                            &b"Content-Type"[..],
-                                            &b"application/json"[..],
-                                        )
-                                        .unwrap(),
-                                    ),
-                            );
-                        }
-                    }
-                    MockBehavior::SuccessNeedsSetup => {
-                        if form.get("grant_type").map(|s| s.as_str()) == Some("authorization_code")
-                        {
-                            // Return tokens with needs_setup=true conditions
-                            let id_token = make_fake_jwt(serde_json::json!({
-                                "https://api.openai.com/auth": {
-                                    "chatgpt_account_id": "acc-1",
-                                }
-                            }));
-                            let access_token = make_fake_jwt(serde_json::json!({
-                                "https://api.openai.com/auth": {
-                                    "organization_id": "org-2",
-                                    "project_id": "proj-2",
-                                    "completed_platform_onboarding": false,
-                                    "is_org_owner": true,
-                                    "chatgpt_plan_type": "pro"
-                                }
-                            }));
-                            let payload = serde_json::json!({
-                                "id_token": id_token,
-                                "access_token": access_token,
-                                "refresh_token": "refresh-1"
-                            });
-                            let _ = request.respond(
-                                tiny_http::Response::from_string(payload.to_string())
-                                    .with_status_code(200)
-                                    .with_header(
-                                        tiny_http::Header::from_bytes(
-                                            &b"Content-Type"[..],
-                                            &b"application/json"[..],
-                                        )
-                                        .unwrap(),
-                                    ),
-                            );
-                        } else {
-                            let payload = serde_json::json!({
-                                "access_token": "sk-test-123"
-                            });
-                            let _ = request.respond(
-                                tiny_http::Response::from_string(payload.to_string())
-                                    .with_status_code(200)
-                                    .with_header(
-                                        tiny_http::Header::from_bytes(
-                                            &b"Content-Type"[..],
-                                            &b"application/json"[..],
-                                        )
-                                        .unwrap(),
-                                    ),
-                            );
-                        }
-                    }
-                    MockBehavior::SuccessIdClaimsOrgProject => {
-                        if form.get("grant_type").map(|s| s.as_str()) == Some("authorization_code")
-                        {
-                            // Put org/project and flags only in ID token; access holds plan_type
-                            let id_token = make_fake_jwt(serde_json::json!({
-                                "https://api.openai.com/auth": {
-                                    "chatgpt_account_id": "acc-3",
-                                    "organization_id": "org-id",
-                                    "project_id": "proj-id",
-                                    "completed_platform_onboarding": true,
-                                    "is_org_owner": false
-                                }
-                            }));
-                            let access_token = make_fake_jwt(serde_json::json!({
-                                "https://api.openai.com/auth": {
-                                    "chatgpt_plan_type": "plus"
-                                }
-                            }));
-                            let payload = serde_json::json!({
-                                "id_token": id_token,
-                                "access_token": access_token,
-                                "refresh_token": "refresh-1"
-                            });
-                            let _ = request.respond(
-                                tiny_http::Response::from_string(payload.to_string())
-                                    .with_status_code(200)
-                                    .with_header(
-                                        tiny_http::Header::from_bytes(
-                                            &b"Content-Type"[..],
-                                            &b"application/json"[..],
-                                        )
-                                        .unwrap(),
-                                    ),
-                            );
-                        } else {
-                            let payload = serde_json::json!({
-                                "access_token": "sk-test-123"
-                            });
-                            let _ = request.respond(
-                                tiny_http::Response::from_string(payload.to_string())
-                                    .with_status_code(200)
-                                    .with_header(
-                                        tiny_http::Header::from_bytes(
-                                            &b"Content-Type"[..],
-                                            &b"application/json"[..],
-                                        )
-                                        .unwrap(),
-                                    ),
-                            );
-                        }
-                    }
-                    MockBehavior::TokenError => {
-                        let _ = request.respond(
-                            tiny_http::Response::from_string("error").with_status_code(500),
-                        );
-                    }
-                    MockBehavior::MissingOrgSkipExchange => {
-                        if form.get("grant_type").map(|s| s.as_str()) == Some("authorization_code")
-                        {
-                            // Return tokens with no org/project in either token
-                            let id_token = make_fake_jwt(serde_json::json!({
-                                "https://api.openai.com/auth": {
-                                    "chatgpt_account_id": "acc-4"
-                                }
-                            }));
-                            let access_token = make_fake_jwt(serde_json::json!({
-                                "https://api.openai.com/auth": {
-                                    "chatgpt_plan_type": "plus"
-                                }
-                            }));
-                            let payload = serde_json::json!({
-                                "id_token": id_token,
-                                "access_token": access_token,
-                                "refresh_token": "refresh-4"
-                            });
-                            let _ = request.respond(
-                                tiny_http::Response::from_string(payload.to_string())
-                                    .with_status_code(200)
-                                    .with_header(
-                                        tiny_http::Header::from_bytes(
-                                            &b"Content-Type"[..],
-                                            &b"application/json"[..],
-                                        )
-                                        .unwrap(),
-                                    ),
-                            );
-                        } else {
-                            // Should not be called in this behavior; return error if it is
-                            let _ = request.respond(
-                                tiny_http::Response::from_string("unexpected token-exchange")
-                                    .with_status_code(500),
-                            );
-                        }
-                    } // Old token-exchange fallback behavior removed
-                      // Old token-exchange fallback behavior removed
+            }));
+            let access_token = make_fake_jwt(serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "organization_id": "org-1",
+                    "project_id": "proj-1",
+                    "completed_platform_onboarding": true,
+                    "is_org_owner": false,
+                    "chatgpt_plan_type": "plus"
                 }
-            } else if request.method() == &tiny_http::Method::Post
-                && url.starts_with("/v1/billing/redeem_credits")
-            {
-                let payload = serde_json::json!({"granted_chatgpt_subscriber_api_credits": 5});
-                let _ = request.respond(
-                    tiny_http::Response::from_string(payload.to_string())
-                        .with_status_code(200)
-                        .with_header(
-                            tiny_http::Header::from_bytes(
-                                &b"Content-Type"[..],
-                                &b"application/json"[..],
-                            )
-                            .unwrap(),
-                        ),
-                );
-            } else {
-                let _ = request
-                    .respond(tiny_http::Response::from_string("not found").with_status_code(404));
-            }
+            }));
+            let payload = serde_json::json!({
+                "id_token": id_token,
+                "access_token": access_token,
+                "refresh_token": "refresh-1"
+            });
+            Mock::given(method("POST"))
+                .and(path("/oauth/token"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "application/json")
+                        .set_body_json(payload),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
         }
-    });
-    port
+        MockBehavior::SuccessTwice => {
+            let id_token = make_fake_jwt(serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_account_id": "acc-1",
+                }
+            }));
+            let access_token = make_fake_jwt(serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "organization_id": "org-1",
+                    "project_id": "proj-1",
+                    "completed_platform_onboarding": true,
+                    "is_org_owner": false,
+                    "chatgpt_plan_type": "plus"
+                }
+            }));
+            let payload = serde_json::json!({
+                "id_token": id_token,
+                "access_token": access_token,
+                "refresh_token": "refresh-1"
+            });
+            Mock::given(method("POST"))
+                .and(path("/oauth/token"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "application/json")
+                        .set_body_json(payload),
+                )
+                .expect(2)
+                .mount(&server)
+                .await;
+        }
+        MockBehavior::SuccessNeedsSetup => {
+            let id_token = make_fake_jwt(serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_account_id": "acc-1",
+                }
+            }));
+            let access_token = make_fake_jwt(serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "organization_id": "org-2",
+                    "project_id": "proj-2",
+                    "completed_platform_onboarding": false,
+                    "is_org_owner": true,
+                    "chatgpt_plan_type": "pro"
+                }
+            }));
+            let payload = serde_json::json!({
+                "id_token": id_token,
+                "access_token": access_token,
+                "refresh_token": "refresh-1"
+            });
+            Mock::given(method("POST"))
+                .and(path("/oauth/token"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "application/json")
+                        .set_body_json(payload),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        MockBehavior::SuccessIdClaimsOrgProject => {
+            let id_token = make_fake_jwt(serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_account_id": "acc-3",
+                    "organization_id": "org-id",
+                    "project_id": "proj-id",
+                    "completed_platform_onboarding": true,
+                    "is_org_owner": false
+                }
+            }));
+            let access_token = make_fake_jwt(serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_plan_type": "plus"
+                }
+            }));
+            let payload = serde_json::json!({
+                "id_token": id_token,
+                "access_token": access_token,
+                "refresh_token": "refresh-1"
+            });
+            Mock::given(method("POST"))
+                .and(path("/oauth/token"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "application/json")
+                        .set_body_json(payload),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        MockBehavior::TokenError => {
+            Mock::given(method("POST"))
+                .and(path("/oauth/token"))
+                .respond_with(ResponseTemplate::new(500))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        MockBehavior::MissingOrgSkipExchange => {
+            let id_token = make_fake_jwt(serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_account_id": "acc-4"
+                }
+            }));
+            let access_token = make_fake_jwt(serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_plan_type": "plus"
+                }
+            }));
+            let payload = serde_json::json!({
+                "id_token": id_token,
+                "access_token": access_token,
+                "refresh_token": "refresh-4"
+            });
+            Mock::given(method("POST"))
+                .and(path("/oauth/token"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "application/json")
+                        .set_body_json(payload),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+    }
+
+    server
 }
 
 #[derive(Clone, Copy)]
 enum MockBehavior {
+    Noop,
     Success,
+    SuccessTwice,
     SuccessNeedsSetup,
     SuccessIdClaimsOrgProject,
     TokenError,
@@ -280,22 +192,50 @@ enum MockBehavior {
     // Old token-exchange fallback behaviors removed
 }
 
-fn make_fake_jwt(payload: serde_json::Value) -> String {
-    let header = serde_json::json!({"alg": "none", "typ": "JWT"});
-    let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
-    let header_b64 = b64(&serde_json::to_vec(&header).unwrap());
-    let payload_b64 = b64(&serde_json::to_vec(&payload).unwrap());
-    let signature_b64 = b64(b"sig");
-    format!("{header_b64}.{payload_b64}.{signature_b64}")
+use common::make_fake_jwt;
+
+fn spawn_login_server_and_wait(
+    issuer: String,
+    codex_home: &tempfile::TempDir,
+    redeem_credits: bool,
+) -> (std::thread::JoinHandle<std::io::Result<()>>, u16) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let opts = LoginServerOptions {
+        codex_home: codex_home.path().to_path_buf(),
+        client_id: "test-client".to_string(),
+        issuer,
+        port: 0,
+        open_browser: false,
+        redeem_credits,
+        expose_state_endpoint: true,
+        testing_timeout_secs: Some(5),
+        verbose: false,
+        #[cfg(feature = "http-e2e-tests")]
+        port_sender: Some(tx),
+    };
+
+    let handle = thread::spawn(move || run_local_login_server_with_options(opts));
+    let port = rx.recv().unwrap();
+    wait_for_state_endpoint(port, Duration::from_secs(5));
+    (handle, port)
 }
 
 fn http_get(url: &str) -> (u16, String, Option<String>) {
     let agent = ureq::AgentBuilder::new().redirects(0).build();
-    let resp = agent.get(url).call().expect("http get failed");
-    let status = resp.status();
-    let location = resp.header("Location").map(|s| s.to_string());
-    let body = resp.into_string().unwrap_or_default();
-    (status as u16, body, location)
+    match agent.get(url).call() {
+        Ok(resp) => {
+            let status = resp.status();
+            let location = resp.header("Location").map(|s| s.to_string());
+            let body = resp.into_string().unwrap_or_default();
+            (status as u16, body, location)
+        }
+        Err(ureq::Error::Status(code, resp)) => {
+            let location = resp.header("Location").map(|s| s.to_string());
+            let body = resp.into_string().unwrap_or_default();
+            (code, body, location)
+        }
+        Err(err) => panic!("http error: {err}"),
+    }
 }
 
 fn http_get_follow_redirect(url: &str) -> (u16, String) {
@@ -308,35 +248,13 @@ fn http_get_follow_redirect(url: &str) -> (u16, String) {
 }
 
 // 1) Happy path: writes auth.json and exits after /success
-#[test]
-fn login_server_happy_path() {
-    let oauth_port = start_mock_oauth_server(MockBehavior::Success);
+#[tokio::test]
+async fn login_server_happy_path() {
+    let server = start_mock_oauth_server(MockBehavior::SuccessTwice).await;
 
     let codex_home = TempDir::new().unwrap();
-    let (tx, rx) = std::sync::mpsc::channel();
-    let issuer = format!("http://127.0.0.1:{oauth_port}");
-
-    let opts = LoginServerOptions {
-        codex_home: codex_home.path().to_path_buf(),
-        client_id: "test-client".to_string(),
-        issuer: issuer.clone(),
-        port: 0,
-        open_browser: false,
-        redeem_credits: true,
-        expose_state_endpoint: true,
-        testing_timeout_secs: Some(5),
-        verbose: false,
-        #[cfg(feature = "http-e2e-tests")]
-        port_sender: Some(tx),
-    };
-
-    let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
-
-    // Receive the bound port from the server
-    let port = rx.recv().unwrap();
-
-    // Wait for server to bind
-    wait_for_state_endpoint(port, Duration::from_secs(5));
+    let issuer = server.uri();
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, true);
 
     // Get state via test-only endpoint
     let state_url = format!("http://127.0.0.1:{port}/__test/state");
@@ -354,12 +272,12 @@ fn login_server_happy_path() {
     assert!(location.contains("plan_type=plus"));
     assert!(location.contains("org_id=org-1"));
     assert!(location.contains("project_id=proj-1"));
-    // Now follow redirect
+    // Now follow redirect (this will invoke the callback a second time)
     let (status, body) = http_get_follow_redirect(&cb_url);
     assert_eq!(status, 200);
     assert!(body.contains("Signed in to Codex CLI"));
 
-    handle.join().unwrap();
+    handle.join().unwrap().unwrap();
 
     // Verify auth.json written
     let auth_path = codex_home.path().join("auth.json");
@@ -369,31 +287,13 @@ fn login_server_happy_path() {
     assert!(v["tokens"]["id_token"].as_str().is_some());
 }
 // 1b) needs_setup=true when onboarding incomplete and is_org_owner=true
-#[test]
-fn login_server_needs_setup_true_and_params_present() {
-    let oauth_port = start_mock_oauth_server(MockBehavior::SuccessNeedsSetup);
+#[tokio::test]
+async fn login_server_needs_setup_true_and_params_present() {
+    let server = start_mock_oauth_server(MockBehavior::SuccessNeedsSetup).await;
 
     let codex_home = TempDir::new().unwrap();
-    let (tx, rx) = std::sync::mpsc::channel();
-    let issuer = format!("http://127.0.0.1:{oauth_port}");
-
-    let opts = LoginServerOptions {
-        codex_home: codex_home.path().to_path_buf(),
-        client_id: "test-client".to_string(),
-        issuer: issuer.clone(),
-        port: 0,
-        open_browser: false,
-        redeem_credits: true,
-        expose_state_endpoint: true,
-        testing_timeout_secs: Some(5),
-        verbose: false,
-        #[cfg(feature = "http-e2e-tests")]
-        port_sender: Some(tx),
-    };
-
-    let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
-    let port = rx.recv().unwrap();
-    wait_for_state_endpoint(port, Duration::from_secs(5));
+    let issuer = server.uri();
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, true);
     let state_url = format!("http://127.0.0.1:{port}/__test/state");
     let (_s, state, _) = http_get(&state_url);
     assert!(!state.is_empty());
@@ -406,35 +306,17 @@ fn login_server_needs_setup_true_and_params_present() {
     assert!(location.contains("org_id=org-2"));
     assert!(location.contains("project_id=proj-2"));
     let _ = ureq::get(&format!("http://127.0.0.1:{port}/success")).call();
-    handle.join().unwrap();
+    handle.join().unwrap().unwrap();
 }
 
 // 1c) org/project from ID token only should appear in redirect (fallback logic)
-#[test]
-fn login_server_id_token_fallback_for_org_and_project() {
-    let oauth_port = start_mock_oauth_server(MockBehavior::SuccessIdClaimsOrgProject);
+#[tokio::test]
+async fn login_server_id_token_fallback_for_org_and_project() {
+    let server = start_mock_oauth_server(MockBehavior::SuccessIdClaimsOrgProject).await;
 
     let codex_home = TempDir::new().unwrap();
-    let (tx, rx) = std::sync::mpsc::channel();
-    let issuer = format!("http://127.0.0.1:{oauth_port}");
-
-    let opts = LoginServerOptions {
-        codex_home: codex_home.path().to_path_buf(),
-        client_id: "test-client".to_string(),
-        issuer: issuer.clone(),
-        port: 0,
-        open_browser: false,
-        redeem_credits: true,
-        expose_state_endpoint: true,
-        testing_timeout_secs: Some(5),
-        verbose: false,
-        #[cfg(feature = "http-e2e-tests")]
-        port_sender: Some(tx),
-    };
-
-    let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
-    let port = rx.recv().unwrap();
-    wait_for_state_endpoint(port, Duration::from_secs(5));
+    let issuer = server.uri();
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, true);
     let state_url = format!("http://127.0.0.1:{port}/__test/state");
     let (_s, state, _) = http_get(&state_url);
     let cb_url = format!("http://127.0.0.1:{port}/auth/callback?code=abc&state={state}");
@@ -444,35 +326,17 @@ fn login_server_id_token_fallback_for_org_and_project() {
     assert!(location.contains("org_id=org-id"));
     assert!(location.contains("project_id=proj-id"));
     let _ = ureq::get(&format!("http://127.0.0.1:{port}/success")).call();
-    handle.join().unwrap();
+    handle.join().unwrap().unwrap();
 }
 
 // 1d) Missing org/project in claims -> skip token-exchange, persist tokens without API key, still success
-#[test]
-fn login_server_skips_exchange_when_no_org_or_project() {
-    let oauth_port = start_mock_oauth_server(MockBehavior::MissingOrgSkipExchange);
+#[tokio::test]
+async fn login_server_skips_exchange_when_no_org_or_project() {
+    let server = start_mock_oauth_server(MockBehavior::MissingOrgSkipExchange).await;
 
     let codex_home = TempDir::new().unwrap();
-    let (tx, rx) = std::sync::mpsc::channel();
-    let issuer = format!("http://127.0.0.1:{oauth_port}");
-
-    let opts = LoginServerOptions {
-        codex_home: codex_home.path().to_path_buf(),
-        client_id: "test-client".to_string(),
-        issuer: issuer.clone(),
-        port: 0,
-        open_browser: false,
-        redeem_credits: true,
-        expose_state_endpoint: true,
-        testing_timeout_secs: Some(5),
-        verbose: false,
-        #[cfg(feature = "http-e2e-tests")]
-        port_sender: Some(tx),
-    };
-
-    let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
-    let port = rx.recv().unwrap();
-    wait_for_state_endpoint(port, Duration::from_secs(5));
+    let issuer = server.uri();
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, true);
     let state_url = format!("http://127.0.0.1:{port}/__test/state");
     let (_s, state, _) = http_get(&state_url);
     let cb_url = format!("http://127.0.0.1:{port}/auth/callback?code=abc&state={state}");
@@ -483,7 +347,7 @@ fn login_server_skips_exchange_when_no_org_or_project() {
     assert!(!location.contains("org_id="));
     assert!(!location.contains("project_id="));
     let _ = ureq::get(&format!("http://127.0.0.1:{port}/success")).call();
-    handle.join().unwrap();
+    handle.join().unwrap().unwrap();
 
     // Verify auth.json OPENAI_API_KEY is null
     let auth_path = codex_home.path().join("auth.json");
@@ -494,29 +358,12 @@ fn login_server_skips_exchange_when_no_org_or_project() {
 
 //
 // 2) State mismatch returns 400 and server stays up
-#[test]
-fn login_server_state_mismatch() {
-    let oauth_port = start_mock_oauth_server(MockBehavior::Success);
-    let (tx, rx) = std::sync::mpsc::channel();
+#[tokio::test]
+async fn login_server_state_mismatch() {
+    let server = start_mock_oauth_server(MockBehavior::Noop).await;
     let codex_home = TempDir::new().unwrap();
-    let issuer = format!("http://127.0.0.1:{oauth_port}");
-
-    let opts = LoginServerOptions {
-        codex_home: codex_home.path().into(),
-        client_id: "test-client".into(),
-        issuer,
-        port: 0,
-        open_browser: false,
-        redeem_credits: false,
-        expose_state_endpoint: true,
-        testing_timeout_secs: Some(5),
-        verbose: false,
-        #[cfg(feature = "http-e2e-tests")]
-        port_sender: Some(tx),
-    };
-    let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
-    let port = rx.recv().unwrap();
-    wait_for_state_endpoint(port, Duration::from_secs(5));
+    let issuer = server.uri();
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, false);
 
     let cb_url = format!("http://127.0.0.1:{port}/auth/callback?code=abc&state=wrong");
     let (status, body) = http_get_follow_redirect(&cb_url);
@@ -525,32 +372,16 @@ fn login_server_state_mismatch() {
 
     // Stop server
     let _ = ureq::get(&format!("http://127.0.0.1:{port}/success")).call();
-    handle.join().unwrap();
+    handle.join().unwrap().unwrap();
 }
 
 // 3) Missing code returns 400
-#[test]
-fn login_server_missing_code() {
-    let oauth_port = start_mock_oauth_server(MockBehavior::Success);
-    let (tx, rx) = std::sync::mpsc::channel();
+#[tokio::test]
+async fn login_server_missing_code() {
+    let server = start_mock_oauth_server(MockBehavior::Noop).await;
     let codex_home = TempDir::new().unwrap();
-    let issuer = format!("http://127.0.0.1:{oauth_port}");
-    let opts = LoginServerOptions {
-        codex_home: codex_home.path().into(),
-        client_id: "test-client".into(),
-        issuer,
-        port: 0,
-        open_browser: false,
-        redeem_credits: false,
-        expose_state_endpoint: true,
-        testing_timeout_secs: Some(5),
-        verbose: false,
-        #[cfg(feature = "http-e2e-tests")]
-        port_sender: Some(tx),
-    };
-    let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
-    let port = rx.recv().unwrap();
-    wait_for_state_endpoint(port, Duration::from_secs(5));
+    let issuer = server.uri();
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, false);
 
     // Fetch state
     let state = ureq::get(&format!("http://127.0.0.1:{port}/__test/state"))
@@ -563,32 +394,16 @@ fn login_server_missing_code() {
     let (status, _body) = http_get_follow_redirect(&cb_url);
     assert_eq!(status, 400);
     let _ = ureq::get(&format!("http://127.0.0.1:{port}/success")).call();
-    handle.join().unwrap();
+    handle.join().unwrap().unwrap();
 }
 
 // 4) Token endpoint error returns 500 (on code exchange) and server stays up
-#[test]
-fn login_server_token_exchange_error() {
-    let oauth_port = start_mock_oauth_server(MockBehavior::TokenError);
-    let (tx, rx) = std::sync::mpsc::channel();
+#[tokio::test]
+async fn login_server_token_exchange_error() {
+    let server = start_mock_oauth_server(MockBehavior::TokenError).await;
     let codex_home = TempDir::new().unwrap();
-    let issuer = format!("http://127.0.0.1:{oauth_port}");
-    let opts = LoginServerOptions {
-        codex_home: codex_home.path().into(),
-        client_id: "test-client".into(),
-        issuer,
-        port: 0,
-        open_browser: false,
-        redeem_credits: false,
-        expose_state_endpoint: true,
-        testing_timeout_secs: Some(5),
-        verbose: false,
-        #[cfg(feature = "http-e2e-tests")]
-        port_sender: Some(tx),
-    };
-    let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
-    let port = rx.recv().unwrap();
-    wait_for_state_endpoint(port, Duration::from_secs(5));
+    let issuer = server.uri();
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, false);
     let state = ureq::get(&format!("http://127.0.0.1:{port}/__test/state"))
         .call()
         .expect("get state")
@@ -598,33 +413,17 @@ fn login_server_token_exchange_error() {
     let (status, _body) = http_get_follow_redirect(&cb_url);
     assert_eq!(status, 500);
     let _ = ureq::get(&format!("http://127.0.0.1:{port}/success")).call();
-    handle.join().unwrap();
+    handle.join().unwrap().unwrap();
 }
 
 // 5) Credit redemption errors do not block success
-#[test]
-fn login_server_credit_redemption_best_effort() {
-    // Mock behavior success for token endpoints, but have redeem endpoint return 500 by not matching path (using different port)
-    let oauth_port = start_mock_oauth_server(MockBehavior::Success);
-    let (tx, rx) = std::sync::mpsc::channel();
+#[tokio::test]
+async fn login_server_credit_redemption_best_effort() {
+    // Mock behavior success for token endpoints
+    let server = start_mock_oauth_server(MockBehavior::Success).await;
     let codex_home = TempDir::new().unwrap();
-    let issuer = format!("http://127.0.0.1:{oauth_port}");
-    let opts = LoginServerOptions {
-        codex_home: codex_home.path().into(),
-        client_id: "test-client".into(),
-        issuer,
-        port: 0,
-        open_browser: false,
-        redeem_credits: true,
-        expose_state_endpoint: true,
-        testing_timeout_secs: Some(5),
-        verbose: false,
-        #[cfg(feature = "http-e2e-tests")]
-        port_sender: Some(tx),
-    };
-    let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
-    let port = rx.recv().unwrap();
-    wait_for_state_endpoint(port, Duration::from_secs(5));
+    let issuer = server.uri();
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, true);
     let state = ureq::get(&format!("http://127.0.0.1:{port}/__test/state"))
         .call()
         .expect("get state")
@@ -633,7 +432,7 @@ fn login_server_credit_redemption_best_effort() {
     let cb_url = format!("http://127.0.0.1:{port}/auth/callback?code=abc&state={state}");
     let (status, _body) = http_get_follow_redirect(&cb_url);
     assert_eq!(status, 200);
-    handle.join().unwrap();
+    handle.join().unwrap().unwrap();
     // auth.json exists
     assert!(codex_home.path().join("auth.json").exists());
 }

@@ -35,3 +35,4 @@ webbrowser = "1"
 pretty_assertions = "1.4.1"
 tempfile = "3"
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+wiremock = "0.6"
