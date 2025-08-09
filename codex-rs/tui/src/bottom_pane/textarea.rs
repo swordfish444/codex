@@ -285,12 +285,22 @@ impl TextArea {
                 code: KeyCode::Left,
                 modifiers: KeyModifiers::NONE,
                 ..
+            }
+            | KeyEvent {
+                code: KeyCode::Char('b'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
             } => {
                 self.move_cursor_left();
             }
             KeyEvent {
                 code: KeyCode::Right,
                 modifiers: KeyModifiers::NONE,
+                ..
+            }
+            | KeyEvent {
+                code: KeyCode::Char('f'),
+                modifiers: KeyModifiers::CONTROL,
                 ..
             } => {
                 self.move_cursor_right();
@@ -882,6 +892,34 @@ mod tests {
         t.kill_to_beginning_of_line();
         assert_eq!(t.text(), "abcdef");
         assert_eq!(t.cursor(), 3);
+    }
+
+    #[test]
+    fn ctrl_f_and_ctrl_b_move_one_char() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let mut t = ta_with("abc");
+        // Forward moves
+        t.set_cursor(0);
+        t.input(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        assert_eq!(t.cursor(), 1);
+        t.input(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        assert_eq!(t.cursor(), 2);
+        t.input(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        assert_eq!(t.cursor(), 3);
+
+        // Backward moves
+        t.input(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        assert_eq!(t.cursor(), 2);
+        t.input(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        assert_eq!(t.cursor(), 1);
+        t.input(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        assert_eq!(t.cursor(), 0);
+        // Further backward at start stays at 0
+        t.input(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        assert_eq!(t.cursor(), 0);
     }
 
     #[test]
