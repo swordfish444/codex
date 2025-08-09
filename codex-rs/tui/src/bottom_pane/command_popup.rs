@@ -17,7 +17,7 @@ pub(crate) struct CommandPopup {
 }
 
 impl CommandPopup {
-    pub(crate) fn new(_all_commands: Vec<(&'static str, SlashCommand)>) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             command_filter: String::new(),
             all_commands: built_in_slash_commands(),
@@ -27,7 +27,7 @@ impl CommandPopup {
 
     /// Update the filter string based on the current composer text. The text
     /// passed in is expected to start with a leading '/'. Everything after the
-    /// *first* '/' on the *first* line becomes the active filter that is used
+    /// *first* '/" on the *first* line becomes the active filter that is used
     /// to narrow down the list of available commands.
     pub(crate) fn on_composer_text_change(&mut self, text: String) {
         let first_line = text.lines().next().unwrap_or("");
@@ -111,12 +111,6 @@ impl CommandPopup {
     }
 }
 
-impl CommandPopup {
-    pub(crate) fn slash() -> Self {
-        CommandPopup::new(built_in_slash_commands())
-    }
-}
-
 impl WidgetRef for CommandPopup {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let matches = self.filtered();
@@ -143,7 +137,7 @@ mod tests {
 
     #[test]
     fn filter_includes_init_when_typing_prefix() {
-        let mut popup = CommandPopup::new(built_in_slash_commands());
+        let mut popup = CommandPopup::new();
         // Simulate the composer line starting with '/in' so the popup filters
         // matching commands by prefix.
         popup.on_composer_text_change("/in".to_string());
@@ -159,7 +153,7 @@ mod tests {
 
     #[test]
     fn selecting_init_by_exact_match() {
-        let mut popup = CommandPopup::new(built_in_slash_commands());
+        let mut popup = CommandPopup::new();
         popup.on_composer_text_change("/init".to_string());
 
         // When an exact match exists, the selected command should be that

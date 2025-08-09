@@ -64,14 +64,12 @@ pub(crate) struct ChatComposer {
     has_focus: bool,
     attached_images: Vec<(String, std::path::PathBuf)>,
     recent_submission_images: Vec<std::path::PathBuf>,
-    /// When true we are in an explicit file search session initiated via @file.
-    file_search_mode: bool,
 }
 
 /// Popup state – at most one can be visible at any time.
 enum ActivePopup {
     None,
-    Slash(CommandPopup),
+    Command(CommandPopup),
     File(FileSearchPopup),
 }
 
@@ -98,7 +96,6 @@ impl ChatComposer {
             has_focus: has_input_focus,
             attached_images: Vec::new(),
             recent_submission_images: Vec::new(),
-            file_search_mode: false,
         }
     }
 
@@ -106,14 +103,14 @@ impl ChatComposer {
         self.textarea.desired_height(width - 1)
             + match &self.active_popup {
                 ActivePopup::None => 1u16,
-                ActivePopup::Slash(c) => c.calculate_required_height(),
+                ActivePopup::Command(c) => c.calculate_required_height(),
                 ActivePopup::File(c) => c.calculate_required_height(),
             }
     }
 
     pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
         let popup_height = match &self.active_popup {
-            ActivePopup::Slash(popup) => popup.calculate_required_height(),
+            ActivePopup::Command(popup) => popup.calculate_required_height(),
             ActivePopup::File(popup) => popup.calculate_required_height(),
             ActivePopup::None => 1,
         };
@@ -226,14 +223,14 @@ impl ChatComposer {
     /// Handle a key event coming from the main UI.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
         let result = match &mut self.active_popup {
-            ActivePopup::Slash(_) => self.handle_key_event_with_slash_popup(key_event),
+            ActivePopup::Command(_) => self.handle_key_event_with_command_popup(key_event),
             ActivePopup::File(_) => self.handle_key_event_with_file_popup(key_event),
             ActivePopup::None => self.handle_key_event_without_popup(key_event),
         };
 
         // Update (or hide/show) popup after processing the key.
         self.sync_command_popup();
-        if matches!(self.active_popup, ActivePopup::Slash(_)) {
+        if matches!(self.active_popup, ActivePopup::Command(_)) {
             self.dismissed_file_popup_token = None;
         } else {
             self.sync_file_search_popup();
@@ -243,8 +240,8 @@ impl ChatComposer {
     }
 
     /// Handle key event when the slash-command popup is visible.
-    fn handle_key_event_with_slash_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
-        let ActivePopup::Slash(popup) = &mut self.active_popup else {
+    fn handle_key_event_with_command_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        let ActivePopup::Command(popup) = &mut self.active_popup else {
             unreachable!();
         };
 
@@ -329,7 +326,6 @@ impl ChatComposer {
                     self.dismissed_file_popup_token = Some(tok.to_string());
                 }
                 self.active_popup = ActivePopup::None;
-                self.file_search_mode = false; // end session
                 (InputResult::None, true)
             }
             KeyEvent {
@@ -413,10 +409,11 @@ impl ChatComposer {
                         self.insert_selected_path(&sel_path);
                     }
                     self.active_popup = ActivePopup::None;
-                    self.file_search_mode = false; // end session on selection
                     return (InputResult::None, true);
                 }
-                (InputResult::None, false)
+                // No selection: treat Enter as closing the popup/session.
+                self.active_popup = ActivePopup::None;
+                (InputResult::None, true)
             }
             input => self.handle_input_basic(input),
         }
@@ -663,7 +660,6 @@ impl ChatComposer {
 
         // Start/continue an explicit file-search session when the cursor is on an @token.
         if Self::current_at_token(&self.textarea).is_some() {
-            self.file_search_mode = true;
             // Allow popup to show for this token.
             self.dismissed_file_popup_token = None;
         }
@@ -748,7 +744,7 @@ impl ChatComposer {
         let first_line = self.textarea.text().lines().next().unwrap_or("");
         let input_starts_with_slash = first_line.starts_with('/');
         match &mut self.active_popup {
-            ActivePopup::Slash(popup) => {
+            ActivePopup::Command(popup) => {
                 if input_starts_with_slash {
                     popup.on_composer_text_change(first_line.to_string());
                 } else {
@@ -757,9 +753,9 @@ impl ChatComposer {
             }
             _ => {
                 if input_starts_with_slash {
-                    let mut command_popup = CommandPopup::slash();
+                    let mut command_popup = CommandPopup::new();
                     command_popup.on_composer_text_change(first_line.to_string());
-                    self.active_popup = ActivePopup::Slash(command_popup);
+                    self.active_popup = ActivePopup::Command(command_popup);
                 }
             }
         }
@@ -768,18 +764,12 @@ impl ChatComposer {
     /// Synchronize `self.file_search_popup` with the current text in the textarea.
     /// Note this is only called when self.active_popup is NOT Command.
     fn sync_file_search_popup(&mut self) {
-        // Only active during an explicit @file initiated session.
-        if !self.file_search_mode {
-            return;
-        }
-
         // Determine current query (may be empty if user just selected @file and hasn't typed yet).
         let query_opt = Self::current_at_token(&self.textarea);
         let Some(query) = query_opt else {
             // Token removed – end session.
             self.active_popup = ActivePopup::None;
             self.dismissed_file_popup_token = None;
-            self.file_search_mode = false;
             return;
         };
 
@@ -823,14 +813,14 @@ impl ChatComposer {
 impl WidgetRef for &ChatComposer {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let popup_height = match &self.active_popup {
-            ActivePopup::Slash(popup) => popup.calculate_required_height(),
+            ActivePopup::Command(popup) => popup.calculate_required_height(),
             ActivePopup::File(popup) => popup.calculate_required_height(),
             ActivePopup::None => 1,
         };
         let [textarea_rect, popup_rect] =
             Layout::vertical([Constraint::Min(0), Constraint::Max(popup_height)]).areas(area);
         match &self.active_popup {
-            ActivePopup::Slash(popup) => {
+            ActivePopup::Command(popup) => {
                 popup.render_ref(popup_rect, buf);
             }
             ActivePopup::File(popup) => {
@@ -920,15 +910,8 @@ impl WidgetRef for &ChatComposer {
     }
 }
 
-// -----------------------------------------------------------------------------
-// Shared helper functions for token boundary calculations.
-// Centralizing these reduces subtle divergence between behaviors that rely on
-// the exact same definition of a *token* (whitespace-delimited) and *@token*.
-// -----------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
-    use super::ActivePopup;
     use crate::app_event::AppEvent;
     use crate::bottom_pane::AppEventSender;
     use crate::bottom_pane::ChatComposer;
@@ -1509,27 +1492,5 @@ mod tests {
         } else {
             panic!("Placeholder not found in textarea");
         }
-    }
-
-    #[test]
-    fn at_symbol_opens_file_popup_and_enter_closes_it() {
-        use crossterm::event::KeyCode;
-        use crossterm::event::KeyEvent;
-        use crossterm::event::KeyModifiers;
-
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(true, sender, false);
-
-        // Type '@' to open file search popup
-        composer.handle_key_event(KeyEvent::new(KeyCode::Char('@'), KeyModifiers::NONE));
-        // Popup should be the File popup, and we should be in file_search_mode
-        assert!(matches!(composer.active_popup, ActivePopup::File(_)));
-        assert!(composer.file_search_mode);
-
-        // Press Enter to select current item and close popup/session
-        composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(matches!(composer.active_popup, ActivePopup::None));
-        assert!(!composer.file_search_mode);
     }
 }
