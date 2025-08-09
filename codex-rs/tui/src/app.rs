@@ -182,6 +182,23 @@ impl App<'_> {
         self.app_event_tx.clone()
     }
 
+    /// Clear the entire screen and re-anchor the viewport at the very top-left.
+    /// Generic over backend so we can unit-test with `TestBackend`.
+    fn clear_to_top_generic<B: ratatui::backend::Backend>(
+        terminal: &mut crate::custom_terminal::Terminal<B>,
+    ) {
+        let mut area = terminal.viewport_area;
+        area.y = 0;
+        terminal.set_viewport_area(area);
+
+        let _ = terminal.set_cursor_position((0, 0));
+        let _ = terminal
+            .backend_mut()
+            .clear_region(ratatui::backend::ClearType::All);
+
+        let _ = terminal.clear();
+    }
+
     /// Schedule a redraw if one is not already pending.
     #[allow(clippy::unwrap_used)]
     fn schedule_redraw(&self) {
@@ -242,19 +259,8 @@ impl App<'_> {
                             kind: KeyEventKind::Press,
                             ..
                         } => {
-                            // Clear terminal, move cursor to (0,0) then clear all to wipe anything above.
-                            // Keep composer area visible including the prompt and cursor position.
-                            let mut area = terminal.viewport_area;
-                            area.y = 0;
-                            terminal.set_viewport_area(area);
-
-                            let _ = terminal.set_cursor_position((0, 0));
-                            let _ = terminal
-                                .backend_mut()
-                                .clear_region(ratatui::backend::ClearType::All);
-
-                            let _ = terminal.clear();
-
+                            // Clear-screen full and re-anchor to top, then redraw.
+                            Self::clear_to_top_generic(terminal);
                             self.app_event_tx.send(AppEvent::RequestRedraw);
                         }
                         KeyEvent {
@@ -569,5 +575,37 @@ impl App<'_> {
             AppState::Chat { widget } => widget.handle_codex_event(event),
             AppState::Onboarding { .. } => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::App;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn ctrl_l_clear_reanchors_viewport_and_moves_cursor() {
+        // Build a test terminal with a small screen and a viewport offset.
+        let backend = TestBackend::new(20, 6);
+        let mut term = match crate::custom_terminal::Terminal::with_options(backend) {
+            Ok(t) => t,
+            Err(e) => panic!("failed to construct terminal: {e}"),
+        };
+
+        // Simulate a viewport not at the top (e.g., after history insertions).
+        term.set_viewport_area(Rect::new(0, 3, 20, 2));
+        assert_eq!(term.viewport_area.y, 3);
+
+        // Invoke the same logic used by the Ctrl+L handler.
+        App::clear_to_top_generic(&mut term);
+
+        // Viewport should be re-anchored at the top and cursor at (0,0).
+        assert_eq!(term.viewport_area.y, 0);
+        let pos = term
+            .get_cursor_position()
+            .expect("backend should provide cursor position");
+        assert_eq!(pos.x, 0);
+        assert_eq!(pos.y, 0);
     }
 }
