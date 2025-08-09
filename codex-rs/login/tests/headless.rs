@@ -84,9 +84,9 @@ fn headless_success_writes_auth_and_url() {
     let outcome =
         process_callback_headless(&opts, "state", "state", Some("code"), "ver", &http).unwrap();
     assert!(outcome.success_url.contains("/success"));
-    let contents = std::fs::read_to_string(tmp.path().join("auth.json")).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&contents).unwrap();
-    assert!(v["OPENAI_API_KEY"].is_null());
+    let auth_path = codex_login::get_auth_file(tmp.path());
+    let auth = codex_login::try_read_auth_json(&auth_path).unwrap();
+    assert!(auth.openai_api_key.is_none());
 }
 
 // 2) State mismatch errors

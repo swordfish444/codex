@@ -280,11 +280,11 @@ async fn login_server_happy_path() {
     handle.join().unwrap().unwrap();
 
     // Verify auth.json written
-    let auth_path = codex_home.path().join("auth.json");
-    let contents = std::fs::read_to_string(&auth_path).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&contents).unwrap();
-    assert!(v["OPENAI_API_KEY"].is_null());
-    assert!(v["tokens"]["id_token"].as_str().is_some());
+    let auth_path = codex_login::get_auth_file(codex_home.path());
+    let auth = codex_login::try_read_auth_json(&auth_path).unwrap();
+    assert!(auth.openai_api_key.is_none());
+    assert!(auth.tokens.as_ref().is_some());
+    assert!(!auth.tokens.as_ref().unwrap().access_token.is_empty());
 }
 // 1b) needs_setup=true when onboarding incomplete and is_org_owner=true
 #[tokio::test]
@@ -350,10 +350,9 @@ async fn login_server_skips_exchange_when_no_org_or_project() {
     handle.join().unwrap().unwrap();
 
     // Verify auth.json OPENAI_API_KEY is null
-    let auth_path = codex_home.path().join("auth.json");
-    let contents = std::fs::read_to_string(&auth_path).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&contents).unwrap();
-    assert!(v["OPENAI_API_KEY"].is_null());
+    let auth_path = codex_login::get_auth_file(codex_home.path());
+    let auth = codex_login::try_read_auth_json(&auth_path).unwrap();
+    assert!(auth.openai_api_key.is_none());
 }
 
 //
@@ -434,7 +433,7 @@ async fn login_server_credit_redemption_best_effort() {
     assert_eq!(status, 200);
     handle.join().unwrap().unwrap();
     // auth.json exists
-    assert!(codex_home.path().join("auth.json").exists());
+    assert!(codex_login::get_auth_file(codex_home.path()).exists());
 }
 
 fn wait_for_state_endpoint(port: u16, timeout: Duration) {
