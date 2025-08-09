@@ -11,16 +11,14 @@ use crate::slash_command::built_in_slash_commands;
 use codex_common::fuzzy_match::fuzzy_match;
 
 pub(crate) struct CommandPopup {
-    prefix: char,
     command_filter: String,
     all_commands: Vec<(&'static str, SlashCommand)>,
     state: ScrollState,
 }
 
 impl CommandPopup {
-    pub(crate) fn new(prefix: char, all_commands: Vec<(&'static str, SlashCommand)>) -> Self {
+    pub(crate) fn new(_all_commands: Vec<(&'static str, SlashCommand)>) -> Self {
         Self {
-            prefix,
             command_filter: String::new(),
             all_commands: built_in_slash_commands(),
             state: ScrollState::new(),
@@ -115,7 +113,7 @@ impl CommandPopup {
 
 impl CommandPopup {
     pub(crate) fn slash() -> Self {
-        CommandPopup::new('/', built_in_slash_commands())
+        CommandPopup::new(built_in_slash_commands())
     }
 }
 
@@ -145,7 +143,7 @@ mod tests {
 
     #[test]
     fn filter_includes_init_when_typing_prefix() {
-        let mut popup = CommandPopup::new('/', built_in_slash_commands());
+        let mut popup = CommandPopup::new(built_in_slash_commands());
         // Simulate the composer line starting with '/in' so the popup filters
         // matching commands by prefix.
         popup.on_composer_text_change("/in".to_string());
@@ -161,7 +159,7 @@ mod tests {
 
     #[test]
     fn selecting_init_by_exact_match() {
-        let mut popup = CommandPopup::new('/', built_in_slash_commands());
+        let mut popup = CommandPopup::new(built_in_slash_commands());
         popup.on_composer_text_change("/init".to_string());
 
         // When an exact match exists, the selected command should be that

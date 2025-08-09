@@ -270,10 +270,6 @@ impl ChatWidget<'_> {
         let _ = (width, height, format_label); // reserved for future use (e.g., status flash)
         self.bottom_pane
             .attach_image(path.clone(), width, height, format_label);
-        // Surface a quick background event so user sees confirmation.
-        self.add_to_history(HistoryCell::new_background_event(format!(
-            "[image copied] {width}x{height} {format_label}"
-        )));
         self.request_redraw();
     }
 

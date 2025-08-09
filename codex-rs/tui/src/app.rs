@@ -31,8 +31,6 @@ use std::sync::mpsc::channel;
 use std::thread;
 use std::time::Duration;
 
-use crate::slash_command::SlashCommand;
-
 /// Time window for debouncing redraw requests.
 const REDRAW_DEBOUNCE: Duration = Duration::from_millis(10);
 

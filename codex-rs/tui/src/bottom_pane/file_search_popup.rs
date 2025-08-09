@@ -33,7 +33,9 @@ impl FileSearchPopup {
             waiting: true,
             matches: Vec::new(),
             state: ScrollState::new(),
-        }
+        };
+        popup.populate_current_dir_if_empty_query();
+        popup
     }
 
     /// Update the query and reset state to *waiting*.
@@ -130,7 +132,7 @@ impl FileSearchPopup {
         }
         let mut entries: Vec<FileMatch> = Vec::new();
         if let Ok(read_dir) = fs::read_dir(".") {
-            for entry in read_dir.flatten().take(MAX_RESULTS) {
+            for entry in read_dir.flatten().take(MAX_POPUP_ROWS) {
                 if let Ok(file_type) = entry.file_type() {
                     // Skip hidden files (dotfiles) for a cleaner popup.
                     let file_name = entry.file_name();
@@ -150,11 +152,9 @@ impl FileSearchPopup {
             }
         }
         self.matches = entries;
-        self.selected_idx = if self.matches.is_empty() {
-            None
-        } else {
-            Some(0)
-        };
+        self.state.clamp_selection(self.matches.len());
+        self.state
+            .ensure_visible(self.matches.len(), self.matches.len().min(MAX_POPUP_ROWS));
     }
 }
 
