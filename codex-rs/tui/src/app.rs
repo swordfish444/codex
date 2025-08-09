@@ -237,6 +237,27 @@ impl App<'_> {
                             }
                         },
                         KeyEvent {
+                            code: KeyCode::Char('l'),
+                            modifiers: crossterm::event::KeyModifiers::CONTROL,
+                            kind: KeyEventKind::Press,
+                            ..
+                        } => {
+                            // Clear terminal, move cursor to (0,0) then clear all to wipe anything above.
+                            // Keep composer area visible including the prompt and cursor position.
+                            let mut area = terminal.viewport_area;
+                            area.y = 0;
+                            terminal.set_viewport_area(area);
+
+                            let _ = terminal.set_cursor_position((0, 0));
+                            let _ = terminal
+                                .backend_mut()
+                                .clear_region(ratatui::backend::ClearType::All);
+
+                            let _ = terminal.clear();
+
+                            self.app_event_tx.send(AppEvent::RequestRedraw);
+                        }
+                        KeyEvent {
                             code: KeyCode::Esc,
                             kind: KeyEventKind::Press,
                             ..
