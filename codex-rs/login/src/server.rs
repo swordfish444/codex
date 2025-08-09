@@ -1,36 +1,30 @@
 //
 use rand::RngCore;
 use reqwest::blocking::Client;
-use serde::Deserialize;
-use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
+#[cfg(feature = "http-e2e-tests")]
 use std::time::Duration;
 use tiny_http::Header;
 use tiny_http::Method;
 use tiny_http::Response;
 use tiny_http::Server;
+use serde_json::json;
 use url::Url;
 use url::form_urlencoded;
 
-use crate::auth_file::write_auth_file;
-use crate::jwt_utils::parse_jwt_claims;
 use crate::pkce::generate_pkce;
-use crate::redeem::maybe_redeem_credits;
 use crate::success_url::build_success_url;
+use crate::token_data::extract_login_context_from_tokens;
+use crate::auth_store::write_new_auth_json;
 
 pub const DEFAULT_PORT: u16 = 1455;
 pub const DEFAULT_ISSUER: &str = "https://auth.openai.com";
 
 pub const LOGIN_SUCCESS_HTML: &str = include_str!("./success_page.html");
 
-#[derive(Debug, Deserialize)]
-struct CodeExchangeResponse {
-    id_token: String,
-    access_token: String,
-    refresh_token: String,
-}
+//
 
 //
 
@@ -53,67 +47,12 @@ pub struct LoginServerOptions {
 /// - account_id is taken from the ID token.
 /// - org_id/project_id prefer ID token, falling back to access token.
 /// - plan_type comes from the access token.
-/// - needs_setup is computed from (completed_platform_onboarding, is_org_owner) with the same precedence as org/project.
-fn extract_login_context(
-    id_token: &str,
-    access_token: &str,
-) -> (
-    Option<String>, // account_id
-    Option<String>, // org_id
-    Option<String>, // project_id
-    bool,           // needs_setup
-    Option<String>, // plan_type
-) {
-    let id_claims = parse_jwt_claims(id_token);
-    let access_claims = parse_jwt_claims(access_token);
-    let id_auth_claims = id_claims
-        .get("https://api.openai.com/auth")
-        .cloned()
-        .unwrap_or(serde_json::Value::Object(Default::default()));
-    let access_auth_claims = access_claims
-        .get("https://api.openai.com/auth")
-        .cloned()
-        .unwrap_or(serde_json::Value::Object(Default::default()));
+/// - needs_setup is computed from (completed_platform_onboarding, is_org_owner)
+/// with the same precedence as org/project.
 
-    let account_id = id_auth_claims
-        .get("chatgpt_account_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    let org_id = id_auth_claims
-        .get("organization_id")
-        .and_then(|v| v.as_str())
-        .or_else(|| access_auth_claims.get("organization_id").and_then(|v| v.as_str()))
-        .map(|s| s.to_string());
-    let project_id = id_auth_claims
-        .get("project_id")
-        .and_then(|v| v.as_str())
-        .or_else(|| access_auth_claims.get("project_id").and_then(|v| v.as_str()))
-        .map(|s| s.to_string());
-
-    let completed_onboarding = id_auth_claims
-        .get("completed_platform_onboarding")
-        .and_then(|v| v.as_bool())
-        .or_else(|| {
-            access_auth_claims
-                .get("completed_platform_onboarding")
-                .and_then(|v| v.as_bool())
-        })
-        .unwrap_or(false);
-    let is_org_owner = id_auth_claims
-        .get("is_org_owner")
-        .and_then(|v| v.as_bool())
-        .or_else(|| access_auth_claims.get("is_org_owner").and_then(|v| v.as_bool()))
-        .unwrap_or(false);
-    let needs_setup = !completed_onboarding && is_org_owner;
-
-    let plan_type = access_auth_claims
-        .get("chatgpt_plan_type")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    (account_id, org_id, project_id, needs_setup, plan_type)
-}
+// Only default issuer supported for platform/api bases
+const PLATFORM_BASE: &str = "https://platform.openai.com";
+const API_BASE: &str = "https://api.openai.com";
 
 fn default_url_base(port: u16) -> String {
     format!("http://localhost:{port}")
@@ -140,7 +79,6 @@ pub fn run_local_login_server_with_options(opts: LoginServerOptions) -> std::io:
     let server = Server::http(&addr).map_err(|e| std::io::Error::other(e.to_string()))?;
 
     let issuer = opts.issuer.clone();
-    let token_endpoint = format!("{issuer}/oauth/token");
     let url_base = default_url_base(opts.port);
 
     let pkce = generate_pkce();
@@ -167,7 +105,6 @@ pub fn run_local_login_server_with_options(opts: LoginServerOptions) -> std::io:
         .append_pair("state", &state);
 
     eprintln!("Starting local login server on {url_base}");
-    // Try to open the browser, but ignore failures.
     if opts.open_browser {
         let _ = webbrowser::open(auth_url.as_str());
     }
@@ -175,12 +112,10 @@ pub fn run_local_login_server_with_options(opts: LoginServerOptions) -> std::io:
         ". If your browser did not open, navigate to this URL to authenticate: \n\n{auth_url}"
     );
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    // HTTP client handled via DefaultHttp in the callback path
 
-    // If a testing timeout is configured, schedule an internal exit request so tests don't hang.
+    // If a testing timeout is configured, schedule an internal exit request so tests don't hang CI.
+    #[cfg(feature = "http-e2e-tests")]
     if let Some(secs) = opts.testing_timeout_secs {
         let port = opts.port;
         std::thread::spawn(move || {
@@ -198,7 +133,6 @@ pub fn run_local_login_server_with_options(opts: LoginServerOptions) -> std::io:
             }
         };
 
-        // Parse URL path and query
         let full = request.url().to_string();
         let (path, query) = match full.split_once('?') {
             Some((p, q)) => (p.to_string(), Some(q.to_string())),
@@ -225,6 +159,7 @@ pub fn run_local_login_server_with_options(opts: LoginServerOptions) -> std::io:
                 break 'outer;
             }
             // Test-only helper to retrieve the current state, enabled via options.
+            #[cfg(feature = "http-e2e-tests")]
             (Method::Get, "/__test/state") if opts.expose_state_endpoint => {
                 let mut resp = Response::from_string(state.clone()).with_status_code(200);
                 if let Ok(h) = Header::from_bytes(&b"Content-Type"[..], &b"text/plain"[..]) {
@@ -239,126 +174,46 @@ pub fn run_local_login_server_with_options(opts: LoginServerOptions) -> std::io:
                         .into_owned()
                         .collect();
 
+                // Preserve explicit error messages for tests
                 if params.get("state").map(|s| s.as_str()) != Some(state.as_str()) {
                     let _ = request.respond(
                         Response::from_string("State parameter mismatch").with_status_code(400),
                     );
                     continue;
                 }
-                let code = match params.get("code").cloned() {
-                    Some(c) if !c.is_empty() => c,
-                    _ => {
-                        let _ = request.respond(
-                            Response::from_string("Missing authorization code")
-                                .with_status_code(400),
-                        );
-                        continue;
-                    }
-                };
+                let code_opt = params.get("code").map(|s| s.as_str());
+                if code_opt.map(|s| s.is_empty()).unwrap_or(true) {
+                    let _ = request.respond(
+                        Response::from_string("Missing authorization code").with_status_code(400),
+                    );
+                    continue;
+                }
 
-                // 1) Authorization code -> tokens
-                if opts.verbose {
-                    eprintln!("POST {token_endpoint} (authorization_code)");
-                }
-                let token_resp = client
-                    .post(&token_endpoint)
-                    .form(&[
-                        ("grant_type", "authorization_code"),
-                        ("code", code.as_str()),
-                        ("redirect_uri", redirect_uri.as_str()),
-                        ("client_id", opts.client_id.as_str()),
-                        ("code_verifier", pkce.code_verifier.as_str()),
-                    ])
-                    .send();
-                let Ok(token_resp) = token_resp else {
-                    if opts.verbose {
-                        eprintln!("Token exchange failed: network error");
-                    }
-                    let _ = request.respond(
-                        Response::from_string("Token exchange failed").with_status_code(500),
-                    );
-                    continue;
-                };
-                if !token_resp.status().is_success() {
-                    let status = token_resp.status();
-                    let body = token_resp.text().unwrap_or_default();
-                    if opts.verbose {
-                        eprintln!("Token exchange failed: status={status} body={body}");
-                    }
-                    let _ = request.respond(
-                        Response::from_string("Token exchange failed").with_status_code(500),
-                    );
-                    continue;
-                }
-                let body_text = token_resp.text().unwrap_or_default();
-                let tokens: CodeExchangeResponse = match serde_json::from_str(&body_text) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        if opts.verbose {
-                            eprintln!("Token exchange failed: invalid JSON: {e} body={body_text}");
+                // Delegate to shared headless callback handler
+                let http = DefaultHttp::default();
+                match process_callback_headless(
+                    &opts,
+                    &state,
+                    &state,
+                    code_opt,
+                    &pkce.code_verifier,
+                    &http,
+                ) {
+                    Ok(outcome) => {
+                        let mut resp = Response::empty(302);
+                        if let Ok(h) =
+                            Header::from_bytes(&b"Location"[..], outcome.success_url.as_str())
+                        {
+                            resp.add_header(h);
                         }
+                        let _ = request.respond(resp);
+                    }
+                    Err(_) => {
                         let _ = request.respond(
                             Response::from_string("Token exchange failed").with_status_code(500),
                         );
-                        continue;
                     }
-                };
-
-                let (account_id, org_id, project_id, needs_setup, plan_type) =
-                    extract_login_context(&tokens.id_token, &tokens.access_token);
-
-                let api_key_opt: Option<String> = None;
-
-                // Persist auth.json
-                if let Err(e) = write_auth_file(
-                    &opts.codex_home,
-                    api_key_opt.clone(),
-                    &tokens.id_token,
-                    &tokens.access_token,
-                    &tokens.refresh_token,
-                    account_id,
-                ) {
-                    let _ = request.respond(
-                        Response::from_string(format!("Unable to persist auth file: {e}"))
-                            .with_status_code(500),
-                    );
-                    continue;
                 }
-
-                // Best-effort credits redemption
-                if opts.redeem_credits {
-                    maybe_redeem_credits(
-                        &issuer,
-                        &opts.client_id,
-                        Some(&tokens.id_token),
-                        &tokens.refresh_token,
-                        &opts.codex_home,
-                    );
-                }
-
-                // Build success URL and redirect
-                let platform_url = if issuer == DEFAULT_ISSUER {
-                    "https://platform.openai.com"
-                } else {
-                    "https://platform.api.openai.org"
-                };
-                let success_url = build_success_url(
-                    &url_base,
-                    Some(&tokens.id_token),
-                    org_id.as_deref(),
-                    project_id.as_deref(),
-                    plan_type.as_deref(),
-                    needs_setup,
-                    platform_url,
-                )
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
-
-                let mut resp = Response::empty(302);
-                let location_value = success_url.to_string();
-                if let Ok(h) = Header::from_bytes(&b"Location"[..], location_value.as_str()) {
-                    resp.add_header(h);
-                }
-                let _ = request.respond(resp);
             }
             _ => {
                 let _ = request
@@ -426,6 +281,13 @@ impl Http for DefaultHttp {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct TokenExchange {
+    id_token: String,
+    access_token: String,
+    refresh_token: String,
+}
+
 pub fn process_callback_headless(
     opts: &LoginServerOptions,
     expected_state: &str,
@@ -450,7 +312,6 @@ pub fn process_callback_headless(
     let token_endpoint = format!("{}/oauth/token", opts.issuer);
     let redirect_uri = format!("{}/auth/callback", default_url_base(opts.port));
 
-    // 1) Code -> tokens
     let form = vec![
         ("grant_type".to_string(), "authorization_code".to_string()),
         ("code".to_string(), code.to_string()),
@@ -459,26 +320,22 @@ pub fn process_callback_headless(
         ("code_verifier".to_string(), code_verifier.to_string()),
     ];
     let tokens_val = http.post_form(&token_endpoint, &form)?;
-    let id_token = tokens_val["id_token"].as_str().unwrap_or("").to_string();
-    let access_token = tokens_val["access_token"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
-    let refresh_token = tokens_val["refresh_token"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let TokenExchange {
+        id_token,
+        access_token,
+        refresh_token,
+    } = serde_json::from_value(tokens_val)
+        .map_err(|e| std::io::Error::other(format!("invalid token response: {e}")))?;
     if id_token.is_empty() || access_token.is_empty() || refresh_token.is_empty() {
         return Err(std::io::Error::other("token exchange failed"));
     }
 
     let (account_id, org_id, project_id, needs_setup, plan_type) =
-        extract_login_context(&id_token, &access_token);
+        extract_login_context_from_tokens(&id_token, &access_token);
 
     let api_key = None;
 
-    // Persist auth.json
-    write_auth_file(
+    write_new_auth_json(
         &opts.codex_home,
         api_key.clone(),
         &id_token,
@@ -487,24 +344,13 @@ pub fn process_callback_headless(
         account_id,
     )?;
 
-    // Attempt credit redemption (best-effort)
     if opts.redeem_credits {
-        let platform_url = if opts.issuer == DEFAULT_ISSUER {
-            "https://api.openai.com"
-        } else {
-            "https://api.openai.org"
-        };
-        let redeem_url = format!("{platform_url}/v1/billing/redeem_credits");
+        let redeem_url = format!("{API_BASE}/v1/billing/redeem_credits");
         let _ = http.post_json(&redeem_url, &json!({"id_token": id_token}));
     }
 
-    // Build success URL
     let base = default_url_base(opts.port);
-    let platform_url = if opts.issuer == DEFAULT_ISSUER {
-        "https://platform.openai.com"
-    } else {
-        "https://platform.api.openai.org"
-    };
+    let platform_url = PLATFORM_BASE;
     let success_url = build_success_url(
         &base,
         Some(&id_token),
