@@ -63,7 +63,6 @@ pub(crate) struct ChatComposer {
     token_usage_info: Option<TokenUsageInfo>,
     has_focus: bool,
     attached_images: Vec<(String, std::path::PathBuf)>,
-    recent_submission_images: Vec<std::path::PathBuf>,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -95,7 +94,6 @@ impl ChatComposer {
             token_usage_info: None,
             has_focus: has_input_focus,
             attached_images: Vec::new(),
-            recent_submission_images: Vec::new(),
         }
     }
 
@@ -195,7 +193,8 @@ impl ChatComposer {
     }
 
     pub fn take_recent_submission_images(&mut self) -> Vec<std::path::PathBuf> {
-        std::mem::take(&mut self.recent_submission_images)
+        let images = std::mem::take(&mut self.attached_images);
+        images.into_iter().map(|(_, path)| path).collect()
     }
 
     /// Integrate results from an asynchronous file search.
@@ -593,35 +592,19 @@ impl ChatComposer {
                 }
                 self.pending_pastes.clear();
 
-                // If removing all image placeholders leaves only whitespace, treat as empty (no submission).
-                let mut content_without_images = text.clone();
+                // Strip image placeholders from the submitted text; images are retrieved via take_recent_submission_images()
                 for (placeholder, _) in &self.attached_images {
-                    content_without_images = content_without_images.replace(placeholder, "");
-                }
-                if content_without_images.trim().is_empty() {
-                    return (InputResult::None, true);
-                }
-
-                // Consume image placeholders and stage their paths (text now guaranteed non-empty after removal).
-                let mut attached_paths = Vec::new();
-                for (placeholder, path) in &self.attached_images {
                     if text.contains(placeholder) {
                         text = text.replace(placeholder, "");
-                        attached_paths.push(path.clone());
                     }
                 }
-                if !attached_paths.is_empty() {
-                    self.recent_submission_images = attached_paths;
-                    text = text.trim().to_string();
-                }
 
-                if text.is_empty() {
-                    (InputResult::None, true)
-                } else {
+                text = text.trim().to_string();
+                if !text.is_empty() {
                     self.history.record_local_submission(&text);
-                    self.attached_images.clear();
-                    (InputResult::Submitted(text), true)
                 }
+                // Do not clear attached_images here; ChatWidget drains them via take_recent_submission_images().
+                (InputResult::Submitted(text), true)
             }
             input => self.handle_input_basic(input),
         }
@@ -1416,7 +1399,7 @@ mod tests {
     }
 
     #[test]
-    fn attach_image_without_text_not_submitted() {
+    fn attach_image_without_text_submits_empty_text_and_images() {
         use crossterm::event::KeyCode;
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
@@ -1427,9 +1410,14 @@ mod tests {
         assert!(composer.attach_image(path.clone(), 10, 5, "PNG"));
         let (result, _) =
             composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(matches!(result, InputResult::None));
-        assert!(composer.take_recent_submission_images().is_empty());
-        assert_eq!(composer.attached_images.len(), 1); // still pending
+        match result {
+            InputResult::Submitted(text) => assert!(text.is_empty()),
+            _ => panic!("expected Submitted"),
+        }
+        let imgs = composer.take_recent_submission_images();
+        assert_eq!(imgs.len(), 1);
+        assert_eq!(imgs[0], path);
+        assert!(composer.attached_images.is_empty());
     }
 
     #[test]
