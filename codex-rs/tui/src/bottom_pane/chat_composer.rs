@@ -383,19 +383,7 @@ impl ChatComposer {
                                     Some(ext) if ext == "jpg" || ext == "jpeg" => "JPEG",
                                     _ => "IMG",
                                 };
-                                self.app_event_tx.send(AppEvent::AttachImage {
-                                    path: path_buf.clone(),
-                                    width: w,
-                                    height: h,
-                                    format_label,
-                                });
-                                tracing::info!(
-                                    "file_search_image selected path={:?} width={} height={} format={}",
-                                    path_buf,
-                                    w,
-                                    h,
-                                    format_label
-                                );
+                                let _ = self.attach_image(path_buf.clone(), w, h, format_label);
                                 // Optionally add a trailing space to keep typing fluid.
                                 self.textarea.insert_str(" ");
                             }
@@ -647,12 +635,7 @@ impl ChatComposer {
             ..
         } = input
         {
-            // Remove image placeholder only when cursor is at the end of it
-            if self.try_remove_image_placeholder_at_cursor() {
-                return (InputResult::None, true);
-            }
-            // Then try pasted-content placeholders (only when at end)
-            if self.try_remove_placeholder_at_cursor() {
+            if self.try_remove_any_placeholder_at_cursor() {
                 return (InputResult::None, true);
             }
         }
@@ -678,44 +661,13 @@ impl ChatComposer {
         (InputResult::None, true)
     }
 
-    /// Attempts to remove a placeholder if the cursor is at the end of one.
+    /// Attempts to remove an image or paste placeholder if the cursor is at the end of one.
     /// Returns true if a placeholder was removed.
-    fn try_remove_placeholder_at_cursor(&mut self) -> bool {
+    fn try_remove_any_placeholder_at_cursor(&mut self) -> bool {
         let p = self.textarea.cursor();
         let text = self.textarea.text();
 
-        // Find any placeholder that ends at the cursor position
-        let placeholder_to_remove = self.pending_pastes.iter().find_map(|(ph, _)| {
-            if p < ph.len() {
-                return None;
-            }
-            let potential_ph_start = p - ph.len();
-            if text[potential_ph_start..p] == *ph {
-                Some(ph.clone())
-            } else {
-                None
-            }
-        });
-
-        if let Some(placeholder) = placeholder_to_remove {
-            self.textarea.replace_range(p - placeholder.len()..p, "");
-            self.pending_pastes.retain(|(ph, _)| ph != &placeholder);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Attempts to remove an attached image placeholder if the cursor is at the end of one.
-    /// Returns true if a placeholder + image mapping was removed.
-    fn try_remove_image_placeholder_at_cursor(&mut self) -> bool {
-        if self.attached_images.is_empty() {
-            return false;
-        }
-        let p = self.textarea.cursor();
-        let text = self.textarea.text();
-
-        // Find any image placeholder that ends at the cursor position
+        // Try image placeholders first
         if let Some((idx, placeholder)) =
             self.attached_images
                 .iter()
@@ -724,8 +676,8 @@ impl ChatComposer {
                     if p < ph.len() {
                         return None;
                     }
-                    let potential_ph_start = p - ph.len();
-                    if text[potential_ph_start..p] == *ph {
+                    let start = p - ph.len();
+                    if text[start..p] == *ph {
                         Some((i, ph.clone()))
                     } else {
                         None
@@ -734,10 +686,27 @@ impl ChatComposer {
         {
             self.textarea.replace_range(p - placeholder.len()..p, "");
             self.attached_images.remove(idx);
-            true
-        } else {
-            false
+            return true;
         }
+
+        // Then try pasted-content placeholders
+        if let Some(placeholder) = self.pending_pastes.iter().find_map(|(ph, _)| {
+            if p < ph.len() {
+                return None;
+            }
+            let start = p - ph.len();
+            if text[start..p] == *ph {
+                Some(ph.clone())
+            } else {
+                None
+            }
+        }) {
+            self.textarea.replace_range(p - placeholder.len()..p, "");
+            self.pending_pastes.retain(|(ph, _)| ph != &placeholder);
+            return true;
+        }
+
+        false
     }
 
     /// Synchronize `self.command_popup` with the current text in the
