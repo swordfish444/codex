@@ -224,8 +224,8 @@ fn print_completion(cmd: CompletionCommand) {
 
 #[cfg(not(debug_assertions))]
 async fn run_update() -> anyhow::Result<()> {
-    use codex_tui::updates::check_for_update;
-    use codex_tui::updates::get_upgrade_version;
+    use codex_common::updates::check_for_update;
+    use codex_common::updates::get_upgrade_version;
     use std::process::Command;
 
     let overrides = ConfigOverrides {

@@ -658,9 +658,14 @@ dependencies = [
 name = "codex-common"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
+ "chrono",
  "clap",
  "codex-core",
+ "reqwest",
  "serde",
+ "serde_json",
+ "tokio",
  "toml 0.9.4",
 ]
 
@@ -888,7 +893,6 @@ dependencies = [
  "ratatui",
  "ratatui-image",
  "regex-lite",
- "reqwest",
  "serde",
  "serde_json",
  "shlex",

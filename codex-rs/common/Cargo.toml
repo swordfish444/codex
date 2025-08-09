@@ -7,9 +7,14 @@ version = { workspace = true }
 workspace = true
 
 [dependencies]
+anyhow = { version = "1", optional = true }
+chrono = { version = "0.4", features = ["serde"], optional = true }
 clap = { version = "4", features = ["derive", "wrap_help"], optional = true }
 codex-core = { path = "../core" }
-serde = { version = "1", optional = true }
+reqwest = { version = "0.12", features = ["json"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+tokio = { version = "1", features = ["fs"], optional = true }
 toml = { version = "0.9", optional = true }
 
 [features]
@@ -17,3 +22,4 @@ toml = { version = "0.9", optional = true }
 cli = ["clap", "serde", "toml"]
 elapsed = []
 sandbox_summary = []
+updates = ["anyhow", "chrono", "reqwest", "serde", "serde_json", "tokio"]
