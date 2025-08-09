@@ -83,8 +83,6 @@ fn headless_success_writes_auth_and_url() {
         "access_token": make_fake_jwt(json!({"https://api.openai.com/auth": {"organization_id": "org","project_id": "proj","completed_platform_onboarding": true, "is_org_owner": false, "chatgpt_plan_type": "plus"}})),
         "refresh_token": "r1"
     }));
-    // Token-exchange to API key
-    http.queue(json!({"access_token": "sk-xyz"}));
     // Credits redeem
     http.queue(json!({"granted_chatgpt_subscriber_api_credits": 5}));
 
@@ -93,7 +91,7 @@ fn headless_success_writes_auth_and_url() {
     assert!(outcome.success_url.contains("/success"));
     let contents = std::fs::read_to_string(tmp.path().join("auth.json")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&contents).unwrap();
-    assert_eq!(v["OPENAI_API_KEY"].as_str(), Some("sk-xyz"));
+    assert!(v["OPENAI_API_KEY"].is_null());
 }
 
 // 2) State mismatch errors
@@ -146,8 +144,6 @@ fn headless_credit_redemption_best_effort() {
         "access_token": make_fake_jwt(json!({"https://api.openai.com/auth": {"organization_id": "org","project_id": "proj","completed_platform_onboarding": false, "is_org_owner": true, "chatgpt_plan_type": "pro"}})),
         "refresh_token": "r1"
     }));
-    // Token exchange -> API key
-    http.queue(json!({"access_token": "sk-xyz"}));
     // Credits redeem: simulate error by not queuing a third response; the mock will error internally
     let outcome =
         process_callback_headless(&opts, "state", "state", Some("code"), "ver", &http).unwrap();
@@ -179,8 +175,6 @@ fn headless_id_token_fallback_for_org_and_project() {
         })),
         "refresh_token": "r1"
     }));
-    // Token exchange -> API key
-    http.queue(json!({"access_token": "sk-xyz"}));
     // Credits redeem
     http.queue(json!({"granted_chatgpt_subscriber_api_credits": 0}));
 

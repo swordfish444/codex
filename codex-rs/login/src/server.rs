@@ -1,4 +1,4 @@
-use chrono::Utc;
+//
 use rand::RngCore;
 use reqwest::blocking::Client;
 use serde::Deserialize;
@@ -23,10 +23,7 @@ use crate::success_url::build_success_url;
 pub const DEFAULT_PORT: u16 = 1455;
 pub const DEFAULT_ISSUER: &str = "https://auth.openai.com";
 
-// Copied from the Python HTML to keep UX consistent.
 pub const LOGIN_SUCCESS_HTML: &str = include_str!("./success_page.html");
-
-// PKCE helpers are in crate::pkce
 
 #[derive(Debug, Deserialize)]
 struct CodeExchangeResponse {
@@ -35,16 +32,7 @@ struct CodeExchangeResponse {
     refresh_token: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct TokenExchangeResponse {
-    access_token: String,
-}
-
-// JWT helpers are in crate::jwt_utils
-
-// Auth file writer is in crate::auth_file
-
-// Credit redemption logic is in crate::redeem
+//
 
 #[derive(Debug, Clone)]
 pub struct LoginServerOptions {
@@ -59,6 +47,72 @@ pub struct LoginServerOptions {
     /// issuing an internal request to a test-only endpoint. Intended for CI/tests.
     pub testing_timeout_secs: Option<u64>,
     pub verbose: bool,
+}
+
+/// Extracts commonly used claims from ID and access tokens.
+/// - account_id is taken from the ID token.
+/// - org_id/project_id prefer ID token, falling back to access token.
+/// - plan_type comes from the access token.
+/// - needs_setup is computed from (completed_platform_onboarding, is_org_owner) with the same precedence as org/project.
+fn extract_login_context(
+    id_token: &str,
+    access_token: &str,
+) -> (
+    Option<String>, // account_id
+    Option<String>, // org_id
+    Option<String>, // project_id
+    bool,           // needs_setup
+    Option<String>, // plan_type
+) {
+    let id_claims = parse_jwt_claims(id_token);
+    let access_claims = parse_jwt_claims(access_token);
+    let id_auth_claims = id_claims
+        .get("https://api.openai.com/auth")
+        .cloned()
+        .unwrap_or(serde_json::Value::Object(Default::default()));
+    let access_auth_claims = access_claims
+        .get("https://api.openai.com/auth")
+        .cloned()
+        .unwrap_or(serde_json::Value::Object(Default::default()));
+
+    let account_id = id_auth_claims
+        .get("chatgpt_account_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let org_id = id_auth_claims
+        .get("organization_id")
+        .and_then(|v| v.as_str())
+        .or_else(|| access_auth_claims.get("organization_id").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+    let project_id = id_auth_claims
+        .get("project_id")
+        .and_then(|v| v.as_str())
+        .or_else(|| access_auth_claims.get("project_id").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+
+    let completed_onboarding = id_auth_claims
+        .get("completed_platform_onboarding")
+        .and_then(|v| v.as_bool())
+        .or_else(|| {
+            access_auth_claims
+                .get("completed_platform_onboarding")
+                .and_then(|v| v.as_bool())
+        })
+        .unwrap_or(false);
+    let is_org_owner = id_auth_claims
+        .get("is_org_owner")
+        .and_then(|v| v.as_bool())
+        .or_else(|| access_auth_claims.get("is_org_owner").and_then(|v| v.as_bool()))
+        .unwrap_or(false);
+    let needs_setup = !completed_onboarding && is_org_owner;
+
+    let plan_type = access_auth_claims
+        .get("chatgpt_plan_type")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    (account_id, org_id, project_id, needs_setup, plan_type)
 }
 
 fn default_url_base(port: u16) -> String {
@@ -250,206 +304,10 @@ pub fn run_local_login_server_with_options(opts: LoginServerOptions) -> std::io:
                     }
                 };
 
-                // Extract account_id from id_token claims
-                let id_claims = parse_jwt_claims(&tokens.id_token);
-                let auth_claims = id_claims
-                    .get("https://api.openai.com/auth")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Object(Default::default()));
-                let account_id = auth_claims
-                    .get("chatgpt_account_id")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                let (account_id, org_id, project_id, needs_setup, plan_type) =
+                    extract_login_context(&tokens.id_token, &tokens.access_token);
 
-                // Parse access token claims to compute redirect target
-                let access_claims = parse_jwt_claims(&tokens.access_token);
-                let access_auth_claims = access_claims
-                    .get("https://api.openai.com/auth")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Object(Default::default()));
-                let id_auth_claims = id_claims
-                    .get("https://api.openai.com/auth")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Object(Default::default()));
-
-                // Prefer ID-token claims (Python parity), fall back to access-token claims
-                let org_id = id_auth_claims
-                    .get("organization_id")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| {
-                        access_auth_claims
-                            .get("organization_id")
-                            .and_then(|v| v.as_str())
-                    });
-                let project_id = id_auth_claims
-                    .get("project_id")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| {
-                        access_auth_claims
-                            .get("project_id")
-                            .and_then(|v| v.as_str())
-                    });
-                let completed_onboarding = id_auth_claims
-                    .get("completed_platform_onboarding")
-                    .and_then(|v| v.as_bool())
-                    .or_else(|| {
-                        access_auth_claims
-                            .get("completed_platform_onboarding")
-                            .and_then(|v| v.as_bool())
-                    })
-                    .unwrap_or(false);
-                let is_org_owner = id_auth_claims
-                    .get("is_org_owner")
-                    .and_then(|v| v.as_bool())
-                    .or_else(|| {
-                        access_auth_claims
-                            .get("is_org_owner")
-                            .and_then(|v| v.as_bool())
-                    })
-                    .unwrap_or(false);
-                // Python uses access-token for plan type; match that
-                let plan_type = access_auth_claims
-                    .get("chatgpt_plan_type")
-                    .and_then(|v| v.as_str());
-                let needs_setup = !completed_onboarding && is_org_owner;
-
-                // 2) Token exchange for API key (Python parity: only if org and project are present)
-                let today = Utc::now().format("%Y-%m-%d").to_string();
-                let random_id = {
-                    let mut bytes = [0u8; 6];
-                    rand::thread_rng().fill_bytes(&mut bytes);
-                    hex::encode(bytes)
-                };
-                let api_key_opt: Option<String> = if org_id.is_none() || project_id.is_none() {
-                    if opts.verbose {
-                        eprintln!(
-                            "Skipping token exchange: missing org_id or project_id in token claims (Python parity)"
-                        );
-                    }
-                    None
-                } else {
-                    if opts.verbose {
-                        eprintln!("POST {token_endpoint} (token-exchange, subject=id_token)");
-                    }
-                    let token_x_id = client
-                        .post(&token_endpoint)
-                        .form(&[
-                            (
-                                "grant_type",
-                                "urn:ietf:params:oauth:grant-type:token-exchange",
-                            ),
-                            ("client_id", opts.client_id.as_str()),
-                            ("requested_token", "openai-api-key"),
-                            ("subject_token", tokens.id_token.as_str()),
-                            (
-                                "subject_token_type",
-                                "urn:ietf:params:oauth:token-type:id_token",
-                            ),
-                            (
-                                "name",
-                                format!("Codex CLI [auto-generated] ({today}) [{random_id}]")
-                                    .as_str(),
-                            ),
-                        ])
-                        .send();
-                    match token_x_id {
-                        Ok(resp) if resp.status().is_success() => {
-                            let body_text = resp.text().unwrap_or_default();
-                            match serde_json::from_str::<TokenExchangeResponse>(&body_text) {
-                                Ok(v) => Some(v.access_token),
-                                Err(e) => {
-                                    if opts.verbose {
-                                        eprintln!(
-                                            "Token exchange failed: invalid JSON (id_token): {e} body={body_text}"
-                                        );
-                                    }
-                                    None
-                                }
-                            }
-                        }
-                        Ok(resp) => {
-                            let status = resp.status();
-                            let body = resp.text().unwrap_or_default();
-                            if opts.verbose {
-                                eprintln!(
-                                    "Token exchange failed (id_token): status={status} body={body}"
-                                );
-                            }
-                            if status.as_u16() == 401 && body.contains("missing organization_id") {
-                                if opts.verbose {
-                                    eprintln!("Retrying token exchange with access_token subject");
-                                }
-                                let retry = client
-                                    .post(&token_endpoint)
-                                    .form(&[
-                                        (
-                                            "grant_type",
-                                            "urn:ietf:params:oauth:grant-type:token-exchange",
-                                        ),
-                                        ("client_id", opts.client_id.as_str()),
-                                        ("requested_token", "openai-api-key"),
-                                        ("subject_token", tokens.access_token.as_str()),
-                                        (
-                                            "subject_token_type",
-                                            "urn:ietf:params:oauth:token-type:access_token",
-                                        ),
-                                        (
-                                            "name",
-                                            format!(
-                                                "Codex CLI [auto-generated] ({today}) [{random_id}]"
-                                            )
-                                            .as_str(),
-                                        ),
-                                    ])
-                                    .send();
-                                match retry {
-                                    Ok(retry_resp) if retry_resp.status().is_success() => {
-                                        let body_text = retry_resp.text().unwrap_or_default();
-                                        match serde_json::from_str::<TokenExchangeResponse>(
-                                            &body_text,
-                                        ) {
-                                            Ok(v) => Some(v.access_token),
-                                            Err(e) => {
-                                                if opts.verbose {
-                                                    eprintln!(
-                                                        "Token exchange failed: invalid JSON (access_token): {e} body={body_text}"
-                                                    );
-                                                }
-                                                None
-                                            }
-                                        }
-                                    }
-                                    Ok(retry_resp) => {
-                                        let status = retry_resp.status();
-                                        let body = retry_resp.text().unwrap_or_default();
-                                        if opts.verbose {
-                                            eprintln!(
-                                                "Token exchange failed (access_token): status={status} body={body}"
-                                            );
-                                        }
-                                        None
-                                    }
-                                    Err(_) => {
-                                        if opts.verbose {
-                                            eprintln!(
-                                                "Token exchange failed: network error (access_token)"
-                                            );
-                                        }
-                                        None
-                                    }
-                                }
-                            } else {
-                                None
-                            }
-                        }
-                        Err(_) => {
-                            if opts.verbose {
-                                eprintln!("Token exchange failed: network error (id_token)");
-                            }
-                            None
-                        }
-                    }
-                };
+                let api_key_opt: Option<String> = None;
 
                 // Persist auth.json
                 if let Err(e) = write_auth_file(
@@ -487,9 +345,9 @@ pub fn run_local_login_server_with_options(opts: LoginServerOptions) -> std::io:
                 let success_url = build_success_url(
                     &url_base,
                     Some(&tokens.id_token),
-                    org_id,
-                    project_id,
-                    plan_type,
+                    org_id.as_deref(),
+                    project_id.as_deref(),
+                    plan_type.as_deref(),
                     needs_setup,
                     platform_url,
                 )
@@ -614,103 +472,10 @@ pub fn process_callback_headless(
         return Err(std::io::Error::other("token exchange failed"));
     }
 
-    // Extract claims with Python-parity precedence: prefer ID-token claims; fall back to access-token
-    let id_claims = parse_jwt_claims(&id_token);
-    let id_auth = id_claims
-        .get("https://api.openai.com/auth")
-        .cloned()
-        .unwrap_or(serde_json::Value::Object(Default::default()));
-    let account_id = id_auth
-        .get("chatgpt_account_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let access_claims = parse_jwt_claims(&access_token);
-    let access_auth = access_claims
-        .get("https://api.openai.com/auth")
-        .cloned()
-        .unwrap_or(serde_json::Value::Object(Default::default()));
-    let org_id = id_auth
-        .get("organization_id")
-        .and_then(|v| v.as_str())
-        .or_else(|| access_auth.get("organization_id").and_then(|v| v.as_str()));
-    let project_id = id_auth
-        .get("project_id")
-        .and_then(|v| v.as_str())
-        .or_else(|| access_auth.get("project_id").and_then(|v| v.as_str()));
-    let completed = id_auth
-        .get("completed_platform_onboarding")
-        .and_then(|v| v.as_bool())
-        .or_else(|| {
-            access_auth
-                .get("completed_platform_onboarding")
-                .and_then(|v| v.as_bool())
-        })
-        .unwrap_or(false);
-    let is_owner = id_auth
-        .get("is_org_owner")
-        .and_then(|v| v.as_bool())
-        .or_else(|| access_auth.get("is_org_owner").and_then(|v| v.as_bool()))
-        .unwrap_or(false);
-    // Keep plan type from access token (Python behavior)
-    let plan_type = access_auth
-        .get("chatgpt_plan_type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let needs_setup = !completed && is_owner;
+    let (account_id, org_id, project_id, needs_setup, plan_type) =
+        extract_login_context(&id_token, &access_token);
 
-    // 2) Token exchange -> API key (Python parity: only if org and project are present)
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-    let random_id = {
-        let mut bytes = [0u8; 6];
-        rand::thread_rng().fill_bytes(&mut bytes);
-        hex::encode(bytes)
-    };
-    let api_key = if org_id.is_none() || project_id.is_none() {
-        None
-    } else {
-        let exchange_form = vec![
-            (
-                "grant_type".to_string(),
-                "urn:ietf:params:oauth:grant-type:token-exchange".to_string(),
-            ),
-            ("client_id".to_string(), opts.client_id.clone()),
-            ("requested_token".to_string(), "openai-api-key".to_string()),
-            ("subject_token".to_string(), id_token.clone()),
-            (
-                "subject_token_type".to_string(),
-                "urn:ietf:params:oauth:token-type:id_token".to_string(),
-            ),
-            (
-                "name".to_string(),
-                format!("Codex CLI [auto-generated] ({today}) [{random_id}]"),
-            ),
-        ];
-        let mut exchange_val = http.post_form(&token_endpoint, &exchange_form)?;
-        let mut api_key = exchange_val["access_token"].as_str().map(|s| s.to_string());
-        if api_key.is_none() {
-            // Fallback: retry with access_token as subject
-            let exchange_form2 = vec![
-                (
-                    "grant_type".to_string(),
-                    "urn:ietf:params:oauth:grant-type:token-exchange".to_string(),
-                ),
-                ("client_id".to_string(), opts.client_id.clone()),
-                ("requested_token".to_string(), "openai-api-key".to_string()),
-                ("subject_token".to_string(), access_token.clone()),
-                (
-                    "subject_token_type".to_string(),
-                    "urn:ietf:params:oauth:token-type:access_token".to_string(),
-                ),
-                (
-                    "name".to_string(),
-                    format!("Codex CLI [auto-generated] ({today}) [{random_id}]"),
-                ),
-            ];
-            exchange_val = http.post_form(&token_endpoint, &exchange_form2)?;
-            api_key = exchange_val["access_token"].as_str().map(|s| s.to_string());
-        }
-        api_key
-    };
+    let api_key = None;
 
     // Persist auth.json
     write_auth_file(
@@ -743,13 +508,9 @@ pub fn process_callback_headless(
     let success_url = build_success_url(
         &base,
         Some(&id_token),
-        org_id,
-        project_id,
-        if plan_type.is_empty() {
-            None
-        } else {
-            Some(plan_type)
-        },
+        org_id.as_deref(),
+        project_id.as_deref(),
+        plan_type.as_deref(),
         needs_setup,
         platform_url,
     )
@@ -761,4 +522,4 @@ pub fn process_callback_headless(
     })
 }
 
-// Success URL builder is in crate::success_url
+//

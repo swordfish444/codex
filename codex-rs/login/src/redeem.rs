@@ -89,7 +89,7 @@ pub(crate) fn maybe_redeem_credits(
         .cloned()
         .unwrap_or(serde_json::Value::Object(Default::default()));
 
-    // Subscription active > 7 days check (parity with Python script)
+    // Subscription active > 7 days check
     if let Some(sub_start_str) = auth_claims
         .get("chatgpt_subscription_active_start")
         .and_then(|v| v.as_str())

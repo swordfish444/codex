@@ -330,14 +330,11 @@ pub async fn login_with_chatgpt(
     open_browser: bool,
     verbose: bool,
 ) -> std::io::Result<()> {
-    // Prefer env override to match Python flow expectations.
     let client_id = std::env::var("CODEX_CLIENT_ID")
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| CLIENT_ID.to_string());
 
-    // Mirror Python's special-case exit for address-in-use by pre-binding the port.
-    // Tiny race window is acceptable for UX parity.
     match TcpListener::bind(("127.0.0.1", server::DEFAULT_PORT)) {
         Ok(_sock) => {
             // release immediately; server will bind next

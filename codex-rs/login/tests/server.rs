@@ -250,162 +250,8 @@ fn start_mock_oauth_server(port: u16, behavior: MockBehavior) {
                             );
                         }
                     }
-                    MockBehavior::IdMissingOrgThenAccessSucceeds => {
-                        if form.get("grant_type").map(|s| s.as_str()) == Some("authorization_code")
-                        {
-                            // Include org/project in access claims so server attempts exchange
-                            let id_token = make_fake_jwt(serde_json::json!({
-                                "https://api.openai.com/auth": {
-                                    "chatgpt_account_id": "acc-5"
-                                }
-                            }));
-                            let access_token = make_fake_jwt(serde_json::json!({
-                                "https://api.openai.com/auth": {
-                                    "organization_id": "org-x",
-                                    "project_id": "proj-x",
-                                    "completed_platform_onboarding": true,
-                                    "is_org_owner": false,
-                                    "chatgpt_plan_type": "plus"
-                                }
-                            }));
-                            let payload = serde_json::json!({
-                                "id_token": id_token,
-                                "access_token": access_token,
-                                "refresh_token": "refresh-5"
-                            });
-                            let _ = request.respond(
-                                tiny_http::Response::from_string(payload.to_string())
-                                    .with_status_code(200)
-                                    .with_header(
-                                        tiny_http::Header::from_bytes(
-                                            &b"Content-Type"[..],
-                                            &b"application/json"[..],
-                                        )
-                                        .unwrap(),
-                                    ),
-                            );
-                        } else {
-                            // Distinguish by subject_token_type
-                            match form.get("subject_token_type").map(|s| s.as_str()) {
-                                Some("urn:ietf:params:oauth:token-type:id_token") => {
-                                    let body = serde_json::json!({
-                                        "error": {
-                                            "message": "Invalid ID token: missing organization_id",
-                                            "type": "invalid_request_error",
-                                            "param": null,
-                                            "code": "invalid_subject_token"
-                                        }
-                                    });
-                                    let _ = request.respond(
-                                        tiny_http::Response::from_string(body.to_string())
-                                            .with_status_code(401)
-                                            .with_header(
-                                                tiny_http::Header::from_bytes(
-                                                    &b"Content-Type"[..],
-                                                    &b"application/json"[..],
-                                                )
-                                                .unwrap(),
-                                            ),
-                                    );
-                                }
-                                Some("urn:ietf:params:oauth:token-type:access_token") => {
-                                    let body =
-                                        serde_json::json!({"access_token": "sk-fallback-xyz"});
-                                    let _ = request.respond(
-                                        tiny_http::Response::from_string(body.to_string())
-                                            .with_status_code(200)
-                                            .with_header(
-                                                tiny_http::Header::from_bytes(
-                                                    &b"Content-Type"[..],
-                                                    &b"application/json"[..],
-                                                )
-                                                .unwrap(),
-                                            ),
-                                    );
-                                }
-                                _ => {
-                                    let _ = request.respond(
-                                        tiny_http::Response::from_string("bad subject")
-                                            .with_status_code(400),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    MockBehavior::IdMissingOrgThenAccessFails => {
-                        if form.get("grant_type").map(|s| s.as_str()) == Some("authorization_code")
-                        {
-                            let id_token = make_fake_jwt(serde_json::json!({
-                                "https://api.openai.com/auth": {"chatgpt_account_id": "acc-6"}
-                            }));
-                            let access_token = make_fake_jwt(serde_json::json!({
-                                "https://api.openai.com/auth": {
-                                    "organization_id": "org-y",
-                                    "project_id": "proj-y",
-                                    "completed_platform_onboarding": true,
-                                    "is_org_owner": false,
-                                    "chatgpt_plan_type": "plus"
-                                }
-                            }));
-                            let payload = serde_json::json!({
-                                "id_token": id_token,
-                                "access_token": access_token,
-                                "refresh_token": "refresh-6"
-                            });
-                            let _ = request.respond(
-                                tiny_http::Response::from_string(payload.to_string())
-                                    .with_status_code(200)
-                                    .with_header(
-                                        tiny_http::Header::from_bytes(
-                                            &b"Content-Type"[..],
-                                            &b"application/json"[..],
-                                        )
-                                        .unwrap(),
-                                    ),
-                            );
-                        } else {
-                            match form.get("subject_token_type").map(|s| s.as_str()) {
-                                Some("urn:ietf:params:oauth:token-type:id_token") => {
-                                    let body = serde_json::json!({
-                                        "error": {"message": "Invalid ID token: missing organization_id", "type": "invalid_request_error", "param": null, "code": "invalid_subject_token"}
-                                    });
-                                    let _ = request.respond(
-                                        tiny_http::Response::from_string(body.to_string())
-                                            .with_status_code(401)
-                                            .with_header(
-                                                tiny_http::Header::from_bytes(
-                                                    &b"Content-Type"[..],
-                                                    &b"application/json"[..],
-                                                )
-                                                .unwrap(),
-                                            ),
-                                    );
-                                }
-                                Some("urn:ietf:params:oauth:token-type:access_token") => {
-                                    let body = serde_json::json!({
-                                        "error": {"message": "Could not validate your subject token. Please try signing in again.", "type": "invalid_request_error", "param": null, "code": "invalid_subject_token"}
-                                    });
-                                    let _ = request.respond(
-                                        tiny_http::Response::from_string(body.to_string())
-                                            .with_status_code(401)
-                                            .with_header(
-                                                tiny_http::Header::from_bytes(
-                                                    &b"Content-Type"[..],
-                                                    &b"application/json"[..],
-                                                )
-                                                .unwrap(),
-                                            ),
-                                    );
-                                }
-                                _ => {
-                                    let _ = request.respond(
-                                        tiny_http::Response::from_string("bad subject")
-                                            .with_status_code(400),
-                                    );
-                                }
-                            }
-                        }
-                    }
+                    // Old token-exchange fallback behavior removed
+                    // Old token-exchange fallback behavior removed
                 }
             } else if request.method() == &tiny_http::Method::Post
                 && url.starts_with("/v1/billing/redeem_credits")
@@ -437,8 +283,7 @@ enum MockBehavior {
     SuccessIdClaimsOrgProject,
     TokenError,
     MissingOrgSkipExchange,
-    IdMissingOrgThenAccessSucceeds,
-    IdMissingOrgThenAccessFails,
+    // Old token-exchange fallback behaviors removed
 }
 
 fn make_fake_jwt(payload: serde_json::Value) -> String {
@@ -522,7 +367,7 @@ fn login_server_happy_path() {
     let auth_path = codex_home.path().join("auth.json");
     let contents = std::fs::read_to_string(&auth_path).unwrap();
     let v: serde_json::Value = serde_json::from_str(&contents).unwrap();
-    assert_eq!(v["OPENAI_API_KEY"].as_str(), Some("sk-test-123"));
+    assert!(v["OPENAI_API_KEY"].is_null());
     assert!(v["tokens"]["id_token"].as_str().is_some());
 }
 // 1b) needs_setup=true when onboarding incomplete and is_org_owner=true
@@ -643,79 +488,7 @@ fn login_server_skips_exchange_when_no_org_or_project() {
     assert!(v["OPENAI_API_KEY"].is_null());
 }
 
-// 1e) Exchange: ID-token missing org -> retry access-token succeeds
-#[test]
-fn login_server_exchange_fallback_to_access_token() {
-    let oauth_port = find_free_port();
-    start_mock_oauth_server(oauth_port, MockBehavior::IdMissingOrgThenAccessSucceeds);
-    let codex_home = TempDir::new().unwrap();
-    let port = find_free_port();
-    let issuer = format!("http://127.0.0.1:{oauth_port}");
-    let opts = LoginServerOptions {
-        codex_home: codex_home.path().to_path_buf(),
-        client_id: "test-client".to_string(),
-        issuer: issuer.clone(),
-        port,
-        open_browser: false,
-        redeem_credits: true,
-        expose_state_endpoint: true,
-        testing_timeout_secs: Some(5),
-        verbose: false,
-    };
-    let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
-    wait_for_state_endpoint(port, Duration::from_secs(5));
-    let state = ureq::get(&format!("http://127.0.0.1:{port}/__test/state"))
-        .call()
-        .unwrap()
-        .into_string()
-        .unwrap();
-    let cb_url = format!("http://127.0.0.1:{port}/auth/callback?code=abc&state={state}");
-    let (status, _body, _loc) = http_get(&cb_url);
-    assert_eq!(status, 302);
-    let _ = ureq::get(&format!("http://127.0.0.1:{port}/success")).call();
-    handle.join().unwrap();
-    let auth_path = codex_home.path().join("auth.json");
-    let v: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&auth_path).unwrap()).unwrap();
-    assert_eq!(v["OPENAI_API_KEY"].as_str(), Some("sk-fallback-xyz"));
-}
-
-// 1f) Exchange: ID-token missing org -> retry access-token fails; still success and tokens persisted w/o API key
-#[test]
-fn login_server_exchange_fallback_fails_persists_tokens() {
-    let oauth_port = find_free_port();
-    start_mock_oauth_server(oauth_port, MockBehavior::IdMissingOrgThenAccessFails);
-    let codex_home = TempDir::new().unwrap();
-    let port = find_free_port();
-    let issuer = format!("http://127.0.0.1:{oauth_port}");
-    let opts = LoginServerOptions {
-        codex_home: codex_home.path().to_path_buf(),
-        client_id: "test-client".to_string(),
-        issuer: issuer.clone(),
-        port,
-        open_browser: false,
-        redeem_credits: true,
-        expose_state_endpoint: true,
-        testing_timeout_secs: Some(5),
-        verbose: false,
-    };
-    let handle = thread::spawn(move || run_local_login_server_with_options(opts).unwrap());
-    wait_for_state_endpoint(port, Duration::from_secs(5));
-    let state = ureq::get(&format!("http://127.0.0.1:{port}/__test/state"))
-        .call()
-        .unwrap()
-        .into_string()
-        .unwrap();
-    let cb_url = format!("http://127.0.0.1:{port}/auth/callback?code=abc&state={state}");
-    let (status, _body, _loc) = http_get(&cb_url);
-    assert_eq!(status, 302);
-    let _ = ureq::get(&format!("http://127.0.0.1:{port}/success")).call();
-    handle.join().unwrap();
-    let auth_path = codex_home.path().join("auth.json");
-    let v: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&auth_path).unwrap()).unwrap();
-    assert!(v["OPENAI_API_KEY"].is_null());
-}
+//
 // 2) State mismatch returns 400 and server stays up
 #[test]
 fn login_server_state_mismatch() {
