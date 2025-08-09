@@ -60,21 +60,6 @@ fn read_version_info(version_file: &Path) -> anyhow::Result<VersionInfo> {
     Ok(serde_json::from_str(&contents)?)
 }
 
-fn is_newer(latest: &str, current: &str) -> Option<bool> {
-    match (parse_version(latest), parse_version(current)) {
-        (Some(l), Some(c)) => Some(l > c),
-        _ => None,
-    }
-}
-
-fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
-    let mut iter = v.trim().split('.');
-    let maj = iter.next()?.parse::<u64>().ok()?;
-    let min = iter.next()?.parse::<u64>().ok()?;
-    let pat = iter.next()?.parse::<u64>().ok()?;
-    Some((maj, min, pat))
-}
-
 /// Fetches the latest release info and updates the on-disk cache file.
 pub async fn check_for_update(version_file: &Path) -> anyhow::Result<()> {
     let ReleaseInfo {
@@ -108,6 +93,21 @@ pub async fn check_for_update(version_file: &Path) -> anyhow::Result<()> {
     }
     tokio::fs::write(version_file, json_line).await?;
     Ok(())
+}
+
+fn is_newer(latest: &str, current: &str) -> Option<bool> {
+    match (parse_version(latest), parse_version(current)) {
+        (Some(l), Some(c)) => Some(l > c),
+        _ => None,
+    }
+}
+
+fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
+    let mut iter = v.trim().split('.');
+    let maj = iter.next()?.parse::<u64>().ok()?;
+    let min = iter.next()?.parse::<u64>().ok()?;
+    let pat = iter.next()?.parse::<u64>().ok()?;
+    Some((maj, min, pat))
 }
 
 #[cfg(test)]
