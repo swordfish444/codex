@@ -918,7 +918,9 @@ mod tests {
         assert_eq!(t.cursor(), t.text().len());
 
         // Test using ctrl-f and ctrl-b for graphemes (byte indices)
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
         let mut t = ta_with("a👍b");
         t.set_cursor(0);
         t.input(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)); // after 'a'
