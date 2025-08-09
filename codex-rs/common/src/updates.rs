@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::path::Path;
 use std::path::PathBuf;
+use tracing::error;
 
 /// Returns the latest available version string if it is newer than the current
 /// one, otherwise `None`.
@@ -19,9 +20,9 @@ pub fn get_upgrade_version(config: &Config) -> Option<String> {
     } {
         // Refresh in the background; callers can use the cached value for this run.
         tokio::spawn(async move {
-            if let Err(e) = check_for_update(&version_file).await {
-                eprintln!("Failed to update version: {e}");
-            }
+            check_for_update(&version_file)
+                .await
+                .inspect_err(|e| error!("Failed to update version: {e}"))
         });
     }
 

@@ -13,6 +13,8 @@ use codex_cli::login::run_login_with_chatgpt;
 use codex_cli::login::run_logout;
 use codex_cli::proto;
 use codex_common::CliConfigOverrides;
+use codex_common::updates::check_for_update;
+use codex_common::updates::get_upgrade_version;
 #[cfg(not(debug_assertions))]
 use codex_core::config::Config;
 #[cfg(not(debug_assertions))]
@@ -224,10 +226,6 @@ fn print_completion(cmd: CompletionCommand) {
 
 #[cfg(not(debug_assertions))]
 async fn run_update() -> anyhow::Result<()> {
-    use codex_common::updates::check_for_update;
-    use codex_common::updates::get_upgrade_version;
-    use std::process::Command;
-
     let overrides = ConfigOverrides {
         model: None,
         cwd: None,
