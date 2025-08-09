@@ -38,7 +38,7 @@ pub struct LoginServerOptions {
     pub testing_timeout_secs: Option<u64>,
     pub verbose: bool,
     #[cfg(feature = "http-e2e-tests")]
-    pub port_sender: Option<std::sync::mpsc::Sender<u16>>, 
+    pub port_sender: Option<std::sync::mpsc::Sender<u16>>,
 }
 
 // Only default issuer supported for platform/api bases
@@ -81,8 +81,8 @@ pub fn run_local_login_server_with_options(mut opts: LoginServerOptions) -> std:
         let _ = tx.send(actual_port);
     }
 
-    let server = Server::from_listener(listener, None)
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let server =
+        Server::from_listener(listener, None).map_err(|e| std::io::Error::other(e.to_string()))?;
 
     let issuer = opts.issuer.clone();
     let url_base = default_url_base(opts.port);

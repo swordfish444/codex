@@ -5,11 +5,11 @@ use codex_login::run_local_login_server_with_options;
 use std::thread;
 use std::time::Duration;
 use tempfile::TempDir;
-use wiremock::matchers::method;
-use wiremock::matchers::path;
 use wiremock::Mock;
 use wiremock::MockServer;
 use wiremock::ResponseTemplate;
+use wiremock::matchers::method;
+use wiremock::matchers::path;
 
 async fn start_mock_oauth_server(behavior: MockBehavior) -> MockServer {
     let server = MockServer::start().await;

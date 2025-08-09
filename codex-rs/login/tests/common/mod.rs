@@ -7,5 +7,3 @@ pub fn make_fake_jwt(payload: serde_json::Value) -> String {
     let signature_b64 = b64(b"sig");
     format!("{header_b64}.{payload_b64}.{signature_b64}")
 }
-
-
