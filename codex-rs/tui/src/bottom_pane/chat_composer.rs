@@ -1,20 +1,24 @@
 use codex_core::protocol::TokenUsage;
+use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
+use crossterm::event::KeyModifiers;
 use ratatui::buffer::Buffer;
+use ratatui::layout::Constraint;
+use ratatui::layout::Layout;
+use ratatui::layout::Margin;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::style::Styled;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
+use ratatui::widgets::Block;
 use ratatui::widgets::BorderType;
 use ratatui::widgets::Borders;
-use ratatui::widgets::Widget;
+use ratatui::widgets::StatefulWidgetRef;
 use ratatui::widgets::WidgetRef;
-use tui_textarea::Input;
-use tui_textarea::Key;
-use tui_textarea::TextArea;
 
 use super::chat_composer_history::ChatComposerHistory;
 use super::command_popup::CommandPopup;
@@ -22,10 +26,13 @@ use super::file_search_popup::FileSearchPopup;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::bottom_pane::textarea::TextArea;
+use crate::bottom_pane::textarea::TextAreaState;
 use codex_file_search::FileMatch;
+use std::cell::RefCell;
 use std::path::Path;
 
-const BASE_PLACEHOLDER_TEXT: &str = "...";
+const BASE_PLACEHOLDER_TEXT: &str = "Ask Codex to do anything";
 /// If the pasted content exceeds this number of characters, replace it with a
 /// placeholder in the UI.
 const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
@@ -36,8 +43,15 @@ pub enum InputResult {
     None,
 }
 
-pub(crate) struct ChatComposer<'a> {
-    textarea: TextArea<'a>,
+struct TokenUsageInfo {
+    total_token_usage: TokenUsage,
+    last_token_usage: TokenUsage,
+    model_context_window: Option<u64>,
+}
+
+pub(crate) struct ChatComposer {
+    textarea: TextArea,
+    textarea_state: RefCell<TextAreaState>,
     active_popup: ActivePopup,
     app_event_tx: AppEventSender,
     history: ChatComposerHistory,
@@ -46,6 +60,8 @@ pub(crate) struct ChatComposer<'a> {
     dismissed_file_popup_token: Option<String>,
     current_file_query: Option<String>,
     pending_pastes: Vec<(String, String)>,
+    token_usage_info: Option<TokenUsageInfo>,
+    has_focus: bool,
     attached_images: Vec<(String, std::path::PathBuf)>,
     recent_submission_images: Vec<std::path::PathBuf>,
     /// When true we are in an explicit file search session initiated via @file.
@@ -59,20 +75,17 @@ enum ActivePopup {
     File(FileSearchPopup),
 }
 
-impl ChatComposer<'_> {
+impl ChatComposer {
     pub fn new(
         has_input_focus: bool,
         app_event_tx: AppEventSender,
         enhanced_keys_supported: bool,
     ) -> Self {
-        let mut textarea = TextArea::default();
-        textarea.set_placeholder_text(BASE_PLACEHOLDER_TEXT);
-        textarea.set_cursor_line_style(ratatui::style::Style::default());
-
         let use_shift_enter_hint = enhanced_keys_supported;
 
-        let mut this = Self {
-            textarea,
+        Self {
+            textarea: TextArea::new(),
+            textarea_state: RefCell::new(TextAreaState::default()),
             active_popup: ActivePopup::None,
             app_event_tx,
             history: ChatComposerHistory::new(),
@@ -81,21 +94,36 @@ impl ChatComposer<'_> {
             dismissed_file_popup_token: None,
             current_file_query: None,
             pending_pastes: Vec::new(),
+            token_usage_info: None,
+            has_focus: has_input_focus,
             attached_images: Vec::new(),
             recent_submission_images: Vec::new(),
             file_search_mode: false,
-        };
-        this.update_border(has_input_focus);
-        this
+        }
     }
 
-    pub fn desired_height(&self) -> u16 {
-        self.textarea.lines().len().max(1) as u16
+    pub fn desired_height(&self, width: u16) -> u16 {
+        self.textarea.desired_height(width - 1)
             + match &self.active_popup {
                 ActivePopup::None => 1u16,
                 ActivePopup::Slash(c) => c.calculate_required_height(),
                 ActivePopup::File(c) => c.calculate_required_height(),
             }
+    }
+
+    pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
+        let popup_height = match &self.active_popup {
+            ActivePopup::Command(popup) => popup.calculate_required_height(),
+            ActivePopup::File(popup) => popup.calculate_required_height(),
+            ActivePopup::None => 1,
+        };
+        let [textarea_rect, _] =
+            Layout::vertical([Constraint::Min(0), Constraint::Max(popup_height)]).areas(area);
+        let mut textarea_rect = textarea_rect;
+        textarea_rect.width = textarea_rect.width.saturating_sub(1);
+        textarea_rect.x += 1;
+        let state = self.textarea_state.borrow();
+        self.textarea.cursor_pos_with_state(textarea_rect, &state)
     }
 
     /// Returns true if the composer currently contains no user input.
@@ -108,31 +136,15 @@ impl ChatComposer<'_> {
     /// context when the composer is empty.
     pub(crate) fn set_token_usage(
         &mut self,
-        token_usage: TokenUsage,
+        total_token_usage: TokenUsage,
+        last_token_usage: TokenUsage,
         model_context_window: Option<u64>,
     ) {
-        let placeholder = match (token_usage.total_tokens, model_context_window) {
-            (total_tokens, Some(context_window)) => {
-                let percent_remaining: u8 = if context_window > 0 {
-                    // Calculate the percentage of context left.
-                    let percent = 100.0 - (total_tokens as f32 / context_window as f32 * 100.0);
-                    percent.clamp(0.0, 100.0) as u8
-                } else {
-                    // If we don't have a context window, we cannot compute the
-                    // percentage.
-                    100
-                };
-                // When https://github.com/openai/codex/issues/1257 is resolved,
-                // check if `percent_remaining < 25`, and if so, recommend
-                // /compact.
-                format!("{BASE_PLACEHOLDER_TEXT} — {percent_remaining}% context left")
-            }
-            (total_tokens, None) => {
-                format!("{BASE_PLACEHOLDER_TEXT} — {total_tokens} tokens used")
-            }
-        };
-
-        self.textarea.set_placeholder_text(placeholder);
+        self.token_usage_info = Some(TokenUsageInfo {
+            total_token_usage,
+            last_token_usage,
+            model_context_window,
+        });
     }
 
     /// Record the history metadata advertised by `SessionConfiguredEvent` so
@@ -150,8 +162,12 @@ impl ChatComposer<'_> {
         offset: usize,
         entry: Option<String>,
     ) -> bool {
-        self.history
-            .on_entry_response(log_id, offset, entry, &mut self.textarea)
+        let Some(text) = self.history.on_entry_response(log_id, offset, entry) else {
+            return false;
+        };
+        self.textarea.set_text(&text);
+        self.textarea.set_cursor(0);
+        true
     }
 
     pub fn handle_paste(&mut self, pasted: String) -> bool {
@@ -204,7 +220,7 @@ impl ChatComposer<'_> {
 
     pub fn set_ctrl_c_quit_hint(&mut self, show: bool, has_focus: bool) {
         self.ctrl_c_quit_hint = show;
-        self.update_border(has_focus);
+        self.set_has_focus(has_focus);
     }
 
     /// Handle a key event coming from the main UI.
@@ -232,49 +248,47 @@ impl ChatComposer<'_> {
             unreachable!();
         };
 
-        match key_event.into() {
-            Input { key: Key::Up, .. } => {
+        match key_event {
+            KeyEvent {
+                code: KeyCode::Up, ..
+            } => {
                 popup.move_up();
                 (InputResult::None, true)
             }
-            Input { key: Key::Down, .. } => {
+            KeyEvent {
+                code: KeyCode::Down,
+                ..
+            } => {
                 popup.move_down();
                 (InputResult::None, true)
             }
-            Input { key: Key::Tab, .. } => {
+            KeyEvent {
+                code: KeyCode::Tab, ..
+            } => {
                 if let Some(cmd) = popup.selected_command() {
-                    let first_line = self
-                        .textarea
-                        .lines()
-                        .first()
-                        .map(|s| s.as_str())
-                        .unwrap_or("");
+                    let first_line = self.textarea.text().lines().next().unwrap_or("");
 
                     let starts_with_cmd = first_line
                         .trim_start()
                         .starts_with(&format!("/{}", cmd.command()));
 
                     if !starts_with_cmd {
-                        self.textarea.select_all();
-                        self.textarea.cut();
-                        let _ = self.textarea.insert_str(format!("/{} ", cmd.command()));
+                        self.textarea.set_text(&format!("/{} ", cmd.command()));
                     }
                 }
                 (InputResult::None, true)
             }
-            Input {
-                key: Key::Enter,
-                shift: false,
-                alt: false,
-                ctrl: false,
+            KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::NONE,
+                ..
             } => {
                 if let Some(cmd) = popup.selected_command() {
                     // Send command to the app layer.
                     self.app_event_tx.send(AppEvent::DispatchCommand(*cmd));
 
                     // Clear textarea so no residual text remains.
-                    self.textarea.select_all();
-                    self.textarea.cut();
+                    self.textarea.set_text("");
 
                     // Hide popup since the command has been dispatched.
                     self.active_popup = ActivePopup::None;
@@ -293,16 +307,23 @@ impl ChatComposer<'_> {
             unreachable!();
         };
 
-        match key_event.into() {
-            Input { key: Key::Up, .. } => {
+        match key_event {
+            KeyEvent {
+                code: KeyCode::Up, ..
+            } => {
                 popup.move_up();
                 (InputResult::None, true)
             }
-            Input { key: Key::Down, .. } => {
+            KeyEvent {
+                code: KeyCode::Down,
+                ..
+            } => {
                 popup.move_down();
                 (InputResult::None, true)
             }
-            Input { key: Key::Esc, .. } => {
+            KeyEvent {
+                code: KeyCode::Esc, ..
+            } => {
                 // Hide popup without modifying text, remember token to avoid immediate reopen.
                 if let Some(tok) = Self::current_at_token(&self.textarea) {
                     self.dismissed_file_popup_token = Some(tok.to_string());
@@ -311,12 +332,13 @@ impl ChatComposer<'_> {
                 self.file_search_mode = false; // end session
                 (InputResult::None, true)
             }
-            Input { key: Key::Tab, .. }
-            | Input {
-                key: Key::Enter,
-                ctrl: false,
-                alt: false,
-                shift: false,
+            KeyEvent {
+                code: KeyCode::Tab, ..
+            }
+            | KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::NONE,
+                ..
             } => {
                 if let Some(sel) = popup.selected_match() {
                     let sel_path = sel.to_string();
@@ -403,88 +425,172 @@ impl ChatComposer<'_> {
     /// - The cursor may be anywhere *inside* the token (including on the
     ///   leading `@`). It does **not** need to be at the end of the line.
     /// - A token is delimited by ASCII whitespace (space, tab, newline).
-    /// - If the token under the cursor starts with `@` and contains at least
-    ///   one additional character, that token (without `@`) is returned.
-    fn current_at_token(textarea: &tui_textarea::TextArea) -> Option<String> {
-        let (row, col) = textarea.cursor();
-        let line = textarea.lines().get(row)?.as_str();
-        let cursor_byte_offset = cursor_byte_offset(line, col);
-        let (start, end) = at_token_bounds(line, cursor_byte_offset, false)?;
-        Some(line[start + 1..end].to_string())
-    }
+    /// - If the token under the cursor starts with `@`, that token is
+    ///   returned without the leading `@`. This includes the case where the
+    ///   token is just "@" (empty query), which is used to trigger a UI hint
+    fn current_at_token(textarea: &TextArea) -> Option<String> {
+        let cursor_offset = textarea.cursor();
+        let text = textarea.text();
 
-    /// Similar to `current_at_token` but returns Some("") if cursor is on a bare '@' token (no body yet).
-    fn current_at_token_allow_empty(textarea: &tui_textarea::TextArea) -> Option<String> {
-        let (row, col) = textarea.cursor();
-        let line = textarea.lines().get(row)?.as_str();
-        let cursor_byte_offset = cursor_byte_offset(line, col);
-        let (start, end) = at_token_bounds(line, cursor_byte_offset, true)?;
-        Some(line[start + 1..end].to_string()) // body may be empty
+        // Adjust the provided byte offset to the nearest valid char boundary at or before it.
+        let mut safe_cursor = cursor_offset.min(text.len());
+        // If we're not on a char boundary, move back to the start of the current char.
+        if safe_cursor < text.len() && !text.is_char_boundary(safe_cursor) {
+            // Find the last valid boundary <= cursor_offset.
+            safe_cursor = text
+                .char_indices()
+                .map(|(i, _)| i)
+                .take_while(|&i| i <= cursor_offset)
+                .last()
+                .unwrap_or(0);
+        }
+
+        // Split the line around the (now safe) cursor position.
+        let before_cursor = &text[..safe_cursor];
+        let after_cursor = &text[safe_cursor..];
+
+        // Detect whether we're on whitespace at the cursor boundary.
+        let at_whitespace = if safe_cursor < text.len() {
+            text[safe_cursor..]
+                .chars()
+                .next()
+                .map(|c| c.is_whitespace())
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        // Left candidate: token containing the cursor position.
+        let start_left = before_cursor
+            .char_indices()
+            .rfind(|(_, c)| c.is_whitespace())
+            .map(|(idx, c)| idx + c.len_utf8())
+            .unwrap_or(0);
+        let end_left_rel = after_cursor
+            .char_indices()
+            .find(|(_, c)| c.is_whitespace())
+            .map(|(idx, _)| idx)
+            .unwrap_or(after_cursor.len());
+        let end_left = safe_cursor + end_left_rel;
+        let token_left = if start_left < end_left {
+            Some(&text[start_left..end_left])
+        } else {
+            None
+        };
+
+        // Right candidate: token immediately after any whitespace from the cursor.
+        let ws_len_right: usize = after_cursor
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .map(|c| c.len_utf8())
+            .sum();
+        let start_right = safe_cursor + ws_len_right;
+        let end_right_rel = text[start_right..]
+            .char_indices()
+            .find(|(_, c)| c.is_whitespace())
+            .map(|(idx, _)| idx)
+            .unwrap_or(text.len() - start_right);
+        let end_right = start_right + end_right_rel;
+        let token_right = if start_right < end_right {
+            Some(&text[start_right..end_right])
+        } else {
+            None
+        };
+
+        let left_at = token_left
+            .filter(|t| t.starts_with('@'))
+            .map(|t| t[1..].to_string());
+        let right_at = token_right
+            .filter(|t| t.starts_with('@'))
+            .map(|t| t[1..].to_string());
+
+        if at_whitespace {
+            if right_at.is_some() {
+                return right_at;
+            }
+            if token_left.is_some_and(|t| t == "@") {
+                return None;
+            }
+            return left_at;
+        }
+        if after_cursor.starts_with('@') {
+            return right_at.or(left_at);
+        }
+        left_at.or(right_at)
     }
 
     /// Replace the active `@token` (the one under the cursor) with `path`.
     /// Mirrors legacy logic using new shared helpers.
     fn insert_selected_path(&mut self, path: &str) {
-        let (row, col) = self.textarea.cursor();
-        let mut lines: Vec<String> = self.textarea.lines().to_vec();
-        if let Some(line) = lines.get_mut(row) {
-            let cursor_byte_offset = cursor_byte_offset(line, col);
-            if let Some((start, end)) = token_bounds(line, cursor_byte_offset) {
-                let mut new_line =
-                    String::with_capacity(line.len() - (end - start) + path.len() + 1);
-                new_line.push_str(&line[..start]);
-                new_line.push_str(path);
-                new_line.push(' ');
-                new_line.push_str(&line[end..]);
-                *line = new_line;
-                let new_text = lines.join("\n");
-                self.textarea.select_all();
-                self.textarea.cut();
-                let _ = self.textarea.insert_str(new_text);
-            }
-        }
+        let cursor_offset = self.textarea.cursor();
+        let text = self.textarea.text();
+
+        let before_cursor = &text[..cursor_offset];
+        let after_cursor = &text[cursor_offset..];
+
+        // Determine token boundaries.
+        let start_idx = before_cursor
+            .char_indices()
+            .rfind(|(_, c)| c.is_whitespace())
+            .map(|(idx, c)| idx + c.len_utf8())
+            .unwrap_or(0);
+
+        let end_rel_idx = after_cursor
+            .char_indices()
+            .find(|(_, c)| c.is_whitespace())
+            .map(|(idx, _)| idx)
+            .unwrap_or(after_cursor.len());
+        let end_idx = cursor_offset + end_rel_idx;
+
+        // Replace the slice `[start_idx, end_idx)` with the chosen path and a trailing space.
+        let mut new_text =
+            String::with_capacity(text.len() - (end_idx - start_idx) + path.len() + 1);
+        new_text.push_str(&text[..start_idx]);
+        new_text.push_str(path);
+        new_text.push(' ');
+        new_text.push_str(&text[end_idx..]);
+
+        self.textarea.set_text(&new_text);
+        let new_cursor = start_idx.saturating_add(path.len()).saturating_add(1);
+        self.textarea.set_cursor(new_cursor);
     }
 
     /// Handle key event when no popup is visible.
     fn handle_key_event_without_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
-        let input: Input = key_event.into();
-        match input {
+        match key_event {
             // -------------------------------------------------------------
             // History navigation (Up / Down) – only when the composer is not
             // empty or when the cursor is at the correct position, to avoid
             // interfering with normal cursor movement.
             // -------------------------------------------------------------
-            Input { key: Key::Up, .. } => {
-                if self.history.should_handle_navigation(&self.textarea) {
-                    let consumed = self
-                        .history
-                        .navigate_up(&mut self.textarea, &self.app_event_tx);
-                    if consumed {
-                        return (InputResult::None, true);
-                    }
-                }
-                self.handle_input_basic(input)
-            }
-            Input { key: Key::Down, .. } => {
-                if self.history.should_handle_navigation(&self.textarea) {
-                    let consumed = self
-                        .history
-                        .navigate_down(&mut self.textarea, &self.app_event_tx);
-                    if consumed {
-                        return (InputResult::None, true);
-                    }
-                }
-                self.handle_input_basic(input)
-            }
-            Input {
-                key: Key::Enter,
-                shift: false,
-                alt: false,
-                ctrl: false,
+            KeyEvent {
+                code: KeyCode::Up | KeyCode::Down,
+                ..
             } => {
-                let mut text = self.textarea.lines().join("\n");
-                self.textarea.select_all();
-                self.textarea.cut();
+                if self
+                    .history
+                    .should_handle_navigation(self.textarea.text(), self.textarea.cursor())
+                {
+                    let replace_text = match key_event.code {
+                        KeyCode::Up => self.history.navigate_up(&self.app_event_tx),
+                        KeyCode::Down => self.history.navigate_down(&self.app_event_tx),
+                        _ => unreachable!(),
+                    };
+                    if let Some(text) = replace_text {
+                        self.textarea.set_text(&text);
+                        self.textarea.set_cursor(0);
+                        return (InputResult::None, true);
+                    }
+                }
+                self.handle_input_basic(key_event)
+            }
+            KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                let mut text = self.textarea.text().to_string();
+                self.textarea.set_text("");
 
                 // Replace all pending pastes in the text
                 for (placeholder, actual) in &self.pending_pastes {
@@ -524,41 +630,15 @@ impl ChatComposer<'_> {
                     (InputResult::Submitted(text), true)
                 }
             }
-            Input {
-                key: Key::Enter, ..
-            }
-            | Input {
-                key: Key::Char('j'),
-                ctrl: true,
-                alt: false,
-                shift: false,
-            } => {
-                self.textarea.insert_newline();
-                (InputResult::None, true)
-            }
-            Input {
-                key: Key::Char('d'),
-                ctrl: true,
-                alt: false,
-                shift: false,
-            } => {
-                self.textarea.input(Input {
-                    key: Key::Delete,
-                    ctrl: false,
-                    alt: false,
-                    shift: false,
-                });
-                (InputResult::None, true)
-            }
             input => self.handle_input_basic(input),
         }
     }
 
     /// Handle generic Input events that modify the textarea content.
-    fn handle_input_basic(&mut self, input: Input) -> (InputResult, bool) {
+    fn handle_input_basic(&mut self, input: KeyEvent) -> (InputResult, bool) {
         // Special handling for backspace on placeholders
-        if let Input {
-            key: Key::Backspace,
+        if let KeyEvent {
+            code: KeyCode::Backspace,
             ..
         } = input
         {
@@ -572,20 +652,9 @@ impl ChatComposer<'_> {
             }
         }
 
-        if let Input {
-            key: Key::Char('u'),
-            ctrl: true,
-            alt: false,
-            ..
-        } = input
-        {
-            self.textarea.delete_line_by_head();
-            return (InputResult::None, true);
-        }
-
         // Normal input handling
         self.textarea.input(input);
-        let text_after = self.textarea.lines().join("\n");
+        let text_after = self.textarea.text();
 
         // Start/continue an explicit file-search session when the cursor is on an @token.
         if Self::current_at_token_allow_empty(&self.textarea).is_some() {
@@ -604,21 +673,16 @@ impl ChatComposer<'_> {
     /// Attempts to remove a placeholder if the cursor is at the end of one.
     /// Returns true if a placeholder was removed.
     fn try_remove_placeholder_at_cursor(&mut self) -> bool {
-        let (row, col) = self.textarea.cursor();
-        let line = self
-            .textarea
-            .lines()
-            .get(row)
-            .map(|s| s.as_str())
-            .unwrap_or("");
+        let p = self.textarea.cursor();
+        let text = self.textarea.text();
 
         // Find any placeholder that ends at the cursor position
         let placeholder_to_remove = self.pending_pastes.iter().find_map(|(ph, _)| {
-            if col < ph.len() {
+            if p < ph.len() {
                 return None;
             }
-            let potential_ph_start = col - ph.len();
-            if line[potential_ph_start..col] == *ph {
+            let potential_ph_start = p - ph.len();
+            if text[potential_ph_start..p] == *ph {
                 Some(ph.clone())
             } else {
                 None
@@ -626,17 +690,7 @@ impl ChatComposer<'_> {
         });
 
         if let Some(placeholder) = placeholder_to_remove {
-            // Remove the entire placeholder from the text
-            let placeholder_len = placeholder.len();
-            for _ in 0..placeholder_len {
-                self.textarea.input(Input {
-                    key: Key::Backspace,
-                    ctrl: false,
-                    alt: false,
-                    shift: false,
-                });
-            }
-            // Remove from pending pastes
+            self.textarea.replace_range(p - placeholder.len()..p, "");
             self.pending_pastes.retain(|(ph, _)| ph != &placeholder);
             true
         } else {
@@ -704,17 +758,8 @@ impl ChatComposer<'_> {
     /// Synchronize `self.command_popup` with the current text in the
     /// textarea. This must be called after every modification that can change
     /// the text so the popup is shown/updated/hidden as appropriate.
-    fn sync_slash_command_popup(&mut self) {
-        // Inspect only the first line to decide whether to show the popup. In
-        // the common case (no leading slash) we avoid copying the entire
-        // textarea contents.
-        let first_line = self
-            .textarea
-            .lines()
-            .first()
-            .map(|s| s.as_str())
-            .unwrap_or("");
-
+    fn sync_command_popup(&mut self) {
+        let first_line = self.textarea.text().lines().next().unwrap_or("");
         let input_starts_with_slash = first_line.starts_with('/');
         match &mut self.active_popup {
             ActivePopup::Slash(popup) => {
@@ -756,7 +801,6 @@ impl ChatComposer<'_> {
         if self.dismissed_file_popup_token.as_ref() == Some(&query) {
             return;
         }
-        // Only trigger a search when query non-empty. (Empty shows an idle popup.)
         if !query.is_empty() {
             self.app_event_tx
                 .send(AppEvent::StartFileSearch(query.clone()));
@@ -764,13 +808,17 @@ impl ChatComposer<'_> {
 
         match &mut self.active_popup {
             ActivePopup::File(popup) => {
-                if !query.is_empty() {
+                if query.is_empty() {
+                    popup.set_empty_prompt();
+                } else {
                     popup.set_query(&query);
                 }
             }
             _ => {
                 let mut popup = FileSearchPopup::new();
-                if !query.is_empty() {
+                if query.is_empty() {
+                    popup.set_empty_prompt();
+                } else {
                     popup.set_query(&query);
                 }
                 self.active_popup = ActivePopup::File(popup);
@@ -781,76 +829,31 @@ impl ChatComposer<'_> {
         self.dismissed_file_popup_token = None;
     }
 
-    fn update_border(&mut self, has_focus: bool) {
-        let border_style = if has_focus {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().dim()
-        };
-
-        self.textarea.set_block(
-            ratatui::widgets::Block::default()
-                .borders(Borders::LEFT)
-                .border_type(BorderType::QuadrantOutside)
-                .border_style(border_style),
-        );
+    fn set_has_focus(&mut self, has_focus: bool) {
+        self.has_focus = has_focus;
     }
 }
 
-impl WidgetRef for &ChatComposer<'_> {
+impl WidgetRef for &ChatComposer {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
+        let popup_height = match &self.active_popup {
+            ActivePopup::Slash(popup) => popup.calculate_required_height(),
+            ActivePopup::File(popup) => popup.calculate_required_height(),
+            ActivePopup::None => 1,
+        };
+        let [textarea_rect, popup_rect] =
+            Layout::vertical([Constraint::Min(0), Constraint::Max(popup_height)]).areas(area);
         match &self.active_popup {
-            ActivePopup::Slash(popup) => {
-                let popup_height = popup.calculate_required_height();
-
-                // Split the provided rect so that the popup is rendered at the
-                // **bottom** and the textarea occupies the remaining space above.
-                let popup_height = popup_height.min(area.height);
-                let textarea_rect = Rect {
-                    x: area.x,
-                    y: area.y,
-                    width: area.width,
-                    height: area.height.saturating_sub(popup_height),
-                };
-                let popup_rect = Rect {
-                    x: area.x,
-                    y: area.y + textarea_rect.height,
-                    width: area.width,
-                    height: popup_height,
-                };
-
-                popup.render(popup_rect, buf);
-                self.textarea.render(textarea_rect, buf);
+            ActivePopup::Command(popup) => {
+                popup.render_ref(popup_rect, buf);
             }
             ActivePopup::File(popup) => {
-                let popup_height = popup.calculate_required_height();
-
-                let popup_height = popup_height.min(area.height);
-                let textarea_rect = Rect {
-                    x: area.x,
-                    y: area.y,
-                    width: area.width,
-                    height: area.height.saturating_sub(popup_height),
-                };
-                let popup_rect = Rect {
-                    x: area.x,
-                    y: area.y + textarea_rect.height,
-                    width: area.width,
-                    height: popup_height,
-                };
-
-                popup.render(popup_rect, buf);
-                self.textarea.render(textarea_rect, buf);
+                popup.render_ref(popup_rect, buf);
             }
             ActivePopup::None => {
-                let mut textarea_rect = area;
-                textarea_rect.height = textarea_rect.height.saturating_sub(1);
-                self.textarea.render(textarea_rect, buf);
-                let mut bottom_line_rect = area;
-                bottom_line_rect.y += textarea_rect.height;
-                bottom_line_rect.height = 1;
+                let bottom_line_rect = popup_rect;
                 let key_hint_style = Style::default().fg(Color::Cyan);
-                let hint = if self.ctrl_c_quit_hint {
+                let mut hint = if self.ctrl_c_quit_hint {
                     vec![
                         Span::from(" "),
                         "Ctrl+C again".set_style(key_hint_style),
@@ -872,10 +875,61 @@ impl WidgetRef for &ChatComposer<'_> {
                         Span::from(" quit"),
                     ]
                 };
+
+                // Append token/context usage info to the footer hints when available.
+                if let Some(token_usage_info) = &self.token_usage_info {
+                    let token_usage = &token_usage_info.total_token_usage;
+                    hint.push(Span::from("   "));
+                    hint.push(
+                        Span::from(format!("{} tokens used", token_usage.total_tokens))
+                            .style(Style::default().add_modifier(Modifier::DIM)),
+                    );
+                    let last_token_usage = &token_usage_info.last_token_usage;
+                    if let Some(context_window) = token_usage_info.model_context_window {
+                        let percent_remaining: u8 = if context_window > 0 {
+                            let percent = 100.0
+                                - (last_token_usage.total_tokens as f32 / context_window as f32
+                                    * 100.0);
+                            percent.clamp(0.0, 100.0) as u8
+                        } else {
+                            100
+                        };
+                        hint.push(Span::from("   "));
+                        hint.push(
+                            Span::from(format!("{percent_remaining}% context left"))
+                                .style(Style::default().add_modifier(Modifier::DIM)),
+                        );
+                    }
+                }
+
                 Line::from(hint)
                     .style(Style::default().dim())
                     .render_ref(bottom_line_rect, buf);
             }
+        }
+        Block::default()
+            .border_style(Style::default().dim())
+            .borders(Borders::LEFT)
+            .border_type(BorderType::QuadrantOutside)
+            .border_style(Style::default().fg(if self.has_focus {
+                Color::Cyan
+            } else {
+                Color::Gray
+            }))
+            .render_ref(
+                Rect::new(textarea_rect.x, textarea_rect.y, 1, textarea_rect.height),
+                buf,
+            );
+        let mut textarea_rect = textarea_rect;
+        textarea_rect.width = textarea_rect.width.saturating_sub(1);
+        textarea_rect.x += 1;
+
+        let mut state = self.textarea_state.borrow_mut();
+        StatefulWidgetRef::render_ref(&(&self.textarea), textarea_rect, buf, &mut state);
+        if self.textarea.text().is_empty() {
+            Line::from(BASE_PLACEHOLDER_TEXT)
+                .style(Style::default().dim())
+                .render_ref(textarea_rect.inner(Margin::new(1, 0)), buf);
         }
     }
 }
@@ -940,11 +994,12 @@ fn at_token_bounds(
 #[cfg(test)]
 mod tests {
     use super::ActivePopup;
+    use crate::app_event::AppEvent;
     use crate::bottom_pane::AppEventSender;
     use crate::bottom_pane::ChatComposer;
     use crate::bottom_pane::InputResult;
     use crate::bottom_pane::chat_composer::LARGE_PASTE_CHAR_THRESHOLD;
-    use tui_textarea::TextArea;
+    use crate::bottom_pane::textarea::TextArea;
 
     #[test]
     fn test_current_at_token_basic_cases() {
@@ -981,15 +1036,20 @@ mod tests {
             ("@👍", 2, Some("👍".to_string()), "Emoji token"),
             // Invalid cases (should return None)
             ("hello", 2, None, "No @ symbol"),
-            ("@", 1, None, "Only @ symbol"),
+            (
+                "@",
+                1,
+                Some("".to_string()),
+                "Only @ symbol triggers empty query",
+            ),
             ("@ hello", 2, None, "@ followed by space"),
             ("test @ world", 6, None, "@ with spaces around"),
         ];
 
         for (input, cursor_pos, expected, description) in test_cases {
-            let mut textarea = TextArea::default();
+            let mut textarea = TextArea::new();
             textarea.insert_str(input);
-            textarea.move_cursor(tui_textarea::CursorMove::Jump(0, cursor_pos));
+            textarea.set_cursor(cursor_pos);
 
             let result = ChatComposer::current_at_token(&textarea);
             assert_eq!(
@@ -1015,15 +1075,15 @@ mod tests {
                 "Second token",
             ),
             // Edge cases
-            ("@", 0, None, "Only @ symbol"),
+            ("@", 0, Some("".to_string()), "Only @ symbol"),
             ("@a", 2, Some("a".to_string()), "Single character after @"),
             ("", 0, None, "Empty input"),
         ];
 
         for (input, cursor_pos, expected, description) in test_cases {
-            let mut textarea = TextArea::default();
+            let mut textarea = TextArea::new();
             textarea.insert_str(input);
-            textarea.move_cursor(tui_textarea::CursorMove::Jump(0, cursor_pos));
+            textarea.set_cursor(cursor_pos);
 
             let result = ChatComposer::current_at_token(&textarea);
             assert_eq!(
@@ -1058,13 +1118,13 @@ mod tests {
             // Full-width space boundaries
             (
                 "test　@İstanbul",
-                6,
+                8,
                 Some("İstanbul".to_string()),
                 "@ token after full-width space",
             ),
             (
                 "@ЙЦУ　@诶",
-                6,
+                10,
                 Some("诶".to_string()),
                 "Full-width space between Unicode tokens",
             ),
@@ -1078,9 +1138,9 @@ mod tests {
         ];
 
         for (input, cursor_pos, expected, description) in test_cases {
-            let mut textarea = TextArea::default();
+            let mut textarea = TextArea::new();
             textarea.insert_str(input);
-            textarea.move_cursor(tui_textarea::CursorMove::Jump(0, cursor_pos));
+            textarea.set_cursor(cursor_pos);
 
             let result = ChatComposer::current_at_token(&textarea);
             assert_eq!(
@@ -1102,7 +1162,7 @@ mod tests {
 
         let needs_redraw = composer.handle_paste("hello".to_string());
         assert!(needs_redraw);
-        assert_eq!(composer.textarea.lines(), ["hello"]);
+        assert_eq!(composer.textarea.text(), "hello");
         assert!(composer.pending_pastes.is_empty());
 
         let (result, _) =
@@ -1127,7 +1187,7 @@ mod tests {
         let needs_redraw = composer.handle_paste(large.clone());
         assert!(needs_redraw);
         let placeholder = format!("[Pasted Content {} chars]", large.chars().count());
-        assert_eq!(composer.textarea.lines(), [placeholder.as_str()]);
+        assert_eq!(composer.textarea.text(), placeholder);
         assert_eq!(composer.pending_pastes.len(), 1);
         assert_eq!(composer.pending_pastes[0].0, placeholder);
         assert_eq!(composer.pending_pastes[0].1, large);
@@ -1203,7 +1263,7 @@ mod tests {
                 composer.handle_paste("b".repeat(LARGE_PASTE_CHAR_THRESHOLD + 4));
                 composer.handle_paste("c".repeat(LARGE_PASTE_CHAR_THRESHOLD + 6));
                 // Move cursor to end and press backspace
-                composer.textarea.move_cursor(tui_textarea::CursorMove::End);
+                composer.textarea.set_cursor(composer.textarea.text().len());
                 composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
             }
 
@@ -1212,6 +1272,49 @@ mod tests {
                 .unwrap_or_else(|e| panic!("Failed to draw {name} composer: {e}"));
 
             assert_snapshot!(name, terminal.backend());
+        }
+    }
+
+    #[test]
+    fn slash_init_dispatches_command_and_does_not_submit_literal_text() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+        use std::sync::mpsc::TryRecvError;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(true, sender, false);
+
+        // Type the slash command.
+        for ch in [
+            '/', 'i', 'n', 'i', 't', // "/init"
+        ] {
+            let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+
+        // Press Enter to dispatch the selected command.
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // When a slash command is dispatched, the composer should not submit
+        // literal text and should clear its textarea.
+        match result {
+            InputResult::None => {}
+            InputResult::Submitted(text) => {
+                panic!("expected command dispatch, but composer submitted literal text: {text}")
+            }
+        }
+        assert!(composer.textarea.is_empty(), "composer should be cleared");
+
+        // Verify a DispatchCommand event for the "init" command was sent.
+        match rx.try_recv() {
+            Ok(AppEvent::DispatchCommand(cmd)) => {
+                assert_eq!(cmd.command(), "init");
+            }
+            Ok(_other) => panic!("unexpected app event"),
+            Err(TryRecvError::Empty) => panic!("expected a DispatchCommand event for '/init'"),
+            Err(TryRecvError::Disconnected) => panic!("app event channel disconnected"),
         }
     }
 
@@ -1318,7 +1421,7 @@ mod tests {
                     current_pos += content.len();
                 }
                 (
-                    composer.textarea.lines().join("\n"),
+                    composer.textarea.text().to_string(),
                     composer.pending_pastes.len(),
                     current_pos,
                 )
@@ -1329,25 +1432,18 @@ mod tests {
         let mut deletion_states = vec![];
 
         // First deletion
-        composer
-            .textarea
-            .move_cursor(tui_textarea::CursorMove::Jump(0, states[0].2 as u16));
+        composer.textarea.set_cursor(states[0].2);
         composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         deletion_states.push((
-            composer.textarea.lines().join("\n"),
+            composer.textarea.text().to_string(),
             composer.pending_pastes.len(),
         ));
 
         // Second deletion
-        composer
-            .textarea
-            .move_cursor(tui_textarea::CursorMove::Jump(
-                0,
-                composer.textarea.lines().join("\n").len() as u16,
-            ));
+        composer.textarea.set_cursor(composer.textarea.text().len());
         composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         deletion_states.push((
-            composer.textarea.lines().join("\n"),
+            composer.textarea.text().to_string(),
             composer.pending_pastes.len(),
         ));
 
@@ -1386,17 +1482,13 @@ mod tests {
                 composer.handle_paste(paste.clone());
                 composer
                     .textarea
-                    .move_cursor(tui_textarea::CursorMove::Jump(
-                        0,
-                        (placeholder.len() - pos_from_end) as u16,
-                    ));
+                    .set_cursor((placeholder.len() - pos_from_end) as usize);
                 composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
                 let result = (
-                    composer.textarea.lines().join("\n").contains(&placeholder),
+                    composer.textarea.text().contains(&placeholder),
                     composer.pending_pastes.len(),
                 );
-                composer.textarea.select_all();
-                composer.textarea.cut();
+                composer.textarea.set_text("");
                 result
             })
             .collect();

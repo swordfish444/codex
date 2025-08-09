@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use async_channel::Sender;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
@@ -19,10 +20,15 @@ use tokio::sync::Notify;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::error::SandboxErr;
+use crate::protocol::Event;
+use crate::protocol::EventMsg;
+use crate::protocol::ExecCommandOutputDeltaEvent;
+use crate::protocol::ExecOutputStream;
 use crate::protocol::SandboxPolicy;
 use crate::seatbelt::spawn_command_under_seatbelt;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
+use serde_bytes::ByteBuf;
 
 // Maximum we send for each stream, which is either:
 // - 10KiB OR
@@ -43,6 +49,14 @@ pub struct ExecParams {
     pub cwd: PathBuf,
     pub timeout_ms: Option<u64>,
     pub env: HashMap<String, String>,
+    pub with_escalated_permissions: Option<bool>,
+    pub justification: Option<String>,
+}
+
+impl ExecParams {
+    pub fn timeout_duration(&self) -> Duration {
+        Duration::from_millis(self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -56,24 +70,30 @@ pub enum SandboxType {
     LinuxSeccomp,
 }
 
+#[derive(Clone)]
+pub struct StdoutStream {
+    pub sub_id: String,
+    pub call_id: String,
+    pub tx_event: Sender<Event>,
+}
+
 pub async fn process_exec_tool_call(
     params: ExecParams,
     sandbox_type: SandboxType,
     ctrl_c: Arc<Notify>,
     sandbox_policy: &SandboxPolicy,
     codex_linux_sandbox_exe: &Option<PathBuf>,
+    stdout_stream: Option<StdoutStream>,
 ) -> Result<ExecToolCallOutput> {
     let start = Instant::now();
 
     let raw_output_result: std::result::Result<RawExecToolCallOutput, CodexErr> = match sandbox_type
     {
-        SandboxType::None => exec(params, sandbox_policy, ctrl_c).await,
+        SandboxType::None => exec(params, sandbox_policy, ctrl_c, stdout_stream.clone()).await,
         SandboxType::MacosSeatbelt => {
+            let timeout = params.timeout_duration();
             let ExecParams {
-                command,
-                cwd,
-                timeout_ms,
-                env,
+                command, cwd, env, ..
             } = params;
             let child = spawn_command_under_seatbelt(
                 command,
@@ -83,14 +103,12 @@ pub async fn process_exec_tool_call(
                 env,
             )
             .await?;
-            consume_truncated_output(child, ctrl_c, timeout_ms).await
+            consume_truncated_output(child, ctrl_c, timeout, stdout_stream.clone()).await
         }
         SandboxType::LinuxSeccomp => {
+            let timeout = params.timeout_duration();
             let ExecParams {
-                command,
-                cwd,
-                timeout_ms,
-                env,
+                command, cwd, env, ..
             } = params;
 
             let codex_linux_sandbox_exe = codex_linux_sandbox_exe
@@ -106,7 +124,7 @@ pub async fn process_exec_tool_call(
             )
             .await?;
 
-            consume_truncated_output(child, ctrl_c, timeout_ms).await
+            consume_truncated_output(child, ctrl_c, timeout, stdout_stream).await
         }
     };
     let duration = start.elapsed();
@@ -126,11 +144,7 @@ pub async fn process_exec_tool_call(
 
             let exit_code = raw_output.exit_status.code().unwrap_or(-1);
 
-            // NOTE(ragona): This is much less restrictive than the previous check. If we exec
-            // a command, and it returns anything other than success, we assume that it may have
-            // been a sandboxing error and allow the user to retry. (The user of course may choose
-            // not to retry, or in a non-interactive mode, would automatically reject the approval.)
-            if exit_code != 0 && sandbox_type != SandboxType::None {
+            if exit_code != 0 && is_likely_sandbox_denied(sandbox_type, exit_code) {
                 return Err(CodexErr::Sandbox(SandboxErr::Denied(
                     exit_code, stdout, stderr,
                 )));
@@ -209,6 +223,26 @@ fn create_linux_sandbox_command_args(
     linux_cmd
 }
 
+/// We don't have a fully deterministic way to tell if our command failed
+/// because of the sandbox - a command in the user's zshrc file might hit an
+/// error, but the command itself might fail or succeed for other reasons.
+/// For now, we conservatively check for 'command not found' (exit code 127),
+/// and can add additional cases as necessary.
+fn is_likely_sandbox_denied(sandbox_type: SandboxType, exit_code: i32) -> bool {
+    if sandbox_type == SandboxType::None {
+        return false;
+    }
+
+    // Quick rejects: well-known non-sandbox shell exit codes
+    // 127: command not found, 2: misuse of shell builtins
+    if exit_code == 127 {
+        return false;
+    }
+
+    // For all other cases, we assume the sandbox is the cause
+    true
+}
+
 #[derive(Debug)]
 pub struct RawExecToolCallOutput {
     pub exit_status: ExitStatus,
@@ -225,15 +259,16 @@ pub struct ExecToolCallOutput {
 }
 
 async fn exec(
-    ExecParams {
-        command,
-        cwd,
-        timeout_ms,
-        env,
-    }: ExecParams,
+    params: ExecParams,
     sandbox_policy: &SandboxPolicy,
     ctrl_c: Arc<Notify>,
+    stdout_stream: Option<StdoutStream>,
 ) -> Result<RawExecToolCallOutput> {
+    let timeout = params.timeout_duration();
+    let ExecParams {
+        command, cwd, env, ..
+    } = params;
+
     let (program, args) = command.split_first().ok_or_else(|| {
         CodexErr::Io(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -251,7 +286,7 @@ async fn exec(
         env,
     )
     .await?;
-    consume_truncated_output(child, ctrl_c, timeout_ms).await
+    consume_truncated_output(child, ctrl_c, timeout, stdout_stream).await
 }
 
 /// Consumes the output of a child process, truncating it so it is suitable for
@@ -259,7 +294,8 @@ async fn exec(
 pub(crate) async fn consume_truncated_output(
     mut child: Child,
     ctrl_c: Arc<Notify>,
-    timeout_ms: Option<u64>,
+    timeout: Duration,
+    stdout_stream: Option<StdoutStream>,
 ) -> Result<RawExecToolCallOutput> {
     // Both stdout and stderr were configured with `Stdio::piped()`
     // above, therefore `take()` should normally return `Some`.  If it doesn't
@@ -280,15 +316,18 @@ pub(crate) async fn consume_truncated_output(
         BufReader::new(stdout_reader),
         MAX_STREAM_OUTPUT,
         MAX_STREAM_OUTPUT_LINES,
+        stdout_stream.clone(),
+        false,
     ));
     let stderr_handle = tokio::spawn(read_capped(
         BufReader::new(stderr_reader),
         MAX_STREAM_OUTPUT,
         MAX_STREAM_OUTPUT_LINES,
+        stdout_stream.clone(),
+        true,
     ));
 
     let interrupted = ctrl_c.notified();
-    let timeout = Duration::from_millis(timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
     let exit_status = tokio::select! {
         result = tokio::time::timeout(timeout, child.wait()) => {
             match result {
@@ -318,10 +357,12 @@ pub(crate) async fn consume_truncated_output(
     })
 }
 
-async fn read_capped<R: AsyncRead + Unpin>(
+async fn read_capped<R: AsyncRead + Unpin + Send + 'static>(
     mut reader: R,
     max_output: usize,
     max_lines: usize,
+    stream: Option<StdoutStream>,
+    is_stderr: bool,
 ) -> io::Result<Vec<u8>> {
     let mut buf = Vec::with_capacity(max_output.min(8 * 1024));
     let mut tmp = [0u8; 8192];
@@ -333,6 +374,25 @@ async fn read_capped<R: AsyncRead + Unpin>(
         let n = reader.read(&mut tmp).await?;
         if n == 0 {
             break;
+        }
+
+        if let Some(stream) = &stream {
+            let chunk = tmp[..n].to_vec();
+            let msg = EventMsg::ExecCommandOutputDelta(ExecCommandOutputDeltaEvent {
+                call_id: stream.call_id.clone(),
+                stream: if is_stderr {
+                    ExecOutputStream::Stderr
+                } else {
+                    ExecOutputStream::Stdout
+                },
+                chunk: ByteBuf::from(chunk),
+            });
+            let event = Event {
+                id: stream.sub_id.clone(),
+                msg,
+            };
+            #[allow(clippy::let_unit_value)]
+            let _ = stream.tx_event.send(event).await;
         }
 
         // Copy into the buffer only while we still have byte and line budget.

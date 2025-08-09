@@ -215,11 +215,14 @@ mod tests {
                         "HOME".to_string(),
                         temp_home.path().to_str().unwrap().to_string(),
                     )]),
+                    with_escalated_permissions: None,
+                    justification: None,
                 },
                 SandboxType::None,
                 Arc::new(Notify::new()),
                 &SandboxPolicy::DangerFullAccess,
                 &None,
+                None,
             )
             .await
             .unwrap();

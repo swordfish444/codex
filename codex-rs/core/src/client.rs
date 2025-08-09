@@ -30,17 +30,26 @@ use crate::config::Config;
 use crate::config_types::ReasoningEffort as ReasoningEffortConfig;
 use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use crate::error::CodexErr;
-use crate::error::EnvVarError;
 use crate::error::Result;
+use crate::error::UsageLimitReachedError;
 use crate::flags::CODEX_RS_SSE_FIXTURE;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::WireApi;
-use crate::models::ContentItem;
 use crate::models::ResponseItem;
 use crate::openai_tools::create_tools_json_for_responses_api;
 use crate::protocol::TokenUsage;
 use crate::util::backoff;
 use std::sync::Arc;
+
+#[derive(Debug, Deserialize)]
+struct ErrorResponse {
+    error: Error,
+}
+
+#[derive(Debug, Deserialize)]
+struct Error {
+    r#type: String,
+}
 
 #[derive(Clone)]
 pub struct ModelClient {
@@ -83,8 +92,7 @@ impl ModelClient {
                 // Create the raw streaming connection first.
                 let response_stream = stream_chat_completions(
                     prompt,
-                    &self.config.model,
-                    self.config.include_plan_tool,
+                    &self.config.model_family,
                     &self.client,
                     &self.provider,
                 )
@@ -93,7 +101,11 @@ impl ModelClient {
                 // Wrap it with the aggregation adapter so callers see *only*
                 // the final assistant message per turn (matching the
                 // behaviour of the Responses API).
-                let mut aggregated = response_stream.aggregate();
+                let mut aggregated = if self.config.show_raw_agent_reasoning {
+                    crate::chat_completions::AggregatedChatStream::streaming_mode(response_stream)
+                } else {
+                    response_stream.aggregate()
+                };
 
                 // Bridge the aggregated stream back into a standard
                 // `ResponseStream` by forwarding events through a channel.
@@ -122,32 +134,19 @@ impl ModelClient {
             return stream_from_fixture(path, self.provider.clone()).await;
         }
 
-        let auth = self.auth.as_ref().ok_or_else(|| {
-            CodexErr::EnvVar(EnvVarError {
-                var: "OPENAI_API_KEY".to_string(),
-                instructions: Some("Create an API key (https://platform.openai.com) and export it as an environment variable.".to_string()),
-            })
-        })?;
+        let auth = self.auth.clone();
 
-        let store = prompt.store && auth.mode != AuthMode::ChatGPT;
+        let auth_mode = auth.as_ref().map(|a| a.mode);
 
-        let base_url = match self.provider.base_url.clone() {
-            Some(url) => url,
-            None => match auth.mode {
-                AuthMode::ChatGPT => "https://chatgpt.com/backend-api/codex".to_string(),
-                AuthMode::ApiKey => "https://api.openai.com/v1".to_string(),
-            },
-        };
+        let store = prompt.store && auth_mode != Some(AuthMode::ChatGPT);
 
-        let token = auth.get_token().await?;
-
-        let full_instructions = prompt.get_full_instructions(&self.config.model);
-        let tools_json = create_tools_json_for_responses_api(
-            prompt,
-            &self.config.model,
-            self.config.include_plan_tool,
-        )?;
-        let reasoning = create_reasoning_param_for_request(&self.config, self.effort, self.summary);
+        let full_instructions = prompt.get_full_instructions(&self.config.model_family);
+        let tools_json = create_tools_json_for_responses_api(&prompt.tools)?;
+        let reasoning = create_reasoning_param_for_request(
+            &self.config.model_family,
+            self.effort,
+            self.summary,
+        );
 
         // Request encrypted COT if we are not storing responses,
         // otherwise reasoning items will be referenced by ID
@@ -157,15 +156,7 @@ impl ModelClient {
             vec![]
         };
 
-        let mut input_with_instructions = Vec::with_capacity(prompt.input.len() + 1);
-        if let Some(ui) = &prompt.user_instructions {
-            input_with_instructions.push(ResponseItem::Message {
-                id: None,
-                role: "user".to_string(),
-                content: vec![ContentItem::InputText { text: ui.clone() }],
-            });
-        }
-        input_with_instructions.extend(prompt.input.clone());
+        let input_with_instructions = prompt.get_formatted_input();
 
         let payload = ResponsesApiRequest {
             model: &self.config.model,
@@ -180,34 +171,35 @@ impl ModelClient {
             include,
         };
 
-        trace!(
-            "POST to {}: {}",
-            self.provider.get_full_url(),
-            serde_json::to_string(&payload)?
-        );
-
         let mut attempt = 0;
         let max_retries = self.provider.request_max_retries();
+
+        trace!(
+            "POST to {}: {}",
+            self.provider.get_full_url(&auth),
+            serde_json::to_string(&payload)?
+        );
 
         loop {
             attempt += 1;
 
             let mut req_builder = self
-                .client
-                .post(format!("{base_url}/responses"))
+                .provider
+                .create_request_builder(&self.client, &auth)
+                .await?;
+
+            req_builder = req_builder
                 .header("OpenAI-Beta", "responses=experimental")
                 .header("session_id", self.session_id.to_string())
-                .bearer_auth(&token)
                 .header(reqwest::header::ACCEPT, "text/event-stream")
                 .json(&payload);
 
-            if auth.mode == AuthMode::ChatGPT {
-                if let Some(account_id) = auth.get_account_id().await {
-                    req_builder = req_builder.header("chatgpt-account-id", account_id);
-                }
+            if let Some(auth) = auth.as_ref()
+                && auth.mode == AuthMode::ChatGPT
+                && let Some(account_id) = auth.get_account_id()
+            {
+                req_builder = req_builder.header("chatgpt-account-id", account_id);
             }
-
-            req_builder = self.provider.apply_http_headers(req_builder);
 
             let originator = self
                 .config
@@ -244,6 +236,14 @@ impl ModelClient {
                 }
                 Ok(res) => {
                     let status = res.status();
+
+                    // Pull out Retry‑After header if present.
+                    let retry_after_secs = res
+                        .headers()
+                        .get(reqwest::header::RETRY_AFTER)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.parse::<u64>().ok());
+
                     // The OpenAI Responses endpoint returns structured JSON bodies even for 4xx/5xx
                     // errors. When we bubble early with only the HTTP status the caller sees an opaque
                     // "unexpected status 400 Bad Request" which makes debugging nearly impossible.
@@ -257,16 +257,29 @@ impl ModelClient {
                         return Err(CodexErr::UnexpectedStatus(status, body));
                     }
 
-                    if attempt > max_retries {
-                        return Err(CodexErr::RetryLimit(status));
+                    if status == StatusCode::TOO_MANY_REQUESTS {
+                        let body = res.json::<ErrorResponse>().await.ok();
+                        if let Some(ErrorResponse {
+                            error: Error { r#type, .. },
+                        }) = body
+                        {
+                            if r#type == "usage_limit_reached" {
+                                return Err(CodexErr::UsageLimitReached(UsageLimitReachedError {
+                                    plan_type: auth.and_then(|a| a.get_plan_type()),
+                                }));
+                            } else if r#type == "usage_not_included" {
+                                return Err(CodexErr::UsageNotIncluded);
+                            }
+                        }
                     }
 
-                    // Pull out Retry‑After header if present.
-                    let retry_after_secs = res
-                        .headers()
-                        .get(reqwest::header::RETRY_AFTER)
-                        .and_then(|v| v.to_str().ok())
-                        .and_then(|s| s.parse::<u64>().ok());
+                    if attempt > max_retries {
+                        if status == StatusCode::INTERNAL_SERVER_ERROR {
+                            return Err(CodexErr::InternalServerError);
+                        }
+
+                        return Err(CodexErr::RetryLimit(status));
+                    }
 
                     let delay = retry_after_secs
                         .map(|s| Duration::from_millis(s * 1_000))
@@ -441,6 +454,14 @@ async fn process_sse<S>(
             "response.reasoning_summary_text.delta" => {
                 if let Some(delta) = event.delta {
                     let event = ResponseEvent::ReasoningSummaryDelta(delta);
+                    if tx_event.send(Ok(event)).await.is_err() {
+                        return;
+                    }
+                }
+            }
+            "response.reasoning_text.delta" => {
+                if let Some(delta) = event.delta {
+                    let event = ResponseEvent::ReasoningContentDelta(delta);
                     if tx_event.send(Ok(event)).await.is_err() {
                         return;
                     }
@@ -634,7 +655,7 @@ mod tests {
             request_max_retries: Some(0),
             stream_max_retries: Some(0),
             stream_idle_timeout_ms: Some(1000),
-            requires_auth: false,
+            requires_openai_auth: false,
         };
 
         let events = collect_events(
@@ -694,7 +715,7 @@ mod tests {
             request_max_retries: Some(0),
             stream_max_retries: Some(0),
             stream_idle_timeout_ms: Some(1000),
-            requires_auth: false,
+            requires_openai_auth: false,
         };
 
         let events = collect_events(&[sse1.as_bytes()], provider).await;
@@ -797,7 +818,7 @@ mod tests {
                 request_max_retries: Some(0),
                 stream_max_retries: Some(0),
                 stream_idle_timeout_ms: Some(1000),
-                requires_auth: false,
+                requires_openai_auth: false,
             };
 
             let out = run_sse(evs, provider).await;
