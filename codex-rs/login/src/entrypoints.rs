@@ -102,5 +102,3 @@ pub async fn login_with_chatgpt(
     .map_err(|e| std::io::Error::other(format!("task join error: {e}")))??;
     Ok(())
 }
-
-

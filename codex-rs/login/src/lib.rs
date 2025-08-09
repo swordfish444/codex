@@ -11,11 +11,11 @@ mod token_data;
 
 pub use auth::AuthMode;
 pub use auth::CodexAuth;
+pub use auth_store::AuthDotJson;
 pub use auth_store::get_auth_file;
 pub use auth_store::login_with_api_key;
 pub use auth_store::logout;
 pub use auth_store::try_read_auth_json;
-pub use auth_store::AuthDotJson;
 pub use entrypoints::SpawnedLogin;
 pub use entrypoints::login_with_chatgpt;
 pub use entrypoints::spawn_login_with_chatgpt;
@@ -31,5 +31,3 @@ pub const EXIT_CODE_WHEN_ADDRESS_ALREADY_IN_USE: i32 = 13;
 
 #[cfg(test)]
 mod lib_tests;
-
-

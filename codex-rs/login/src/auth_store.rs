@@ -95,9 +95,8 @@ pub(crate) fn update_tokens(
     if let Some(r) = refresh_token {
         obj["tokens"]["refresh_token"] = serde_json::Value::String(r);
     }
-    obj["last_refresh"] = serde_json::Value::String(
-        Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
-    );
+    obj["last_refresh"] =
+        serde_json::Value::String(Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true));
     let updated = serde_json::to_string_pretty(&obj)?;
     std::fs::write(auth_file, updated)?;
     // Return parsed structure
@@ -139,5 +138,3 @@ pub(crate) fn write_new_auth_json(
     file.write_all(contents.as_bytes())?;
     file.flush()
 }
-
-

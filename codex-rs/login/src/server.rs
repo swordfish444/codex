@@ -1,6 +1,7 @@
 //
 use rand::RngCore;
 use reqwest::blocking::Client;
+use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
@@ -10,23 +11,18 @@ use tiny_http::Header;
 use tiny_http::Method;
 use tiny_http::Response;
 use tiny_http::Server;
-use serde_json::json;
 use url::Url;
 use url::form_urlencoded;
 
+use crate::auth_store::write_new_auth_json;
 use crate::pkce::generate_pkce;
 use crate::success_url::build_success_url;
 use crate::token_data::extract_login_context_from_tokens;
-use crate::auth_store::write_new_auth_json;
 
 pub const DEFAULT_PORT: u16 = 1455;
 pub const DEFAULT_ISSUER: &str = "https://auth.openai.com";
 
 pub const LOGIN_SUCCESS_HTML: &str = include_str!("./success_page.html");
-
-//
-
-//
 
 #[derive(Debug, Clone)]
 pub struct LoginServerOptions {
@@ -37,18 +33,10 @@ pub struct LoginServerOptions {
     pub open_browser: bool,
     pub redeem_credits: bool,
     pub expose_state_endpoint: bool,
-    /// When set, the server will auto-exit after the specified number of seconds by
-    /// issuing an internal request to a test-only endpoint. Intended for CI/tests.
+    /// timeout after x secs for e2e tests
     pub testing_timeout_secs: Option<u64>,
     pub verbose: bool,
 }
-
-/// Extracts commonly used claims from ID and access tokens.
-/// - account_id is taken from the ID token.
-/// - org_id/project_id prefer ID token, falling back to access token.
-/// - plan_type comes from the access token.
-/// - needs_setup is computed from (completed_platform_onboarding, is_org_owner)
-/// with the same precedence as org/project.
 
 // Only default issuer supported for platform/api bases
 const PLATFORM_BASE: &str = "https://platform.openai.com";

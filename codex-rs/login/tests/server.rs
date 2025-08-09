@@ -249,9 +249,8 @@ fn start_mock_oauth_server(port: u16, behavior: MockBehavior) {
                                     .with_status_code(500),
                             );
                         }
-                    }
-                    // Old token-exchange fallback behavior removed
-                    // Old token-exchange fallback behavior removed
+                    } // Old token-exchange fallback behavior removed
+                      // Old token-exchange fallback behavior removed
                 }
             } else if request.method() == &tiny_http::Method::Post
                 && url.starts_with("/v1/billing/redeem_credits")

@@ -3,9 +3,9 @@ use super::*;
 use crate::auth::AuthMode;
 use crate::auth::CodexAuth;
 use crate::auth::load_auth;
+use crate::auth_store::AuthDotJson;
 use crate::auth_store::get_auth_file;
 use crate::auth_store::logout;
-use crate::auth_store::AuthDotJson;
 use crate::token_data::IdTokenInfo;
 use crate::token_data::KnownPlan;
 use crate::token_data::PlanType;
@@ -14,8 +14,8 @@ use base64::Engine;
 use pretty_assertions::assert_eq;
 use serde::Serialize;
 use serde_json::json;
-use tempfile::tempdir;
 use std::path::Path;
+use tempfile::tempdir;
 
 const LAST_REFRESH: &str = "2025-08-06T20:41:36.232376Z";
 
@@ -172,7 +172,10 @@ fn write_auth_file(params: AuthFileParams, codex_home: &Path) -> std::io::Result
         alg: &'static str,
         typ: &'static str,
     }
-    let header = Header { alg: "none", typ: "JWT" };
+    let header = Header {
+        alg: "none",
+        typ: "JWT",
+    };
     let payload = serde_json::json!({
         "email": "user@example.com",
         "email_verified": true,
@@ -252,5 +255,3 @@ fn logout_removes_auth_file() -> Result<(), std::io::Error> {
     assert!(!dir.path().join("auth.json").exists());
     Ok(())
 }
-
-

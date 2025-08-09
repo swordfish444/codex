@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use crate::auth_store::AuthDotJson;
 use crate::auth_store::get_auth_file;
 use crate::auth_store::try_read_auth_json;
 use crate::auth_store::update_tokens;
-use crate::auth_store::AuthDotJson;
 use crate::refresh::try_refresh_token;
 use crate::token_data::TokenData;
 
@@ -146,7 +146,10 @@ impl CodexAuth {
     }
 }
 
-pub(crate) fn load_auth(codex_home: &Path, include_env_var: bool) -> std::io::Result<Option<CodexAuth>> {
+pub(crate) fn load_auth(
+    codex_home: &Path,
+    include_env_var: bool,
+) -> std::io::Result<Option<CodexAuth>> {
     // First, check to see if there is a valid auth.json file. If not, we fall
     // back to AuthMode::ApiKey using the OPENAI_API_KEY environment variable
     // (if it is set).
@@ -217,5 +220,3 @@ fn read_openai_api_key_from_env() -> Option<String> {
         .ok()
         .filter(|s| !s.is_empty())
 }
-
-

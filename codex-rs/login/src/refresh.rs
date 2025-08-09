@@ -46,5 +46,3 @@ pub(crate) async fn try_refresh_token(refresh_token: String) -> std::io::Result<
         )))
     }
 }
-
-

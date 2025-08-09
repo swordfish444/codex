@@ -166,17 +166,18 @@ fn decode_jwt_payload(token: &str) -> Option<Vec<u8>> {
     let _header = parts.next();
     let payload_b64 = parts.next();
     let _sig = parts.next();
-    payload_b64.and_then(|p| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(p).ok())
+    payload_b64.and_then(|p| {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(p)
+            .ok()
+    })
 }
 
 fn parse_auth_inner_claims(token: &str) -> AuthInnerClaims {
-    match decode_jwt_payload(token)
+    decode_jwt_payload(token)
         .and_then(|bytes| serde_json::from_slice::<AuthOuterClaims>(&bytes).ok())
         .and_then(|o| o.auth)
-    {
-        Some(inner) => inner,
-        None => AuthInnerClaims::default(),
-    }
+        .unwrap_or_default()
 }
 
 /// Extracts commonly used claims from ID and access tokens.
