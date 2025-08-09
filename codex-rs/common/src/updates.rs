@@ -36,43 +36,6 @@ pub fn get_upgrade_version(config: &Config) -> Option<String> {
     })
 }
 
-/// Fetches the latest release info and updates the on-disk cache file.
-pub async fn check_for_update(version_file: &Path) -> anyhow::Result<()> {
-    let ReleaseInfo {
-        tag_name: latest_tag_name,
-    } = reqwest::Client::new()
-        .get(LATEST_RELEASE_URL)
-        .header(
-            "User-Agent",
-            format!(
-                "codex/{} (+https://github.com/openai/codex)",
-                env!("CARGO_PKG_VERSION")
-            ),
-        )
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<ReleaseInfo>()
-        .await?;
-
-    let info = VersionInfo {
-        latest_version: latest_tag_name
-            .strip_prefix("rust-v")
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse latest tag name '{latest_tag_name}'"))?
-            .into(),
-        last_checked_at: Utc::now(),
-    };
-
-    let json_line = format!("{}\n", serde_json::to_string(&info)?);
-    if let Some(parent) = version_file.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    tokio::fs::write(version_file, json_line).await?;
-    Ok(())
-}
-
-// --- Helpers below ---
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct VersionInfo {
     latest_version: String,
@@ -110,6 +73,41 @@ fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
     let min = iter.next()?.parse::<u64>().ok()?;
     let pat = iter.next()?.parse::<u64>().ok()?;
     Some((maj, min, pat))
+}
+
+/// Fetches the latest release info and updates the on-disk cache file.
+pub async fn check_for_update(version_file: &Path) -> anyhow::Result<()> {
+    let ReleaseInfo {
+        tag_name: latest_tag_name,
+    } = reqwest::Client::new()
+        .get(LATEST_RELEASE_URL)
+        .header(
+            "User-Agent",
+            format!(
+                "codex/{} (+https://github.com/openai/codex)",
+                env!("CARGO_PKG_VERSION")
+            ),
+        )
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<ReleaseInfo>()
+        .await?;
+
+    let info = VersionInfo {
+        latest_version: latest_tag_name
+            .strip_prefix("rust-v")
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse latest tag name '{latest_tag_name}'"))?
+            .into(),
+        last_checked_at: Utc::now(),
+    };
+
+    let json_line = format!("{}\n", serde_json::to_string(&info)?);
+    if let Some(parent) = version_file.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::write(version_file, json_line).await?;
+    Ok(())
 }
 
 #[cfg(test)]
