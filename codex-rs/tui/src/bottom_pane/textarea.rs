@@ -895,38 +895,11 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_f_and_ctrl_b_move_one_char() {
-        use crossterm::event::KeyCode;
-        use crossterm::event::KeyEvent;
-        use crossterm::event::KeyModifiers;
-
-        let mut t = ta_with("abc");
-        // Forward moves
-        t.set_cursor(0);
-        t.input(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
-        assert_eq!(t.cursor(), 1);
-        t.input(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
-        assert_eq!(t.cursor(), 2);
-        t.input(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
-        assert_eq!(t.cursor(), 3);
-
-        // Backward moves
-        t.input(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
-        assert_eq!(t.cursor(), 2);
-        t.input(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
-        assert_eq!(t.cursor(), 1);
-        t.input(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
-        assert_eq!(t.cursor(), 0);
-        // Further backward at start stays at 0
-        t.input(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
-        assert_eq!(t.cursor(), 0);
-    }
-
-    #[test]
     fn cursor_left_and_right_handle_graphemes() {
         let mut t = ta_with("a👍b");
         t.set_cursor(t.text().len());
 
+        // Test moving left
         t.move_cursor_left(); // before 'b'
         let after_first_left = t.cursor();
         t.move_cursor_left(); // before '👍'
@@ -938,11 +911,29 @@ mod tests {
         assert!(after_second_left < after_first_left);
         assert!(after_third_left < after_second_left);
 
-        // Move right back to end safely
+        // Test moving right back to end safely
         t.move_cursor_right();
         t.move_cursor_right();
         t.move_cursor_right();
         assert_eq!(t.cursor(), t.text().len());
+
+        // Test using ctrl-f and ctrl-b for graphemes (byte indices)
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut t = ta_with("a👍b");
+        t.set_cursor(0);
+        t.input(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)); // after 'a'
+        assert_eq!(t.cursor(), 1);
+        t.input(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)); // after '👍' (4-byte emoji)
+        assert_eq!(t.cursor(), 5);
+        t.input(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)); // after 'b' (end)
+        assert_eq!(t.cursor(), 6);
+
+        t.input(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)); // back to after '👍'
+        assert_eq!(t.cursor(), 5);
+        t.input(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)); // back to after 'a'
+        assert_eq!(t.cursor(), 1);
+        t.input(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)); // back to start
+        assert_eq!(t.cursor(), 0);
     }
 
     #[test]
