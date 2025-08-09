@@ -49,7 +49,7 @@ mod tui;
 mod user_approval_widget;
 
 #[cfg(not(debug_assertions))]
-mod updates;
+pub mod updates;
 #[cfg(not(debug_assertions))]
 use color_eyre::owo_colors::OwoColorize;
 

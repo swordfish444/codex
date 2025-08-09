@@ -62,7 +62,7 @@ fn read_version_info(version_file: &Path) -> anyhow::Result<VersionInfo> {
     Ok(serde_json::from_str(&contents)?)
 }
 
-async fn check_for_update(version_file: &Path) -> anyhow::Result<()> {
+pub async fn check_for_update(version_file: &Path) -> anyhow::Result<()> {
     let ReleaseInfo {
         tag_name: latest_tag_name,
     } = reqwest::Client::new()
