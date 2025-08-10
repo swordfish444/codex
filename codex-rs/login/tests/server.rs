@@ -1,4 +1,5 @@
 #![cfg(feature = "http-e2e-tests")]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 mod common;
 use codex_login::LoginServerOptions;
 use codex_login::run_local_login_server_with_options;
@@ -227,7 +228,7 @@ fn http_get(url: &str) -> (u16, String, Option<String>) {
             let status = resp.status();
             let location = resp.header("Location").map(|s| s.to_string());
             let body = resp.into_string().unwrap_or_default();
-            (status as u16, body, location)
+            (status, body, location)
         }
         Err(ureq::Error::Status(code, resp)) => {
             let location = resp.header("Location").map(|s| s.to_string());

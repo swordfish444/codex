@@ -118,8 +118,6 @@ pub fn run_local_login_server_with_options(mut opts: LoginServerOptions) -> std:
         ". If your browser did not open, navigate to this URL to authenticate: \n\n{auth_url}"
     );
 
-    // HTTP client handled via DefaultHttp in the callback path
-
     // If a testing timeout is configured, schedule an internal exit request so tests don't hang CI.
     #[cfg(feature = "http-e2e-tests")]
     if let Some(secs) = opts.testing_timeout_secs {

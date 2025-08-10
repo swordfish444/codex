@@ -166,7 +166,6 @@ struct AuthFileParams {
 
 fn write_auth_file(params: AuthFileParams, codex_home: &Path) -> std::io::Result<()> {
     let auth_file = get_auth_file(codex_home);
-    // Create a minimal valid JWT for the id_token field.
     #[derive(Serialize)]
     struct Header {
         alg: &'static str,

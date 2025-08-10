@@ -18,8 +18,6 @@ pub struct TokenData {
 }
 
 impl TokenData {
-    /// Returns true if this is a plan that should use the traditional
-    /// "metered" billing via an API key.
     pub(crate) fn is_plan_that_should_use_api_key(&self) -> bool {
         self.id_token
             .chatgpt_plan_type
@@ -32,9 +30,6 @@ impl TokenData {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct IdTokenInfo {
     pub email: Option<String>,
-    /// The ChatGPT subscription plan type
-    /// (e.g., "free", "plus", "pro", "business", "enterprise", "edu").
-    /// (Note: ae has not verified that those are the exact values.)
     pub(crate) chatgpt_plan_type: Option<PlanType>,
 }
 

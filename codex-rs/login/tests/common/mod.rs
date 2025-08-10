@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 pub fn make_fake_jwt(payload: serde_json::Value) -> String {
     use base64::Engine;
     let header = serde_json::json!({"alg": "none", "typ": "JWT"});

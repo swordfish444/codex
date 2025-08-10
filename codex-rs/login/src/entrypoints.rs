@@ -15,6 +15,26 @@ pub struct SpawnedLogin {
     pub stderr: Arc<Mutex<Vec<u8>>>,
 }
 
+impl SpawnedLogin {
+    /// Attempts to extract the login URL printed by the spawned login server.
+    ///
+    /// The login server prints the authorization URL to stderr on its own line
+    /// in case the browser does not open automatically. We scan the captured
+    /// stderr buffer from the end and return the last line that looks like an
+    /// http(s) URL.
+    pub fn get_login_url(&self) -> Option<String> {
+        let buf = self.stderr.lock().ok()?;
+        let text = String::from_utf8_lossy(&buf);
+        for line in text.lines().rev() {
+            let s = line.trim();
+            if s.starts_with("http://") || s.starts_with("https://") {
+                return Some(s.to_string());
+            }
+        }
+        None
+    }
+}
+
 /// Spawn the Rust login server via the current executable ("codex login") and return a handle to its process.
 pub fn spawn_login_with_chatgpt(codex_home: &Path) -> std::io::Result<SpawnedLogin> {
     let current_exe = std::env::current_exe()?;
