@@ -82,6 +82,8 @@ pub(crate) enum JsonSchema {
         #[serde(skip_serializing_if = "Option::is_none")]
         description: Option<String>,
     },
+    /// MCP schema allows "number" | "integer" for Number types.
+    #[serde(alias = "integer")]
     Number {
         #[serde(skip_serializing_if = "Option::is_none")]
         description: Option<String>,
@@ -319,7 +321,6 @@ pub(crate) fn mcp_tool_to_openai_tool(
 /// - Ensures every schema object has a "type". If missing, infers it from
 ///   common keywords (properties => object, items => array, enum/const/format => string)
 ///   and otherwise defaults to "string".
-/// - Normalizes unsupported types (e.g. "integer" -> "number").
 /// - Fills required child fields (e.g. array items, object properties) with
 ///   permissive defaults when absent.
 fn sanitize_json_schema(value: &mut JsonValue) {
@@ -363,11 +364,11 @@ fn sanitize_json_schema(value: &mut JsonValue) {
                 if let Some(JsonValue::Array(types)) = map.get("type") {
                     for t in types {
                         if let Some(tt) = t.as_str() {
-                            if matches!(tt, "object" | "array" | "string" | "number" | "boolean") {
+                            if matches!(
+                                tt,
+                                "object" | "array" | "string" | "number" | "integer" | "boolean"
+                            ) {
                                 ty = Some(tt.to_string());
-                                break;
-                            } else if tt == "integer" {
-                                ty = Some("number".to_string());
                                 break;
                             }
                         }
@@ -401,20 +402,10 @@ fn sanitize_json_schema(value: &mut JsonValue) {
 
             // If we still couldn't infer, default to string
             let ty = ty.unwrap_or_else(|| "string".to_string());
-
-            // Write back normalized type
-            let normalized_ty = match ty.as_str() {
-                "integer" => "number",
-                // Unrecognized types fallback to string
-                other => other,
-            };
-            map.insert(
-                "type".to_string(),
-                JsonValue::String(normalized_ty.to_string()),
-            );
+            map.insert("type".to_string(), JsonValue::String(ty.to_string()));
 
             // Ensure object schemas have properties map
-            if normalized_ty == "object" {
+            if ty == "object" {
                 if !map.contains_key("properties") {
                     map.insert(
                         "properties".to_string(),
@@ -432,7 +423,7 @@ fn sanitize_json_schema(value: &mut JsonValue) {
             }
 
             // Ensure array schemas have items
-            if normalized_ty == "array" && !map.contains_key("items") {
+            if ty == "array" && !map.contains_key("items") {
                 map.insert("items".to_string(), json!({ "type": "string" }));
             }
         }
