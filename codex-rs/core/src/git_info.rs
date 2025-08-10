@@ -83,6 +83,36 @@ pub async fn collect_git_info(cwd: &Path) -> Option<GitInfo> {
     Some(git_info)
 }
 
+/// Blocking convenience wrapper around `collect_git_info` suitable for
+/// synchronous contexts. If called from within an active Tokio runtime,
+/// spawns a separate thread to avoid blocking the runtime's executor thread.
+pub fn collect_git_info_blocking(cwd: &Path) -> Option<GitInfo> {
+    // If we're already on a Tokio runtime, avoid `block_on` on the same thread.
+    if tokio::runtime::Handle::try_current().is_ok() {
+        let cwd = cwd.to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            // Use a lightweight current-thread runtime.
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+            let res = match rt {
+                Ok(rt) => rt.block_on(collect_git_info(&cwd)),
+                Err(_) => None,
+            };
+            let _ = tx.send(res);
+        });
+        rx.recv().ok().flatten()
+    } else {
+        // Safe to block here – we're not inside a runtime.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .ok()?;
+        rt.block_on(collect_git_info(cwd))
+    }
+}
+
 /// Run a git command with a timeout to prevent blocking on large repositories
 async fn run_git_command_with_timeout(args: &[&str], cwd: &Path) -> Option<std::process::Output> {
     let result = timeout(

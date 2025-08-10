@@ -212,6 +212,19 @@ impl HistoryCell {
                 None => config.cwd.display().to_string(),
             };
 
+            // Determine the current Git branch (if any) for display using
+            // the shared Git info collector in a way that is safe in sync contexts.
+            let branch_suffix = codex_core::git_info::collect_git_info_blocking(&config.cwd)
+                .and_then(|g| g.branch)
+                .map(|b| format!(" ({b})"))
+                .unwrap_or_default();
+
+            let path_and_branch = if branch_suffix.is_empty() {
+                format!(" {cwd_str}")
+            } else {
+                format!(" {cwd_str}{branch_suffix}")
+            };
+
             let lines: Vec<Line<'static>> = vec![
                 Line::from(vec![
                     Span::raw(">_ ").dim(),
@@ -219,7 +232,7 @@ impl HistoryCell {
                         "You are using OpenAI Codex in",
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
-                    Span::raw(format!(" {cwd_str}")).dim(),
+                    Span::raw(path_and_branch).dim(),
                 ]),
                 Line::from("".dim()),
                 Line::from(" To get started, describe a task or try one of these commands:".dim()),
@@ -833,6 +846,8 @@ impl HistoryCell {
         }
     }
 }
+
+//
 
 impl WidgetRef for &HistoryCell {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
