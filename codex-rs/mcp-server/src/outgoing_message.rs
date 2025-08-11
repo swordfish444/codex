@@ -133,6 +133,28 @@ impl OutgoingMessageSender {
         });
         let _ = self.sender.send(outgoing_message).await;
     }
+
+    /// Send a typed server notification by serializing it into a method/params pair.
+    pub(crate) async fn send_server_notification(
+        &self,
+        notification: crate::mcp_protocol::ServerNotification,
+    ) {
+        match serde_json::to_value(notification) {
+            Ok(serde_json::Value::Object(mut map)) => {
+                let method = map
+                    .remove("method")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()));
+                let params = map.remove("params").unwrap_or(serde_json::Value::Null);
+                if let Some(method) = method {
+                    self.send_custom_notification(&method, params).await;
+                } else {
+                    warn!("ServerNotification missing method after serialization");
+                }
+            }
+            Ok(_) => warn!("ServerNotification did not serialize to an object"),
+            Err(err) => warn!("Failed to serialize ServerNotification: {err:?}"),
+        }
+    }
 }
 
 /// Outgoing message from the server to the client.

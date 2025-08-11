@@ -5,6 +5,7 @@ use mcp_test_support::create_config_toml;
 use mcp_test_support::create_final_assistant_message_sse_response;
 use mcp_test_support::create_mock_chat_completions_server;
 use mcp_types::JSONRPCNotification;
+use mcp_types::ModelContextProtocolNotification;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
@@ -181,7 +182,7 @@ async fn test_cancel_stream_then_reconnect_catches_up_initial_state() {
 
     // Cancel stream A
     mcp.send_notification(
-        "notifications/cancelled",
+        mcp_types::CancelledNotification::METHOD,
         Some(json!({ "requestId": stream_a_id })),
     )
     .await
@@ -245,7 +246,6 @@ async fn test_cancel_stream_then_reconnect_catches_up_initial_state() {
         }),
     ];
     assert_eq!(*events, expected);
-    drop(server);
 }
 
-// create_config_toml is provided by tests/common
+//

@@ -4,6 +4,7 @@
 use codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_mcp_server::CodexToolCallParam;
 use mcp_types::JSONRPCResponse;
+use mcp_types::ModelContextProtocolNotification;
 use mcp_types::RequestId;
 use serde_json::json;
 use tempfile::TempDir;
@@ -94,7 +95,7 @@ async fn shell_command_interruption() -> anyhow::Result<()> {
     // Send interrupt notification
     mcp_process
         .send_notification(
-            "notifications/cancelled",
+            mcp_types::CancelledNotification::METHOD,
             Some(json!({ "requestId": codex_request_id })),
         )
         .await?;
@@ -125,7 +126,7 @@ async fn shell_command_interruption() -> anyhow::Result<()> {
     // Send interrupt notification
     mcp_process
         .send_notification(
-            "notifications/cancelled",
+            mcp_types::CancelledNotification::METHOD,
             Some(json!({ "requestId": codex_reply_request_id })),
         )
         .await?;
@@ -148,4 +149,4 @@ async fn shell_command_interruption() -> anyhow::Result<()> {
     Ok(())
 }
 
-// Helpers are provided by tests/common
+

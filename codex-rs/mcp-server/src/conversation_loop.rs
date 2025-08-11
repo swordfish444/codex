@@ -3,10 +3,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use codex_core::Codex;
+use codex_core::error::Result as CodexResult;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
+use codex_core::protocol::InputItem;
+use codex_core::protocol::Op;
 use codex_core::protocol::ExecApprovalRequestEvent;
 use codex_core::protocol::FileChange;
 use mcp_types::RequestId;
@@ -14,6 +17,7 @@ use tokio::sync::Mutex;
 // no streaming watch channel; streaming is toggled via set_streaming on the struct
 use tracing::error;
 use uuid::Uuid;
+use tokio_util::sync::CancellationToken;
 
 use crate::exec_approval::handle_exec_approval_request;
 use crate::mcp_protocol::CodexEventNotificationParams;
@@ -21,8 +25,10 @@ use crate::mcp_protocol::ConversationId;
 use crate::mcp_protocol::InitialStateNotificationParams;
 use crate::mcp_protocol::InitialStatePayload;
 use crate::mcp_protocol::NotificationMeta;
+use crate::mcp_protocol::ServerNotification;
 use crate::outgoing_message::OutgoingMessageSender;
 use crate::patch_approval::handle_patch_approval_request;
+use crate::request_id::request_id_to_string;
 
 /// Conversation struct that owns the Codex session and all per-conversation state.
 pub(crate) struct Conversation {
@@ -31,6 +37,7 @@ pub(crate) struct Conversation {
     outgoing: Arc<OutgoingMessageSender>,
     request_id: RequestId,
     state: Mutex<ConversationState>,
+    cancel: CancellationToken,
 }
 
 struct ConversationState {
@@ -56,9 +63,10 @@ impl Conversation {
                 buffered_events: Vec::new(),
                 pending_elicitations: Vec::new(),
             }),
+            cancel: CancellationToken::new(),
         });
         // Detach a background loop tied to this Conversation
-        Conversation::spawn_loop(conv.clone());
+        spawn_conversation_loop(conv.clone());
         conv
     }
 
@@ -80,22 +88,6 @@ impl Conversation {
         }
     }
 
-    fn spawn_loop(this: Arc<Self>) {
-        tokio::spawn(async move {
-            // Clone once outside the loop; `Codex` is cheap to clone but we don't need to do it repeatedly.
-            let codex = this.codex.clone();
-            loop {
-                match codex.next_event().await {
-                    Ok(event) => this.handle_event(event).await,
-                    Err(e) => {
-                        error!("Codex next_event error (session {}): {e}", this.session_id);
-                        break;
-                    }
-                }
-            }
-        });
-    }
-
     pub(crate) fn codex(&self) -> Arc<Codex> {
         self.codex.clone()
     }
@@ -103,23 +95,13 @@ impl Conversation {
     pub(crate) async fn try_submit_user_input(
         &self,
         request_id: RequestId,
-        items: Vec<codex_core::protocol::InputItem>,
-    ) -> Result<(), String> {
-        let request_id_string = match &request_id {
-            RequestId::String(s) => s.clone(),
-            RequestId::Integer(i) => i.to_string(),
-        };
-        let submit_res = self
-            .codex
-            .submit_with_id(codex_core::protocol::Submission {
-                id: request_id_string,
-                op: codex_core::protocol::Op::UserInput { items },
-            })
-            .await;
-        if let Err(e) = submit_res {
-            return Err(format!("Failed to submit user input: {e}"));
-        }
-        Ok(())
+        items: Vec<InputItem>,
+    ) -> CodexResult<()> {
+        let _ = request_id; // request_id is not used to enforce uniqueness; Codex generates ids.
+        self.codex
+            .submit(Op::UserInput { items })
+            .await
+            .map(|_| ())
     }
 
     async fn handle_event(&self, event: Event) {
@@ -142,8 +124,8 @@ impl Conversation {
                 self.process_exec_request(command, cwd, call_id, event.id.clone())
                     .await;
             }
-            EventMsg::Error(_) => {
-                error!("Codex runtime error");
+            EventMsg::Error(err) => {
+                error!("Codex runtime error: {}", err.message);
             }
             EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
                 call_id,
@@ -151,7 +133,7 @@ impl Conversation {
                 grant_root,
                 changes,
             }) => {
-                self.process_patch_request(PatchRequest {
+                self.start_patch_approval(PatchRequest {
                     call_id,
                     reason,
                     grant_root,
@@ -162,8 +144,8 @@ impl Conversation {
             }
             EventMsg::TaskComplete(_) => {}
             EventMsg::TaskStarted => {}
-            EventMsg::SessionConfigured(_) => {
-                error!("unexpected SessionConfigured event");
+            EventMsg::SessionConfigured(ev) => {
+                error!("unexpected SessionConfigured event: {:?}", ev);
             }
             EventMsg::AgentMessageDelta(_) => {}
             EventMsg::AgentReasoningDelta(_) => {}
@@ -195,13 +177,9 @@ impl Conversation {
             }),
             initial_state: InitialStatePayload { events },
         };
-        if let Ok(params_val) = serde_json::to_value(&params) {
-            self.outgoing
-                .send_custom_notification("notifications/initial_state", params_val)
-                .await;
-        } else {
-            error!("Failed to serialize InitialState params");
-        }
+        self.outgoing
+            .send_server_notification(ServerNotification::InitialState(params))
+            .await;
     }
 
     async fn drain_pending_elicitations_from(&self, items: Vec<PendingElicitation>) {
@@ -219,10 +197,7 @@ impl Conversation {
                         self.outgoing.clone(),
                         self.codex.clone(),
                         self.request_id.clone(),
-                        match &self.request_id {
-                            RequestId::String(s) => s.clone(),
-                            RequestId::Integer(n) => n.to_string(),
-                        },
+                        request_id_to_string(&self.request_id),
                         event_id,
                         call_id,
                     )
@@ -243,10 +218,7 @@ impl Conversation {
                         self.outgoing.clone(),
                         self.codex.clone(),
                         self.request_id.clone(),
-                        match &self.request_id {
-                            RequestId::String(s) => s.clone(),
-                            RequestId::Integer(n) => n.to_string(),
-                        },
+                        request_id_to_string(&self.request_id),
                         event_id,
                     )
                     .await;
@@ -262,7 +234,10 @@ impl Conversation {
         call_id: String,
         event_id: String,
     ) {
-        let should_stream = { self.state.lock().await.streaming_enabled };
+        let should_stream = {
+            let st = self.state.lock().await;
+            st.streaming_enabled
+        };
         if should_stream {
             handle_exec_approval_request(
                 command,
@@ -270,10 +245,7 @@ impl Conversation {
                 self.outgoing.clone(),
                 self.codex.clone(),
                 self.request_id.clone(),
-                match &self.request_id {
-                    RequestId::String(s) => s.clone(),
-                    RequestId::Integer(n) => n.to_string(),
-                },
+                request_id_to_string(&self.request_id),
                 event_id,
                 call_id,
             )
@@ -290,7 +262,7 @@ impl Conversation {
         }
     }
 
-    async fn process_patch_request(&self, req: PatchRequest) {
+    async fn start_patch_approval(&self, req: PatchRequest) {
         let PatchRequest {
             call_id,
             reason,
@@ -298,7 +270,10 @@ impl Conversation {
             changes,
             event_id,
         } = req;
-        let should_stream = { self.state.lock().await.streaming_enabled };
+        let should_stream = {
+            let st = self.state.lock().await;
+            st.streaming_enabled
+        };
         if should_stream {
             handle_patch_approval_request(
                 call_id,
@@ -308,10 +283,7 @@ impl Conversation {
                 self.outgoing.clone(),
                 self.codex.clone(),
                 self.request_id.clone(),
-                match &self.request_id {
-                    RequestId::String(s) => s.clone(),
-                    RequestId::Integer(n) => n.to_string(),
-                },
+                request_id_to_string(&self.request_id),
                 event_id,
             )
             .await;
@@ -337,12 +309,15 @@ impl Conversation {
             meta: None,
             msg: msg.clone(),
         };
-        if let Ok(params_val) = serde_json::to_value(&params) {
-            self.outgoing
-                .send_custom_notification(&method, params_val)
-                .await;
-        } else {
-            error!("Failed to serialize event params");
+        match serde_json::to_value(&params) {
+            Ok(params_val) => {
+                self.outgoing
+                    .send_custom_notification(&method, params_val)
+                    .await;
+            }
+            Err(err) => {
+                error!("Failed to serialize event params: {err:?}");
+            }
         }
     }
 }
@@ -365,4 +340,33 @@ struct ExecRequest {
     cwd: PathBuf,
     event_id: String,
     call_id: String,
+}
+
+impl Drop for Conversation {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+    }
+}
+
+fn spawn_conversation_loop(this: Arc<Conversation>) {
+    tokio::spawn(async move {
+        let codex = this.codex.clone();
+        let cancel = this.cancel.clone();
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    break;
+                }
+                res = codex.next_event() => {
+                    match res {
+                        Ok(event) => this.handle_event(event).await,
+                        Err(e) => {
+                            error!("Codex next_event error (session {}): {e}", this.session_id);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
 }

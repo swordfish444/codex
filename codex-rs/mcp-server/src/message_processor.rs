@@ -17,7 +17,6 @@ use crate::tool_handlers::stream_conversation::handle_stream_conversation;
 
 use codex_core::Codex;
 use codex_core::config::Config as CodexConfig;
-use codex_core::protocol::Submission;
 use mcp_types::CallToolRequest;
 use mcp_types::CallToolRequestParams;
 use mcp_types::CallToolResult;
@@ -357,8 +356,8 @@ impl MessageProcessor {
     async fn handle_new_tool_calls(&self, request_id: RequestId, params: ToolCallRequestParams) {
         // Track the request to allow graceful cancellation routing later.
         {
-            let mut guard = self.tool_request_map.lock().await;
-            guard.insert(request_id.clone(), params.clone());
+            let mut tool_request_map = self.tool_request_map.lock().await;
+            tool_request_map.insert(request_id.clone(), params.clone());
         }
         match params {
             ToolCallRequestParams::ConversationCreate(args) => {
@@ -601,8 +600,8 @@ impl MessageProcessor {
         let request_id = params.request_id;
 
         if let Some(orig) = {
-            let mut guard = self.tool_request_map.lock().await;
-            guard.remove(&request_id)
+            let mut tool_request_map = self.tool_request_map.lock().await;
+            tool_request_map.remove(&request_id)
         } {
             self.handle_mcp_protocol_cancelled_notification(request_id, orig)
                 .await;
@@ -621,12 +620,7 @@ impl MessageProcessor {
                 stream_conversation::handle_cancel(self, &args).await;
             }
             ToolCallRequestParams::ConversationSendMessage(args) => {
-                // Cancel in-flight user input for this conversation by interrupting
-                // the submission with the same request id we used when sending.
-                let request_id_string = match &request_id {
-                    RequestId::String(s) => s.clone(),
-                    RequestId::Integer(i) => i.to_string(),
-                };
+                // Cancel in-flight user input for this conversation by interrupting the session.
 
                 let session_id = args.conversation_id.0;
                 let codex_arc = {
@@ -642,13 +636,7 @@ impl MessageProcessor {
                     }
                 };
 
-                if let Err(e) = codex_arc
-                    .submit_with_id(Submission {
-                        id: request_id_string,
-                        op: codex_core::protocol::Op::Interrupt,
-                    })
-                    .await
-                {
+                if let Err(e) = codex_arc.submit(codex_core::protocol::Op::Interrupt).await {
                     tracing::error!("Failed to submit interrupt for send_message cancel: {e}");
                 }
             }
@@ -664,10 +652,8 @@ impl MessageProcessor {
     }
 
     async fn handle_legacy_cancelled_notification(&self, request_id: RequestId) {
-        let request_id_string = match &request_id {
-            RequestId::String(s) => s.clone(),
-            RequestId::Integer(i) => i.to_string(),
-        };
+        use crate::request_id::request_id_to_string;
+        let request_id_string = request_id_to_string(&request_id);
 
         let session_id = {
             let map_guard = self.running_requests_id_to_codex_uuid.lock().await;
@@ -693,10 +679,7 @@ impl MessageProcessor {
         };
 
         if let Err(e) = codex_arc
-            .submit_with_id(Submission {
-                id: request_id_string,
-                op: codex_core::protocol::Op::Interrupt,
-            })
+            .submit(codex_core::protocol::Op::Interrupt)
             .await
         {
             tracing::error!("Failed to submit interrupt to Codex: {e}");

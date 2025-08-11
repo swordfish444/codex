@@ -23,6 +23,7 @@ mod json_to_toml;
 pub mod mcp_protocol;
 pub(crate) mod message_processor;
 mod outgoing_message;
+mod request_id;
 mod patch_approval;
 pub(crate) mod tool_handlers;
 
