@@ -82,7 +82,7 @@ pub(crate) enum JsonSchema {
         #[serde(skip_serializing_if = "Option::is_none")]
         description: Option<String>,
     },
-    /// MCP schema allows "number" | "integer" for Number types.
+    /// MCP schema allows "number" | "integer" for Number
     #[serde(alias = "integer")]
     Number {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -399,7 +399,6 @@ fn sanitize_json_schema(value: &mut JsonValue) {
                     ty = Some("number".to_string());
                 }
             }
-
             // If we still couldn't infer, default to string
             let ty = ty.unwrap_or_else(|| "string".to_string());
             map.insert("type".to_string(), JsonValue::String(ty.to_string()));
@@ -475,6 +474,7 @@ pub(crate) fn get_openai_tools(
 mod tests {
     use crate::model_family::find_family_for_model;
     use mcp_types::ToolInputSchema;
+    use pretty_assertions::assert_eq;
 
     use super::*;
 
@@ -657,21 +657,24 @@ mod tests {
 
         assert_eq_tool_names(&tools, &["shell", "dash/search"]);
 
-        match &tools[1] {
-            OpenAiTool::Function(ResponsesApiTool { parameters, .. }) => {
-                let JsonSchema::Object { properties, .. } = parameters else {
-                    panic!("expected object schema")
-                };
-                assert!(properties.contains_key("query"));
-                assert_eq!(
-                    properties.get("query").expect("missing 'query' property"),
-                    &JsonSchema::String {
-                        description: Some("search query".to_string())
-                    }
-                );
-            }
-            _ => panic!("expected function tool"),
-        }
+        assert_eq!(
+            tools[1],
+            OpenAiTool::Function(ResponsesApiTool {
+                name: "dash/search".to_string(),
+                parameters: JsonSchema::Object {
+                    properties: BTreeMap::from([(
+                        "query".to_string(),
+                        JsonSchema::String {
+                            description: Some("search query".to_string())
+                        }
+                    )]),
+                    required: None,
+                    additional_properties: None,
+                },
+                description: "Search docs".to_string(),
+                strict: false,
+            })
+        );
     }
 
     #[test]
@@ -706,18 +709,22 @@ mod tests {
         );
 
         assert_eq_tool_names(&tools, &["shell", "dash/paginate"]);
-        match &tools[1] {
-            OpenAiTool::Function(ResponsesApiTool { parameters, .. }) => {
-                let JsonSchema::Object { properties, .. } = parameters else {
-                    panic!("expected object schema")
-                };
-                assert_eq!(
-                    properties.get("page").expect("missing 'page' property"),
-                    &JsonSchema::Number { description: None }
-                );
-            }
-            _ => panic!("expected function tool"),
-        }
+        assert_eq!(
+            tools[1],
+            OpenAiTool::Function(ResponsesApiTool {
+                name: "dash/paginate".to_string(),
+                parameters: JsonSchema::Object {
+                    properties: BTreeMap::from([(
+                        "page".to_string(),
+                        JsonSchema::Number { description: None }
+                    )]),
+                    required: None,
+                    additional_properties: None,
+                },
+                description: "Pagination".to_string(),
+                strict: false,
+            })
+        );
     }
 
     #[test]
@@ -752,21 +759,25 @@ mod tests {
         );
 
         assert_eq_tool_names(&tools, &["shell", "dash/tags"]);
-        match &tools[1] {
-            OpenAiTool::Function(ResponsesApiTool { parameters, .. }) => {
-                let JsonSchema::Object { properties, .. } = parameters else {
-                    panic!("expected object schema")
-                };
-                assert_eq!(
-                    properties.get("tags").expect("missing 'tags' property"),
-                    &JsonSchema::Array {
-                        items: Box::new(JsonSchema::String { description: None }),
-                        description: None
-                    }
-                );
-            }
-            _ => panic!("expected function tool"),
-        }
+        assert_eq!(
+            tools[1],
+            OpenAiTool::Function(ResponsesApiTool {
+                name: "dash/tags".to_string(),
+                parameters: JsonSchema::Object {
+                    properties: BTreeMap::from([(
+                        "tags".to_string(),
+                        JsonSchema::Array {
+                            items: Box::new(JsonSchema::String { description: None }),
+                            description: None
+                        }
+                    )]),
+                    required: None,
+                    additional_properties: None,
+                },
+                description: "Tags".to_string(),
+                strict: false,
+            })
+        );
     }
 
     #[test]
@@ -801,17 +812,21 @@ mod tests {
         );
 
         assert_eq_tool_names(&tools, &["shell", "dash/value"]);
-        match &tools[1] {
-            OpenAiTool::Function(ResponsesApiTool { parameters, .. }) => {
-                let JsonSchema::Object { properties, .. } = parameters else {
-                    panic!("expected object schema")
-                };
-                assert_eq!(
-                    properties.get("value").expect("missing 'value' property"),
-                    &JsonSchema::String { description: None }
-                );
-            }
-            _ => panic!("expected function tool"),
-        }
+        assert_eq!(
+            tools[1],
+            OpenAiTool::Function(ResponsesApiTool {
+                name: "dash/value".to_string(),
+                parameters: JsonSchema::Object {
+                    properties: BTreeMap::from([(
+                        "value".to_string(),
+                        JsonSchema::String { description: None }
+                    )]),
+                    required: None,
+                    additional_properties: None,
+                },
+                description: "AnyOf Value".to_string(),
+                strict: false,
+            })
+        );
     }
 }
