@@ -678,10 +678,7 @@ impl MessageProcessor {
             }
         };
 
-        if let Err(e) = codex_arc
-            .submit(codex_core::protocol::Op::Interrupt)
-            .await
-        {
+        if let Err(e) = codex_arc.submit(codex_core::protocol::Op::Interrupt).await {
             tracing::error!("Failed to submit interrupt to Codex: {e}");
             return;
         }

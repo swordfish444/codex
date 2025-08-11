@@ -62,7 +62,9 @@ pub(crate) async fn handle_send_message(
             .send_response_with_optional_error(
                 id,
                 Some(ToolCallResponseResult::ConversationSendMessage(
-                    ConversationSendMessageResult::Error { message: e.to_string() },
+                    ConversationSendMessageResult::Error {
+                        message: e.to_string(),
+                    },
                 )),
                 Some(true),
             )

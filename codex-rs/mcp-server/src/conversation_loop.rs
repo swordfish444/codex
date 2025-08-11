@@ -8,16 +8,16 @@ use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
-use codex_core::protocol::InputItem;
-use codex_core::protocol::Op;
 use codex_core::protocol::ExecApprovalRequestEvent;
 use codex_core::protocol::FileChange;
+use codex_core::protocol::InputItem;
+use codex_core::protocol::Op;
 use mcp_types::RequestId;
 use tokio::sync::Mutex;
 // no streaming watch channel; streaming is toggled via set_streaming on the struct
+use tokio_util::sync::CancellationToken;
 use tracing::error;
 use uuid::Uuid;
-use tokio_util::sync::CancellationToken;
 
 use crate::exec_approval::handle_exec_approval_request;
 use crate::mcp_protocol::CodexEventNotificationParams;
@@ -98,10 +98,7 @@ impl Conversation {
         items: Vec<InputItem>,
     ) -> CodexResult<()> {
         let _ = request_id; // request_id is not used to enforce uniqueness; Codex generates ids.
-        self.codex
-            .submit(Op::UserInput { items })
-            .await
-            .map(|_| ())
+        self.codex.submit(Op::UserInput { items }).await.map(|_| ())
     }
 
     async fn handle_event(&self, event: Event) {
