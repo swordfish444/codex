@@ -1,4 +1,3 @@
-//
 use rand::RngCore;
 use reqwest::blocking::Client;
 use std::collections::HashMap;

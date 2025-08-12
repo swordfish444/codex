@@ -16,7 +16,8 @@ pub struct TokenData {
 
     pub account_id: Option<String>,
 }
-
+/// Returns true if this is a plan that should use the traditional
+/// "metered" billing via an API key.
 impl TokenData {
     pub(crate) fn is_plan_that_should_use_api_key(&self) -> bool {
         self.id_token
