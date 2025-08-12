@@ -289,12 +289,18 @@ fn update_tokens_preserves_id_token_as_string() {
 }
 
 #[test]
-fn write_new_auth_json_is_python_compatible_shape() {
+fn write_auth_json_is_python_compatible_shape() {
     let dir = tempdir().unwrap();
     let id_token = {
         #[derive(Serialize)]
-        struct Header { alg: &'static str, typ: &'static str }
-        let header = Header { alg: "none", typ: "JWT" };
+        struct Header {
+            alg: &'static str,
+            typ: &'static str,
+        }
+        let header = Header {
+            alg: "none",
+            typ: "JWT",
+        };
         let payload = serde_json::json!({"sub": "123"});
         let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
         let header_b64 = b64(&serde_json::to_vec(&header).unwrap());
@@ -303,15 +309,20 @@ fn write_new_auth_json_is_python_compatible_shape() {
         format!("{header_b64}.{payload_b64}.{signature_b64}")
     };
 
-    crate::auth_store::write_new_auth_json(
-        dir.path(),
-        Some("sk-test".to_string()),
-        &id_token,
-        "a1",
-        "r1",
+    let tokens = crate::token_data::TokenData::from_raw(
+        id_token.clone(),
+        "a1".to_string(),
+        "r1".to_string(),
         Some("acc".to_string()),
     )
     .unwrap();
+    let auth = crate::auth_store::AuthDotJson {
+        openai_api_key: Some("sk-test".to_string()),
+        tokens: Some(tokens),
+        last_refresh: Some(chrono::Utc::now()),
+    };
+    crate::auth_store::write_auth_json(&crate::auth_store::get_auth_file(dir.path()), &auth)
+        .unwrap();
 
     let raw = std::fs::read_to_string(dir.path().join("auth.json")).unwrap();
     let val: serde_json::Value = serde_json::from_str(&raw).unwrap();

@@ -13,9 +13,12 @@ use tiny_http::Server;
 use url::Url;
 use url::form_urlencoded;
 
-use crate::auth_store::write_new_auth_json;
+use crate::auth_store::AuthDotJson;
+use crate::auth_store::get_auth_file;
+use crate::auth_store::write_auth_json;
 use crate::pkce::generate_pkce;
 use crate::success_url::build_success_url;
+use crate::token_data::TokenData;
 use crate::token_data::extract_login_context_from_tokens;
 use tracing::error;
 use tracing::trace;
@@ -374,14 +377,20 @@ pub fn process_callback_headless(
 
     let api_key = None;
 
-    write_new_auth_json(
-        &opts.codex_home,
-        api_key.clone(),
-        &id_token,
-        &access_token,
-        &refresh_token,
+    let tokens_struct = TokenData::from_raw(
+        id_token.clone(),
+        access_token.clone(),
+        refresh_token.clone(),
         account_id,
-    )?;
+    )
+    .map_err(std::io::Error::other)?;
+    let auth = AuthDotJson {
+        openai_api_key: api_key.clone(),
+        tokens: Some(tokens_struct),
+        last_refresh: Some(chrono::Utc::now()),
+    };
+    let auth_file = get_auth_file(&opts.codex_home);
+    write_auth_json(&auth_file, &auth)?;
 
     // Intentionally not redeeming credits here
 

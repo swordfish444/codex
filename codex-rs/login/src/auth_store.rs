@@ -49,7 +49,10 @@ pub fn try_read_auth_json(auth_file: &Path) -> std::io::Result<AuthDotJson> {
     Ok(auth_dot_json)
 }
 
-fn write_auth_json(auth_file: &Path, auth_dot_json: &AuthDotJson) -> std::io::Result<()> {
+pub(crate) fn write_auth_json(
+    auth_file: &Path,
+    auth_dot_json: &AuthDotJson,
+) -> std::io::Result<()> {
     let json_data = serde_json::to_string_pretty(auth_dot_json)?;
     let mut options = OpenOptions::new();
     options.truncate(true).write(true).create(true);
@@ -143,31 +146,4 @@ pub(crate) fn update_tokens(
     auth.tokens = Some(new_tokens);
     write_auth_json(auth_file, &auth)?;
     try_read_auth_json(auth_file)
-}
-
-/// Write a fresh auth.json to `codex_home` with the provided values.
-/// Creates the directory if needed.
-pub(crate) fn write_new_auth_json(
-    codex_home: &Path,
-    api_key: Option<String>,
-    id_token: &str,
-    access_token: &str,
-    refresh_token: &str,
-    account_id: Option<String>,
-) -> std::io::Result<()> {
-    std::fs::create_dir_all(codex_home)?;
-    let auth_file = get_auth_file(codex_home);
-    let tokens = crate::token_data::TokenData::from_raw(
-        id_token.to_string(),
-        access_token.to_string(),
-        refresh_token.to_string(),
-        account_id,
-    )
-    .map_err(std::io::Error::other)?;
-    let auth_dot_json = AuthDotJson {
-        openai_api_key: api_key,
-        tokens: Some(tokens),
-        last_refresh: Some(Utc::now()),
-    };
-    write_auth_json(&auth_file, &auth_dot_json)
 }
