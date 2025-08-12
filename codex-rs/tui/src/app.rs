@@ -12,6 +12,7 @@ use crate::tui;
 use codex_core::config::Config;
 use codex_core::protocol::Event;
 use codex_core::protocol::Op;
+use codex_core::server::CodexServer;
 use color_eyre::eyre::Result;
 use crossterm::SynchronizedUpdate;
 use crossterm::event::KeyCode;
@@ -48,6 +49,7 @@ enum AppState<'a> {
 }
 
 pub(crate) struct App<'a> {
+    server: Arc<CodexServer>,
     app_event_tx: AppEventSender,
     app_event_rx: Receiver<AppEvent>,
     app_state: AppState<'a>,
@@ -82,6 +84,8 @@ impl App<'_> {
         initial_images: Vec<std::path::PathBuf>,
         show_trust_screen: bool,
     ) -> Self {
+        let server = Arc::new(CodexServer::default());
+
         let (app_event_tx, app_event_rx) = channel();
         let app_event_tx = AppEventSender::new(app_event_tx);
         let pending_redraw = Arc::new(AtomicBool::new(false));
@@ -152,6 +156,7 @@ impl App<'_> {
         } else {
             let chat_widget = ChatWidget::new(
                 config.clone(),
+                server.clone(),
                 app_event_tx.clone(),
                 initial_prompt,
                 initial_images,
@@ -164,6 +169,7 @@ impl App<'_> {
 
         let file_search = FileSearchManager::new(config.cwd.clone(), app_event_tx.clone());
         Self {
+            server,
             app_event_tx,
             pending_history_lines: Vec::new(),
             app_event_rx,
@@ -316,6 +322,7 @@ impl App<'_> {
                         // User accepted – switch to chat view.
                         let new_widget = Box::new(ChatWidget::new(
                             self.config.clone(),
+                            self.server.clone(),
                             self.app_event_tx.clone(),
                             None,
                             Vec::new(),
@@ -437,6 +444,7 @@ impl App<'_> {
                     self.app_state = AppState::Chat {
                         widget: Box::new(ChatWidget::new(
                             config,
+                            self.server.clone(),
                             app_event_tx.clone(),
                             initial_prompt,
                             initial_images,
