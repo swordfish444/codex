@@ -6,12 +6,11 @@ mod event_processor_with_json_output;
 use std::io::IsTerminal;
 use std::io::Read;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 pub use cli::Cli;
 use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
-use codex_core::codex_wrapper::CodexConversation;
-use codex_core::codex_wrapper::{self};
+use codex_core::ConversationManager;
+use codex_core::NewConversation;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config_types::SandboxMode;
@@ -185,25 +184,35 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         std::process::exit(1);
     }
 
-    let CodexConversation {
-        codex: codex_wrapper,
+    let conversation_manager = ConversationManager::default();
+    let NewConversation {
+        conversation_id: _,
+        conversation,
         session_configured,
-        ctrl_c,
-        ..
-    } = codex_wrapper::init_codex(config).await?;
-    let codex = Arc::new(codex_wrapper);
+    } = conversation_manager.new_conversation(config).await?;
     info!("Codex initialized with event: {session_configured:?}");
+
+    let conversation_for_ctrl_c = conversation.clone();
+    tokio::spawn({
+        async move {
+            loop {
+                tokio::signal::ctrl_c().await.ok();
+                tracing::debug!("Keyboard interrupt");
+                conversation_for_ctrl_c.abort();
+            }
+        }
+    });
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     {
-        let codex = codex.clone();
+        let conversation = conversation.clone();
         tokio::spawn(async move {
             loop {
-                let interrupted = ctrl_c.notified();
+                let aborted = conversation.on_abort();
                 tokio::select! {
-                    _ = interrupted => {
-                        // Forward an interrupt to the codex so it can abort any in‑flight task.
-                        let _ = codex
+                    _ = aborted => {
+                        // Forward an abort to the codex so it can abort any in‑flight task.
+                        let _ = conversation
                             .submit(
                                 Op::Interrupt,
                             )
@@ -213,7 +222,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
                         // will emit a `TurnInterrupted` (Error) event which is drained later.
                         break;
                     }
-                    res = codex.next_event() => match res {
+                    res = conversation.next_event() => match res {
                         Ok(event) => {
                             debug!("Received event: {event:?}");
 
@@ -243,9 +252,9 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
             .into_iter()
             .map(|path| InputItem::LocalImage { path })
             .collect();
-        let initial_images_event_id = codex.submit(Op::UserInput { items }).await?;
+        let initial_images_event_id = conversation.submit(Op::UserInput { items }).await?;
         info!("Sent images with event ID: {initial_images_event_id}");
-        while let Ok(event) = codex.next_event().await {
+        while let Ok(event) = conversation.next_event().await {
             if event.id == initial_images_event_id
                 && matches!(
                     event.msg,
@@ -261,7 +270,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
 
     // Send the prompt.
     let items: Vec<InputItem> = vec![InputItem::Text { text: prompt }];
-    let initial_prompt_task_id = codex.submit(Op::UserInput { items }).await?;
+    let initial_prompt_task_id = conversation.submit(Op::UserInput { items }).await?;
     info!("Sent prompt with event ID: {initial_prompt_task_id}");
 
     // Run the loop until the task is complete.
@@ -270,7 +279,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         match shutdown {
             CodexStatus::Running => continue,
             CodexStatus::InitiateShutdown => {
-                codex.submit(Op::Shutdown).await?;
+                conversation.submit(Op::Shutdown).await?;
             }
             CodexStatus::Shutdown => {
                 break;

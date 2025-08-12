@@ -126,7 +126,7 @@ impl Codex {
     pub async fn spawn(
         config: Config,
         auth: Option<CodexAuth>,
-        ctrl_c: Arc<Notify>,
+        on_abort: Arc<Notify>,
     ) -> CodexResult<CodexSpawnOk> {
         // experimental resume path (undocumented)
         let resume_path = config.experimental_resume.clone();
@@ -156,7 +156,7 @@ impl Codex {
         // Generate a unique ID for the lifetime of this Codex session.
         let session_id = Uuid::new_v4();
         tokio::spawn(submission_loop(
-            session_id, config, auth, rx_sub, tx_event, ctrl_c,
+            session_id, config, auth, rx_sub, tx_event, on_abort,
         ));
         let codex = Codex {
             next_id: AtomicU64::new(0),
@@ -577,7 +577,7 @@ impl Session {
             .await
     }
 
-    pub fn abort(&self) {
+    fn abort(&self) {
         info!("Aborting existing session");
         let mut state = self.state.lock().unwrap();
         state.pending_approvals.clear();
@@ -708,7 +708,7 @@ async fn submission_loop(
     auth: Option<CodexAuth>,
     rx_sub: Receiver<Submission>,
     tx_event: Sender<Event>,
-    ctrl_c: Arc<Notify>,
+    on_abort: Arc<Notify>,
 ) {
     let mut sess: Option<Arc<Session>> = None;
     // shorthand - send an event when there is no active session
@@ -724,13 +724,13 @@ async fn submission_loop(
     };
 
     loop {
-        let interrupted = ctrl_c.notified();
+        let aborted = on_abort.notified();
         let sub = tokio::select! {
             res = rx_sub.recv() => match res {
                 Ok(sub) => sub,
                 Err(_) => break,
             },
-            _ = interrupted => {
+            _ = aborted => {
                 if let Some(sess) = sess.as_ref(){
                     sess.abort();
                 }
@@ -876,7 +876,7 @@ async fn submission_loop(
                         config.include_plan_tool,
                     ),
                     tx_event: tx_event.clone(),
-                    ctrl_c: Arc::clone(&ctrl_c),
+                    ctrl_c: Arc::clone(&on_abort),
                     user_instructions,
                     base_instructions,
                     approval_policy,
