@@ -493,6 +493,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                     model,
                     history_log_id: _,
                     history_entry_count: _,
+                    git_info: _,
                 } = session_configured_event;
 
                 ts_println!(

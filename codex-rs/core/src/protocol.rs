@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::config_types::ReasoningEffort as ReasoningEffortConfig;
 use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use crate::git_info::GitInfo;
 use crate::message_history::HistoryEntry;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::plan_tool::UpdatePlanArgs;
@@ -693,6 +694,10 @@ pub struct SessionConfiguredEvent {
 
     /// Current number of entries in the history log.
     pub history_entry_count: usize,
+
+    /// Optional Git metadata for the configured cwd.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_info: Option<GitInfo>,
 }
 
 /// User's decision in response to an ExecApprovalRequest.
@@ -755,6 +760,7 @@ mod tests {
                 model: "codex-mini-latest".to_string(),
                 history_log_id: 0,
                 history_entry_count: 0,
+                git_info: None,
             }),
         };
         let serialized = serde_json::to_string(&event).unwrap();

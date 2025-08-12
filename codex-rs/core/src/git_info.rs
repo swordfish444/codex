@@ -6,8 +6,12 @@ use tokio::process::Command;
 use tokio::time::Duration as TokioDuration;
 use tokio::time::timeout;
 
-/// Timeout for git commands to prevent freezing on large repositories
-const GIT_COMMAND_TIMEOUT: TokioDuration = TokioDuration::from_secs(5);
+/// Timeout for git commands to prevent freezing on large repositories.
+///
+/// Tests that wait for the initial `SessionConfigured` event use a short
+/// timeout (~1s). Collecting Git info is best-effort and must not block the
+/// session handshake, so we cap individual Git calls to a small value.
+const GIT_COMMAND_TIMEOUT: TokioDuration = TokioDuration::from_millis(400);
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct GitInfo {
@@ -81,36 +85,6 @@ pub async fn collect_git_info(cwd: &Path) -> Option<GitInfo> {
     }
 
     Some(git_info)
-}
-
-/// Blocking convenience wrapper around `collect_git_info` suitable for
-/// synchronous contexts. If called from within an active Tokio runtime,
-/// spawns a separate thread to avoid blocking the runtime's executor thread.
-pub fn collect_git_info_blocking(cwd: &Path) -> Option<GitInfo> {
-    // If we're already on a Tokio runtime, avoid `block_on` on the same thread.
-    if tokio::runtime::Handle::try_current().is_ok() {
-        let cwd = cwd.to_path_buf();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            // Use a lightweight current-thread runtime.
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build();
-            let res = match rt {
-                Ok(rt) => rt.block_on(collect_git_info(&cwd)),
-                Err(_) => None,
-            };
-            let _ = tx.send(res);
-        });
-        rx.recv().ok().flatten()
-    } else {
-        // Safe to block here – we're not inside a runtime.
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .ok()?;
-        rt.block_on(collect_git_info(cwd))
-    }
 }
 
 /// Run a git command with a timeout to prevent blocking on large repositories

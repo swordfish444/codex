@@ -908,6 +908,7 @@ mod tests {
                 model: "codex-mini-latest".into(),
                 history_log_id: 42,
                 history_entry_count: 3,
+                git_info: None,
             }),
         };
 

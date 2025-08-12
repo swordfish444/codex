@@ -899,9 +899,11 @@ async fn submission_loop(
                     }
                 }
 
-                // Gather history metadata for SessionConfiguredEvent.
-                let (history_log_id, history_entry_count) =
-                    crate::message_history::history_metadata(&config).await;
+                // Gather history metadata for SessionConfiguredEvent and await git info.
+                let git_info_fut = crate::git_info::collect_git_info(&sess.as_ref().unwrap().cwd);
+                let history_fut = crate::message_history::history_metadata(&config);
+                let (git_info, (history_log_id, history_entry_count)) =
+                    tokio::join!(git_info_fut, history_fut);
 
                 // ack
                 let events = std::iter::once(Event {
@@ -911,6 +913,7 @@ async fn submission_loop(
                         model,
                         history_log_id,
                         history_entry_count,
+                        git_info,
                     }),
                 })
                 .chain(mcp_connection_errors.into_iter());

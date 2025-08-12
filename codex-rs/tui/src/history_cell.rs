@@ -204,6 +204,7 @@ impl HistoryCell {
             session_id: _,
             history_log_id: _,
             history_entry_count: _,
+            git_info,
         } = event;
         if is_first_event {
             let cwd_str = match relativize_to_home(&config.cwd) {
@@ -212,9 +213,8 @@ impl HistoryCell {
                 None => config.cwd.display().to_string(),
             };
 
-            // Determine the current Git branch (if any) for display using
-            // the shared Git info collector in a way that is safe in sync contexts.
-            let branch_suffix = codex_core::git_info::collect_git_info_blocking(&config.cwd)
+            // Use async-collected Git info from the event if available.
+            let branch_suffix = git_info
                 .and_then(|g| g.branch)
                 .map(|b| format!(" ({b})"))
                 .unwrap_or_default();
