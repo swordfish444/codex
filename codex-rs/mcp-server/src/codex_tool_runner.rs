@@ -5,18 +5,18 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use codex_core::Codex;
-use codex_core::codex_wrapper::CodexConversation;
-use codex_core::codex_wrapper::init_codex;
 use codex_core::config::Config as CodexConfig;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
+use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::ExecApprovalRequestEvent;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
 use codex_core::protocol::Submission;
 use codex_core::protocol::TaskCompleteEvent;
+use codex_core::server::CodexConversation;
+use codex_core::server::CodexServer;
 use mcp_types::CallToolResult;
 use mcp_types::ContentBlock;
 use mcp_types::RequestId;
@@ -41,15 +41,10 @@ pub async fn run_codex_tool_session(
     initial_prompt: String,
     config: CodexConfig,
     outgoing: Arc<OutgoingMessageSender>,
-    session_map: Arc<Mutex<HashMap<Uuid, Arc<Codex>>>>,
+    codex_server: Arc<CodexServer>,
     running_requests_id_to_codex_uuid: Arc<Mutex<HashMap<RequestId, Uuid>>>,
 ) {
-    let CodexConversation {
-        codex,
-        session_configured,
-        session_id,
-        ..
-    } = match init_codex(config).await {
+    let new_conv = match codex_server.new_conversation(config).await {
         Ok(res) => res,
         Err(e) => {
             let result = CallToolResult {
@@ -65,16 +60,32 @@ pub async fn run_codex_tool_session(
             return;
         }
     };
-    let codex = Arc::new(codex);
+    let session_id = new_conv.conversation_id;
+    let session_configured = new_conv.session_configured;
+    let codex: Arc<CodexConversation> = match codex_server.get_conversation(session_id).await {
+        Ok(c) => c,
+        Err(e) => {
+            let result = CallToolResult {
+                content: vec![ContentBlock::TextContent(TextContent {
+                    r#type: "text".to_string(),
+                    text: format!("Failed to get conversation handle: {e}"),
+                    annotations: None,
+                })],
+                is_error: Some(true),
+                structured_content: None,
+            };
+            outgoing.send_response(id.clone(), result.into()).await;
+            return;
+        }
+    };
 
-    // update the session map so we can retrieve the session in a reply, and then drop it, since
-    // we no longer need it for this function
-    session_map.lock().await.insert(session_id, codex.clone());
-    drop(session_map);
-
+    let session_configured_event = Event {
+        id: "init".to_string(),
+        msg: EventMsg::SessionConfigured(session_configured.clone()),
+    };
     outgoing
         .send_event_as_notification(
-            &session_configured,
+            &session_configured_event,
             Some(OutgoingNotificationMeta::new(Some(id.clone()))),
         )
         .await;
@@ -110,7 +121,7 @@ pub async fn run_codex_tool_session(
 }
 
 pub async fn run_codex_tool_session_reply(
-    codex: Arc<Codex>,
+    codex: Arc<CodexConversation>,
     outgoing: Arc<OutgoingMessageSender>,
     request_id: RequestId,
     prompt: String,
@@ -146,7 +157,7 @@ pub async fn run_codex_tool_session_reply(
 }
 
 async fn run_codex_tool_session_inner(
-    codex: Arc<Codex>,
+    codex: Arc<CodexConversation>,
     outgoing: Arc<OutgoingMessageSender>,
     request_id: RequestId,
     running_requests_id_to_codex_uuid: Arc<Mutex<HashMap<RequestId, Uuid>>>,
