@@ -18,7 +18,8 @@ use crate::auth_store::write_new_auth_json;
 use crate::pkce::generate_pkce;
 use crate::success_url::build_success_url;
 use crate::token_data::extract_login_context_from_tokens;
-use tracing::{error, trace};
+use tracing::error;
+use tracing::trace;
 
 pub const DEFAULT_PORT: u16 = 1455;
 pub const DEFAULT_ISSUER: &str = "https://auth.openai.com";
@@ -29,7 +30,7 @@ pub const LOGIN_ERROR_HTML: &str = include_str!("./error_page.html");
 fn render_error_html(message: &str) -> String {
     LOGIN_ERROR_HTML.replace(
         "%%MESSAGE%%",
-        &html_escape::encode_text(message).to_string(),
+        html_escape::encode_text(message).as_ref(),
     )
 }
 
@@ -188,8 +189,12 @@ pub fn run_local_login_server_with_options(mut opts: LoginServerOptions) -> std:
 
                 // Preserve explicit error messages for tests
                 if params.get("state").map(|s| s.as_str()) != Some(state.as_str()) {
-                    let mut resp = Response::from_string(render_error_html("State parameter mismatch")).with_status_code(400);
-                    if let Ok(h) = Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]) {
+                    let mut resp =
+                        Response::from_string(render_error_html("State parameter mismatch"))
+                            .with_status_code(400);
+                    if let Ok(h) =
+                        Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..])
+                    {
                         resp.add_header(h);
                     }
                     if let Err(e) = request.respond(resp) {
@@ -199,8 +204,12 @@ pub fn run_local_login_server_with_options(mut opts: LoginServerOptions) -> std:
                 }
                 let code_opt = params.get("code").map(|s| s.as_str());
                 if code_opt.map(|s| s.is_empty()).unwrap_or(true) {
-                    let mut resp = Response::from_string(render_error_html("Missing authorization code")).with_status_code(400);
-                    if let Ok(h) = Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]) {
+                    let mut resp =
+                        Response::from_string(render_error_html("Missing authorization code"))
+                            .with_status_code(400);
+                    if let Ok(h) =
+                        Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..])
+                    {
                         resp.add_header(h);
                     }
                     if let Err(e) = request.respond(resp) {
@@ -231,8 +240,13 @@ pub fn run_local_login_server_with_options(mut opts: LoginServerOptions) -> std:
                         }
                     }
                     Err(_) => {
-                        let mut resp = Response::from_string(render_error_html("Token exchange failed")).with_status_code(500);
-                        if let Ok(h) = Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]) {
+                        let mut resp =
+                            Response::from_string(render_error_html("Token exchange failed"))
+                                .with_status_code(500);
+                        if let Ok(h) = Header::from_bytes(
+                            &b"Content-Type"[..],
+                            &b"text/html; charset=utf-8"[..],
+                        ) {
                             resp.add_header(h);
                         }
                         if let Err(e) = request.respond(resp) {
@@ -242,9 +256,9 @@ pub fn run_local_login_server_with_options(mut opts: LoginServerOptions) -> std:
                 }
             }
             _ => {
-                if let Err(e) = request.respond(
-                    Response::from_string("Endpoint not supported").with_status_code(404),
-                ) {
+                if let Err(e) = request
+                    .respond(Response::from_string("Endpoint not supported").with_status_code(404))
+                {
                     error!("failed to respond 404: {e}");
                 }
             }

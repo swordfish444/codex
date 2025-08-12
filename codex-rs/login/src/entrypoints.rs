@@ -79,9 +79,7 @@ pub fn spawn_login_with_chatgpt(codex_home: &Path) -> std::io::Result<SpawnedLog
 }
 
 /// Entrypoint used by the CLI to run the local login server.
-pub async fn login_with_chatgpt(
-    codex_home: &Path,
-) -> std::io::Result<()> {
+pub async fn login_with_chatgpt(codex_home: &Path) -> std::io::Result<()> {
     let client_id = std::env::var("CODEX_CLIENT_ID")
         .ok()
         .filter(|s| !s.is_empty())

@@ -384,7 +384,12 @@ async fn login_server_state_mismatch() {
     let (status, body, content_type) = http_get_with_ct(&cb_url);
     assert_eq!(status, 400);
     assert!(body.contains("State parameter mismatch"));
-    assert!(content_type.unwrap_or_default().to_ascii_lowercase().starts_with("text/html"));
+    assert!(
+        content_type
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .starts_with("text/html")
+    );
 
     // Stop server
     let _ = ureq::get(&format!("http://127.0.0.1:{port}/success")).call();
@@ -410,7 +415,12 @@ async fn login_server_missing_code() {
     let (status, body, content_type) = http_get_with_ct(&cb_url);
     assert_eq!(status, 400);
     assert!(body.contains("Missing authorization code"));
-    assert!(content_type.unwrap_or_default().to_ascii_lowercase().starts_with("text/html"));
+    assert!(
+        content_type
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .starts_with("text/html")
+    );
     let _ = ureq::get(&format!("http://127.0.0.1:{port}/success")).call();
     handle.join().unwrap().unwrap();
 }
@@ -431,7 +441,12 @@ async fn login_server_token_exchange_error() {
     let (status, body, content_type) = http_get_with_ct(&cb_url);
     assert_eq!(status, 500);
     assert!(body.contains("Token exchange failed"));
-    assert!(content_type.unwrap_or_default().to_ascii_lowercase().starts_with("text/html"));
+    assert!(
+        content_type
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .starts_with("text/html")
+    );
     let _ = ureq::get(&format!("http://127.0.0.1:{port}/success")).call();
     handle.join().unwrap().unwrap();
 }

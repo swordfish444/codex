@@ -267,8 +267,14 @@ fn update_tokens_preserves_id_token_as_string() {
 
     // Build a valid-looking JWT (URL-safe base64 header.payload.signature)
     #[derive(Serialize)]
-    struct Header { alg: &'static str, typ: &'static str }
-    let header = Header { alg: "none", typ: "JWT" };
+    struct Header {
+        alg: &'static str,
+        typ: &'static str,
+    }
+    let header = Header {
+        alg: "none",
+        typ: "JWT",
+    };
     let payload = serde_json::json!({});
     let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
     let header_b64 = b64(&serde_json::to_vec(&header).unwrap());
