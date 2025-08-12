@@ -1,16 +1,11 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use codex_core::Codex;
-use codex_core::codex_wrapper::init_codex;
 use codex_core::config::Config as CodexConfig;
 use codex_core::config::ConfigOverrides;
-use codex_core::protocol::EventMsg;
-use codex_core::protocol::SessionConfiguredEvent;
+use codex_core::server::CodexConversation;
+use codex_core::server::NewConversation;
 use mcp_types::RequestId;
-use tokio::sync::Mutex;
-use uuid::Uuid;
 
 use crate::conversation_loop::run_conversation_loop;
 use crate::json_to_toml::json_to_toml;
@@ -81,8 +76,11 @@ pub(crate) async fn handle_create_conversation(
         }
     };
 
-    // Initialize Codex session
-    let codex_conversation = match init_codex(cfg).await {
+    // Initialize Codex session via server API
+    let NewConversation {
+        conversation_id: session_id,
+        session_configured,
+    } = match message_processor.codex_server().new_conversation(cfg).await {
         Ok(conv) => conv,
         Err(e) => {
             message_processor
@@ -100,36 +98,33 @@ pub(crate) async fn handle_create_conversation(
         }
     };
 
-    // Expect SessionConfigured; if not, return error.
-    let EventMsg::SessionConfigured(SessionConfiguredEvent { model, .. }) =
-        &codex_conversation.session_configured.msg
-    else {
-        message_processor
-            .send_response_with_optional_error(
-                id,
-                Some(ToolCallResponseResult::ConversationCreate(
-                    ConversationCreateResult::Error {
-                        message: "Expected SessionConfigured event".to_string(),
-                    },
-                )),
-                Some(true),
-            )
-            .await;
-        return;
+    let effective_model = session_configured.model.clone();
+
+    // Obtain the Codex conversation handle from the server
+    let codex_arc: Arc<CodexConversation> = match message_processor
+        .codex_server()
+        .get_conversation(session_id)
+        .await
+    {
+        Ok(conv) => conv,
+        Err(e) => {
+            message_processor
+                .send_response_with_optional_error(
+                    id,
+                    Some(ToolCallResponseResult::ConversationCreate(
+                        ConversationCreateResult::Error {
+                            message: format!(
+                                "Failed to get conversation handle for {session_id}: {e}"
+                            ),
+                        },
+                    )),
+                    Some(true),
+                )
+                .await;
+            return;
+        }
     };
 
-    let effective_model = model.clone();
-
-    let session_id = codex_conversation.session_id;
-    let codex_arc = Arc::new(codex_conversation.codex);
-
-    // Store session for future calls
-    insert_session(
-        session_id,
-        codex_arc.clone(),
-        message_processor.session_map(),
-    )
-    .await;
     // Run the conversation loop in the background so this request can return immediately.
     let outgoing = message_processor.outgoing();
     let spawn_id = id.clone();
@@ -152,11 +147,4 @@ pub(crate) async fn handle_create_conversation(
         .await;
 }
 
-async fn insert_session(
-    session_id: Uuid,
-    codex: Arc<Codex>,
-    session_map: Arc<Mutex<HashMap<Uuid, Arc<Codex>>>>,
-) {
-    let mut guard = session_map.lock().await;
-    guard.insert(session_id, codex);
-}
+// No longer need to insert into a local session map; CodexServer manages sessions.

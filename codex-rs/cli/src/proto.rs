@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use clap::Parser;
 use codex_common::CliConfigOverrides;
-use codex_core::Codex;
-use codex_core::CodexSpawnOk;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::protocol::Submission;
+use codex_core::server::CodexConversation;
+use codex_core::server::CodexServer;
 use codex_core::util::notify_on_sigint;
 use codex_login::CodexAuth;
 use tokio::io::AsyncBufReadExt;
@@ -36,10 +36,12 @@ pub async fn run_main(opts: ProtoCli) -> anyhow::Result<()> {
         .map_err(anyhow::Error::msg)?;
 
     let config = Config::load_with_cli_overrides(overrides_vec, ConfigOverrides::default())?;
-    let auth = CodexAuth::from_codex_home(&config.codex_home)?;
+    let _auth = CodexAuth::from_codex_home(&config.codex_home)?;
     let ctrl_c = notify_on_sigint();
-    let CodexSpawnOk { codex, .. } = Codex::spawn(config, auth, ctrl_c.clone()).await?;
-    let codex = Arc::new(codex);
+    // Use server API to start a conversation
+    let server = CodexServer::default();
+    let new_conv = server.new_conversation(config).await?;
+    let codex: Arc<CodexConversation> = server.get_conversation(new_conv.conversation_id).await?;
 
     // Task that reads JSON lines from stdin and forwards to Submission Queue
     let sq_fut = {
