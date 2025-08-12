@@ -28,10 +28,7 @@ pub const LOGIN_SUCCESS_HTML: &str = include_str!("./success_page.html");
 pub const LOGIN_ERROR_HTML: &str = include_str!("./error_page.html");
 
 fn render_error_html(message: &str) -> String {
-    LOGIN_ERROR_HTML.replace(
-        "%%MESSAGE%%",
-        html_escape::encode_text(message).as_ref(),
-    )
+    LOGIN_ERROR_HTML.replace("%%MESSAGE%%", html_escape::encode_text(message).as_ref())
 }
 
 #[derive(Debug, Clone)]
