@@ -152,10 +152,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                     if let Some(api_key) = login_cli.api_key {
                         run_login_with_api_key(login_cli.config_overrides, api_key).await;
                     } else {
-                        run_login_with_chatgpt(
-                            login_cli.config_overrides,
-                        )
-                        .await;
+                        run_login_with_chatgpt(login_cli.config_overrides).await;
                     }
                 }
             }

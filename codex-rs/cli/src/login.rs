@@ -11,9 +11,7 @@ use codex_login::login_with_api_key;
 use codex_login::login_with_chatgpt;
 use codex_login::logout;
 
-pub async fn run_login_with_chatgpt(
-    cli_config_overrides: CliConfigOverrides,
-) -> ! {
+pub async fn run_login_with_chatgpt(cli_config_overrides: CliConfigOverrides) -> ! {
     let config = load_config_or_exit(cli_config_overrides);
 
     match login_with_chatgpt(&config.codex_home).await {
