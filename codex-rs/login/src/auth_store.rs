@@ -38,8 +38,8 @@ pub fn logout(codex_home: &Path) -> std::io::Result<bool> {
     }
 }
 
-/// Attempt to read and refresh the `auth.json` file in the given `CODEX_HOME` directory.
-/// Returns the full AuthDotJson structure after refreshing if necessary.
+/// Attempt to read and deserialize the `auth.json` file at the given path.
+/// Returns the full AuthDotJson structure.
 pub fn try_read_auth_json(auth_file: &Path) -> std::io::Result<AuthDotJson> {
     let mut file = File::open(auth_file)?;
     let mut contents = String::new();

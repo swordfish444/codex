@@ -100,14 +100,6 @@ struct LoginCommand {
     #[arg(long = "api-key", value_name = "API_KEY")]
     api_key: Option<String>,
 
-    /// Do not automatically open the browser
-    #[arg(long = "no-browser")]
-    no_browser: bool,
-
-    /// Enable verbose request logging during login
-    #[arg(long = "verbose")]
-    verbose: bool,
-
     #[command(subcommand)]
     action: Option<LoginSubcommand>,
 }
@@ -162,8 +154,6 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                     } else {
                         run_login_with_chatgpt(
                             login_cli.config_overrides,
-                            login_cli.no_browser,
-                            login_cli.verbose,
                         )
                         .await;
                     }

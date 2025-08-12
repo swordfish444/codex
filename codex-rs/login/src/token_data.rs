@@ -83,19 +83,7 @@ pub(crate) enum KnownPlan {
     Edu,
 }
 
-#[derive(Deserialize)]
-struct IdClaims {
-    #[serde(default)]
-    email: Option<String>,
-    #[serde(rename = "https://api.openai.com/auth", default)]
-    auth: Option<AuthClaims>,
-}
-
-#[derive(Deserialize)]
-struct AuthClaims {
-    #[serde(default)]
-    chatgpt_plan_type: Option<PlanType>,
-}
+// Removed duplicate IdClaims/AuthClaims in favor of unified helpers below
 
 #[derive(Debug, Error)]
 pub enum IdTokenInfoError {
@@ -108,16 +96,10 @@ pub enum IdTokenInfoError {
 }
 
 pub(crate) fn parse_id_token(id_token: &str) -> Result<IdTokenInfo, IdTokenInfoError> {
-    // JWT format: header.payload.signature
-    let mut parts = id_token.split('.');
-    let (_header_b64, payload_b64, _sig_b64) = match (parts.next(), parts.next(), parts.next()) {
-        (Some(h), Some(p), Some(s)) if !h.is_empty() && !p.is_empty() && !s.is_empty() => (h, p, s),
-        _ => return Err(IdTokenInfoError::InvalidFormat),
-    };
-
-    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload_b64)?;
-    let claims: IdClaims = serde_json::from_slice(&payload_bytes)?;
-
+    // Reuse the generic JWT parsing helpers to extract fields
+    let payload = decode_jwt_payload(id_token).ok_or(IdTokenInfoError::InvalidFormat)?;
+    // Reuse AuthOuterClaims instead of a local struct to avoid duplication
+    let claims: AuthOuterClaims = serde_json::from_slice(&payload)?;
     Ok(IdTokenInfo {
         email: claims.email,
         chatgpt_plan_type: claims.auth.and_then(|a| a.chatgpt_plan_type),
@@ -136,6 +118,8 @@ where
 
 #[derive(Default, Deserialize)]
 struct AuthOuterClaims {
+    #[serde(default)]
+    email: Option<String>,
     #[serde(rename = "https://api.openai.com/auth", default)]
     auth: Option<AuthInnerClaims>,
 }

@@ -57,10 +57,8 @@ fn default_opts(tmp: &TempDir) -> LoginServerOptions {
         issuer: "http://auth.local".into(),
         port: 1455,
         open_browser: false,
-        redeem_credits: true,
         expose_state_endpoint: false,
         testing_timeout_secs: None,
-        verbose: false,
         #[cfg(feature = "http-e2e-tests")]
         port_sender: None,
     }
@@ -78,8 +76,6 @@ fn headless_success_writes_auth_and_url() {
         "access_token": make_fake_jwt(json!({"https://api.openai.com/auth": {"organization_id": "org","project_id": "proj","completed_platform_onboarding": true, "is_org_owner": false, "chatgpt_plan_type": "plus"}})),
         "refresh_token": "r1"
     }));
-    // Credits redeem
-    http.queue(json!({"granted_chatgpt_subscriber_api_credits": 5}));
 
     let outcome =
         process_callback_headless(&opts, "state", "state", Some("code"), "ver", &http).unwrap();
@@ -126,25 +122,7 @@ fn headless_token_endpoint_failure() {
     assert_eq!(err.kind(), std::io::ErrorKind::Other);
 }
 
-// 5) Credit redemption best-effort: even if it errors, success persists
-#[test]
-fn headless_credit_redemption_best_effort() {
-    let tmp = TempDir::new().unwrap();
-    let mut opts = default_opts(&tmp);
-    opts.redeem_credits = true;
-    let http = MockHttp::default();
-    // Code exchange
-    http.queue(json!({
-        "id_token": make_fake_jwt(json!({"https://api.openai.com/auth": {"chatgpt_account_id": "acc"}})),
-        "access_token": make_fake_jwt(json!({"https://api.openai.com/auth": {"organization_id": "org","project_id": "proj","completed_platform_onboarding": false, "is_org_owner": true, "chatgpt_plan_type": "pro"}})),
-        "refresh_token": "r1"
-    }));
-    // Credits redeem: simulate error by not queuing a third response; the mock will error internally
-    let outcome =
-        process_callback_headless(&opts, "state", "state", Some("code"), "ver", &http).unwrap();
-    assert!(outcome.success_url.contains("needs_setup=true"));
-    assert!(tmp.path().join("auth.json").exists());
-}
+// 5) (Removed) Credit redemption is no longer attempted
 
 // 6) ID-token fallback for org/project/flags
 #[test]
@@ -170,8 +148,6 @@ fn headless_id_token_fallback_for_org_and_project() {
         })),
         "refresh_token": "r1"
     }));
-    // Credits redeem
-    http.queue(json!({"granted_chatgpt_subscriber_api_credits": 0}));
 
     let outcome =
         process_callback_headless(&opts, "state", "state", Some("code"), "ver", &http).unwrap();

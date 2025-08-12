@@ -81,8 +81,6 @@ pub fn spawn_login_with_chatgpt(codex_home: &Path) -> std::io::Result<SpawnedLog
 /// Entrypoint used by the CLI to run the local login server.
 pub async fn login_with_chatgpt(
     codex_home: &Path,
-    open_browser: bool,
-    verbose: bool,
 ) -> std::io::Result<()> {
     let client_id = std::env::var("CODEX_CLIENT_ID")
         .ok()
@@ -97,11 +95,9 @@ pub async fn login_with_chatgpt(
             client_id: client_id_cloned,
             issuer: server::DEFAULT_ISSUER.to_string(),
             port: server::DEFAULT_PORT,
-            open_browser,
-            redeem_credits: true,
+            open_browser: true,
             expose_state_endpoint: false,
             testing_timeout_secs: None,
-            verbose,
             #[cfg(feature = "http-e2e-tests")]
             port_sender: None,
         };

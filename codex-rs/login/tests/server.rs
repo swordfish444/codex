@@ -198,7 +198,6 @@ use common::make_fake_jwt;
 fn spawn_login_server_and_wait(
     issuer: String,
     codex_home: &tempfile::TempDir,
-    redeem_credits: bool,
 ) -> (std::thread::JoinHandle<std::io::Result<()>>, u16) {
     let (tx, rx) = std::sync::mpsc::channel();
     let opts = LoginServerOptions {
@@ -207,10 +206,8 @@ fn spawn_login_server_and_wait(
         issuer,
         port: 0,
         open_browser: false,
-        redeem_credits,
         expose_state_endpoint: true,
         testing_timeout_secs: Some(5),
-        verbose: false,
         #[cfg(feature = "http-e2e-tests")]
         port_sender: Some(tx),
     };
@@ -239,6 +236,24 @@ fn http_get(url: &str) -> (u16, String, Option<String>) {
     }
 }
 
+fn http_get_with_ct(url: &str) -> (u16, String, Option<String>) {
+    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    match agent.get(url).call() {
+        Ok(resp) => {
+            let status = resp.status();
+            let content_type = resp.header("content-type").map(|s| s.to_string());
+            let body = resp.into_string().unwrap_or_default();
+            (status, body, content_type)
+        }
+        Err(ureq::Error::Status(code, resp)) => {
+            let content_type = resp.header("content-type").map(|s| s.to_string());
+            let body = resp.into_string().unwrap_or_default();
+            (code, body, content_type)
+        }
+        Err(err) => panic!("http error: {err}"),
+    }
+}
+
 fn http_get_follow_redirect(url: &str) -> (u16, String) {
     let agent = ureq::AgentBuilder::new().redirects(5).build();
     match agent.get(url).call() {
@@ -255,7 +270,7 @@ async fn login_server_happy_path() {
 
     let codex_home = TempDir::new().unwrap();
     let issuer = server.uri();
-    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, true);
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home);
 
     // Get state via test-only endpoint
     let state_url = format!("http://127.0.0.1:{port}/__test/state");
@@ -294,7 +309,7 @@ async fn login_server_needs_setup_true_and_params_present() {
 
     let codex_home = TempDir::new().unwrap();
     let issuer = server.uri();
-    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, true);
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home);
     let state_url = format!("http://127.0.0.1:{port}/__test/state");
     let (_s, state, _) = http_get(&state_url);
     assert!(!state.is_empty());
@@ -317,7 +332,7 @@ async fn login_server_id_token_fallback_for_org_and_project() {
 
     let codex_home = TempDir::new().unwrap();
     let issuer = server.uri();
-    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, true);
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home);
     let state_url = format!("http://127.0.0.1:{port}/__test/state");
     let (_s, state, _) = http_get(&state_url);
     let cb_url = format!("http://127.0.0.1:{port}/auth/callback?code=abc&state={state}");
@@ -337,7 +352,7 @@ async fn login_server_skips_exchange_when_no_org_or_project() {
 
     let codex_home = TempDir::new().unwrap();
     let issuer = server.uri();
-    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, true);
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home);
     let state_url = format!("http://127.0.0.1:{port}/__test/state");
     let (_s, state, _) = http_get(&state_url);
     let cb_url = format!("http://127.0.0.1:{port}/auth/callback?code=abc&state={state}");
@@ -363,12 +378,13 @@ async fn login_server_state_mismatch() {
     let server = start_mock_oauth_server(MockBehavior::Noop).await;
     let codex_home = TempDir::new().unwrap();
     let issuer = server.uri();
-    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, false);
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home);
 
     let cb_url = format!("http://127.0.0.1:{port}/auth/callback?code=abc&state=wrong");
-    let (status, body) = http_get_follow_redirect(&cb_url);
+    let (status, body, content_type) = http_get_with_ct(&cb_url);
     assert_eq!(status, 400);
-    assert!(body.contains("State parameter mismatch") || body.is_empty());
+    assert!(body.contains("State parameter mismatch"));
+    assert!(content_type.unwrap_or_default().to_ascii_lowercase().starts_with("text/html"));
 
     // Stop server
     let _ = ureq::get(&format!("http://127.0.0.1:{port}/success")).call();
@@ -381,7 +397,7 @@ async fn login_server_missing_code() {
     let server = start_mock_oauth_server(MockBehavior::Noop).await;
     let codex_home = TempDir::new().unwrap();
     let issuer = server.uri();
-    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, false);
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home);
 
     // Fetch state
     let state = ureq::get(&format!("http://127.0.0.1:{port}/__test/state"))
@@ -391,8 +407,10 @@ async fn login_server_missing_code() {
         .unwrap();
     // Missing code
     let cb_url = format!("http://127.0.0.1:{port}/auth/callback?state={state}");
-    let (status, _body) = http_get_follow_redirect(&cb_url);
+    let (status, body, content_type) = http_get_with_ct(&cb_url);
     assert_eq!(status, 400);
+    assert!(body.contains("Missing authorization code"));
+    assert!(content_type.unwrap_or_default().to_ascii_lowercase().starts_with("text/html"));
     let _ = ureq::get(&format!("http://127.0.0.1:{port}/success")).call();
     handle.join().unwrap().unwrap();
 }
@@ -403,15 +421,17 @@ async fn login_server_token_exchange_error() {
     let server = start_mock_oauth_server(MockBehavior::TokenError).await;
     let codex_home = TempDir::new().unwrap();
     let issuer = server.uri();
-    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, false);
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home);
     let state = ureq::get(&format!("http://127.0.0.1:{port}/__test/state"))
         .call()
         .expect("get state")
         .into_string()
         .unwrap();
     let cb_url = format!("http://127.0.0.1:{port}/auth/callback?code=abc&state={state}");
-    let (status, _body) = http_get_follow_redirect(&cb_url);
+    let (status, body, content_type) = http_get_with_ct(&cb_url);
     assert_eq!(status, 500);
+    assert!(body.contains("Token exchange failed"));
+    assert!(content_type.unwrap_or_default().to_ascii_lowercase().starts_with("text/html"));
     let _ = ureq::get(&format!("http://127.0.0.1:{port}/success")).call();
     handle.join().unwrap().unwrap();
 }
@@ -423,7 +443,7 @@ async fn login_server_credit_redemption_best_effort() {
     let server = start_mock_oauth_server(MockBehavior::Success).await;
     let codex_home = TempDir::new().unwrap();
     let issuer = server.uri();
-    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home, true);
+    let (handle, port) = spawn_login_server_and_wait(issuer, &codex_home);
     let state = ureq::get(&format!("http://127.0.0.1:{port}/__test/state"))
         .call()
         .expect("get state")

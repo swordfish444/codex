@@ -19,14 +19,7 @@ use tempfile::tempdir;
 
 const LAST_REFRESH: &str = "2025-08-06T20:41:36.232376Z";
 
-#[test]
-fn writes_api_key_and_loads_auth() {
-    let dir = tempdir().unwrap();
-    crate::auth_store::login_with_api_key(dir.path(), "sk-test-key").unwrap();
-    let auth = load_auth(dir.path(), false).unwrap().unwrap();
-    assert_eq!(auth.mode, AuthMode::ApiKey);
-    assert_eq!(auth.api_key.as_deref(), Some("sk-test-key"));
-}
+// moved to integration tests in tests/api_key_login.rs
 
 #[test]
 fn loads_from_env_var_if_env_var_exists() {
@@ -253,4 +246,40 @@ fn logout_removes_auth_file() -> Result<(), std::io::Error> {
     assert!(removed);
     assert!(!dir.path().join("auth.json").exists());
     Ok(())
+}
+
+#[test]
+fn update_tokens_preserves_id_token_as_string() {
+    let dir = tempdir().unwrap();
+    let auth_file = crate::auth_store::get_auth_file(dir.path());
+
+    // Write an initial auth.json with a tokens object
+    let initial = serde_json::json!({
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "id_token": "old-id-token",
+            "access_token": "a1",
+            "refresh_token": "r1"
+        },
+        "last_refresh": LAST_REFRESH
+    });
+    std::fs::write(&auth_file, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+
+    // Build a valid-looking JWT (URL-safe base64 header.payload.signature)
+    #[derive(Serialize)]
+    struct Header { alg: &'static str, typ: &'static str }
+    let header = Header { alg: "none", typ: "JWT" };
+    let payload = serde_json::json!({});
+    let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
+    let header_b64 = b64(&serde_json::to_vec(&header).unwrap());
+    let payload_b64 = b64(&serde_json::to_vec(&payload).unwrap());
+    let signature_b64 = b64(b"sig");
+    let new_id = format!("{header_b64}.{payload_b64}.{signature_b64}");
+    // Call update_tokens with a new id_token
+    let _ = crate::auth_store::update_tokens(&auth_file, new_id.clone(), None, None).unwrap();
+
+    // Read raw file and ensure id_token is still a string, equal to what we wrote
+    let raw = std::fs::read_to_string(&auth_file).unwrap();
+    let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(val["tokens"]["id_token"].as_str(), Some(new_id.as_str()));
 }
