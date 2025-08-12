@@ -2,8 +2,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use codex_core::codex_wrapper::CodexConversation;
-use codex_core::codex_wrapper::init_codex;
 use codex_core::config::Config;
 use codex_core::parse_command::ParsedCommand;
 use codex_core::protocol::AgentMessageDeltaEvent;
@@ -28,6 +26,7 @@ use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::TaskCompleteEvent;
 use codex_core::protocol::TokenUsage;
 use codex_core::protocol::TurnDiffEvent;
+use codex_core::server::NewConversation;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use ratatui::buffer::Buffer;
@@ -53,6 +52,7 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell::PatchEventType;
 use crate::live_wrap::RowBuilder;
 use crate::user_approval_widget::ApprovalRequest;
+use codex_core::server::CodexServer;
 use codex_file_search::FileMatch;
 use ratatui::style::Stylize;
 
@@ -161,6 +161,7 @@ impl ChatWidget<'_> {
     }
     pub(crate) fn new(
         config: Config,
+        server: Arc<CodexServer>,
         app_event_tx: AppEventSender,
         initial_prompt: Option<String>,
         initial_images: Vec<PathBuf>,
@@ -172,12 +173,12 @@ impl ChatWidget<'_> {
         // Create the Codex asynchronously so the UI loads as quickly as possible.
         let config_for_agent_loop = config.clone();
         tokio::spawn(async move {
-            let CodexConversation {
-                codex,
+            let NewConversation {
+                conversation_id: _,
+                conversation,
                 session_configured,
-                ..
-            } = match init_codex(config_for_agent_loop).await {
-                Ok(vals) => vals,
+            } = match server.new_conversation(config_for_agent_loop).await {
+                Ok(v) => v,
                 Err(e) => {
                     // TODO: surface this error to the user.
                     tracing::error!("failed to initialize codex: {e}");
@@ -185,21 +186,24 @@ impl ChatWidget<'_> {
                 }
             };
 
-            // Forward the captured `SessionInitialized` event that was consumed
-            // inside `init_codex()` so it can be rendered in the UI.
-            app_event_tx_clone.send(AppEvent::CodexEvent(session_configured.clone()));
-            let codex = Arc::new(codex);
-            let codex_clone = codex.clone();
+            // Forward the captured `SessionConfigured` event so it can be rendered in the UI.
+            let ev = codex_core::protocol::Event {
+                // The `id` does not matter for rendering, so we can use a fake value.
+                id: "".to_string(),
+                msg: codex_core::protocol::EventMsg::SessionConfigured(session_configured),
+            };
+            app_event_tx_clone.send(AppEvent::CodexEvent(ev));
+            let conversation_clone = conversation.clone();
             tokio::spawn(async move {
                 while let Some(op) = codex_op_rx.recv().await {
-                    let id = codex_clone.submit(op).await;
+                    let id = conversation_clone.submit(op).await;
                     if let Err(e) = id {
                         tracing::error!("failed to submit op: {e}");
                     }
                 }
             });
 
-            while let Ok(event) = codex.next_event().await {
+            while let Ok(event) = conversation.next_event().await {
                 app_event_tx_clone.send(AppEvent::CodexEvent(event));
             }
         });
