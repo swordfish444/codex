@@ -128,6 +128,7 @@ impl CodexAuth {
             openai_api_key: None,
             tokens: Some(TokenData {
                 id_token: Default::default(),
+                id_token_raw: String::new(),
                 access_token: "Access Token".to_string(),
                 refresh_token: "test".to_string(),
                 account_id: Some("account_id".to_string()),

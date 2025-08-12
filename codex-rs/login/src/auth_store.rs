@@ -79,26 +79,69 @@ pub(crate) fn update_tokens(
     access_token: Option<String>,
     refresh_token: Option<String>,
 ) -> std::io::Result<AuthDotJson> {
-    // Read, modify, write raw JSON to preserve id_token as a string on disk.
-    let mut contents = String::new();
-    {
-        let mut f = File::open(auth_file)?;
-        use std::io::Read as _;
-        f.read_to_string(&mut contents)?;
-    }
-    let mut obj: serde_json::Value = serde_json::from_str(&contents)?;
-    obj["tokens"]["id_token"] = serde_json::Value::String(id_token);
-    if let Some(a) = access_token {
-        obj["tokens"]["access_token"] = serde_json::Value::String(a);
-    }
-    if let Some(r) = refresh_token {
-        obj["tokens"]["refresh_token"] = serde_json::Value::String(r);
-    }
-    obj["last_refresh"] =
-        serde_json::Value::String(Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true));
-    let updated = serde_json::to_string_pretty(&obj)?;
-    std::fs::write(auth_file, updated)?;
-    // Return parsed structure
+    let mut prior_access: Option<String> = None;
+    let mut prior_refresh: Option<String> = None;
+    let mut auth = match try_read_auth_json(auth_file) {
+        Ok(a) => a,
+        Err(_) => {
+            // Try to salvage existing access/refresh from raw JSON on disk
+            if let Ok(mut f) = File::open(auth_file) {
+                let mut contents = String::new();
+                use std::io::Read as _;
+                if f.read_to_string(&mut contents).is_ok() {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&contents) {
+                        prior_access = val
+                            .get("tokens")
+                            .and_then(|t| t.get("access_token"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        prior_refresh = val
+                            .get("tokens")
+                            .and_then(|t| t.get("refresh_token"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                    }
+                }
+            }
+            AuthDotJson {
+                openai_api_key: None,
+                tokens: None,
+                last_refresh: None,
+            }
+        }
+    };
+    let now = Utc::now();
+    auth.last_refresh = Some(now);
+
+    let new_tokens = match auth.tokens.take() {
+        Some(mut tokens) => {
+            tokens.id_token_raw = id_token;
+            if let Some(a) = access_token.clone() {
+                tokens.access_token = a;
+            }
+            if let Some(r) = refresh_token.clone() {
+                tokens.refresh_token = r;
+            }
+            // Re-parse id_token_raw into parsed fields
+            tokens.id_token = crate::token_data::parse_id_token(&tokens.id_token_raw)
+                .map_err(std::io::Error::other)?;
+            tokens
+        }
+        None => {
+            // Construct fresh TokenData from provided values
+            let a = access_token
+                .or_else(|| prior_access.clone())
+                .ok_or_else(|| std::io::Error::other("missing access_token"))?;
+            let r = refresh_token
+                .or_else(|| prior_refresh.clone())
+                .ok_or_else(|| std::io::Error::other("missing refresh_token"))?;
+            crate::token_data::TokenData::from_raw(id_token, a, r, None)
+                .map_err(std::io::Error::other)?
+        }
+    };
+
+    auth.tokens = Some(new_tokens);
+    write_auth_json(auth_file, &auth)?;
     try_read_auth_json(auth_file)
 }
 
@@ -114,26 +157,17 @@ pub(crate) fn write_new_auth_json(
 ) -> std::io::Result<()> {
     std::fs::create_dir_all(codex_home)?;
     let auth_file = get_auth_file(codex_home);
-    // Write explicit JSON preserving raw JWT in id_token
-    let json_data = serde_json::json!({
-        "OPENAI_API_KEY": api_key,
-        "tokens": {
-            "id_token": id_token,
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "account_id": account_id,
-        },
-        "last_refresh": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
-    });
-    let contents = serde_json::to_string_pretty(&json_data)?;
-    let mut options = OpenOptions::new();
-    options.truncate(true).write(true).create(true);
-    #[cfg(unix)]
-    {
-        options.mode(0o600);
-    }
-    let mut file = options.open(&auth_file)?;
-    use std::io::Write as _;
-    file.write_all(contents.as_bytes())?;
-    file.flush()
+    let tokens = crate::token_data::TokenData::from_raw(
+        id_token.to_string(),
+        access_token.to_string(),
+        refresh_token.to_string(),
+        account_id,
+    )
+    .map_err(std::io::Error::other)?;
+    let auth_dot_json = AuthDotJson {
+        openai_api_key: api_key,
+        tokens: Some(tokens),
+        last_refresh: Some(Utc::now()),
+    };
+    write_auth_json(&auth_file, &auth_dot_json)
 }

@@ -1,9 +1,7 @@
 #![expect(clippy::expect_used, clippy::unwrap_used)]
-use super::*;
 use crate::auth::AuthMode;
 use crate::auth::CodexAuth;
 use crate::auth::load_auth;
-use crate::auth_store::AuthDotJson;
 use crate::auth_store::get_auth_file;
 use crate::auth_store::logout;
 use crate::token_data::IdTokenInfo;
@@ -54,27 +52,27 @@ async fn pro_account_with_no_api_key_uses_chatgpt_auth() {
     assert_eq!(AuthMode::ChatGPT, mode);
 
     let guard = auth_dot_json.lock().unwrap();
-    let auth_dot_json = guard.as_ref().expect("AuthDotJson should exist");
+    let actual = guard.as_ref().expect("AuthDotJson should exist");
+    assert_eq!(actual.openai_api_key, None);
+    let tokens = actual.tokens.as_ref().expect("tokens should exist");
     assert_eq!(
-        &AuthDotJson {
-            openai_api_key: None,
-            tokens: Some(TokenData {
-                id_token: IdTokenInfo {
-                    email: Some("user@example.com".to_string()),
-                    chatgpt_plan_type: Some(PlanType::Known(KnownPlan::Pro)),
-                },
-                access_token: "test-access-token".to_string(),
-                refresh_token: "test-refresh-token".to_string(),
-                account_id: None,
-            }),
-            last_refresh: Some(
-                chrono::DateTime::parse_from_rfc3339(LAST_REFRESH)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-            ),
-        },
-        auth_dot_json
-    )
+        tokens.id_token,
+        IdTokenInfo {
+            email: Some("user@example.com".to_string()),
+            chatgpt_plan_type: Some(PlanType::Known(KnownPlan::Pro)),
+        }
+    );
+    assert_eq!(tokens.access_token, "test-access-token".to_string());
+    assert_eq!(tokens.refresh_token, "test-refresh-token".to_string());
+    assert_eq!(tokens.account_id, None);
+    assert_eq!(
+        actual.last_refresh,
+        Some(
+            chrono::DateTime::parse_from_rfc3339(LAST_REFRESH)
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        )
+    );
 }
 
 /// Even if the OPENAI_API_KEY is set in auth.json, if the plan is not in
@@ -102,27 +100,27 @@ async fn pro_account_with_api_key_still_uses_chatgpt_auth() {
     assert_eq!(AuthMode::ChatGPT, mode);
 
     let guard = auth_dot_json.lock().unwrap();
-    let auth_dot_json = guard.as_ref().expect("AuthDotJson should exist");
+    let actual = guard.as_ref().expect("AuthDotJson should exist");
+    assert_eq!(actual.openai_api_key, None);
+    let tokens = actual.tokens.as_ref().expect("tokens should exist");
     assert_eq!(
-        &AuthDotJson {
-            openai_api_key: None,
-            tokens: Some(TokenData {
-                id_token: IdTokenInfo {
-                    email: Some("user@example.com".to_string()),
-                    chatgpt_plan_type: Some(PlanType::Known(KnownPlan::Pro)),
-                },
-                access_token: "test-access-token".to_string(),
-                refresh_token: "test-refresh-token".to_string(),
-                account_id: None,
-            }),
-            last_refresh: Some(
-                chrono::DateTime::parse_from_rfc3339(LAST_REFRESH)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-            ),
-        },
-        auth_dot_json
-    )
+        tokens.id_token,
+        IdTokenInfo {
+            email: Some("user@example.com".to_string()),
+            chatgpt_plan_type: Some(PlanType::Known(KnownPlan::Pro)),
+        }
+    );
+    assert_eq!(tokens.access_token, "test-access-token".to_string());
+    assert_eq!(tokens.refresh_token, "test-refresh-token".to_string());
+    assert_eq!(tokens.account_id, None);
+    assert_eq!(
+        actual.last_refresh,
+        Some(
+            chrono::DateTime::parse_from_rfc3339(LAST_REFRESH)
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        )
+    );
 }
 
 /// If the OPENAI_API_KEY is set in auth.json and it is an enterprise
@@ -288,4 +286,41 @@ fn update_tokens_preserves_id_token_as_string() {
     let raw = std::fs::read_to_string(&auth_file).unwrap();
     let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(val["tokens"]["id_token"].as_str(), Some(new_id.as_str()));
+}
+
+#[test]
+fn write_new_auth_json_is_python_compatible_shape() {
+    let dir = tempdir().unwrap();
+    let id_token = {
+        #[derive(Serialize)]
+        struct Header { alg: &'static str, typ: &'static str }
+        let header = Header { alg: "none", typ: "JWT" };
+        let payload = serde_json::json!({"sub": "123"});
+        let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
+        let header_b64 = b64(&serde_json::to_vec(&header).unwrap());
+        let payload_b64 = b64(&serde_json::to_vec(&payload).unwrap());
+        let signature_b64 = b64(b"sig");
+        format!("{header_b64}.{payload_b64}.{signature_b64}")
+    };
+
+    crate::auth_store::write_new_auth_json(
+        dir.path(),
+        Some("sk-test".to_string()),
+        &id_token,
+        "a1",
+        "r1",
+        Some("acc".to_string()),
+    )
+    .unwrap();
+
+    let raw = std::fs::read_to_string(dir.path().join("auth.json")).unwrap();
+    let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+
+    assert_eq!(val["OPENAI_API_KEY"].as_str(), Some("sk-test"));
+    assert!(val["last_refresh"].as_str().is_some());
+    assert!(val["tokens"].is_object());
+    assert_eq!(val["tokens"]["id_token"].as_str(), Some(id_token.as_str()));
+    assert_eq!(val["tokens"]["access_token"].as_str(), Some("a1"));
+    assert_eq!(val["tokens"]["refresh_token"].as_str(), Some("r1"));
+    assert_eq!(val["tokens"]["account_id"].as_str(), Some("acc"));
 }

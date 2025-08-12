@@ -3,27 +3,107 @@ use serde::Deserialize;
 use serde::Serialize;
 use thiserror::Error;
 
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct TokenData {
-    /// Flat info parsed from the JWT in auth.json.
-    #[serde(deserialize_with = "deserialize_id_token")]
+    /// Flat info parsed from the JWT in auth.json (not serialized).
     pub id_token: IdTokenInfo,
-
+    /// Raw JWT string used for serialization as `tokens.id_token` on disk.
+    pub id_token_raw: String,
     /// This is a JWT.
     pub access_token: String,
-
     pub refresh_token: String,
-
     pub account_id: Option<String>,
 }
+
+impl PartialEq for TokenData {
+    fn eq(&self, other: &Self) -> bool {
+        self.id_token == other.id_token
+            && self.access_token == other.access_token
+            && self.refresh_token == other.refresh_token
+            && self.account_id == other.account_id
+    }
+}
+
+impl Eq for TokenData {}
 /// Returns true if this is a plan that should use the traditional
 /// "metered" billing via an API key.
 impl TokenData {
+    pub fn from_raw(
+        id_token_raw: String,
+        access_token: String,
+        refresh_token: String,
+        account_id: Option<String>,
+    ) -> Result<Self, IdTokenInfoError> {
+        let id_token = parse_id_token(&id_token_raw)?;
+        Ok(Self {
+            id_token,
+            id_token_raw,
+            access_token,
+            refresh_token,
+            account_id,
+        })
+    }
+
     pub(crate) fn is_plan_that_should_use_api_key(&self) -> bool {
         self.id_token
             .chatgpt_plan_type
             .as_ref()
             .is_none_or(|plan| plan.is_plan_that_should_use_api_key())
+    }
+}
+
+impl Serialize for TokenData {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct Ser<'a> {
+            #[serde(rename = "id_token")]
+            id_token_raw: &'a str,
+            access_token: &'a str,
+            refresh_token: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            account_id: &'a Option<String>,
+        }
+        let helper = Ser {
+            id_token_raw: &self.id_token_raw,
+            access_token: &self.access_token,
+            refresh_token: &self.refresh_token,
+            account_id: &self.account_id,
+        };
+        helper.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for TokenData {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct De {
+            #[serde(rename = "id_token")]
+            id_token_raw: String,
+            access_token: String,
+            refresh_token: String,
+            #[serde(default)]
+            account_id: Option<String>,
+        }
+        let De {
+            id_token_raw,
+            access_token,
+            refresh_token,
+            account_id,
+        } = De::deserialize(deserializer)?;
+        let id_token = parse_id_token(&id_token_raw).map_err(serde::de::Error::custom)?;
+        Ok(TokenData {
+            id_token,
+            id_token_raw,
+            access_token,
+            refresh_token,
+            account_id,
+        })
     }
 }
 
@@ -105,14 +185,6 @@ pub(crate) fn parse_id_token(id_token: &str) -> Result<IdTokenInfo, IdTokenInfoE
         email: claims.email,
         chatgpt_plan_type: claims.auth.and_then(|a| a.chatgpt_plan_type),
     })
-}
-
-fn deserialize_id_token<'de, D>(deserializer: D) -> Result<IdTokenInfo, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    parse_id_token(&s).map_err(serde::de::Error::custom)
 }
 
 // -------- Helpers for parsing OpenAI auth claims from arbitrary JWTs --------
