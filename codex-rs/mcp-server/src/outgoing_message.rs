@@ -74,9 +74,27 @@ impl OutgoingMessageSender {
         }
     }
 
-    pub(crate) async fn send_response(&self, id: RequestId, result: Result) {
-        let outgoing_message = OutgoingMessage::Response(OutgoingResponse { id, result });
-        let _ = self.sender.send(outgoing_message).await;
+    pub(crate) async fn send_response<T: Serialize>(&self, id: RequestId, result: T) {
+        match serde_json::to_value(result) {
+            Ok(result_value) => {
+                let outgoing_message = OutgoingMessage::Response(OutgoingResponse {
+                    id,
+                    result: result_value,
+                });
+                let _ = self.sender.send(outgoing_message).await;
+            }
+            Err(err) => {
+                self.send_error(
+                    id,
+                    JSONRPCErrorError {
+                        code: -32603,
+                        message: format!("failed to serialize response: {err}"),
+                        data: None,
+                    },
+                )
+                .await;
+            }
+        }
     }
 
     pub(crate) async fn send_event_as_notification(
