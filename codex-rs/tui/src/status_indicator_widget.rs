@@ -249,6 +249,7 @@ impl WidgetRef for StatusIndicatorWidget {
             Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
         ));
         // Add a space and then the log text (not animated by the gradient)
+        #[cfg(debug_assertions)]
         if !status_prefix.is_empty() {
             spans.push(Span::styled(
                 " ",
