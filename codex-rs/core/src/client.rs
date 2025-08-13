@@ -38,6 +38,7 @@ use crate::model_provider_info::WireApi;
 use crate::models::ResponseItem;
 use crate::openai_tools::create_tools_json_for_responses_api;
 use crate::protocol::TokenUsage;
+use crate::user_agent::get_codex_user_agent;
 use crate::util::backoff;
 use std::sync::Arc;
 
@@ -169,6 +170,7 @@ impl ModelClient {
             store,
             stream: true,
             include,
+            prompt_cache_key: Some(self.session_id.to_string()),
         };
 
         let mut attempt = 0;
@@ -207,6 +209,7 @@ impl ModelClient {
                 .as_deref()
                 .unwrap_or("codex_cli_rs");
             req_builder = req_builder.header("originator", originator);
+            req_builder = req_builder.header("User-Agent", get_codex_user_agent(Some(originator)));
 
             let res = req_builder.send().await;
             if let Ok(resp) = &res {
@@ -403,6 +406,8 @@ async fn process_sse<S>(
             }
         };
 
+        trace!("SSE event: {}", sse.data);
+
         let event: SseEvent = match serde_json::from_str(&sse.data) {
             Ok(event) => event,
             Err(e) => {
@@ -411,7 +416,6 @@ async fn process_sse<S>(
             }
         };
 
-        trace!(?event, "SSE event");
         match event.kind.as_str() {
             // Individual output item finalised. Forward immediately so the
             // rest of the agent can stream assistant text/functions *live*
@@ -503,12 +507,18 @@ async fn process_sse<S>(
             | "response.function_call_arguments.delta"
             | "response.in_progress"
             | "response.output_item.added"
-            | "response.output_text.done"
-            | "response.reasoning_summary_part.added"
-            | "response.reasoning_summary_text.done" => {
-                // Currently, we ignore these events, but we handle them
+            | "response.output_text.done" => {
+                // Currently, we ignore this event, but we handle it
                 // separately to skip the logging message in the `other` case.
             }
+            "response.reasoning_summary_part.added" => {
+                // Boundary between reasoning summary sections (e.g., titles).
+                let event = ResponseEvent::ReasoningSummaryPartAdded;
+                if tx_event.send(Ok(event)).await.is_err() {
+                    return;
+                }
+            }
+            "response.reasoning_summary_text.done" => {}
             other => debug!(other, "sse event"),
         }
     }

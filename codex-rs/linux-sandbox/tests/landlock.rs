@@ -11,9 +11,7 @@ use codex_core::exec_env::create_env;
 use codex_core::protocol::SandboxPolicy;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use tempfile::NamedTempFile;
-use tokio::sync::Notify;
 
 // At least on GitHub CI, the arm64 tests appear to need longer timeouts.
 
@@ -59,11 +57,9 @@ async fn run_cmd(cmd: &[&str], writable_roots: &[PathBuf], timeout_ms: u64) {
     };
     let sandbox_program = env!("CARGO_BIN_EXE_codex-linux-sandbox");
     let codex_linux_sandbox_exe = Some(PathBuf::from(sandbox_program));
-    let ctrl_c = Arc::new(Notify::new());
     let res = process_exec_tool_call(
         params,
         SandboxType::LinuxSeccomp,
-        ctrl_c,
         &sandbox_policy,
         &codex_linux_sandbox_exe,
         None,
@@ -72,8 +68,8 @@ async fn run_cmd(cmd: &[&str], writable_roots: &[PathBuf], timeout_ms: u64) {
     .unwrap();
 
     if res.exit_code != 0 {
-        println!("stdout:\n{}", res.stdout);
-        println!("stderr:\n{}", res.stderr);
+        println!("stdout:\n{}", res.stdout.text);
+        println!("stderr:\n{}", res.stderr.text);
         panic!("exit code: {}", res.exit_code);
     }
 }
@@ -150,13 +146,11 @@ async fn assert_network_blocked(cmd: &[&str]) {
     };
 
     let sandbox_policy = SandboxPolicy::new_read_only_policy();
-    let ctrl_c = Arc::new(Notify::new());
     let sandbox_program = env!("CARGO_BIN_EXE_codex-linux-sandbox");
     let codex_linux_sandbox_exe: Option<PathBuf> = Some(PathBuf::from(sandbox_program));
     let result = process_exec_tool_call(
         params,
         SandboxType::LinuxSeccomp,
-        ctrl_c,
         &sandbox_policy,
         &codex_linux_sandbox_exe,
         None,
@@ -164,7 +158,7 @@ async fn assert_network_blocked(cmd: &[&str]) {
     .await;
 
     let (exit_code, stdout, stderr) = match result {
-        Ok(output) => (output.exit_code, output.stdout, output.stderr),
+        Ok(output) => (output.exit_code, output.stdout.text, output.stderr.text),
         Err(CodexErr::Sandbox(SandboxErr::Denied(exit_code, stdout, stderr))) => {
             (exit_code, stdout, stderr)
         }

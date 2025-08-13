@@ -144,6 +144,7 @@ pub enum ResponseEvent {
     OutputTextDelta(String),
     ReasoningSummaryDelta(String),
     ReasoningContentDelta(String),
+    ReasoningSummaryPartAdded,
 }
 
 #[derive(Debug, Serialize)]
@@ -215,6 +216,8 @@ pub(crate) struct ResponsesApiRequest<'a> {
     pub(crate) store: bool,
     pub(crate) stream: bool,
     pub(crate) include: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) prompt_cache_key: Option<String>,
 }
 
 pub(crate) fn create_reasoning_param_for_request(

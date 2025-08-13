@@ -35,8 +35,6 @@ pub(crate) enum ApprovalRequest {
     Exec {
         id: String,
         command: Vec<String>,
-        #[allow(dead_code)]
-        cwd: PathBuf,
         reason: Option<String>,
     },
     ApplyPatch {
@@ -247,7 +245,7 @@ impl UserApprovalWidget<'_> {
                 match decision {
                     ReviewDecision::Approved => {
                         lines.push(Line::from(vec![
-                            "✓ ".fg(Color::Green),
+                            "✔ ".fg(Color::Green),
                             "You ".into(),
                             "approved".bold(),
                             " codex to run ".into(),
@@ -258,7 +256,7 @@ impl UserApprovalWidget<'_> {
                     }
                     ReviewDecision::ApprovedForSession => {
                         lines.push(Line::from(vec![
-                            "✓ ".fg(Color::Green),
+                            "✔ ".fg(Color::Green),
                             "You ".into(),
                             "approved".bold(),
                             " codex to run ".into(),
@@ -394,7 +392,6 @@ mod tests {
     use crossterm::event::KeyCode;
     use crossterm::event::KeyEvent;
     use crossterm::event::KeyModifiers;
-    use std::path::PathBuf;
     use std::sync::mpsc::channel;
 
     #[test]
@@ -404,7 +401,6 @@ mod tests {
         let req = ApprovalRequest::Exec {
             id: "1".to_string(),
             command: vec!["echo".to_string()],
-            cwd: PathBuf::new(),
             reason: None,
         };
         let mut widget = UserApprovalWidget::new(req, tx);
@@ -427,7 +423,6 @@ mod tests {
         let req = ApprovalRequest::Exec {
             id: "2".to_string(),
             command: vec!["echo".to_string()],
-            cwd: PathBuf::new(),
             reason: None,
         };
         let mut widget = UserApprovalWidget::new(req, tx);

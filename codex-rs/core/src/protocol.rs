@@ -21,6 +21,7 @@ use crate::config_types::ReasoningEffort as ReasoningEffortConfig;
 use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use crate::message_history::HistoryEntry;
 use crate::model_provider_info::ModelProviderInfo;
+use crate::parse_command::ParsedCommand;
 use crate::plan_tool::UpdatePlanArgs;
 
 /// Submission Queue Entry - requests from user
@@ -234,8 +235,7 @@ impl SandboxPolicy {
         }
     }
 
-    /// Always returns `true` for now, as we do not yet support restricting read
-    /// access.
+    /// Always returns `true`; restricting read access is not supported.
     pub fn has_full_disk_read_access(&self) -> bool {
         true
     }
@@ -383,6 +383,8 @@ pub enum EventMsg {
 
     /// Agent reasoning content delta event from agent.
     AgentReasoningRawContentDelta(AgentReasoningRawContentDeltaEvent),
+    /// Signaled when the model begins a new reasoning summary section (e.g., a new titled block).
+    AgentReasoningSectionBreak(AgentReasoningSectionBreakEvent),
 
     /// Ack the client's configure message.
     SessionConfigured(SessionConfiguredEvent),
@@ -531,6 +533,9 @@ pub struct AgentReasoningRawContentDeltaEvent {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AgentReasoningSectionBreakEvent {}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentReasoningDeltaEvent {
     pub delta: String,
 }
@@ -579,6 +584,7 @@ pub struct ExecCommandBeginEvent {
     pub command: Vec<String>,
     /// The command's working directory if not the default cwd for the agent.
     pub cwd: PathBuf,
+    pub parsed_cmd: Vec<ParsedCommand>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

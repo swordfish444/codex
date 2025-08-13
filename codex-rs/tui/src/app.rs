@@ -9,9 +9,9 @@ use crate::onboarding::onboarding_screen::OnboardingScreenArgs;
 use crate::should_show_login_screen;
 use crate::slash_command::SlashCommand;
 use crate::tui;
+use codex_core::ConversationManager;
 use codex_core::config::Config;
 use codex_core::protocol::Event;
-use codex_core::protocol::EventMsg;
 use codex_core::protocol::Op;
 use color_eyre::eyre::Result;
 use crossterm::SynchronizedUpdate;
@@ -32,7 +32,7 @@ use std::thread;
 use std::time::Duration;
 
 /// Time window for debouncing redraw requests.
-const REDRAW_DEBOUNCE: Duration = Duration::from_millis(10);
+const REDRAW_DEBOUNCE: Duration = Duration::from_millis(1);
 
 /// Top-level application state: which full-screen view is currently active.
 #[allow(clippy::large_enum_variant)]
@@ -49,6 +49,7 @@ enum AppState<'a> {
 }
 
 pub(crate) struct App<'a> {
+    server: Arc<ConversationManager>,
     app_event_tx: AppEventSender,
     app_event_rx: Receiver<AppEvent>,
     app_state: AppState<'a>,
@@ -64,6 +65,9 @@ pub(crate) struct App<'a> {
     pending_history_lines: Vec<Line<'static>>,
 
     enhanced_keys_supported: bool,
+
+    /// Controls the animation thread that sends CommitTick events.
+    commit_anim_running: Arc<AtomicBool>,
 }
 
 /// Aggregate parameters needed to create a `ChatWidget`, as creation may be
@@ -83,6 +87,8 @@ impl App<'_> {
         initial_images: Vec<std::path::PathBuf>,
         show_trust_screen: bool,
     ) -> Self {
+        let conversation_manager = Arc::new(ConversationManager::default());
+
         let (app_event_tx, app_event_rx) = channel();
         let app_event_tx = AppEventSender::new(app_event_tx);
         let pending_redraw = Arc::new(AtomicBool::new(false));
@@ -111,10 +117,8 @@ impl App<'_> {
                                     app_event_tx.send(AppEvent::RequestRedraw);
                                 }
                                 crossterm::event::Event::Paste(pasted) => {
-                                    // Many terminals convert newlines to \r when
-                                    // pasting, e.g. [iTerm2][]. But [tui-textarea
-                                    // expects \n][tui-textarea]. This seems like a bug
-                                    // in tui-textarea IMO, but work around it for now.
+                                    // Many terminals convert newlines to \r when pasting (e.g., iTerm2),
+                                    // but tui-textarea expects \n. Normalize CR to LF.
                                     // [tui-textarea]: https://github.com/rhysd/tui-textarea/blob/4d18622eeac13b309e0ff6a55a46ac6706da68cf/src/textarea.rs#L782-L783
                                     // [iTerm2]: https://github.com/gnachman/iTerm2/blob/5d0c0d9f68523cbd0494dad5422998964a2ecd8d/sources/iTermPasteHelper.m#L206-L216
                                     let pasted = pasted.replace("\r", "\n");
@@ -153,6 +157,7 @@ impl App<'_> {
         } else {
             let chat_widget = ChatWidget::new(
                 config.clone(),
+                conversation_manager.clone(),
                 app_event_tx.clone(),
                 initial_prompt,
                 initial_images,
@@ -165,6 +170,7 @@ impl App<'_> {
 
         let file_search = FileSearchManager::new(config.cwd.clone(), app_event_tx.clone());
         Self {
+            server: conversation_manager,
             app_event_tx,
             pending_history_lines: Vec::new(),
             app_event_rx,
@@ -173,6 +179,7 @@ impl App<'_> {
             file_search,
             pending_redraw,
             enhanced_keys_supported,
+            commit_anim_running: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -189,7 +196,7 @@ impl App<'_> {
         // redraw is already pending so we can return early.
         if self
             .pending_redraw
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
             return;
@@ -200,7 +207,7 @@ impl App<'_> {
         thread::spawn(move || {
             thread::sleep(REDRAW_DEBOUNCE);
             tx.send(AppEvent::Redraw);
-            pending_redraw.store(false, Ordering::SeqCst);
+            pending_redraw.store(false, Ordering::Release);
         });
     }
 
@@ -221,6 +228,30 @@ impl App<'_> {
                 AppEvent::Redraw => {
                     std::io::stdout().sync_update(|_| self.draw_next_frame(terminal))??;
                 }
+                AppEvent::StartCommitAnimation => {
+                    if self
+                        .commit_anim_running
+                        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        let tx = self.app_event_tx.clone();
+                        let running = self.commit_anim_running.clone();
+                        thread::spawn(move || {
+                            while running.load(Ordering::Relaxed) {
+                                thread::sleep(Duration::from_millis(50));
+                                tx.send(AppEvent::CommitTick);
+                            }
+                        });
+                    }
+                }
+                AppEvent::StopCommitAnimation => {
+                    self.commit_anim_running.store(false, Ordering::Release);
+                }
+                AppEvent::CommitTick => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.on_commit_tick();
+                    }
+                }
                 AppEvent::KeyEvent(key_event) => {
                     match key_event {
                         KeyEvent {
@@ -237,28 +268,16 @@ impl App<'_> {
                             }
                         },
                         KeyEvent {
-                            code: KeyCode::Esc,
-                            kind: KeyEventKind::Press,
-                            ..
-                        } => match &mut self.app_state {
-                            AppState::Chat { widget } => {
-                                if !widget.on_esc() {
-                                    self.dispatch_key_event(key_event);
-                                }
-                            }
-                            AppState::Onboarding { .. } => {
-                                self.dispatch_key_event(key_event);
-                            }
-                        },
-                        KeyEvent {
                             code: KeyCode::Char('z'),
                             modifiers: crossterm::event::KeyModifiers::CONTROL,
                             kind: KeyEventKind::Press,
                             ..
                         } => {
-                            if let AppState::Chat { widget } = &mut self.app_state {
-                                widget.on_ctrl_z();
+                            #[cfg(unix)]
+                            {
+                                self.suspend(terminal)?;
                             }
+                            // No-op on non-Unix platforms.
                         }
                         KeyEvent {
                             code: KeyCode::Char('d'),
@@ -289,7 +308,7 @@ impl App<'_> {
                             self.dispatch_key_event(key_event);
                         }
                         _ => {
-                            // Ignore Release key events for now.
+                            // Ignore Release key events.
                         }
                     };
                 }
@@ -315,6 +334,7 @@ impl App<'_> {
                         // User accepted – switch to chat view.
                         let new_widget = Box::new(ChatWidget::new(
                             self.config.clone(),
+                            self.server.clone(),
                             self.app_event_tx.clone(),
                             None,
                             Vec::new(),
@@ -366,6 +386,11 @@ impl App<'_> {
                             widget.add_diff_output(text);
                         }
                     }
+                    SlashCommand::Mention => {
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.insert_str("@");
+                        }
+                    }
                     SlashCommand::Status => {
                         if let AppState::Chat { widget } = &mut self.app_state {
                             widget.add_status_output();
@@ -378,6 +403,7 @@ impl App<'_> {
                     }
                     #[cfg(debug_assertions)]
                     SlashCommand::TestApproval => {
+                        use codex_core::protocol::EventMsg;
                         use std::collections::HashMap;
 
                         use codex_core::protocol::ApplyPatchApprovalRequestEvent;
@@ -430,6 +456,7 @@ impl App<'_> {
                     self.app_state = AppState::Chat {
                         widget: Box::new(ChatWidget::new(
                             config,
+                            self.server.clone(),
                             app_event_tx.clone(),
                             initial_prompt,
                             initial_images,
@@ -451,6 +478,23 @@ impl App<'_> {
         }
         terminal.clear()?;
 
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn suspend(&mut self, terminal: &mut tui::Tui) -> Result<()> {
+        tui::restore()?;
+        // SAFETY: Unix-only code path. We intentionally send SIGTSTP to the
+        // current process group (pid 0) to trigger standard job-control
+        // suspension semantics. This FFI does not involve any raw pointers,
+        // is not called from a signal handler, and uses a constant signal.
+        // Errors from kill are acceptable (e.g., if already stopped) — the
+        // subsequent re-init path will still leave the terminal in a good state.
+        // We considered `nix`, but didn't think it was worth pulling in for this one call.
+        unsafe { libc::kill(0, libc::SIGTSTP) };
+        *terminal = tui::init(&self.config)?;
+        terminal.clear()?;
+        self.app_event_tx.send(AppEvent::RequestRedraw);
         Ok(())
     }
 
