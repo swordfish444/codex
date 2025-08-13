@@ -208,8 +208,9 @@ fn spawn_login_server_and_wait(
         open_browser: false,
         expose_state_endpoint: true,
         testing_timeout_secs: Some(5),
-        #[cfg(feature = "http-e2e-tests")]
         port_sender: Some(tx),
+        status_sender: None,
+        cancel_receiver: None,
     };
 
     let handle = thread::spawn(move || run_local_login_server_with_options(opts));

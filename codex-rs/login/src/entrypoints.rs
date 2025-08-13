@@ -88,20 +88,37 @@ pub async fn login_with_chatgpt(codex_home: &Path) -> std::io::Result<()> {
     let codex_home = codex_home.to_path_buf();
     let client_id_cloned = client_id.clone();
     tokio::task::spawn_blocking(move || {
-        let opts = server::LoginServerOptions {
-            codex_home: codex_home.clone(),
-            client_id: client_id_cloned,
-            issuer: server::DEFAULT_ISSUER.to_string(),
-            port: server::DEFAULT_PORT,
-            open_browser: true,
-            expose_state_endpoint: false,
-            testing_timeout_secs: None,
-            #[cfg(feature = "http-e2e-tests")]
-            port_sender: None,
-        };
+        let opts = server::LoginServerOptions::for_cli(&codex_home, &client_id_cloned);
         server::run_local_login_server_with_options(opts)
     })
     .await
     .map_err(|e| std::io::Error::other(format!("task join error: {e}")))??;
     Ok(())
+}
+
+pub fn spawn_login_in_process(
+    codex_home: &Path,
+) -> (
+    std::thread::JoinHandle<std::io::Result<()>>,
+    std::sync::mpsc::Receiver<crate::server::LoginServerStatus>,
+    std::sync::mpsc::Sender<()>,
+) {
+    let (status_tx, status_rx) = std::sync::mpsc::channel();
+    let (cancel_tx, cancel_rx) = std::sync::mpsc::channel();
+
+    let client_id = std::env::var("CODEX_CLIENT_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| crate::CLIENT_ID.to_string());
+
+    let opts = server::LoginServerOptions::for_ui(
+        codex_home,
+        &client_id,
+        status_tx,
+        cancel_rx,
+        server::DEFAULT_PORT,
+    );
+
+    let handle = std::thread::spawn(move || server::run_local_login_server_with_options(opts));
+    (handle, status_rx, cancel_tx)
 }

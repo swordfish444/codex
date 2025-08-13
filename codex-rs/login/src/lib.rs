@@ -18,10 +18,12 @@ pub use auth_store::logout;
 pub use auth_store::try_read_auth_json;
 pub use entrypoints::SpawnedLogin;
 pub use entrypoints::login_with_chatgpt;
+pub use entrypoints::spawn_login_in_process;
 pub use entrypoints::spawn_login_with_chatgpt;
 pub use server::HeadlessOutcome;
 pub use server::Http;
 pub use server::LoginServerOptions;
+pub use server::LoginServerStatus;
 pub use server::process_callback_headless;
 pub use server::run_local_login_server_with_options;
 

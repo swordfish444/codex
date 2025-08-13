@@ -34,6 +34,12 @@ fn render_error_html(message: &str) -> String {
 }
 
 #[derive(Debug, Clone)]
+pub enum LoginServerStatus {
+    Url(String),
+    Completed,
+}
+
+#[derive(Debug)]
 pub struct LoginServerOptions {
     pub codex_home: PathBuf,
     pub client_id: String,
@@ -41,13 +47,50 @@ pub struct LoginServerOptions {
     pub port: u16,
     pub open_browser: bool,
     pub expose_state_endpoint: bool,
-    /// timeout after x secs for e2e tests
     pub testing_timeout_secs: Option<u64>,
-    #[cfg(feature = "http-e2e-tests")]
     pub port_sender: Option<std::sync::mpsc::Sender<u16>>,
+    pub status_sender: Option<std::sync::mpsc::Sender<LoginServerStatus>>,
+    pub cancel_receiver: Option<std::sync::mpsc::Receiver<()>>,
 }
 
-// Only default issuer supported for platform/api bases
+impl LoginServerOptions {
+    pub fn for_cli(codex_home: &Path, client_id: &str) -> Self {
+        Self {
+            codex_home: codex_home.to_path_buf(),
+            client_id: client_id.to_string(),
+            issuer: DEFAULT_ISSUER.to_string(),
+            port: DEFAULT_PORT,
+            open_browser: true,
+            expose_state_endpoint: false,
+            testing_timeout_secs: None,
+            port_sender: None,
+            status_sender: None,
+            cancel_receiver: None,
+        }
+    }
+
+    pub fn for_ui(
+        codex_home: &Path,
+        client_id: &str,
+        status_sender: std::sync::mpsc::Sender<LoginServerStatus>,
+        cancel_receiver: std::sync::mpsc::Receiver<()>,
+        port: u16,
+    ) -> Self {
+        Self {
+            codex_home: codex_home.to_path_buf(),
+            client_id: client_id.to_string(),
+            issuer: DEFAULT_ISSUER.to_string(),
+            port,
+            open_browser: true,
+            expose_state_endpoint: false,
+            testing_timeout_secs: None,
+            port_sender: None,
+            status_sender: Some(status_sender),
+            cancel_receiver: Some(cancel_receiver),
+        }
+    }
+}
+
 const PLATFORM_BASE: &str = "https://platform.openai.com";
 
 fn default_url_base(port: u16) -> String {
@@ -56,17 +99,7 @@ fn default_url_base(port: u16) -> String {
 
 #[allow(dead_code)]
 pub fn run_local_login_server(codex_home: &Path, client_id: &str) -> std::io::Result<()> {
-    let opts = LoginServerOptions {
-        codex_home: codex_home.to_path_buf(),
-        client_id: client_id.to_string(),
-        issuer: DEFAULT_ISSUER.to_string(),
-        port: DEFAULT_PORT,
-        open_browser: true,
-        expose_state_endpoint: false,
-        testing_timeout_secs: None,
-        #[cfg(feature = "http-e2e-tests")]
-        port_sender: None,
-    };
+    let opts = LoginServerOptions::for_cli(codex_home, client_id);
     run_local_login_server_with_options(opts)
 }
 
@@ -79,7 +112,6 @@ pub fn run_local_login_server_with_options(mut opts: LoginServerOptions) -> std:
         .port();
     opts.port = actual_port;
 
-    #[cfg(feature = "http-e2e-tests")]
     if let Some(tx) = &opts.port_sender {
         let _ = tx.send(actual_port);
     }
@@ -113,13 +145,20 @@ pub fn run_local_login_server_with_options(mut opts: LoginServerOptions) -> std:
         .append_pair("codex_cli_simplified_flow", "true")
         .append_pair("state", &state);
 
-    eprintln!("Starting local login server on {url_base}");
+    if opts.status_sender.is_none() {
+        eprintln!("Starting local login server on {url_base}");
+    }
+    if let Some(tx) = &opts.status_sender {
+        let _ = tx.send(LoginServerStatus::Url(auth_url.as_str().to_string()));
+    }
     if opts.open_browser {
         let _ = webbrowser::open(auth_url.as_str());
     }
-    eprintln!(
-        ". If your browser did not open, navigate to this URL to authenticate: \n\n{auth_url}"
-    );
+    if opts.status_sender.is_none() {
+        eprintln!(
+            ". If your browser did not open, navigate to this URL to authenticate: \n\n{auth_url}"
+        );
+    }
 
     // If a testing timeout is configured, schedule an internal exit request so tests don't hang CI.
     #[cfg(feature = "http-e2e-tests")]
@@ -128,6 +167,15 @@ pub fn run_local_login_server_with_options(mut opts: LoginServerOptions) -> std:
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(secs));
             let _ = reqwest::blocking::get(format!("http://127.0.0.1:{port}/__test/exit"));
+        });
+    }
+
+    // If cancellation is requested via cancel_receiver, trigger server shutdown by hitting /success
+    if let Some(rx) = opts.cancel_receiver.take() {
+        let port = opts.port;
+        std::thread::spawn(move || {
+            let _ = rx.recv();
+            let _ = reqwest::blocking::get(format!("http://127.0.0.1:{port}/success"));
         });
     }
 
@@ -263,7 +311,9 @@ pub fn run_local_login_server_with_options(mut opts: LoginServerOptions) -> std:
             }
         }
     }
-
+    if let Some(tx) = &opts.status_sender {
+        let _ = tx.send(LoginServerStatus::Completed);
+    }
     Ok(())
 }
 
