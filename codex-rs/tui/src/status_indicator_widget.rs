@@ -154,7 +154,7 @@ impl WidgetRef for StatusIndicatorWidget {
 
         // Schedule next animation frame.
         self.app_event_tx
-            .send(AppEvent::ScheduleFrameIn(Duration::from_millis(100)));
+            .send(AppEvent::ScheduleFrameIn(Duration::from_millis(32)));
         let idx = self.current_frame();
         let elapsed = self.start_time.elapsed().as_secs();
         let shown_now = self.current_shown_len(idx);
