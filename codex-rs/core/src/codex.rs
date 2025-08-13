@@ -914,6 +914,7 @@ async fn submission_loop(
                 // attempt to inject input into current task
                 if let Err(items) = sess.inject_input(items) {
                     // no current task, spawn a new one
+                    tracing::warn!("starting a new task");
                     let task = AgentTask::spawn(Arc::clone(sess), sub.id, items);
                     sess.set_task(task);
                 }
