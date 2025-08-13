@@ -1,15 +1,12 @@
 use std::io::IsTerminal;
-use std::sync::Arc;
 
 use clap::Parser;
 use codex_common::CliConfigOverrides;
-use codex_core::Codex;
-use codex_core::CodexSpawnOk;
+use codex_core::ConversationManager;
+use codex_core::NewConversation;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::protocol::Submission;
-use codex_core::util::notify_on_sigint;
-use codex_login::CodexAuth;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tracing::error;
@@ -36,22 +33,23 @@ pub async fn run_main(opts: ProtoCli) -> anyhow::Result<()> {
         .map_err(anyhow::Error::msg)?;
 
     let config = Config::load_with_cli_overrides(overrides_vec, ConfigOverrides::default())?;
-    let auth = CodexAuth::from_codex_home(&config.codex_home)?;
-    let ctrl_c = notify_on_sigint();
-    let CodexSpawnOk { codex, .. } = Codex::spawn(config, auth, ctrl_c.clone()).await?;
-    let codex = Arc::new(codex);
+    // Use conversation_manager API to start a conversation
+    let conversation_manager = ConversationManager::default();
+    let NewConversation {
+        conversation_id: _,
+        conversation,
+        session_configured: _,
+    } = conversation_manager.new_conversation(config).await?;
 
     // Task that reads JSON lines from stdin and forwards to Submission Queue
     let sq_fut = {
-        let codex = codex.clone();
-        let ctrl_c = ctrl_c.clone();
+        let conversation = conversation.clone();
         async move {
             let stdin = BufReader::new(tokio::io::stdin());
             let mut lines = stdin.lines();
             loop {
                 let result = tokio::select! {
-                    _ = ctrl_c.notified() => {
-                        info!("Interrupted, exiting");
+                    _ = tokio::signal::ctrl_c() => {
                         break
                     },
                     res = lines.next_line() => res,
@@ -65,7 +63,7 @@ pub async fn run_main(opts: ProtoCli) -> anyhow::Result<()> {
                         }
                         match serde_json::from_str::<Submission>(line) {
                             Ok(sub) => {
-                                if let Err(e) = codex.submit_with_id(sub).await {
+                                if let Err(e) = conversation.submit_with_id(sub).await {
                                     error!("{e:#}");
                                     break;
                                 }
@@ -88,8 +86,8 @@ pub async fn run_main(opts: ProtoCli) -> anyhow::Result<()> {
     let eq_fut = async move {
         loop {
             let event = tokio::select! {
-                _ = ctrl_c.notified() => break,
-                event = codex.next_event() => event,
+                _ = tokio::signal::ctrl_c() => break,
+                event = conversation.next_event() => event,
             };
             match event {
                 Ok(event) => {
