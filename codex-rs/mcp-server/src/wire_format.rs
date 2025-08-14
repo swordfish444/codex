@@ -196,6 +196,11 @@ pub struct ExecCommandApprovalResponse {
     pub decision: ReviewDecision,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ApplyPatchApprovalResponse {
+    pub decision: ReviewDecision,
+}
+
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {

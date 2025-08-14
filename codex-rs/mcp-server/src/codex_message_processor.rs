@@ -15,6 +15,7 @@ use codex_core::protocol::ReviewDecision;
 use mcp_types::JSONRPCErrorError;
 use mcp_types::RequestId;
 use tokio::sync::oneshot;
+use tracing::error;
 use uuid::Uuid;
 
 use crate::error_code::INTERNAL_ERROR_CODE;
@@ -26,6 +27,7 @@ use crate::wire_format::APPLY_PATCH_APPROVAL_METHOD;
 use crate::wire_format::AddConversationListenerParams;
 use crate::wire_format::AddConversationSubscriptionResponse;
 use crate::wire_format::ApplyPatchApprovalParams;
+use crate::wire_format::ApplyPatchApprovalResponse;
 use crate::wire_format::ClientRequest;
 use crate::wire_format::ConversationId;
 use crate::wire_format::EXEC_COMMAND_APPROVAL_METHOD;
@@ -285,6 +287,10 @@ async fn apply_bespoke_event_handling(
             let rx = outgoing
                 .send_request(APPLY_PATCH_APPROVAL_METHOD, Some(value))
                 .await;
+            // TODO(mbolin): Enforce a timeout so this task does not live indefinitely?
+            tokio::spawn(async move {
+                on_patch_approval_response(event_id, rx, conversation).await;
+            });
         }
         EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
             call_id: _,
@@ -349,6 +355,48 @@ fn derive_config_from_params(
     Config::load_with_cli_overrides(cli_overrides, overrides)
 }
 
+async fn on_patch_approval_response(
+    event_id: String,
+    receiver: tokio::sync::oneshot::Receiver<mcp_types::Result>,
+    codex: Arc<CodexConversation>,
+) {
+    let response = receiver.await;
+    let value = match response {
+        Ok(value) => value,
+        Err(err) => {
+            error!("request failed: {err:?}");
+            if let Err(submit_err) = codex
+                .submit(Op::PatchApproval {
+                    id: event_id.clone(),
+                    decision: ReviewDecision::Denied,
+                })
+                .await
+            {
+                error!("failed to submit denied PatchApproval after request failure: {submit_err}");
+            }
+            return;
+        }
+    };
+
+    let response =
+        serde_json::from_value::<ApplyPatchApprovalResponse>(value).unwrap_or_else(|err| {
+            error!("failed to deserialize ApplyPatchApprovalResponse: {err}");
+            ApplyPatchApprovalResponse {
+                decision: ReviewDecision::Denied,
+            }
+        });
+
+    if let Err(err) = codex
+        .submit(Op::PatchApproval {
+            id: event_id,
+            decision: response.decision,
+        })
+        .await
+    {
+        error!("failed to submit PatchApproval: {err}");
+    }
+}
+
 async fn on_exec_approval_response(
     event_id: String,
     receiver: tokio::sync::oneshot::Receiver<mcp_types::Result>,
@@ -366,7 +414,7 @@ async fn on_exec_approval_response(
     // Try to deserialize `value` and then make the appropriate call to `codex`.
     let response =
         serde_json::from_value::<ExecCommandApprovalResponse>(value).unwrap_or_else(|err| {
-            tracing::error!("failed to deserialize ExecCommandApprovalResponse: {err}");
+            error!("failed to deserialize ExecCommandApprovalResponse: {err}");
             // If we cannot deserialize the response, we deny the request to be
             // conservative.
             ExecCommandApprovalResponse {
@@ -381,6 +429,6 @@ async fn on_exec_approval_response(
         })
         .await
     {
-        tracing::error!("failed to submit ExecApproval: {err}");
+        error!("failed to submit ExecApproval: {err}");
     }
 }
