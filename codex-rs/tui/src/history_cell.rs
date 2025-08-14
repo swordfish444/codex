@@ -37,6 +37,7 @@ use std::io::Cursor;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::error;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub(crate) struct CommandOutput {
@@ -560,7 +561,11 @@ impl HistoryCell {
         }
     }
 
-    pub(crate) fn new_status_output(config: &Config, usage: &TokenUsage) -> Self {
+    pub(crate) fn new_status_output(
+        config: &Config,
+        usage: &TokenUsage,
+        session_id: &Option<Uuid>,
+    ) -> Self {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from("/status".magenta()));
 
@@ -597,6 +602,12 @@ impl HistoryCell {
             "  • Sandbox: ".into(),
             sandbox_name.into(),
         ]));
+        if let Some(session_id) = session_id {
+            lines.push(Line::from(vec![
+                "  • Session ID: ".into(),
+                session_id.to_string().into(),
+            ]));
+        }
 
         lines.push(Line::from(""));
 
