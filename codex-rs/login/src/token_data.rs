@@ -3,15 +3,19 @@ use serde::Deserialize;
 use serde::Serialize;
 use thiserror::Error;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(try_from = "TokenDataDe")]
 pub struct TokenData {
     /// Flat info parsed from the JWT in auth.json (not serialized).
+    #[serde(skip)]
     pub id_token: IdTokenInfo,
     /// Raw JWT string used for serialization as `tokens.id_token` on disk.
+    #[serde(rename = "id_token")]
     pub id_token_raw: String,
     /// This is a JWT.
     pub access_token: String,
     pub refresh_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
 }
 
@@ -52,57 +56,27 @@ impl TokenData {
     }
 }
 
-impl Serialize for TokenData {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        #[derive(Serialize)]
-        struct Ser<'a> {
-            #[serde(rename = "id_token")]
-            id_token_raw: &'a str,
-            access_token: &'a str,
-            refresh_token: &'a str,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            account_id: &'a Option<String>,
-        }
-        let helper = Ser {
-            id_token_raw: &self.id_token_raw,
-            access_token: &self.access_token,
-            refresh_token: &self.refresh_token,
-            account_id: &self.account_id,
-        };
-        helper.serialize(serializer)
-    }
+#[derive(Deserialize)]
+struct TokenDataDe {
+    #[serde(rename = "id_token")]
+    id_token_raw: String,
+    access_token: String,
+    refresh_token: String,
+    #[serde(default)]
+    account_id: Option<String>,
 }
 
-impl<'de> Deserialize<'de> for TokenData {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct De {
-            #[serde(rename = "id_token")]
-            id_token_raw: String,
-            access_token: String,
-            refresh_token: String,
-            #[serde(default)]
-            account_id: Option<String>,
-        }
-        let De {
-            id_token_raw,
-            access_token,
-            refresh_token,
-            account_id,
-        } = De::deserialize(deserializer)?;
-        let id_token = parse_id_token(&id_token_raw).map_err(serde::de::Error::custom)?;
+impl TryFrom<TokenDataDe> for TokenData {
+    type Error = IdTokenInfoError;
+
+    fn try_from(de: TokenDataDe) -> Result<Self, Self::Error> {
+        let id_token = parse_id_token(&de.id_token_raw)?;
         Ok(TokenData {
             id_token,
-            id_token_raw,
-            access_token,
-            refresh_token,
-            account_id,
+            id_token_raw: de.id_token_raw,
+            access_token: de.access_token,
+            refresh_token: de.refresh_token,
+            account_id: de.account_id,
         })
     }
 }
