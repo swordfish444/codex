@@ -267,12 +267,14 @@ impl HistoryCell {
                 Line::from(""),
             ];
             if let Some(p) = &agents_path {
-                let display_path = diff_paths(p, &config.cwd)
+                let instructions_display_path = diff_paths(p, &config.cwd)
                     .map(|rel| rel.display().to_string())
                     .unwrap_or_else(|| p.display().to_string());
-                lines.push(Line::from(
-                    format!(" AGENTS.md found at {display_path}").dim(),
-                ));
+                lines.push(Line::from(vec![
+                    " Found ".dim(),
+                    instructions_display_path.into(),
+                    ".".dim(),
+                ]));
                 lines.push(Line::from(""));
             }
             lines.push(Line::from(
