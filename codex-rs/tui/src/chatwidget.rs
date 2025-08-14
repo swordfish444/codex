@@ -36,6 +36,7 @@ use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
+use uuid::Uuid;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -86,6 +87,7 @@ pub(crate) struct ChatWidget<'a> {
     interrupts: InterruptManager,
     // Whether a redraw is needed after handling the current event
     needs_redraw: bool,
+    session_id: Option<Uuid>,
 }
 
 struct UserMessage {
@@ -123,6 +125,7 @@ impl ChatWidget<'_> {
     }
     // --- Small event handlers ---
     fn on_session_configured(&mut self, event: codex_core::protocol::SessionConfiguredEvent) {
+        self.session_id = Some(event.session_id);
         self.bottom_pane
             .set_history_metadata(event.history_log_id, event.history_entry_count);
         self.add_to_history(&history_cell::new_session_info(&self.config, event, true));
@@ -528,6 +531,7 @@ impl ChatWidget<'_> {
             task_complete_pending: false,
             interrupts: InterruptManager::new(),
             needs_redraw: false,
+            session_id: None,
         }
     }
 
@@ -675,6 +679,7 @@ impl ChatWidget<'_> {
         self.add_to_history(&history_cell::new_status_output(
             &self.config,
             &self.total_token_usage,
+            &self.session_id,
         ));
     }
 
