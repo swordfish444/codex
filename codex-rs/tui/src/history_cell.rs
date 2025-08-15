@@ -917,22 +917,6 @@ fn format_mcp_invocation<'a>(invocation: McpInvocation) -> Line<'a> {
     Line::from(invocation_spans)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parsed_command_with_newlines_starts_each_line_at_origin() {
-        let parsed = vec![ParsedCommand::Unknown {
-            cmd: "printf 'foo\nbar'".to_string(),
-        }];
-        let lines = exec_command_lines(&[], &parsed, None, None);
-        assert!(lines.len() >= 3);
-        assert_eq!(lines[1].spans[0].content, "  └ ");
-        assert_eq!(lines[2].spans[0].content, "    ");
-    }
-}
-
 pub(crate) fn new_exec_approval_decision(
     approval_request: &ApprovalRequest,
     decision: codex_core::protocol::ReviewDecision,
@@ -1019,4 +1003,20 @@ pub(crate) fn new_reasoning_block(
     append_markdown(&full_reasoning_buffer, &mut lines, config);
     lines.push(Line::from(""));
     TranscriptOnlyHistoryCell { lines }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parsed_command_with_newlines_starts_each_line_at_origin() {
+        let parsed = vec![ParsedCommand::Unknown {
+            cmd: "printf 'foo\nbar'".to_string(),
+        }];
+        let lines = exec_command_lines(&[], &parsed, None, None);
+        assert!(lines.len() >= 3);
+        assert_eq!(lines[1].spans[0].content, "  └ ");
+        assert_eq!(lines[2].spans[0].content, "    ");
+    }
 }
