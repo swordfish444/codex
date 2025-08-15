@@ -31,12 +31,11 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::ModelProviderInfo;
+use crate::apply_patch;
 use crate::apply_patch::ApplyPatchExec;
 use crate::apply_patch::CODEX_APPLY_PATCH_ARG1;
 use crate::apply_patch::InternalApplyPatchInvocation;
 use crate::apply_patch::convert_apply_patch_to_protocol;
-use crate::apply_patch::get_writable_roots;
-use crate::apply_patch::{self};
 use crate::client::ModelClient;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
@@ -230,7 +229,6 @@ pub(crate) struct Session {
     approval_policy: AskForApproval,
     sandbox_policy: SandboxPolicy,
     shell_environment_policy: ShellEnvironmentPolicy,
-    writable_roots: Vec<PathBuf>,
     disable_response_storage: bool,
     tools_config: ToolsConfig,
 
@@ -409,8 +407,6 @@ impl Session {
             state.history.record_items(&restored_items);
         }
 
-        let writable_roots = get_writable_roots(&cwd);
-
         // Handle MCP manager result and record any startup failures.
         let (mcp_connection_manager, failed_clients) = match mcp_res {
             Ok((mgr, failures)) => (mgr, failures),
@@ -463,7 +459,6 @@ impl Session {
             sandbox_policy,
             shell_environment_policy: config.shell_environment_policy.clone(),
             cwd,
-            writable_roots,
             mcp_connection_manager,
             notify,
             state: Mutex::new(state),
@@ -507,12 +502,12 @@ impl Session {
         Ok(sess)
     }
 
-    pub(crate) fn get_writable_roots(&self) -> &[PathBuf] {
-        &self.writable_roots
-    }
-
     pub(crate) fn get_approval_policy(&self) -> AskForApproval {
         self.approval_policy
+    }
+
+    pub(crate) fn get_sandbox_policy(&self) -> &SandboxPolicy {
+        &self.sandbox_policy
     }
 
     pub(crate) fn get_cwd(&self) -> &Path {
