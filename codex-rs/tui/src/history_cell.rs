@@ -31,6 +31,7 @@ use ratatui::style::Style;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
+use shlex::try_join as shlex_try_join;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -136,14 +137,6 @@ fn pretty_provider_name(id: &str) -> String {
     }
 }
 
-pub(crate) fn new_background_event(message: String) -> PlainHistoryCell {
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    lines.push(Line::from("event".dim()));
-    lines.extend(message.lines().map(|line| ansi_escape_line(line).dim()));
-    lines.push(Line::from(""));
-    PlainHistoryCell { lines }
-}
-
 pub(crate) fn new_session_info(
     config: &Config,
     event: SessionConfiguredEvent,
@@ -240,10 +233,11 @@ fn exec_command_lines(
 ) -> Vec<Line<'static>> {
     match parsed.is_empty() {
         true => new_exec_command_generic(command, output, start_time),
-        false => new_parsed_command(parsed, output, start_time),
+        false => new_parsed_command(command, parsed, output, start_time),
     }
 }
 fn new_parsed_command(
+    command: &[String],
     parsed_commands: &[ParsedCommand],
     output: Option<&CommandOutput>,
     start_time: Option<Instant>,
@@ -267,6 +261,24 @@ fn new_parsed_command(
             ));
         }
     };
+
+    // Optionally include the complete, unaltered command from the model.
+    if std::env::var("SHOW_FULL_COMMANDS")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+    {
+        let full_cmd = shlex_try_join(command.iter().map(|s| s.as_str()))
+            .unwrap_or_else(|_| command.join(" "));
+        lines.push(Line::from(vec![
+            Span::styled("  └ ", Style::default().add_modifier(Modifier::DIM)),
+            Span::styled(
+                full_cmd,
+                Style::default()
+                    .add_modifier(Modifier::DIM)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+        ]));
+    }
 
     for (i, parsed) in parsed_commands.iter().enumerate() {
         let text = match parsed {
