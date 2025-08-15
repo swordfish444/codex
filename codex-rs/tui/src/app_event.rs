@@ -66,4 +66,10 @@ pub(crate) enum AppEvent {
         id: String,
         text: String,
     },
+
+    /// Voice transcription failed; remove the placeholder identified by `id`.
+    TranscriptionFailed {
+        id: String,
+        error: String,
+    },
 }

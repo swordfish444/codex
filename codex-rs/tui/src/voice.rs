@@ -160,6 +160,8 @@ pub fn transcribe_async(id: String, audio: RecordedAudio, tx: AppEventSender) {
                 return;
             }
         };
+        let tx2 = tx.clone();
+        let id2 = id.clone();
         let res: Result<(), String> = rt.block_on(async move {
             // Resolve API key using existing Codex auth logic (do not read env).
             let codex_home =
@@ -227,12 +229,14 @@ pub fn transcribe_async(id: String, audio: RecordedAudio, tx: AppEventSender) {
             if text.is_empty() {
                 return Err("empty transcription result".to_string());
             }
-            tx.send(AppEvent::TranscriptionComplete { id, text });
+            tx2.send(AppEvent::TranscriptionComplete { id: id2, text });
             Ok(())
         });
 
         if let Err(e) = res {
             error!("voice transcription error: {e}");
+            // Ensure placeholder is removed on error
+            tx.send(AppEvent::TranscriptionFailed { id, error: e });
         } else {
             info!("voice transcription succeeded");
         }

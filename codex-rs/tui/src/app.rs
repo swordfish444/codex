@@ -244,6 +244,11 @@ impl App<'_> {
                         widget.replace_transcription(&id, &text);
                     }
                 }
+                AppEvent::TranscriptionFailed { id, error: _ } => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.remove_transcription_placeholder(&id);
+                    }
+                }
                 AppEvent::RequestRedraw => {
                     self.schedule_frame_in(REDRAW_DEBOUNCE);
                 }

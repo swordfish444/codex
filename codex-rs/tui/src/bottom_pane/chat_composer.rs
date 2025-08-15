@@ -620,6 +620,14 @@ impl ChatComposer {
         self.sync_file_search_popup();
     }
 
+    pub fn remove_transcription_placeholder(&mut self, id: &str) {
+        // Replace with empty string to delete the placeholder if present.
+        if self.textarea.replace_element_by_id(id, "") {
+            self.sync_command_popup();
+            self.sync_file_search_popup();
+        }
+    }
+
     /// Handle generic Input events that modify the textarea content.
     fn handle_input_basic(&mut self, input: KeyEvent) -> (InputResult, bool) {
         // Normal input handling
