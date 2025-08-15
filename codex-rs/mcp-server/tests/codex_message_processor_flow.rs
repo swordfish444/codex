@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use codex_core::config_types::ReasoningEffort;
-use codex_core::config_types::ReasoningSummary;
+use codex_core::protocol_config_types::ReasoningEffort;
+use codex_core::protocol_config_types::ReasoningSummary;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
