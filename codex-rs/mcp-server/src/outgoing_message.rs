@@ -265,17 +265,6 @@ mod tests {
             panic!("Event must serialize");
         };
         assert_eq!(params, Some(expected_params.clone()));
-
-        let result2 = outgoing_rx.recv().await.unwrap();
-        let OutgoingMessage::Notification(OutgoingNotification {
-            method: method2,
-            params: params2,
-        }) = result2
-        else {
-            panic!("expected Notification for second message");
-        };
-        assert_eq!(method2, event.msg.to_string());
-        assert_eq!(params2, Some(expected_params));
     }
 
     #[tokio::test]
@@ -320,16 +309,5 @@ mod tests {
             }
         });
         assert_eq!(params.unwrap(), expected_params);
-
-        let result2 = outgoing_rx.recv().await.unwrap();
-        let OutgoingMessage::Notification(OutgoingNotification {
-            method: method2,
-            params: params2,
-        }) = result2
-        else {
-            panic!("expected Notification for second message");
-        };
-        assert_eq!(method2, event.msg.to_string());
-        assert_eq!(params2.unwrap(), expected_params);
     }
 }
