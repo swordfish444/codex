@@ -167,6 +167,11 @@ impl BottomPane<'_> {
         self.request_redraw();
     }
 
+    pub(crate) fn replace_transcription(&mut self, id: &str, text: &str) {
+        self.composer.replace_transcription(id, text);
+        self.request_redraw();
+    }
+
     pub(crate) fn show_ctrl_c_quit_hint(&mut self) {
         self.ctrl_c_quit_hint = true;
         self.composer

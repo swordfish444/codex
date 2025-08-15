@@ -239,9 +239,9 @@ impl App<'_> {
                     self.pending_history_lines.extend(lines);
                     self.app_event_tx.send(AppEvent::RequestRedraw);
                 }
-                AppEvent::InsertComposerText(text) => {
+                AppEvent::TranscriptionComplete { id, text } => {
                     if let AppState::Chat { widget } = &mut self.app_state {
-                        widget.insert_str(&text);
+                        widget.replace_transcription(&id, &text);
                     }
                 }
                 AppEvent::RequestRedraw => {

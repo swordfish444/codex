@@ -61,6 +61,9 @@ pub(crate) enum AppEvent {
     OnboardingAuthComplete(Result<(), String>),
     OnboardingComplete(ChatWidgetArgs),
 
-    /// Insert transcribed text from voice input into the composer.
-    InsertComposerText(String),
+    /// Voice transcription finished for the given placeholder id.
+    TranscriptionComplete {
+        id: String,
+        text: String,
+    },
 }

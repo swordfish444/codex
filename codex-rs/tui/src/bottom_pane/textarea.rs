@@ -17,6 +17,7 @@ use unicode_width::UnicodeWidthStr;
 #[derive(Debug, Clone)]
 struct TextElement {
     range: Range<usize>,
+    id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -610,12 +611,41 @@ impl TextArea {
         self.set_cursor(end);
     }
 
-    fn add_element(&mut self, range: Range<usize>) {
+    pub fn insert_named_element(&mut self, text: &str, id: String) {
+        let start = self.clamp_pos_for_insertion(self.cursor_pos);
+        self.insert_str_at(start, text);
+        let end = start + text.len();
+        self.add_element_with_id(start..end, Some(id));
+        // Place cursor at end of inserted element
+        self.set_cursor(end);
+    }
+
+    pub fn replace_element_by_id(&mut self, id: &str, text: &str) -> bool {
+        if let Some(idx) = self
+            .elements
+            .iter()
+            .position(|e| e.id.as_deref() == Some(id))
+        {
+            let range = self.elements[idx].range.clone();
+            self.replace_range_raw(range, text);
+            self.elements.retain(|e| e.id.as_deref() != Some(id));
+            true
+        } else {
+            false
+        }
+    }
+
+    fn add_element_with_id(&mut self, range: Range<usize>, id: Option<String>) {
         let elem = TextElement {
             range: range.clone(),
+            id,
         };
         self.elements.push(elem);
         self.elements.sort_by_key(|e| e.range.start);
+    }
+
+    fn add_element(&mut self, range: Range<usize>) {
+        self.add_element_with_id(range, None);
     }
 
     fn find_element_containing(&self, pos: usize) -> Option<usize> {

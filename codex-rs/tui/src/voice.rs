@@ -128,7 +128,7 @@ impl VoiceCapture {
     }
 }
 
-pub fn transcribe_async(audio: RecordedAudio, tx: AppEventSender) {
+pub fn transcribe_async(id: String, audio: RecordedAudio, tx: AppEventSender) {
     std::thread::spawn(move || {
         // Serialize WAV to memory
         let mut wav_bytes: Vec<u8> = Vec::new();
@@ -227,7 +227,7 @@ pub fn transcribe_async(audio: RecordedAudio, tx: AppEventSender) {
             if text.is_empty() {
                 return Err("empty transcription result".to_string());
             }
-            tx.send(AppEvent::InsertComposerText(text));
+            tx.send(AppEvent::TranscriptionComplete { id, text });
             Ok(())
         });
 

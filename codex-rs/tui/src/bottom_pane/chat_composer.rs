@@ -31,6 +31,7 @@ use crate::bottom_pane::textarea::TextArea;
 use crate::bottom_pane::textarea::TextAreaState;
 use codex_file_search::FileMatch;
 use std::cell::RefCell;
+use uuid::Uuid;
 
 const BASE_PLACEHOLDER_TEXT: &str = "Ask Codex to do anything";
 /// If the pasted content exceeds this number of characters, replace it with a
@@ -224,8 +225,12 @@ impl ChatComposer {
                 if let Some(vc) = self.voice.take() {
                     match vc.stop() {
                         Ok(audio) => {
+                            // Insert a placeholder element tied to a unique id
+                            let id = Uuid::new_v4().to_string();
+                            let placeholder = "[...transcribing...]".to_string();
+                            self.textarea.insert_named_element(&placeholder, id.clone());
                             let tx = self.app_event_tx.clone();
-                            crate::voice::transcribe_async(audio, tx);
+                            crate::voice::transcribe_async(id, audio, tx);
                         }
                         Err(e) => {
                             tracing::error!("failed to stop voice capture: {e}");
@@ -586,8 +591,11 @@ impl ChatComposer {
                 if let Some(vc) = self.voice.take() {
                     match vc.stop() {
                         Ok(audio) => {
+                            let id = Uuid::new_v4().to_string();
+                            let placeholder = "[...transcribing...]".to_string();
+                            self.textarea.insert_named_element(&placeholder, id.clone());
                             let tx = self.app_event_tx.clone();
-                            crate::voice::transcribe_async(audio, tx);
+                            crate::voice::transcribe_async(id, audio, tx);
                         }
                         Err(e) => {
                             tracing::error!("failed to stop voice capture: {e}");
@@ -602,6 +610,14 @@ impl ChatComposer {
             }
             input => self.handle_input_basic(input),
         }
+    }
+
+    pub fn replace_transcription(&mut self, id: &str, text: &str) {
+        if !self.textarea.replace_element_by_id(id, text) {
+            self.textarea.insert_str(text);
+        }
+        self.sync_command_popup();
+        self.sync_file_search_popup();
     }
 
     /// Handle generic Input events that modify the textarea content.
