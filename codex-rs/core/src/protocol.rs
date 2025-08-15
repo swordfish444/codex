@@ -183,8 +183,29 @@ pub enum SandboxPolicy {
 /// not modified by the agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WritableRoot {
+    /// Absolute path, by construction.
     pub root: PathBuf,
+
+    /// Also absolute paths, by construction.
     pub read_only_subpaths: Vec<PathBuf>,
+}
+
+impl WritableRoot {
+    pub(crate) fn is_path_writable(&self, path: &Path) -> bool {
+        // Check if the path is under the root.
+        if !path.starts_with(&self.root) {
+            return false;
+        }
+
+        // Check if the path is under any of the read-only subpaths.
+        for subpath in &self.read_only_subpaths {
+            if path.starts_with(subpath) {
+                return false;
+            }
+        }
+
+        true
+    }
 }
 
 impl FromStr for SandboxPolicy {
@@ -724,7 +745,6 @@ pub struct Chunk {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
 
     /// Serialize Event to verify that its JSON representation has the expected
