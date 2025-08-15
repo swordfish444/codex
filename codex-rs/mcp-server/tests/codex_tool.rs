@@ -114,6 +114,13 @@ async fn shell_command_approval_triggers_elicitation() -> anyhow::Result<()> {
         )
         .await?;
 
+    // Verify task_complete notification arrives before the tool call completes.
+    let _task_complete = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp_process.read_stream_until_legacy_task_complete_notification(),
+    )
+    .await??;
+
     // Verify the original `codex` tool call completes and that `git init` ran
     // successfully.
     let codex_response = timeout(
