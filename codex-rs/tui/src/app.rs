@@ -339,7 +339,7 @@ impl App<'_> {
                         }
                         // Forward spacebar release so the composer can stop voice recording.
                         KeyEvent {
-                            code: KeyCode::Char(' '),
+                            code: KeyCode::PageDown,
                             kind: KeyEventKind::Release,
                             ..
                         } => {

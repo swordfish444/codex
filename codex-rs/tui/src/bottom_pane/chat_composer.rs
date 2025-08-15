@@ -217,7 +217,7 @@ impl ChatComposer {
         // While recording, swallow all input except Space release to finish.
         if self.voice.is_some() {
             if let KeyEvent {
-                code: KeyCode::Char(' '),
+                code: KeyCode::PageDown,
                 kind: KeyEventKind::Release,
                 ..
             } = key_event
@@ -562,13 +562,13 @@ impl ChatComposer {
                     (InputResult::Submitted(text), true)
                 }
             }
-            // Spacebar handling for push-to-talk voice input when composer is empty.
+            // Shift+Space handling for push-to-talk voice input
             KeyEvent {
-                code: KeyCode::Char(' '),
+                code: KeyCode::PageDown,
                 kind: KeyEventKind::Press,
                 ..
             } => {
-                if self.textarea.is_empty() && self.voice.is_none() {
+                if self.voice.is_none() {
                     match crate::voice::VoiceCapture::start() {
                         Ok(vc) => {
                             self.voice = Some(vc);
@@ -584,7 +584,7 @@ impl ChatComposer {
                 self.handle_input_basic(key_event)
             }
             KeyEvent {
-                code: KeyCode::Char(' '),
+                code: KeyCode::PageDown,
                 kind: KeyEventKind::Release,
                 ..
             } => {
@@ -613,9 +613,8 @@ impl ChatComposer {
     }
 
     pub fn replace_transcription(&mut self, id: &str, text: &str) {
-        if !self.textarea.replace_element_by_id(id, text) {
-            self.textarea.insert_str(text);
-        }
+        // Only replace if the placeholder still exists; otherwise do nothing.
+        let _ = self.textarea.replace_element_by_id(id, text);
         self.sync_command_popup();
         self.sync_file_search_popup();
     }
@@ -713,6 +712,10 @@ impl ChatComposer {
 
     fn set_has_focus(&mut self, has_focus: bool) {
         self.has_focus = has_focus;
+    }
+
+    pub(crate) fn is_recording(&self) -> bool {
+        self.voice.is_some()
     }
 }
 

@@ -103,6 +103,26 @@ impl BottomPane<'_> {
 
     /// Forward a key event to the active view or the composer.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> InputResult {
+        // Intercept Shift+Space to start/stop recording even if a view is active.
+        if let KeyEvent {
+            code: crossterm::event::KeyCode::PageDown,
+            ..
+        } = key_event
+        {
+            let (_ir, needs_redraw) = self.composer.handle_key_event(key_event);
+            if needs_redraw {
+                self.request_redraw();
+            }
+            return InputResult::None;
+        }
+        // While recording, route all keys to the composer so it can stop on release or next key.
+        if self.composer.is_recording() {
+            let (_ir, needs_redraw) = self.composer.handle_key_event(key_event);
+            if needs_redraw {
+                self.request_redraw();
+            }
+            return InputResult::None;
+        }
         if let Some(mut view) = self.active_view.take() {
             view.handle_key_event(self, key_event);
             if !view.is_complete() {
