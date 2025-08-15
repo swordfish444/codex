@@ -9,7 +9,7 @@ use codex_ansi_escape::ansi_escape_line;
 use codex_common::create_config_summary_entries;
 use codex_common::elapsed::format_duration;
 use codex_core::config::Config;
-use codex_core::parse_command::ParsedCommand;
+use codex_protocol::parse_command::ParsedCommand;
 use codex_core::plan_tool::PlanItemArg;
 use codex_core::plan_tool::StepStatus;
 use codex_core::plan_tool::UpdatePlanArgs;
