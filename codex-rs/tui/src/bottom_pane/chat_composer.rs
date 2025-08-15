@@ -64,6 +64,7 @@ pub(crate) struct ChatComposer {
     token_usage_info: Option<TokenUsageInfo>,
     has_focus: bool,
     voice: Option<crate::voice::VoiceCapture>,
+    recording_placeholder_id: Option<String>,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -95,6 +96,7 @@ impl ChatComposer {
             token_usage_info: None,
             has_focus: has_input_focus,
             voice: None,
+            recording_placeholder_id: None,
         }
     }
 
@@ -564,14 +566,19 @@ impl ChatComposer {
             }
             // Shift+Space handling for push-to-talk voice input
             KeyEvent {
-                code: KeyCode::PageDown,
+                code: KeyCode::Char(' '),
                 kind: KeyEventKind::Press,
+                modifiers,
                 ..
             } => {
-                if self.voice.is_none() {
+                if modifiers.contains(KeyModifiers::SHIFT) && self.voice.is_none() {
                     match crate::voice::VoiceCapture::start() {
                         Ok(vc) => {
                             self.voice = Some(vc);
+                            // Insert a visible placeholder immediately showing "recording"
+                            let id = Uuid::new_v4().to_string();
+                            self.textarea.insert_named_element("recording", id.clone());
+                            self.recording_placeholder_id = Some(id);
                             // Do not insert a space
                             return (InputResult::None, true);
                         }
@@ -584,16 +591,19 @@ impl ChatComposer {
                 self.handle_input_basic(key_event)
             }
             KeyEvent {
-                code: KeyCode::PageDown,
+                code: KeyCode::Char(' '),
                 kind: KeyEventKind::Release,
                 ..
             } => {
                 if let Some(vc) = self.voice.take() {
                     match vc.stop() {
                         Ok(audio) => {
-                            let id = Uuid::new_v4().to_string();
-                            let placeholder = "[...transcribing...]".to_string();
-                            self.textarea.insert_named_element(&placeholder, id.clone());
+                            // Update the existing placeholder to show "transcribing"
+                            let id = self
+                                .recording_placeholder_id
+                                .take()
+                                .unwrap_or_else(|| Uuid::new_v4().to_string());
+                            let _ = self.textarea.replace_element_by_id(&id, "transcribing");
                             let tx = self.app_event_tx.clone();
                             crate::voice::transcribe_async(id, audio, tx);
                         }
@@ -738,14 +748,7 @@ impl WidgetRef for &ChatComposer {
             ActivePopup::None => {
                 let bottom_line_rect = popup_rect;
                 let key_hint_style = Style::default().fg(Color::Cyan);
-                let mut hint = if self.voice.is_some() {
-                    vec![
-                        Span::from(" "),
-                        Span::from("Recording")
-                            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-                        Span::from(" — release Space to transcribe"),
-                    ]
-                } else if self.ctrl_c_quit_hint {
+                let mut hint = if self.ctrl_c_quit_hint {
                     vec![
                         Span::from(" "),
                         "Ctrl+C again".set_style(key_hint_style),
