@@ -77,6 +77,7 @@ uuid = "1"
 
 cpal = "0.15"
 hound = "3.5"
+webrtc-vad = "0.4"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
