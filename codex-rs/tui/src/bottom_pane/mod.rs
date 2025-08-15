@@ -103,7 +103,7 @@ impl BottomPane<'_> {
 
     /// Forward a key event to the active view or the composer.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> InputResult {
-        // Intercept Shift+Space to start/stop recording even if a view is active.
+        // Intercept PageDown to start/stop recording even if a view is active.
         if let KeyEvent {
             code: crossterm::event::KeyCode::PageDown,
             ..

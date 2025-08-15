@@ -216,6 +216,41 @@ impl ChatComposer {
 
     /// Handle a key event coming from the main UI.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        // If recording, attempt to stop on PageDown release, or on the next key press
+        // (some terminals do not emit Release events).
+        if self.voice.is_some() {
+            let should_stop = match key_event.kind {
+                KeyEventKind::Release => matches!(key_event.code, KeyCode::PageDown),
+                KeyEventKind::Press | KeyEventKind::Repeat => {
+                    !matches!(key_event.code, KeyCode::PageDown)
+                }
+                _ => false,
+            };
+            if should_stop {
+                if let Some(vc) = self.voice.take() {
+                    match vc.stop() {
+                        Ok(audio) => {
+                            // Update the existing placeholder to show "transcribing" and preserve id
+                            let id = self
+                                .recording_placeholder_id
+                                .take()
+                                .unwrap_or_else(|| Uuid::new_v4().to_string());
+                            let _ = self
+                                .textarea
+                                .update_named_element_by_id(&id, "transcribing");
+                            let tx = self.app_event_tx.clone();
+                            crate::voice::transcribe_async(id, audio, tx);
+                        }
+                        Err(e) => {
+                            tracing::error!("failed to stop voice capture: {e}");
+                        }
+                    }
+                }
+                return (InputResult::None, true);
+            }
+            // Swallow non-stopping keys while recording
+            return (InputResult::None, false);
+        }
         // While recording, swallow all input except Space release to finish.
         if self.voice.is_some() {
             if let KeyEvent {
@@ -564,14 +599,13 @@ impl ChatComposer {
                     (InputResult::Submitted(text), true)
                 }
             }
-            // Shift+Space handling for push-to-talk voice input
+            // PageDown handling for push-to-talk voice input
             KeyEvent {
-                code: KeyCode::Char(' '),
+                code: KeyCode::PageDown,
                 kind: KeyEventKind::Press,
-                modifiers,
                 ..
             } => {
-                if modifiers.contains(KeyModifiers::SHIFT) && self.voice.is_none() {
+                if self.voice.is_none() {
                     match crate::voice::VoiceCapture::start() {
                         Ok(vc) => {
                             self.voice = Some(vc);
@@ -591,19 +625,21 @@ impl ChatComposer {
                 self.handle_input_basic(key_event)
             }
             KeyEvent {
-                code: KeyCode::Char(' '),
+                code: KeyCode::PageDown,
                 kind: KeyEventKind::Release,
                 ..
             } => {
                 if let Some(vc) = self.voice.take() {
                     match vc.stop() {
                         Ok(audio) => {
-                            // Update the existing placeholder to show "transcribing"
+                            // Update the existing placeholder to show "transcribing" and preserve id
                             let id = self
                                 .recording_placeholder_id
                                 .take()
                                 .unwrap_or_else(|| Uuid::new_v4().to_string());
-                            let _ = self.textarea.replace_element_by_id(&id, "transcribing");
+                            let _ = self
+                                .textarea
+                                .update_named_element_by_id(&id, "transcribing");
                             let tx = self.app_event_tx.clone();
                             crate::voice::transcribe_async(id, audio, tx);
                         }

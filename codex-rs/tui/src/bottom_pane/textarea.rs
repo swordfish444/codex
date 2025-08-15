@@ -635,6 +635,27 @@ impl TextArea {
         }
     }
 
+    /// Update the element's text in place, preserving its id so callers can
+    /// update it again later (e.g. recording -> transcribing -> final).
+    pub fn update_named_element_by_id(&mut self, id: &str, text: &str) -> bool {
+        if let Some(elem_idx) = self
+            .elements
+            .iter()
+            .position(|e| e.id.as_deref() == Some(id))
+        {
+            let start = self.elements[elem_idx].range.start;
+            let old_range = self.elements[elem_idx].range.clone();
+            self.replace_range_raw(old_range.clone(), text);
+            // After replace_range_raw, the old element entry was removed if fully overlapped.
+            // Re-add an updated element with the same id and new range.
+            let new_end = start + text.len();
+            self.add_element_with_id(start..new_end, Some(id.to_string()));
+            true
+        } else {
+            false
+        }
+    }
+
     fn add_element_with_id(&mut self, range: Range<usize>, id: Option<String>) {
         let elem = TextElement {
             range: range.clone(),
