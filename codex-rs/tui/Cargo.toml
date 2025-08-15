@@ -51,7 +51,7 @@ ratatui = { version = "0.29.0", features = [
 ] }
 ratatui-image = "8.0.0"
 regex-lite = "0.1"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "multipart"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 shlex = "1.3.0"
@@ -74,6 +74,9 @@ tui-markdown = "0.3.3"
 unicode-segmentation = "1.12.0"
 unicode-width = "0.1"
 uuid = "1"
+
+cpal = "0.15"
+hound = "3.5"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

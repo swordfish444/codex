@@ -60,4 +60,7 @@ pub(crate) enum AppEvent {
     /// Onboarding: result of login_with_chatgpt.
     OnboardingAuthComplete(Result<(), String>),
     OnboardingComplete(ChatWidgetArgs),
+
+    /// Insert transcribed text from voice input into the composer.
+    InsertComposerText(String),
 }

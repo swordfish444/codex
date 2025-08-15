@@ -1,6 +1,7 @@
 use codex_core::protocol::TokenUsage;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
+use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
@@ -61,6 +62,7 @@ pub(crate) struct ChatComposer {
     pending_pastes: Vec<(String, String)>,
     token_usage_info: Option<TokenUsageInfo>,
     has_focus: bool,
+    voice: Option<crate::voice::VoiceCapture>,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -91,6 +93,7 @@ impl ChatComposer {
             pending_pastes: Vec::new(),
             token_usage_info: None,
             has_focus: has_input_focus,
+            voice: None,
         }
     }
 
@@ -163,6 +166,10 @@ impl ChatComposer {
     }
 
     pub fn handle_paste(&mut self, pasted: String) -> bool {
+        if self.voice.is_some() {
+            // Ignore paste while recording
+            return false;
+        }
         let char_count = pasted.chars().count();
         if char_count > LARGE_PASTE_CHAR_THRESHOLD {
             let placeholder = format!("[Pasted Content {char_count} chars]");
@@ -206,6 +213,30 @@ impl ChatComposer {
 
     /// Handle a key event coming from the main UI.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        // While recording, swallow all input except Space release to finish.
+        if self.voice.is_some() {
+            if let KeyEvent {
+                code: KeyCode::Char(' '),
+                kind: KeyEventKind::Release,
+                ..
+            } = key_event
+            {
+                if let Some(vc) = self.voice.take() {
+                    match vc.stop() {
+                        Ok(audio) => {
+                            let tx = self.app_event_tx.clone();
+                            crate::voice::transcribe_async(audio, tx);
+                        }
+                        Err(e) => {
+                            tracing::error!("failed to stop voice capture: {e}");
+                        }
+                    }
+                }
+                return (InputResult::None, true);
+            }
+            // Swallow everything else while recording
+            return (InputResult::None, false);
+        }
         let result = match &mut self.active_popup {
             ActivePopup::Command(_) => self.handle_key_event_with_slash_popup(key_event),
             ActivePopup::File(_) => self.handle_key_event_with_file_popup(key_event),
@@ -526,6 +557,49 @@ impl ChatComposer {
                     (InputResult::Submitted(text), true)
                 }
             }
+            // Spacebar handling for push-to-talk voice input when composer is empty.
+            KeyEvent {
+                code: KeyCode::Char(' '),
+                kind: KeyEventKind::Press,
+                ..
+            } => {
+                if self.textarea.is_empty() && self.voice.is_none() {
+                    match crate::voice::VoiceCapture::start() {
+                        Ok(vc) => {
+                            self.voice = Some(vc);
+                            // Do not insert a space
+                            return (InputResult::None, true);
+                        }
+                        Err(e) => {
+                            tracing::error!("failed to start voice capture: {e}");
+                            // Fall through to normal input handling if capture fails
+                        }
+                    }
+                }
+                self.handle_input_basic(key_event)
+            }
+            KeyEvent {
+                code: KeyCode::Char(' '),
+                kind: KeyEventKind::Release,
+                ..
+            } => {
+                if let Some(vc) = self.voice.take() {
+                    match vc.stop() {
+                        Ok(audio) => {
+                            let tx = self.app_event_tx.clone();
+                            crate::voice::transcribe_async(audio, tx);
+                        }
+                        Err(e) => {
+                            tracing::error!("failed to stop voice capture: {e}");
+                        }
+                    }
+                    // Swallow the key event; don't insert a space
+                    (InputResult::None, true)
+                } else {
+                    // Not recording; treat as normal release
+                    (InputResult::None, false)
+                }
+            }
             input => self.handle_input_basic(input),
         }
     }
@@ -637,7 +711,14 @@ impl WidgetRef for &ChatComposer {
             ActivePopup::None => {
                 let bottom_line_rect = popup_rect;
                 let key_hint_style = Style::default().fg(Color::Cyan);
-                let mut hint = if self.ctrl_c_quit_hint {
+                let mut hint = if self.voice.is_some() {
+                    vec![
+                        Span::from(" "),
+                        Span::from("Recording")
+                            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                        Span::from(" — release Space to transcribe"),
+                    ]
+                } else if self.ctrl_c_quit_hint {
                     vec![
                         Span::from(" "),
                         "Ctrl+C again".set_style(key_hint_style),

@@ -239,6 +239,11 @@ impl App<'_> {
                     self.pending_history_lines.extend(lines);
                     self.app_event_tx.send(AppEvent::RequestRedraw);
                 }
+                AppEvent::InsertComposerText(text) => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.insert_str(&text);
+                    }
+                }
                 AppEvent::RequestRedraw => {
                     self.schedule_frame_in(REDRAW_DEBOUNCE);
                 }
@@ -323,6 +328,14 @@ impl App<'_> {
                         }
                         KeyEvent {
                             kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                            ..
+                        } => {
+                            self.dispatch_key_event(key_event);
+                        }
+                        // Forward spacebar release so the composer can stop voice recording.
+                        KeyEvent {
+                            code: KeyCode::Char(' '),
+                            kind: KeyEventKind::Release,
                             ..
                         } => {
                             self.dispatch_key_event(key_event);
