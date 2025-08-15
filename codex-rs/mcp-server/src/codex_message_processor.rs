@@ -424,6 +424,7 @@ fn derive_config_from_params(
         config: cli_overrides,
         base_instructions,
         include_plan_tool,
+        include_apply_patch_tool,
     } = params;
     let overrides = ConfigOverrides {
         model,
@@ -435,6 +436,7 @@ fn derive_config_from_params(
         codex_linux_sandbox_exe,
         base_instructions,
         include_plan_tool,
+        include_apply_patch_tool,
         disable_response_storage: None,
         show_raw_agent_reasoning: None,
     };
