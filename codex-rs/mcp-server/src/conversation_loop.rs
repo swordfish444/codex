@@ -7,6 +7,7 @@ use crate::patch_approval::handle_patch_approval_request;
 use codex_core::CodexConversation;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
+use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::ExecApprovalRequestEvent;
 use mcp_types::RequestId;
@@ -27,12 +28,14 @@ pub async fn run_conversation_loop(
     loop {
         match codex.next_event().await {
             Ok(event) => {
-                outgoing
-                    .send_event_as_notification(
-                        &event,
-                        Some(OutgoingNotificationMeta::new(Some(request_id.clone()))),
-                    )
-                    .await;
+                if should_dispatch_notification_for_event(&event) {
+                    outgoing
+                        .send_event_as_notification(
+                            &event,
+                            Some(OutgoingNotificationMeta::new(Some(request_id.clone()))),
+                        )
+                        .await;
+                }
 
                 match event.msg {
                     EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
@@ -52,7 +55,6 @@ pub async fn run_conversation_loop(
                             call_id,
                         )
                         .await;
-                        continue;
                     }
                     EventMsg::Error(_) => {
                         error!("Codex runtime error");
@@ -75,7 +77,6 @@ pub async fn run_conversation_loop(
                             event.id.clone(),
                         )
                         .await;
-                        continue;
                     }
                     EventMsg::TaskComplete(_) => {}
                     EventMsg::SessionConfigured(_) => {
@@ -107,6 +108,7 @@ pub async fn run_conversation_loop(
                     | EventMsg::PatchApplyEnd(_)
                     | EventMsg::GetHistoryEntryResponse(_)
                     | EventMsg::PlanUpdate(_)
+                    | EventMsg::TurnAborted(_)
                     | EventMsg::ShutdownComplete => {
                         // For now, we do not do anything extra for these
                         // events. Note that
@@ -122,4 +124,11 @@ pub async fn run_conversation_loop(
             }
         }
     }
+}
+
+fn should_dispatch_notification_for_event(event: &Event) -> bool {
+    // This should increase over time. Note we do not send a notification for
+    // TurnAborted because clients should look for the response to
+    // InterruptConversation instead.
+    !matches!(event.msg, EventMsg::TurnAborted(_))
 }
