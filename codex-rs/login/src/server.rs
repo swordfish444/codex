@@ -3,11 +3,7 @@ use std::io::{self};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
-use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
 
 use crate::AuthDotJson;
 use crate::get_auth_file;
@@ -32,7 +28,6 @@ pub struct ServerOptions {
     pub port: u16,
     pub open_browser: bool,
     pub force_state: Option<String>,
-    pub login_timeout: Option<Duration>,
 }
 
 impl ServerOptions {
@@ -44,7 +39,6 @@ impl ServerOptions {
             port: DEFAULT_PORT,
             open_browser: true,
             force_state: None,
-            login_timeout: None,
         }
     }
 }
@@ -128,21 +122,6 @@ pub fn run_login_server(
     }
     let shutdown_notify: Arc<tokio::sync::Notify> =
         shutdown_flag.unwrap_or_else(|| Arc::new(tokio::sync::Notify::new()));
-    let shutdown_notify_clone = shutdown_notify.clone();
-    let timeout_flag = Arc::new(AtomicBool::new(false));
-
-    // Channel used to signal completion to timeout watcher.
-    let (done_tx, done_rx) = mpsc::channel::<()>();
-
-    if let Some(timeout) = opts.login_timeout {
-        spawn_timeout_watcher(
-            done_rx,
-            timeout,
-            shutdown_notify.clone(),
-            timeout_flag.clone(),
-            server.clone(),
-        );
-    }
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Request>(16);
     let _server_handle = {
@@ -159,25 +138,16 @@ pub fn run_login_server(
     };
 
     let server_for_task = server.clone();
+    let shutdown_for_task = shutdown_notify.clone();
     let server_handle = tokio::spawn(async move {
         loop {
             tokio::select! {
-                _ = shutdown_notify.notified() => {
-                    let _ = done_tx.send(());
-                    if timeout_flag.load(Ordering::SeqCst) {
-                        return Err(io::Error::other("Login timed out"));
-                    } else {
-                        return Err(io::Error::other("Login was not completed"));
-                    }
+                _ = shutdown_for_task.notified() => {
+                    return Err(io::Error::other("Login was not completed"));
                 }
                 maybe_req = rx.recv() => {
                     let Some(req) = maybe_req else {
-                        let _ = done_tx.send(());
-                        if timeout_flag.load(Ordering::SeqCst) {
-                            return Err(io::Error::other("Login timed out"));
-                        } else {
-                            return Err(io::Error::other("Login was not completed"));
-                        }
+                        return Err(io::Error::other("Login was not completed"));
                     };
 
                     let url_raw = req.url().to_string();
@@ -196,8 +166,7 @@ pub fn run_login_server(
                     }
 
                     if is_login_complete {
-                        shutdown_notify.notify_waiters();
-                        let _ = done_tx.send(());
+                        shutdown_for_task.notify_waiters();
                         server_for_task.unblock();
                         return Ok(());
                     }
@@ -207,10 +176,10 @@ pub fn run_login_server(
     });
 
     Ok(LoginServer {
-        auth_url: auth_url.clone(),
+        auth_url,
         actual_port,
         server_handle,
-        shutdown_flag: shutdown_notify_clone,
+        shutdown_flag: shutdown_notify,
         server,
     })
 }
@@ -317,26 +286,6 @@ async fn process_request(
         }
         _ => HandledRequest::Response(Response::from_string("Not Found").with_status_code(404)),
     }
-}
-
-/// Spawns a detached thread that waits for either a completion signal on `done_rx`
-/// or the specified `timeout` to elapse. If the timeout elapses first it marks
-/// the `shutdown_flag`, records `timeout_flag`, and unblocks the HTTP server so
-/// that the main server loop can exit promptly.
-fn spawn_timeout_watcher(
-    done_rx: mpsc::Receiver<()>,
-    timeout: Duration,
-    shutdown_notify: Arc<tokio::sync::Notify>,
-    timeout_flag: Arc<AtomicBool>,
-    server: Arc<Server>,
-) {
-    thread::spawn(move || {
-        if done_rx.recv_timeout(timeout).is_err() {
-            timeout_flag.store(true, Ordering::SeqCst);
-            shutdown_notify.notify_waiters();
-            server.unblock();
-        }
-    });
 }
 
 fn build_authorize_url(
