@@ -26,8 +26,7 @@ use crate::onboarding::onboarding_screen::StepStateProvider;
 use crate::shimmer::shimmer_spans;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
+use tokio::sync::Notify;
 
 use super::onboarding_screen::StepState;
 // no additional imports
@@ -46,13 +45,13 @@ pub(crate) enum SignInState {
 /// Used to manage the lifecycle of SpawnedLogin and ensure it gets cleaned up.
 pub(crate) struct ContinueInBrowserState {
     auth_url: String,
-    shutdown_flag: Option<Arc<AtomicBool>>,
+    shutdown_flag: Option<Arc<Notify>>,
     _login_wait_handle: Option<tokio::task::JoinHandle<()>>,
 }
 impl Drop for ContinueInBrowserState {
     fn drop(&mut self) {
         if let Some(flag) = &self.shutdown_flag {
-            flag.store(true, Ordering::SeqCst);
+            flag.notify_waiters();
         }
     }
 }
