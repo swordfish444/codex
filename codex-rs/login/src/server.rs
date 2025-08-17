@@ -120,16 +120,11 @@ pub fn run_login_server(
     let _server_handle = {
         let server = server.clone();
         thread::spawn(move || -> io::Result<()> {
-            loop {
-                match server.recv() {
-                    Ok(request) => tx.blocking_send(request).map_err(|e| {
-                        eprintln!("Failed to send request to channel: {e}");
-                        io::Error::other("Failed to send request to channel")
-                    })?,
-                    Err(_e) => {
-                        break;
-                    }
-                };
+            while let Ok(request) = server.recv() {
+                tx.blocking_send(request).map_err(|e| {
+                    eprintln!("Failed to send request to channel: {e}");
+                    io::Error::other("Failed to send request to channel")
+                })?;
             }
             Ok(())
         })
