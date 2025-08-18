@@ -235,10 +235,22 @@ async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() {
         "role": "user",
         "content": [ { "type": "input_text", "text": "hello 2" } ]
     });
+    // After overriding the turn context, the environment context should be emitted again
+    // reflecting the new cwd, approval policy and sandbox settings.
+    let expected_env_text_2 = format!(
+        "<environment_context>\nCurrent working directory: {}\nApproval policy: never\nSandbox mode: workspace-write\nNetwork access: enabled\n</environment_context>",
+        new_cwd.path().to_string_lossy()
+    );
+    let expected_env_msg_2 = serde_json::json!({
+        "type": "message",
+        "id": serde_json::Value::Null,
+        "role": "user",
+        "content": [ { "type": "input_text", "text": expected_env_text_2 } ]
+    });
     let expected_body2 = serde_json::json!(
         [
             body1["input"].as_array().unwrap().as_slice(),
-            [expected_user_message_2].as_slice(),
+            [expected_env_msg_2, expected_user_message_2].as_slice(),
         ]
         .concat()
     );
