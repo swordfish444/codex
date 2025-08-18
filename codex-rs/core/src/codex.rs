@@ -1037,8 +1037,10 @@ async fn submission_loop(
                 );
 
                 let new_approval_policy = approval_policy.unwrap_or(prev.approval_policy);
-                let new_sandbox_policy = sandbox_policy.unwrap_or(prev.sandbox_policy.clone());
-                let new_cwd = cwd.unwrap_or_else(|| prev.cwd.clone());
+                let new_sandbox_policy = sandbox_policy
+                    .clone()
+                    .unwrap_or(prev.sandbox_policy.clone());
+                let new_cwd = cwd.clone().unwrap_or_else(|| prev.cwd.clone());
 
                 let tools_config = ToolsConfig::new(
                     &effective_family,
@@ -1054,14 +1056,22 @@ async fn submission_loop(
                     user_instructions: prev.user_instructions.clone(),
                     base_instructions: prev.base_instructions.clone(),
                     approval_policy: new_approval_policy,
-                    sandbox_policy: new_sandbox_policy,
+                    sandbox_policy: new_sandbox_policy.clone(),
                     shell_environment_policy: prev.shell_environment_policy.clone(),
-                    cwd: new_cwd,
+                    cwd: new_cwd.clone(),
                     disable_response_storage: prev.disable_response_storage,
                 };
 
                 // Install the new persistent context for subsequent tasks/turns.
                 turn_context = Arc::new(new_turn_context);
+                if cwd.is_some() || approval_policy.is_some() || sandbox_policy.is_some() {
+                    sess.record_conversation_items(&[ResponseItem::from(EnvironmentContext::new(
+                        new_cwd,
+                        new_approval_policy,
+                        new_sandbox_policy,
+                    ))])
+                    .await;
+                }
             }
             Op::UserInput { items } => {
                 // attempt to inject input into current task
