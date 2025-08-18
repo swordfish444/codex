@@ -113,10 +113,10 @@ Build & Run
   ```
 
 Convenience (via `just`, inside `codex-rs`)
-- `just codex` — run the CLI
-- `just tui` — run the TUI subcommand
-- `just fmt` — format code
-- `just fix` — apply clippy fixes
+- `just codex` - run the CLI
+- `just tui` - run the TUI subcommand
+- `just fmt` - format code
+- `just fix` - apply clippy fixes
 
 ### Using Codex with your ChatGPT plan
 
