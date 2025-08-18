@@ -1133,7 +1133,7 @@ async fn submission_loop(
                         cwd,
                         disable_response_storage: turn_context.disable_response_storage,
                     };
-
+                    // TODO: record the new environment context in the conversation history
                     // no current task, spawn a new one with the per‑turn context
                     let task =
                         AgentTask::spawn(sess.clone(), Arc::new(fresh_turn_context), sub.id, items);
