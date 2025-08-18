@@ -1,5 +1,3 @@
-#![expect(clippy::unwrap_used)]
-
 use std::collections::HashMap;
 
 use codex_core::ModelProviderInfo;
