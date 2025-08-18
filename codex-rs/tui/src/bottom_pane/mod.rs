@@ -16,6 +16,7 @@ mod bottom_pane_view;
 mod chat_composer;
 mod chat_composer_history;
 mod command_popup;
+mod choice_popup;
 mod file_search_popup;
 mod popup_consts;
 mod scroll_state;
@@ -59,6 +60,8 @@ pub(crate) struct BottomPaneParams {
     pub(crate) has_input_focus: bool,
     pub(crate) enhanced_keys_supported: bool,
     pub(crate) placeholder_text: String,
+    /// Whether to show reasoning-related slash commands.
+    pub(crate) show_reasoning_commands: bool,
 }
 
 impl BottomPane<'_> {
@@ -71,6 +74,7 @@ impl BottomPane<'_> {
                 params.app_event_tx.clone(),
                 enhanced_keys_supported,
                 params.placeholder_text,
+                params.show_reasoning_commands,
             ),
             active_view: None,
             app_event_tx: params.app_event_tx,
@@ -297,6 +301,16 @@ impl BottomPane<'_> {
         self.composer.on_file_search_result(query, matches);
         self.request_redraw();
     }
+
+    /// Open a popup to choose the reasoning effort and apply the chosen
+    /// override on selection.
+    pub(crate) fn open_reasoning_effort_popup(
+        &mut self,
+        current: codex_core::protocol_config_types::ReasoningEffort,
+    ) {
+        self.composer.open_reasoning_effort_popup(current);
+        self.request_redraw();
+    }
 }
 
 impl WidgetRef for &BottomPane<'_> {
@@ -355,6 +369,7 @@ mod tests {
             has_input_focus: true,
             enhanced_keys_supported: false,
             placeholder_text: "Ask Codex to do anything".to_string(),
+            show_reasoning_commands: false,
         });
         pane.push_approval_request(exec_request());
         assert_eq!(CancellationEvent::Handled, pane.on_ctrl_c());
@@ -373,6 +388,7 @@ mod tests {
             has_input_focus: true,
             enhanced_keys_supported: false,
             placeholder_text: "Ask Codex to do anything".to_string(),
+            show_reasoning_commands: false,
         });
 
         // Create an approval modal (active view).
@@ -402,6 +418,7 @@ mod tests {
             has_input_focus: true,
             enhanced_keys_supported: false,
             placeholder_text: "Ask Codex to do anything".to_string(),
+            show_reasoning_commands: false,
         });
 
         // Start a running task so the status indicator replaces the composer.
@@ -452,6 +469,7 @@ mod tests {
             has_input_focus: true,
             enhanced_keys_supported: false,
             placeholder_text: "Ask Codex to do anything".to_string(),
+            show_reasoning_commands: false,
         });
 
         // Begin a task: show initial status.
@@ -484,6 +502,7 @@ mod tests {
             has_input_focus: true,
             enhanced_keys_supported: false,
             placeholder_text: "Ask Codex to do anything".to_string(),
+            show_reasoning_commands: false,
         });
 
         // Activate spinner (status view replaces composer) with no live ring.
@@ -536,6 +555,7 @@ mod tests {
             has_input_focus: true,
             enhanced_keys_supported: false,
             placeholder_text: "Ask Codex to do anything".to_string(),
+            show_reasoning_commands: false,
         });
 
         pane.set_task_running(true);

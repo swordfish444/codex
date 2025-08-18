@@ -507,6 +507,7 @@ impl ChatWidget<'_> {
                 has_input_focus: true,
                 enhanced_keys_supported,
                 placeholder_text: placeholder,
+                show_reasoning_commands: config.model_family.supports_reasoning_summaries,
             }),
             active_exec_cell: None,
             config: config.clone(),
@@ -683,6 +684,12 @@ impl ChatWidget<'_> {
             &self.total_token_usage,
             &self.session_id,
         ));
+    }
+
+    /// Open a popup to choose the model reasoning effort.
+    pub(crate) fn open_reasoning_effort_popup(&mut self) {
+        let current = self.config.model_reasoning_effort;
+        self.bottom_pane.open_reasoning_effort_popup(current);
     }
 
     /// Forward file-search results to the bottom pane.

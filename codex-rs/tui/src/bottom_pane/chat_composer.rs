@@ -21,6 +21,8 @@ use ratatui::widgets::StatefulWidgetRef;
 use ratatui::widgets::WidgetRef;
 
 use super::chat_composer_history::ChatComposerHistory;
+use super::choice_popup::ChoicePayload;
+use super::choice_popup::ChoicePopup;
 use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
 
@@ -28,6 +30,8 @@ use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::textarea::TextArea;
 use crate::bottom_pane::textarea::TextAreaState;
+use codex_core::protocol::Op;
+use codex_core::protocol_config_types::ReasoningEffort as ReasoningEffortConfig;
 use codex_file_search::FileMatch;
 use std::cell::RefCell;
 
@@ -61,6 +65,7 @@ pub(crate) struct ChatComposer {
     token_usage_info: Option<TokenUsageInfo>,
     has_focus: bool,
     placeholder_text: String,
+    show_reasoning_commands: bool,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -68,6 +73,7 @@ enum ActivePopup {
     None,
     Command(CommandPopup),
     File(FileSearchPopup),
+    Choice(ChoicePopup),
 }
 
 impl ChatComposer {
@@ -76,6 +82,7 @@ impl ChatComposer {
         app_event_tx: AppEventSender,
         enhanced_keys_supported: bool,
         placeholder_text: String,
+        show_reasoning_commands: bool,
     ) -> Self {
         let use_shift_enter_hint = enhanced_keys_supported;
 
@@ -93,6 +100,7 @@ impl ChatComposer {
             token_usage_info: None,
             has_focus: has_input_focus,
             placeholder_text,
+            show_reasoning_commands,
         }
     }
 
@@ -102,6 +110,7 @@ impl ChatComposer {
                 ActivePopup::None => 1u16,
                 ActivePopup::Command(c) => c.calculate_required_height(),
                 ActivePopup::File(c) => c.calculate_required_height(),
+                ActivePopup::Choice(c) => c.calculate_required_height(),
             }
     }
 
@@ -109,6 +118,7 @@ impl ChatComposer {
         let popup_height = match &self.active_popup {
             ActivePopup::Command(popup) => popup.calculate_required_height(),
             ActivePopup::File(popup) => popup.calculate_required_height(),
+            ActivePopup::Choice(popup) => popup.calculate_required_height(),
             ActivePopup::None => 1,
         };
         let [textarea_rect, _] =
@@ -211,15 +221,22 @@ impl ChatComposer {
         let result = match &mut self.active_popup {
             ActivePopup::Command(_) => self.handle_key_event_with_slash_popup(key_event),
             ActivePopup::File(_) => self.handle_key_event_with_file_popup(key_event),
+            ActivePopup::Choice(_) => self.handle_key_event_with_choice_popup(key_event),
             ActivePopup::None => self.handle_key_event_without_popup(key_event),
         };
 
         // Update (or hide/show) popup after processing the key.
         self.sync_command_popup();
-        if matches!(self.active_popup, ActivePopup::Command(_)) {
-            self.dismissed_file_popup_token = None;
-        } else {
-            self.sync_file_search_popup();
+        match self.active_popup {
+            ActivePopup::Command(_) => {
+                self.dismissed_file_popup_token = None;
+            }
+            ActivePopup::File(_) | ActivePopup::None => {
+                self.sync_file_search_popup();
+            }
+            ActivePopup::Choice(_) => {
+                // Do not clobber a generic choice popup with file-search sync.
+            }
         }
 
         result
@@ -326,6 +343,60 @@ impl ChatComposer {
                     let sel_path = sel.to_string();
                     // Drop popup borrow before using self mutably again.
                     self.insert_selected_path(&sel_path);
+                    self.active_popup = ActivePopup::None;
+                    return (InputResult::None, true);
+                }
+                (InputResult::None, false)
+            }
+            input => self.handle_input_basic(input),
+        }
+    }
+
+    /// Handle key events when a generic choice popup is visible.
+    fn handle_key_event_with_choice_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        let ActivePopup::Choice(popup) = &mut self.active_popup else {
+            unreachable!();
+        };
+
+        match key_event {
+            KeyEvent {
+                code: KeyCode::Up, ..
+            } => {
+                popup.move_up();
+                (InputResult::None, true)
+            }
+            KeyEvent {
+                code: KeyCode::Down,
+                ..
+            } => {
+                popup.move_down();
+                (InputResult::None, true)
+            }
+            KeyEvent {
+                code: KeyCode::Esc, ..
+            } => {
+                self.active_popup = ActivePopup::None;
+                (InputResult::None, true)
+            }
+            KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                if let Some(sel) = popup.selected_payload() {
+                    match sel {
+                        ChoicePayload::ReasoningEffort(effort) => {
+                            self.app_event_tx
+                                .send(AppEvent::CodexOp(Op::OverrideTurnContext {
+                                    cwd: None,
+                                    approval_policy: None,
+                                    sandbox_policy: None,
+                                    model: None,
+                                    effort: Some(*effort),
+                                    summary: None,
+                                }));
+                        }
+                    }
                     self.active_popup = ActivePopup::None;
                     return (InputResult::None, true);
                 }
@@ -562,6 +633,7 @@ impl ChatComposer {
             _ => {
                 if input_starts_with_slash {
                     let mut command_popup = CommandPopup::new();
+                    command_popup.filter_for_capabilities(self.show_reasoning_commands);
                     command_popup.on_composer_text_change(first_line.to_string());
                     self.active_popup = ActivePopup::Command(command_popup);
                 }
@@ -618,6 +690,12 @@ impl ChatComposer {
     fn set_has_focus(&mut self, has_focus: bool) {
         self.has_focus = has_focus;
     }
+
+    /// Open a choice popup to select a reasoning effort value.
+    pub(crate) fn open_reasoning_effort_popup(&mut self, current: ReasoningEffortConfig) {
+        let popup = ChoicePopup::new_reasoning_effort(current);
+        self.active_popup = ActivePopup::Choice(popup);
+    }
 }
 
 impl WidgetRef for &ChatComposer {
@@ -625,6 +703,7 @@ impl WidgetRef for &ChatComposer {
         let popup_height = match &self.active_popup {
             ActivePopup::Command(popup) => popup.calculate_required_height(),
             ActivePopup::File(popup) => popup.calculate_required_height(),
+            ActivePopup::Choice(popup) => popup.calculate_required_height(),
             ActivePopup::None => 1,
         };
         let [textarea_rect, popup_rect] =
@@ -634,6 +713,9 @@ impl WidgetRef for &ChatComposer {
                 popup.render_ref(popup_rect, buf);
             }
             ActivePopup::File(popup) => {
+                popup.render_ref(popup_rect, buf);
+            }
+            ActivePopup::Choice(popup) => {
                 popup.render_ref(popup_rect, buf);
             }
             ActivePopup::None => {
@@ -887,8 +969,13 @@ mod tests {
 
         let (tx, _rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
 
         let needs_redraw = composer.handle_paste("hello".to_string());
         assert!(needs_redraw);
@@ -911,8 +998,13 @@ mod tests {
 
         let (tx, _rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
 
         let large = "x".repeat(LARGE_PASTE_CHAR_THRESHOLD + 10);
         let needs_redraw = composer.handle_paste(large.clone());
@@ -941,8 +1033,13 @@ mod tests {
         let large = "y".repeat(LARGE_PASTE_CHAR_THRESHOLD + 1);
         let (tx, _rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
 
         composer.handle_paste(large);
         assert_eq!(composer.pending_pastes.len(), 1);
@@ -983,6 +1080,7 @@ mod tests {
                 sender.clone(),
                 false,
                 "Ask Codex to do anything".to_string(),
+                false,
             );
 
             if let Some(text) = input {
@@ -1021,8 +1119,13 @@ mod tests {
 
         let (tx, rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
 
         // Type the slash command.
         for ch in [
@@ -1065,8 +1168,13 @@ mod tests {
 
         let (tx, rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
 
         for ch in ['/', 'm', 'e', 'n', 't', 'i', 'o', 'n'] {
             let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
@@ -1105,8 +1213,13 @@ mod tests {
 
         let (tx, _rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
 
         // Define test cases: (paste content, is_large)
         let test_cases = [
@@ -1179,8 +1292,13 @@ mod tests {
 
         let (tx, _rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
 
         // Define test cases: (content, is_large)
         let test_cases = [
@@ -1246,8 +1364,13 @@ mod tests {
 
         let (tx, _rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
 
         // Define test cases: (cursor_position_from_end, expected_pending_count)
         let test_cases = [

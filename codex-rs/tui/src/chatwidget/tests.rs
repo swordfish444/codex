@@ -125,6 +125,7 @@ fn make_chatwidget_manual() -> (
         has_input_focus: true,
         enhanced_keys_supported: false,
         placeholder_text: "Ask Codex to do anything".to_string(),
+        show_reasoning_commands: false,
     });
     let widget = ChatWidget {
         app_event_tx,

@@ -416,6 +416,13 @@ impl App<'_> {
                             widget.add_status_output();
                         }
                     }
+                    SlashCommand::Effort => {
+                        if self.config.model_family.supports_reasoning_summaries {
+                            if let AppState::Chat { widget } = &mut self.app_state {
+                                widget.open_reasoning_effort_popup();
+                            }
+                        }
+                    }
                     #[cfg(debug_assertions)]
                     SlashCommand::TestApproval => {
                         use codex_core::protocol::EventMsg;

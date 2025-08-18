@@ -25,6 +25,15 @@ impl CommandPopup {
         }
     }
 
+    /// Filter commands based on runtime capabilities (e.g., hide reasoning-related
+    /// commands when the current model does not support them).
+    pub(crate) fn filter_for_capabilities(&mut self, show_reasoning_commands: bool) {
+        if !show_reasoning_commands {
+            self.all_commands
+                .retain(|(_, c)| !matches!(c, SlashCommand::Effort));
+        }
+    }
+
     /// Update the filter string based on the current composer text. The text
     /// passed in is expected to start with a leading '/'. Everything after the
     /// *first* '/" on the *first* line becomes the active filter that is used
