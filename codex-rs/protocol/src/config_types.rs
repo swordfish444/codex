@@ -13,8 +13,6 @@ pub enum ReasoningEffort {
     #[default]
     Medium,
     High,
-    /// Option to disable reasoning.
-    None,
 }
 
 /// A summary of the reasoning performed by the model. This can be useful for

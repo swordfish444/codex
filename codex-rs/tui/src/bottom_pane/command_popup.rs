@@ -30,7 +30,7 @@ impl CommandPopup {
     pub(crate) fn filter_for_capabilities(&mut self, show_reasoning_commands: bool) {
         if !show_reasoning_commands {
             self.all_commands
-                .retain(|(_, c)| !matches!(c, SlashCommand::Effort));
+                .retain(|(_, c)| !matches!(c, SlashCommand::ReasoningEffort));
         }
     }
 

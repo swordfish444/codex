@@ -17,9 +17,8 @@ pub enum SlashCommand {
     Compact,
     Diff,
     Mention,
+    ReasoningEffort,
     Status,
-    /// Choose model reasoning effort (only shown when supported by model family).
-    Effort,
     Logout,
     Quit,
     #[cfg(debug_assertions)]
@@ -34,10 +33,12 @@ impl SlashCommand {
             SlashCommand::Init => "create an AGENTS.md file with instructions for Codex",
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
             SlashCommand::Quit => "exit Codex",
+            SlashCommand::ReasoningEffort => {
+                "choose model reasoning effort (low/medium/high/minimal)"
+            }
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
             SlashCommand::Status => "show current session configuration and token usage",
-            SlashCommand::Effort => "choose model reasoning effort (low/medium/high/minimal/none)",
             SlashCommand::Logout => "log out of Codex",
             #[cfg(debug_assertions)]
             SlashCommand::TestApproval => "test approval request",
