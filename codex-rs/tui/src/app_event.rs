@@ -70,6 +70,7 @@ pub(crate) enum AppEvent {
     /// Voice transcription failed; remove the placeholder identified by `id`.
     TranscriptionFailed {
         id: String,
+        #[allow(dead_code)]
         error: String,
     },
 }

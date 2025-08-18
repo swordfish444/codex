@@ -224,7 +224,6 @@ impl ChatComposer {
                 KeyEventKind::Press | KeyEventKind::Repeat => {
                     !matches!(key_event.code, KeyCode::PageDown)
                 }
-                _ => false,
             };
             if should_stop {
                 if let Some(vc) = self.voice.take() {

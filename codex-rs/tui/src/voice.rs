@@ -11,13 +11,15 @@ use cpal::traits::StreamTrait;
 use hound::SampleFormat;
 use hound::WavSpec;
 use hound::WavWriter;
+use std::convert::TryFrom;
 use std::io::Cursor;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tracing::error;
 use tracing::info;
-use std::convert::TryFrom;
-use webrtc_vad::{SampleRate, Vad, VadMode};
+use webrtc_vad::SampleRate;
+use webrtc_vad::Vad;
+use webrtc_vad::VadMode;
 
 pub struct RecordedAudio {
     pub data: Vec<i16>,
