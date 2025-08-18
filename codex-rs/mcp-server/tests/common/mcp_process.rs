@@ -11,14 +11,9 @@ use tokio::process::ChildStdout;
 
 use anyhow::Context;
 use assert_cmd::prelude::*;
-use codex_core::protocol::InputItem;
 use codex_mcp_server::CodexToolCallParam;
-use codex_mcp_server::CodexToolCallReplyParam;
-use codex_mcp_server::mcp_protocol::ConversationCreateArgs;
-use codex_mcp_server::mcp_protocol::ConversationId;
-use codex_mcp_server::mcp_protocol::ConversationSendMessageArgs;
-use codex_mcp_server::mcp_protocol::ToolCallRequestParams;
 use codex_mcp_server::wire_format::AddConversationListenerParams;
+use codex_mcp_server::wire_format::InterruptConversationParams;
 use codex_mcp_server::wire_format::NewConversationParams;
 use codex_mcp_server::wire_format::RemoveConversationListenerParams;
 use codex_mcp_server::wire_format::SendUserMessageParams;
@@ -40,7 +35,6 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::process::Command as StdCommand;
 use tokio::process::Command;
-use uuid::Uuid;
 
 pub struct McpProcess {
     next_request_id: AtomicI64,
@@ -167,83 +161,10 @@ impl McpProcess {
         .await
     }
 
-    pub async fn send_codex_reply_tool_call(
-        &mut self,
-        session_id: &str,
-        prompt: &str,
-    ) -> anyhow::Result<i64> {
-        let codex_tool_call_params = CallToolRequestParams {
-            name: "codex-reply".to_string(),
-            arguments: Some(serde_json::to_value(CodexToolCallReplyParam {
-                prompt: prompt.to_string(),
-                session_id: session_id.to_string(),
-            })?),
-        };
-        self.send_request(
-            mcp_types::CallToolRequest::METHOD,
-            Some(serde_json::to_value(codex_tool_call_params)?),
-        )
-        .await
-    }
-
-    pub async fn send_user_message_tool_call(
-        &mut self,
-        message: &str,
-        session_id: &str,
-    ) -> anyhow::Result<i64> {
-        let params = ToolCallRequestParams::ConversationSendMessage(ConversationSendMessageArgs {
-            conversation_id: ConversationId(Uuid::parse_str(session_id)?),
-            content: vec![InputItem::Text {
-                text: message.to_string(),
-            }],
-            parent_message_id: None,
-            conversation_overrides: None,
-        });
-        self.send_request(
-            mcp_types::CallToolRequest::METHOD,
-            Some(serde_json::to_value(params)?),
-        )
-        .await
-    }
-
-    pub async fn send_conversation_create_tool_call(
-        &mut self,
-        prompt: &str,
-        model: &str,
-        cwd: &str,
-    ) -> anyhow::Result<i64> {
-        let params = ToolCallRequestParams::ConversationCreate(ConversationCreateArgs {
-            prompt: prompt.to_string(),
-            model: model.to_string(),
-            cwd: cwd.to_string(),
-            approval_policy: None,
-            sandbox: None,
-            config: None,
-            profile: None,
-            base_instructions: None,
-        });
-        self.send_request(
-            mcp_types::CallToolRequest::METHOD,
-            Some(serde_json::to_value(params)?),
-        )
-        .await
-    }
-
-    pub async fn send_conversation_create_with_args(
-        &mut self,
-        args: ConversationCreateArgs,
-    ) -> anyhow::Result<i64> {
-        let params = ToolCallRequestParams::ConversationCreate(args);
-        self.send_request(
-            mcp_types::CallToolRequest::METHOD,
-            Some(serde_json::to_value(params)?),
-        )
-        .await
-    }
-
     // ---------------------------------------------------------------------
     // Codex JSON-RPC (non-tool) helpers
     // ---------------------------------------------------------------------
+
     /// Send a `newConversation` JSON-RPC request.
     pub async fn send_new_conversation_request(
         &mut self,
@@ -289,6 +210,14 @@ impl McpProcess {
     ) -> anyhow::Result<i64> {
         let params = Some(serde_json::to_value(params)?);
         self.send_request("sendUserTurn", params).await
+    }
+
+    pub async fn send_interrupt_conversation_request(
+        &mut self,
+        params: InterruptConversationParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("interruptConversation", params).await
     }
 
     async fn send_request(
@@ -378,6 +307,33 @@ impl McpProcess {
                 JSONRPCMessage::Response(jsonrpc_response) => {
                     if jsonrpc_response.id == request_id {
                         return Ok(jsonrpc_response);
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn read_stream_until_error_message(
+        &mut self,
+        request_id: RequestId,
+    ) -> anyhow::Result<mcp_types::JSONRPCError> {
+        loop {
+            let message = self.read_jsonrpc_message().await?;
+            eprint!("message: {message:?}");
+
+            match message {
+                JSONRPCMessage::Notification(_) => {
+                    eprintln!("notification: {message:?}");
+                }
+                JSONRPCMessage::Request(_) => {
+                    anyhow::bail!("unexpected JSONRPCMessage::Request: {message:?}");
+                }
+                JSONRPCMessage::Response(_) => {
+                    // Keep scanning; we're waiting for an error with matching id.
+                }
+                JSONRPCMessage::Error(err) => {
+                    if err.id == request_id {
+                        return Ok(err);
                     }
                 }
             }
