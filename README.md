@@ -17,6 +17,7 @@
 
 - [Quickstart](#quickstart)
   - [Installing and running Codex CLI](#installing-and-running-codex-cli)
+  - [Local Build & Run (from source)](#local-build--run-from-source)
   - [Using Codex with your ChatGPT plan](#using-codex-with-your-chatgpt-plan)
   - [Connecting on a "Headless" Machine](#connecting-on-a-headless-machine)
     - [Authenticate locally and copy your credentials to the "headless" machine](#authenticate-locally-and-copy-your-credentials-to-the-headless-machine)
@@ -94,6 +95,28 @@ Each GitHub Release contains many executables, but in practice, you likely want 
 Each archive contains a single entry with the platform baked into the name (e.g., `codex-x86_64-unknown-linux-musl`), so you likely want to rename it to `codex` after extracting it.
 
 </details>
+
+### Local Build & Run (from source)
+
+Build and run the Rust CLI locally from the `codex-rs` workspace.
+
+Prerequisites
+- Rust toolchain via `rustup` (toolchain pinned by `codex-rs/rust-toolchain.toml`)
+- macOS: `brew install pkg-config openssl`
+- Linux (Debian/Ubuntu): `sudo apt-get install -y build-essential pkg-config libssl-dev`
+
+Build & Run
+- Run the TUI (default):
+  ```bash
+  cd codex-rs
+  cargo run --bin codex
+  ```
+
+Convenience (via `just`, inside `codex-rs`)
+- `just codex` — run the CLI
+- `just tui` — run the TUI subcommand
+- `just fmt` — format code
+- `just fix` — apply clippy fixes
 
 ### Using Codex with your ChatGPT plan
 

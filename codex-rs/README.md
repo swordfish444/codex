@@ -2,16 +2,27 @@
 
 We provide Codex CLI as a standalone, native executable to ensure a zero-dependency install.
 
-## Installing Codex
+## Local Build & Run
 
-Today, the easiest way to install Codex is via `npm`, though we plan to publish Codex to other package managers soon.
+Build and run the Rust CLI locally from source.
 
-```shell
-npm i -g @openai/codex@native
-codex
-```
+Prerequisites
+- Rust toolchain via `rustup` (toolchain pinned by `rust-toolchain.toml`)
+- macOS: `brew install pkg-config openssl`
+- Linux (Debian/Ubuntu): `sudo apt-get install -y build-essential pkg-config libssl-dev`
 
-You can also download a platform-specific release directly from our [GitHub Releases](https://github.com/openai/codex/releases).
+Build & Run
+- Run the TUI (default):
+  ```bash
+  cd codex-rs
+  cargo run --bin codex
+  ```
+
+Convenience (via `just`, inside `codex-rs`)
+- `just codex` — run the CLI
+- `just tui` — run the TUI subcommand
+- `just fmt` — format code
+- `just fix` — apply clippy fixes
 
 ## What's new in the Rust CLI
 
