@@ -1,0 +1,17 @@
+[package]
+edition = "2024"
+name = "codex-protocol-ts"
+version = { workspace = true }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "codex-protocol-ts"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+codex-protocol = { path = "../protocol" }
+ts-rs = "11"
+clap = { version = "4", features = ["derive"] }

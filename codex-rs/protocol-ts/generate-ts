@@ -1,0 +1,9 @@
+#!/bin/bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")"
+tmpdir=$(mktemp -d)
+cargo run -- --prettier ../../node_modules/.bin/prettier --out "$tmpdir"
+
+echo "wrote output to $tmpdir"
