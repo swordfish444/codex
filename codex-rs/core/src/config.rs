@@ -535,7 +535,7 @@ impl Config {
         let mut model_providers = built_in_model_providers();
         // Merge user-defined providers into the built-in list.
         for (key, provider) in cfg.model_providers.into_iter() {
-            // Override the built-in provider if the same key is present ib config.toml
+            // Override the built-in provider if the same key is present in config.toml
             model_providers.insert(key, provider);
         }
 
