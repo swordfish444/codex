@@ -989,13 +989,79 @@ async fn submission_loop(
     rx_sub: Receiver<Submission>,
 ) {
     // Wrap once to avoid cloning TurnContext for each task.
-    let turn_context = Arc::new(turn_context);
+    let mut turn_context = Arc::new(turn_context);
     // To break out of this loop, send Op::Shutdown.
     while let Ok(sub) = rx_sub.recv().await {
         debug!(?sub, "Submission");
         match sub.op {
             Op::Interrupt => {
                 sess.interrupt_task();
+            }
+            Op::OverrideTurnContext {
+                cwd,
+                approval_policy,
+                sandbox_policy,
+                model,
+                effort,
+                summary,
+            } => {
+                // Recalculate the persistent turn context with provided overrides.
+                let prev = Arc::clone(&turn_context);
+                let provider = prev.client.get_provider();
+
+                // Effective model + family
+                let (effective_model, effective_family) = if let Some(m) = model {
+                    let fam =
+                        find_family_for_model(&m).unwrap_or_else(|| config.model_family.clone());
+                    (m, fam)
+                } else {
+                    (prev.client.get_model(), prev.client.get_model_family())
+                };
+
+                // Effective reasoning settings
+                let effective_effort = effort.unwrap_or(prev.client.get_reasoning_effort());
+                let effective_summary = summary.unwrap_or(prev.client.get_reasoning_summary());
+
+                // Build updated config for the client
+                let mut updated_config = (*config).clone();
+                updated_config.model = effective_model.clone();
+                updated_config.model_family = effective_family.clone();
+
+                let client = ModelClient::new(
+                    Arc::new(updated_config),
+                    None,
+                    provider,
+                    effective_effort,
+                    effective_summary,
+                    sess.session_id,
+                );
+
+                let new_approval_policy = approval_policy.unwrap_or(prev.approval_policy);
+                let new_sandbox_policy = sandbox_policy.unwrap_or(prev.sandbox_policy.clone());
+                let new_cwd = cwd.unwrap_or_else(|| prev.cwd.clone());
+
+                let tools_config = ToolsConfig::new(
+                    &effective_family,
+                    new_approval_policy,
+                    new_sandbox_policy.clone(),
+                    config.include_plan_tool,
+                    config.include_apply_patch_tool,
+                );
+
+                let new_turn_context = TurnContext {
+                    client,
+                    tools_config,
+                    user_instructions: prev.user_instructions.clone(),
+                    base_instructions: prev.base_instructions.clone(),
+                    approval_policy: new_approval_policy,
+                    sandbox_policy: new_sandbox_policy,
+                    shell_environment_policy: prev.shell_environment_policy.clone(),
+                    cwd: new_cwd,
+                    disable_response_storage: prev.disable_response_storage,
+                };
+
+                // Install the new persistent context for subsequent tasks/turns.
+                turn_context = Arc::new(new_turn_context);
             }
             Op::UserInput { items } => {
                 // attempt to inject input into current task
