@@ -2,17 +2,16 @@
 
 use std::collections::HashMap;
 
-use codex_core::config::{Config, ConfigOverrides, ConfigToml};
-use codex_core::model_provider_info::{ModelProviderInfo, WireApi};
+use codex_core::ModelProviderInfo;
+use codex_core::WireApi;
+use codex_core::config::Config;
+use codex_core::config::ConfigOverrides;
+use codex_core::config::ConfigToml;
 use tempfile::TempDir;
 
 #[test]
 fn user_defined_provider_overrides_builtin() {
     let tmp = TempDir::new().unwrap();
-
-    let mut cfg = ConfigToml::default();
-    cfg.model_provider = Some("oss".to_string());
-    cfg.model = Some("gpt-oss:20b".to_string());
 
     let mut providers = HashMap::new();
     providers.insert(
@@ -32,7 +31,12 @@ fn user_defined_provider_overrides_builtin() {
             requires_openai_auth: false,
         },
     );
-    cfg.model_providers = providers;
+    let cfg = ConfigToml {
+        model_provider: Some("oss".to_string()),
+        model: Some("gpt-oss:20b".to_string()),
+        model_providers: providers,
+        ..Default::default()
+    };
 
     let config = Config::load_from_base_config_with_overrides(
         cfg,
@@ -47,4 +51,3 @@ fn user_defined_provider_overrides_builtin() {
         Some("https://example.com/v1")
     );
 }
-
