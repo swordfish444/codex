@@ -1022,6 +1022,7 @@ async fn submission_loop(
                 let effective_effort = effort.unwrap_or(prev.client.get_reasoning_effort());
                 let effective_summary = summary.unwrap_or(prev.client.get_reasoning_summary());
 
+                let auth = prev.client.get_auth();
                 // Build updated config for the client
                 let mut updated_config = (*config).clone();
                 updated_config.model = effective_model.clone();
@@ -1029,7 +1030,7 @@ async fn submission_loop(
 
                 let client = ModelClient::new(
                     Arc::new(updated_config),
-                    None,
+                    auth,
                     provider,
                     effective_effort,
                     effective_summary,

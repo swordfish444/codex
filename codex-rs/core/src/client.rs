@@ -332,6 +332,10 @@ impl ModelClient {
     pub fn get_reasoning_summary(&self) -> ReasoningSummaryConfig {
         self.summary
     }
+
+    pub fn get_auth(&self) -> Option<CodexAuth> {
+        self.auth.clone()
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
