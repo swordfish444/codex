@@ -442,7 +442,6 @@ impl AuthModeWidget {
         }
     }
 
-    /// TODO: Read/write from the correct hierarchy config overrides + auth json + OPENAI_API_KEY.
     fn verify_api_key(&mut self) {
         match &self.login_status {
             LoginStatus::Auth(auth) if auth.mode == AuthMode::ApiKey => {
