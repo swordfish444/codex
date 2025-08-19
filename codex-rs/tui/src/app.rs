@@ -11,7 +11,9 @@ use crate::slash_command::SlashCommand;
 use crate::tui;
 use codex_core::ConversationManager;
 use codex_core::config::Config;
+use codex_core::protocol::BackgroundEventEvent;
 use codex_core::protocol::Event;
+use codex_core::protocol::EventMsg;
 use codex_core::protocol::Op;
 use color_eyre::eyre::Result;
 use crossterm::SynchronizedUpdate;
@@ -274,6 +276,25 @@ impl App<'_> {
                 }
                 AppEvent::KeyEvent(key_event) => {
                     match key_event {
+                        KeyEvent {
+                            code: KeyCode::Char('e'),
+                            modifiers: crossterm::event::KeyModifiers::CONTROL,
+                            kind: KeyEventKind::Press,
+                            ..
+                        } => {
+                            let env = std::env::var("MANUALLY_DEBUG_TUI_BACKGROUND_RETRY")
+                                .unwrap_or_default();
+                            if env == "1" {
+                                self.app_event_tx.send(AppEvent::CodexEvent(Event {
+                                    id: "manual".to_string(),
+                                    msg: EventMsg::BackgroundEvent(BackgroundEventEvent {
+                                        message: "stream error: stream disconnected before completion: idle timeout waiting for SSE; retrying 1/5 in 200ms…".to_string(),
+                                    }),
+                                }));
+                            } else {
+                                self.dispatch_key_event(key_event);
+                            }
+                        }
                         KeyEvent {
                             code: KeyCode::Char('c'),
                             modifiers: crossterm::event::KeyModifiers::CONTROL,

@@ -297,6 +297,7 @@ impl ChatWidget<'_> {
 
     fn on_background_event(&mut self, message: String) {
         debug!("BackgroundEvent: {message}");
+        self.add_to_history(&history_cell::new_background_event(message));
     }
     /// Periodic tick to commit at most one queued line to history with a small delay,
     /// animating the output.

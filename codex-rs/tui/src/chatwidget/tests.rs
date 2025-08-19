@@ -181,7 +181,7 @@ fn open_fixture(name: &str) -> std::fs::File {
             return f;
         }
     }
-    // 2) Fallback to parent (workspace root)
+    // 2) Fallback to parent (workspace crate root)
     {
         let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         p.push("..");
@@ -978,4 +978,118 @@ fn deltas_then_same_final_message_are_rendered_snapshot() {
         .map(|lines| lines_to_single_string(lines))
         .collect::<String>();
     assert_snapshot!(combined);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn timeout_session_transcript_shows_background_errors() {
+    let (mut chat, rx, _op_rx) = make_chatwidget_manual();
+
+    // Set up a VT100 test terminal to capture ANSI visual output
+    let width: u16 = 80;
+    let height: u16 = 2000;
+    let viewport = ratatui::layout::Rect::new(0, height - 1, width, 1);
+    let backend = ratatui::backend::TestBackend::new(width, height);
+    let mut terminal = crate::custom_terminal::Terminal::with_options(backend)
+        .expect("failed to construct terminal");
+    terminal.set_viewport_area(viewport);
+
+    // Replay the recorded session into the widget and collect transcript
+    let file = open_fixture("timeout-session-log.jsonl");
+    let reader = BufReader::new(file);
+    let mut ansi: Vec<u8> = Vec::new();
+
+    for line in reader.lines() {
+        let line = line.expect("read line");
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Ok(v): Result<serde_json::Value, _> = serde_json::from_str(&line) else {
+            continue;
+        };
+        let Some(dir) = v.get("dir").and_then(|d| d.as_str()) else {
+            continue;
+        };
+        if dir != "to_tui" {
+            continue;
+        }
+        let Some(kind) = v.get("kind").and_then(|k| k.as_str()) else {
+            continue;
+        };
+
+        match kind {
+            "codex_event" => {
+                if let Some(payload) = v.get("payload") {
+                    let ev: Event = serde_json::from_value(payload.clone()).expect("parse");
+                    chat.handle_codex_event(ev);
+                    while let Ok(app_ev) = rx.try_recv() {
+                        if let AppEvent::InsertHistory(lines) = app_ev {
+                            crate::insert_history::insert_history_lines_to_writer(
+                                &mut terminal,
+                                &mut ansi,
+                                lines,
+                            );
+                        }
+                    }
+                }
+            }
+            "app_event" => {
+                if let Some(variant) = v.get("variant").and_then(|s| s.as_str()) {
+                    if variant == "CommitTick" {
+                        chat.on_commit_tick();
+                        while let Ok(app_ev) = rx.try_recv() {
+                            if let AppEvent::InsertHistory(lines) = app_ev {
+                                crate::insert_history::insert_history_lines_to_writer(
+                                    &mut terminal,
+                                    &mut ansi,
+                                    lines,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Build the final VT100 visual by parsing the ANSI stream. Trim trailing spaces per line
+    // and drop trailing empty lines for stable comparisons.
+    let mut parser = vt100::Parser::new(height, width, 0);
+    parser.process(&ansi);
+    let mut lines: Vec<String> = Vec::with_capacity(height as usize);
+    for row in 0..height {
+        let mut s = String::with_capacity(width as usize);
+        for col in 0..width {
+            if let Some(cell) = parser.screen().cell(row, col) {
+                if let Some(ch) = cell.contents().chars().next() {
+                    s.push(ch);
+                } else {
+                    s.push(' ');
+                }
+            } else {
+                s.push(' ');
+            }
+        }
+        lines.push(s.trim_end().to_string());
+    }
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+
+    let visible_after = lines.join("\n");
+    let visible_flat = visible_after.replace('\n', " ");
+
+    // Assertions: ensure background events are visible and contain timeout info.
+    assert!(
+        visible_flat.contains("stream error:"),
+        "missing 'stream error:' in vt100 output:\n{visible_after}"
+    );
+    assert!(
+        visible_flat.contains("idle timeout waiting for SSE"),
+        "missing timeout detail in vt100 output:\n{visible_after}"
+    );
+    assert!(
+        visible_flat.contains("retrying 1/"),
+        "missing retry indicator in vt100 output:\n{visible_after}"
+    );
 }
