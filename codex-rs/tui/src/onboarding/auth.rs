@@ -263,15 +263,15 @@ impl AuthModeWidget {
         spans.extend(shimmer_spans("Finish signing in via your browser"));
         let mut lines = vec![Line::from(spans), Line::from("")];
 
-        if let SignInState::ChatGptContinueInBrowser(state) = &self.sign_in_state {
-            if !state.auth_url.is_empty() {
-                lines.push(Line::from("  If the link doesn't open automatically, open the following link to authenticate:"));
-                lines.push(Line::from(vec![
-                    Span::raw("  "),
-                    state.auth_url.as_str().cyan().underlined(),
-                ]));
-                lines.push(Line::from(""));
-            }
+        if let SignInState::ChatGptContinueInBrowser(state) = &self.sign_in_state
+            && !state.auth_url.is_empty()
+        {
+            lines.push(Line::from("  If the link doesn't open automatically, open the following link to authenticate:"));
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                state.auth_url.as_str().cyan().underlined(),
+            ]));
+            lines.push(Line::from(""));
         }
 
         lines.push(
