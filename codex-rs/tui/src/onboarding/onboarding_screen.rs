@@ -301,5 +301,3 @@ impl WidgetRef for Step {
         }
     }
 }
-
-// Note: free-plan handling now occurs within the Auth sign-in state.
