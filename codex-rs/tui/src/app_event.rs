@@ -51,6 +51,10 @@ pub(crate) enum AppEvent {
         matches: Vec<FileMatch>,
     },
 
+    /// Stop or reset any pending/active file search in the manager.
+    /// Used when the user cancels the `@` popup or completes a mention.
+    StopFileSearch,
+
     /// Result of computing a `/diff` command.
     DiffResult(String),
 

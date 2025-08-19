@@ -487,6 +487,9 @@ impl App<'_> {
                 AppEvent::StartFileSearch(query) => {
                     self.file_search.on_user_query(query);
                 }
+                AppEvent::StopFileSearch => {
+                    self.file_search.reset();
+                }
                 AppEvent::FileSearchResult { query, matches } => {
                     if let AppState::Chat { widget } = &mut self.app_state {
                         widget.apply_file_search_result(query, matches);
