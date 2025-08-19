@@ -14,6 +14,7 @@ use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::MaybeApplyPatchVerified;
 use codex_apply_patch::maybe_parse_apply_patch_verified;
 use codex_login::CodexAuth;
+use codex_protocol::config_types::CodexTool;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
 use futures::prelude::*;
@@ -474,13 +475,7 @@ impl Session {
         );
         let turn_context = TurnContext {
             client,
-            tools_config: ToolsConfig::new(
-                &config.model_family,
-                approval_policy,
-                sandbox_policy.clone(),
-                config.include_plan_tool,
-                config.include_apply_patch_tool,
-            ),
+            tools_config: ToolsConfig::from(config.as_ref()),
             user_instructions,
             base_instructions,
             approval_policy,
@@ -1043,12 +1038,18 @@ async fn submission_loop(
                     .unwrap_or(prev.sandbox_policy.clone());
                 let new_cwd = cwd.clone().unwrap_or_else(|| prev.cwd.clone());
 
+                let codex_tools: HashSet<CodexTool> = config
+                    .codex_tools
+                    .as_ref()
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .cloned()
+                    .collect();
                 let tools_config = ToolsConfig::new(
                     &effective_family,
                     new_approval_policy,
                     new_sandbox_policy.clone(),
-                    config.include_plan_tool,
-                    config.include_apply_patch_tool,
+                    codex_tools,
                 );
 
                 let new_turn_context = TurnContext {
@@ -1117,14 +1118,20 @@ async fn submission_loop(
                         sess.session_id,
                     );
 
+                    let codex_tools: HashSet<CodexTool> = config
+                        .codex_tools
+                        .as_ref()
+                        .unwrap_or(&vec![])
+                        .iter()
+                        .cloned()
+                        .collect();
                     let fresh_turn_context = TurnContext {
                         client,
                         tools_config: ToolsConfig::new(
                             &model_family,
                             approval_policy,
                             sandbox_policy.clone(),
-                            config.include_plan_tool,
-                            config.include_apply_patch_tool,
+                            codex_tools,
                         ),
                         user_instructions: turn_context.user_instructions.clone(),
                         base_instructions: turn_context.base_instructions.clone(),

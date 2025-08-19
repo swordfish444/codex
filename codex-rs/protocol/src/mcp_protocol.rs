@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::path::PathBuf;
 
+use crate::config_types::CodexTool;
 use crate::config_types::ReasoningEffort;
 use crate::config_types::ReasoningSummary;
 use crate::config_types::SandboxMode;
@@ -105,13 +106,9 @@ pub struct NewConversationParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_instructions: Option<String>,
 
-    /// Whether to include the plan tool in the conversation.
+    /// List of additional Codex-provided tools to enable for the model
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub include_plan_tool: Option<bool>,
-
-    /// Whether to include the apply patch tool in the conversation.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub include_apply_patch_tool: Option<bool>,
+    pub codex_tools: Option<Vec<CodexTool>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
@@ -311,8 +308,7 @@ mod tests {
                 sandbox: None,
                 config: None,
                 base_instructions: None,
-                include_plan_tool: None,
-                include_apply_patch_tool: None,
+                codex_tools: Some(vec![CodexTool::UpdatePlan]),
             },
         };
         assert_eq!(
@@ -321,7 +317,8 @@ mod tests {
                 "id": 42,
                 "params": {
                     "model": "gpt-5",
-                    "approvalPolicy": "on-request"
+                    "approvalPolicy": "on-request",
+                    "codex_tools": ["update_plan"]
                 }
             }),
             serde_json::to_value(&request).unwrap(),

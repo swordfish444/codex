@@ -46,3 +46,14 @@ pub enum SandboxMode {
     #[serde(rename = "danger-full-access")]
     DangerFullAccess,
 }
+
+/// Additional tools available within Codex, beyond the default shells.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexTool {
+    /// Provides a session-persistent planning mechanism
+    UpdatePlan,
+    /// Matches the `apply_patch` synthetic shell command, for models that
+    /// benefit from invoking file edits as a structured tool call.
+    ApplyPatch,
+}

@@ -50,10 +50,6 @@ pub struct CodexToolCallParam {
     /// The set of instructions to use instead of the default ones.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_instructions: Option<String>,
-
-    /// Whether to include the plan tool in the conversation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub include_plan_tool: Option<bool>,
 }
 
 /// Custom enum mirroring [`AskForApproval`], but has an extra dependency on
@@ -146,7 +142,6 @@ impl CodexToolCallParam {
             sandbox,
             config: cli_overrides,
             base_instructions,
-            include_plan_tool,
         } = self;
 
         // Build the `ConfigOverrides` recognized by codex-core.
@@ -159,8 +154,7 @@ impl CodexToolCallParam {
             model_provider: None,
             codex_linux_sandbox_exe,
             base_instructions,
-            include_plan_tool,
-            include_apply_patch_tool: None,
+            codex_tools: None,
             disable_response_storage: None,
             show_raw_agent_reasoning: None,
         };

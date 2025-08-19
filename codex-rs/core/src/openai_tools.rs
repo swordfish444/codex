@@ -1,10 +1,13 @@
+use codex_protocol::config_types::CodexTool;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
+use crate::config::Config;
 use crate::model_family::ModelFamily;
 use crate::plan_tool::PLAN_TOOL;
 use crate::protocol::AskForApproval;
@@ -32,6 +35,7 @@ pub(crate) enum OpenAiTool {
     LocalShell {},
 }
 
+// Which shell tool to use
 #[derive(Debug, Clone)]
 pub enum ConfigShellToolType {
     DefaultShell,
@@ -42,8 +46,7 @@ pub enum ConfigShellToolType {
 #[derive(Debug, Clone)]
 pub struct ToolsConfig {
     pub shell_type: ConfigShellToolType,
-    pub plan_tool: bool,
-    pub apply_patch_tool: bool,
+    pub codex_tools: HashSet<CodexTool>,
 }
 
 impl ToolsConfig {
@@ -51,8 +54,7 @@ impl ToolsConfig {
         model_family: &ModelFamily,
         approval_policy: AskForApproval,
         sandbox_policy: SandboxPolicy,
-        include_plan_tool: bool,
-        include_apply_patch_tool: bool,
+        codex_tools: HashSet<CodexTool>,
     ) -> Self {
         let mut shell_type = if model_family.uses_local_shell_tool {
             ConfigShellToolType::LocalShell
@@ -67,9 +69,25 @@ impl ToolsConfig {
 
         Self {
             shell_type,
-            plan_tool: include_plan_tool,
-            apply_patch_tool: include_apply_patch_tool || model_family.uses_apply_patch_tool,
+            codex_tools,
         }
+    }
+}
+
+impl From<&Config> for ToolsConfig {
+    fn from(config: &Config) -> Self {
+        Self::new(
+            &config.model_family,
+            config.approval_policy,
+            config.sandbox_policy.clone(),
+            config
+                .codex_tools
+                .as_ref()
+                .unwrap_or(&vec![])
+                .iter()
+                .cloned()
+                .collect(),
+        )
     }
 }
 
@@ -535,12 +553,11 @@ pub(crate) fn get_openai_tools(
         }
     }
 
-    if config.plan_tool {
-        tools.push(PLAN_TOOL.clone());
-    }
-
-    if config.apply_patch_tool {
-        tools.push(create_apply_patch_tool());
+    for tool in &config.codex_tools {
+        match tool {
+            CodexTool::UpdatePlan => tools.push(PLAN_TOOL.clone()),
+            CodexTool::ApplyPatch => tools.push(create_apply_patch_tool()),
+        }
     }
 
     if let Some(mcp_tools) = mcp_tools {
@@ -595,8 +612,7 @@ mod tests {
             &model_family,
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
-            true,
-            model_family.uses_apply_patch_tool,
+            HashSet::from([CodexTool::UpdatePlan]),
         );
         let tools = get_openai_tools(&config, Some(HashMap::new()));
 
@@ -610,8 +626,7 @@ mod tests {
             &model_family,
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
-            true,
-            model_family.uses_apply_patch_tool,
+            HashSet::from([CodexTool::UpdatePlan]),
         );
         let tools = get_openai_tools(&config, Some(HashMap::new()));
 
@@ -625,8 +640,7 @@ mod tests {
             &model_family,
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
-            false,
-            model_family.uses_apply_patch_tool,
+            HashSet::new(),
         );
         let tools = get_openai_tools(
             &config,
@@ -719,8 +733,7 @@ mod tests {
             &model_family,
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
-            false,
-            model_family.uses_apply_patch_tool,
+            HashSet::new(),
         );
 
         let tools = get_openai_tools(
@@ -775,8 +788,7 @@ mod tests {
             &model_family,
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
-            false,
-            model_family.uses_apply_patch_tool,
+            HashSet::new(),
         );
 
         let tools = get_openai_tools(
@@ -826,8 +838,7 @@ mod tests {
             &model_family,
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
-            false,
-            model_family.uses_apply_patch_tool,
+            HashSet::new(),
         );
 
         let tools = get_openai_tools(
@@ -880,8 +891,7 @@ mod tests {
             &model_family,
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
-            false,
-            model_family.uses_apply_patch_tool,
+            HashSet::new(),
         );
 
         let tools = get_openai_tools(

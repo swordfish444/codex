@@ -15,6 +15,7 @@ use codex_core::protocol::SandboxPolicy;
 use codex_login::AuthMode;
 use codex_login::CodexAuth;
 use codex_ollama::DEFAULT_OSS_MODEL;
+use codex_protocol::config_types::CodexTool;
 use codex_protocol::config_types::SandboxMode;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
@@ -116,8 +117,7 @@ pub async fn run_main(
         config_profile: cli.config_profile.clone(),
         codex_linux_sandbox_exe,
         base_instructions: None,
-        include_plan_tool: Some(true),
-        include_apply_patch_tool: None,
+        codex_tools: Some(vec![CodexTool::UpdatePlan]),
         disable_response_storage: cli.oss.then_some(true),
         show_raw_agent_reasoning: cli.oss.then_some(true),
     };
