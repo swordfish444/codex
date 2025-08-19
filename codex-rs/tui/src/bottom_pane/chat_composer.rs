@@ -669,7 +669,7 @@ impl WidgetRef for &ChatComposer {
                 if let Some(token_usage_info) = &self.token_usage_info {
                     let token_usage = &token_usage_info.total_token_usage;
                     hint.push("   ".into());
-                    hint.push(token_usage_info.model.clone().dim());
+                    hint.push(format!("model: {}", token_usage_info.model.clone()).dim());
                     hint.push("   ".into());
                     hint.push(format!("{} tokens used", token_usage.blended_total()).dim());
                     let last_token_usage = &token_usage_info.last_token_usage;
