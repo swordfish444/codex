@@ -168,20 +168,20 @@ impl AuthModeWidget {
 
         // If the user is already authenticated but the method differs from their
         // preferred auth method, show a brief explanation.
-        if let LoginStatus::Auth(ref current) = self.login_status {
-            if current.mode != self.preferred_auth_method {
-                let to_label = |mode: AuthMode| match mode {
-                    AuthMode::ApiKey => "API key",
-                    AuthMode::ChatGPT => "ChatGPT",
-                };
-                let msg = format!(
-                    "  You’re currently using {} while your preferred method is {}.",
-                    to_label(current.mode),
-                    to_label(self.preferred_auth_method)
-                );
-                lines.push(Line::from(msg).style(Style::default()));
-                lines.push(Line::from(""));
-            }
+        if let LoginStatus::Auth(ref current) = self.login_status
+            && current.mode != self.preferred_auth_method
+        {
+            let to_label = |mode: AuthMode| match mode {
+                AuthMode::ApiKey => "API key",
+                AuthMode::ChatGPT => "ChatGPT",
+            };
+            let msg = format!(
+                "  You’re currently using {} while your preferred method is {}.",
+                to_label(current.mode),
+                to_label(self.preferred_auth_method)
+            );
+            lines.push(Line::from(msg).style(Style::default()));
+            lines.push(Line::from(""));
         }
 
         let create_mode_item = |idx: usize,
@@ -402,16 +402,16 @@ impl AuthModeWidget {
     fn start_chatgpt_login(&mut self) {
         // If we're already authenticated with ChatGPT, don't start a new login –
         // just proceed to the success message flow.
-        if let LoginStatus::Auth(auth) = &self.login_status {
-            if auth.mode == AuthMode::ChatGPT {
-                if auth.get_plan_type().as_deref() == Some("free") {
-                    self.sign_in_state = SignInState::FreePlan;
-                } else {
-                    self.sign_in_state = SignInState::ChatGptSuccess;
-                }
-                self.event_tx.send(AppEvent::RequestRedraw);
-                return;
+        if let LoginStatus::Auth(auth) = &self.login_status
+            && auth.mode == AuthMode::ChatGPT
+        {
+            if auth.get_plan_type().as_deref() == Some("free") {
+                self.sign_in_state = SignInState::FreePlan;
+            } else {
+                self.sign_in_state = SignInState::ChatGptSuccess;
             }
+            self.event_tx.send(AppEvent::RequestRedraw);
+            return;
         }
 
         self.error = None;
