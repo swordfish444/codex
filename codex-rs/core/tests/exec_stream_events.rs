@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use async_channel::Receiver;
 use codex_core::exec::ExecParams;
@@ -14,7 +13,6 @@ use codex_core::protocol::EventMsg;
 use codex_core::protocol::ExecCommandOutputDeltaEvent;
 use codex_core::protocol::ExecOutputStream;
 use codex_core::protocol::SandboxPolicy;
-use tokio::sync::Notify;
 
 fn collect_stdout_events(rx: Receiver<Event>) -> Vec<u8> {
     let mut out = Vec::new();
@@ -57,13 +55,11 @@ async fn test_exec_stdout_stream_events_echo() {
         justification: None,
     };
 
-    let ctrl_c = Arc::new(Notify::new());
     let policy = SandboxPolicy::new_read_only_policy();
 
     let result = process_exec_tool_call(
         params,
         SandboxType::None,
-        ctrl_c,
         &policy,
         &None,
         Some(stdout_stream),
@@ -76,7 +72,7 @@ async fn test_exec_stdout_stream_events_echo() {
     };
 
     assert_eq!(result.exit_code, 0);
-    assert_eq!(result.stdout, "hello-world\n");
+    assert_eq!(result.stdout.text, "hello-world\n");
 
     let streamed = collect_stdout_events(rx);
     // We should have received at least the same contents (possibly in one chunk)
@@ -109,13 +105,11 @@ async fn test_exec_stderr_stream_events_echo() {
         justification: None,
     };
 
-    let ctrl_c = Arc::new(Notify::new());
     let policy = SandboxPolicy::new_read_only_policy();
 
     let result = process_exec_tool_call(
         params,
         SandboxType::None,
-        ctrl_c,
         &policy,
         &None,
         Some(stdout_stream),
@@ -128,8 +122,8 @@ async fn test_exec_stderr_stream_events_echo() {
     };
 
     assert_eq!(result.exit_code, 0);
-    assert_eq!(result.stdout, "");
-    assert_eq!(result.stderr, "oops\n");
+    assert_eq!(result.stdout.text, "");
+    assert_eq!(result.stderr.text, "oops\n");
 
     // Collect only stderr delta events
     let mut err = Vec::new();

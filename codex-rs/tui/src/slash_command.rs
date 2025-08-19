@@ -16,8 +16,9 @@ pub enum SlashCommand {
     Init,
     Compact,
     Diff,
+    Mention,
     Status,
-    Prompts,
+    Mcp,
     Logout,
     Quit,
     #[cfg(debug_assertions)]
@@ -33,8 +34,9 @@ impl SlashCommand {
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
             SlashCommand::Quit => "exit Codex",
             SlashCommand::Diff => "show git diff (including untracked files)",
+            SlashCommand::Mention => "mention a file",
             SlashCommand::Status => "show current session configuration and token usage",
-            SlashCommand::Prompts => "show example prompts",
+            SlashCommand::Mcp => "list configured MCP tools",
             SlashCommand::Logout => "log out of Codex",
             #[cfg(debug_assertions)]
             SlashCommand::TestApproval => "test approval request",
