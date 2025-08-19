@@ -2,6 +2,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use strum_macros::Display as DeriveDisplay;
 
+use crate::git_info::GitInfo;
+use crate::git_info::fmt_for_env_context;
 use crate::models::ContentItem;
 use crate::models::ResponseItem;
 use crate::protocol::AskForApproval;
@@ -28,6 +30,7 @@ pub(crate) struct EnvironmentContext {
     pub approval_policy: AskForApproval,
     pub sandbox_mode: SandboxMode,
     pub network_access: NetworkAccess,
+    pub git_info: Option<GitInfo>,
 }
 
 impl EnvironmentContext {
@@ -35,6 +38,7 @@ impl EnvironmentContext {
         cwd: PathBuf,
         approval_policy: AskForApproval,
         sandbox_policy: SandboxPolicy,
+        git_info: Option<GitInfo>,
     ) -> Self {
         Self {
             cwd,
@@ -55,6 +59,7 @@ impl EnvironmentContext {
                     }
                 }
             },
+            git_info,
         }
     }
 }
@@ -69,6 +74,7 @@ impl Display for EnvironmentContext {
         writeln!(f, "Approval policy: {}", self.approval_policy)?;
         writeln!(f, "Sandbox mode: {}", self.sandbox_mode)?;
         writeln!(f, "Network access: {}", self.network_access)?;
+        writeln!(f, "{}", fmt_for_env_context(self.git_info.as_ref()))?;
         Ok(())
     }
 }

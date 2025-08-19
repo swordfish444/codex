@@ -9,7 +9,7 @@ use tokio::time::timeout;
 /// Timeout for git commands to prevent freezing on large repositories
 const GIT_COMMAND_TIMEOUT: TokioDuration = TokioDuration::from_secs(5);
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct GitInfo {
     /// Current commit hash (SHA)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -20,6 +20,9 @@ pub struct GitInfo {
     /// Repository URL (if available from remote)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_url: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff_stat: Option<String>,
 }
 
 /// Collect git repository information from the given working directory using command-line git.
@@ -38,16 +41,18 @@ pub async fn collect_git_info(cwd: &Path) -> Option<GitInfo> {
     }
 
     // Run all git info collection commands in parallel
-    let (commit_result, branch_result, url_result) = tokio::join!(
+    let (commit_result, branch_result, url_result, diff_result) = tokio::join!(
         run_git_command_with_timeout(&["rev-parse", "HEAD"], cwd),
         run_git_command_with_timeout(&["rev-parse", "--abbrev-ref", "HEAD"], cwd),
-        run_git_command_with_timeout(&["remote", "get-url", "origin"], cwd)
+        run_git_command_with_timeout(&["remote", "get-url", "origin"], cwd),
+        run_git_command_with_timeout(&["diff", "--stat", "HEAD"], cwd),
     );
 
     let mut git_info = GitInfo {
         commit_hash: None,
         branch: None,
         repository_url: None,
+        diff_stat: None,
     };
 
     // Process commit hash
@@ -77,7 +82,41 @@ pub async fn collect_git_info(cwd: &Path) -> Option<GitInfo> {
         git_info.repository_url = Some(url.trim().to_string());
     }
 
+    // Process diff stat
+    if let Some(output) = diff_result {
+        if output.status.success() {
+            if let Ok(diff_stat) = String::from_utf8(output.stdout) {
+                git_info.diff_stat = Some(diff_stat.trim().to_string());
+            }
+        }
+    }
+
     Some(git_info)
+}
+
+/// Format Git information for inclusion in the environment context block.
+/// When `info` is `None`, it returns a simple "Current git info:\nnone" string.
+pub fn fmt_for_env_context(info: Option<&GitInfo>) -> String {
+    let mut parts: Vec<String> = vec!["Current git info:".to_string()];
+    if let Some(info) = info {
+        if let Some(hash) = &info.commit_hash {
+            let short = &hash[..std::cmp::min(7, hash.len())];
+            parts.push(format!("commit {short}"));
+        }
+        if let Some(branch) = &info.branch {
+            parts.push(format!("branch {branch}"));
+        }
+        if let Some(url) = &info.repository_url {
+            parts.push(format!("remote {url}"));
+        }
+        if let Some(diff_stat) = &info.diff_stat {
+            parts.push("diff stat:".to_string());
+            parts.push(diff_stat.clone());
+        }
+    } else {
+        parts.push("none".to_string());
+    }
+    parts.join("\n")
 }
 
 /// Run a git command with a timeout to prevent blocking on large repositories
@@ -278,6 +317,7 @@ mod tests {
             commit_hash: Some("abc123def456".to_string()),
             branch: Some("main".to_string()),
             repository_url: Some("https://github.com/example/repo.git".to_string()),
+            diff_stat: Some("1 file changed, 1 insertion(+), 1 deletion(-)".to_string()),
         };
 
         let json = serde_json::to_string(&git_info).expect("Should serialize GitInfo");
@@ -289,6 +329,10 @@ mod tests {
             parsed["repository_url"],
             "https://github.com/example/repo.git"
         );
+        assert_eq!(
+            parsed["diff_stat"],
+            "1 file changed, 1 insertion(+), 1 deletion(-)"
+        );
     }
 
     #[test]
@@ -297,6 +341,7 @@ mod tests {
             commit_hash: None,
             branch: None,
             repository_url: None,
+            diff_stat: None,
         };
 
         let json = serde_json::to_string(&git_info).expect("Should serialize GitInfo");
@@ -306,5 +351,6 @@ mod tests {
         assert!(!parsed.as_object().unwrap().contains_key("commit_hash"));
         assert!(!parsed.as_object().unwrap().contains_key("branch"));
         assert!(!parsed.as_object().unwrap().contains_key("repository_url"));
+        assert!(!parsed.as_object().unwrap().contains_key("diff_stat"));
     }
 }

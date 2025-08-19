@@ -19,6 +19,196 @@ use wiremock::ResponseTemplate;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
 
+/// Ensure previous environment_context messages remain stable, even if git status changes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn environment_context_is_stable_across_git_changes() {
+    use pretty_assertions::assert_eq;
+    use std::process::Command;
+
+    // Start a mock server that will accept two streaming responses.
+    let server = MockServer::start().await;
+    let sse = sse_completed("resp");
+    let template = ResponseTemplate::new(200)
+        .insert_header("content-type", "text/event-stream")
+        .set_body_raw(sse, "text/event-stream");
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(template)
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    // Create a temp cwd and initialize a git repo with a known branch.
+    let cwd = TempDir::new().unwrap();
+    let repo = cwd.path();
+    let envs = vec![
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+    ];
+    Command::new("git")
+        .envs(envs.clone())
+        .arg("init")
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .envs(envs.clone())
+        .args(["config", "user.name", "Test User"])
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .envs(envs.clone())
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    // Create a branch to stabilize branch name expectation.
+    Command::new("git")
+        .envs(envs.clone())
+        .args(["checkout", "-b", "envctx-test-branch"])
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    std::fs::write(repo.join("a.txt"), "one").unwrap();
+    Command::new("git")
+        .envs(envs.clone())
+        .args(["add", "."])
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .envs(envs.clone())
+        .args(["commit", "-m", "first"])
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    let commit1 = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let commit1_short = &commit1.trim()[..7];
+
+    // Configure Codex to use this cwd and our mock provider.
+    let model_provider = ModelProviderInfo {
+        base_url: Some(format!("{}/v1", server.uri())),
+        ..built_in_model_providers()["openai"].clone()
+    };
+    let codex_home = TempDir::new().unwrap();
+    let mut config = load_default_config_for_test(&codex_home);
+    config.cwd = repo.to_path_buf();
+    config.model_provider = model_provider;
+    config.user_instructions = Some("be consistent and helpful".to_string());
+
+    let conversation_manager = ConversationManager::default();
+    let codex = conversation_manager
+        .new_conversation_with_auth(config, Some(CodexAuth::from_api_key("Test API Key")))
+        .await
+        .expect("create new conversation")
+        .conversation;
+
+    // First turn
+    codex
+        .submit(Op::UserInput {
+            items: vec![InputItem::Text {
+                text: "hello 1".into(),
+            }],
+        })
+        .await
+        .unwrap();
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+    // Change the git state to a new commit between turns
+    std::fs::write(repo.join("b.txt"), "two").unwrap();
+    Command::new("git")
+        .envs(envs.clone())
+        .args(["add", "."])
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .envs(envs)
+        .args(["commit", "-m", "second"])
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    let commit2 = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let commit2_short = &commit2.trim()[..7];
+
+    // Second turn
+    codex
+        .submit(Op::UserInput {
+            items: vec![InputItem::Text {
+                text: "hello 2".into(),
+            }],
+        })
+        .await
+        .unwrap();
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+    // Verify two requests, and that the first env_context remains stable in the second request.
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2, "expected two POST requests");
+
+    let body1 = requests[0].body_json::<serde_json::Value>().unwrap();
+    let body2 = requests[1].body_json::<serde_json::Value>().unwrap();
+
+    let expected_env_text_1 = format!(
+        "<environment_context>\nCurrent working directory: {}\nApproval policy: on-request\nSandbox mode: read-only\nNetwork access: restricted\nGit info: commit {}, branch envctx-test-branch\n</environment_context>",
+        repo.to_string_lossy(),
+        commit1_short,
+    );
+    let expected_env_msg_1 = serde_json::json!({
+        "type": "message",
+        "id": serde_json::Value::Null,
+        "role": "user",
+        "content": [ { "type": "input_text", "text": expected_env_text_1 } ]
+    });
+    // body1 must include the env context as the second item (after user_instructions)
+    assert_eq!(body1["input"][1], expected_env_msg_1);
+
+    let expected_env_text_2 = format!(
+        "<environment_context>\nCurrent working directory: {}\nApproval policy: on-request\nSandbox mode: read-only\nNetwork access: restricted\nGit info: commit {}, branch envctx-test-branch\n</environment_context>",
+        repo.to_string_lossy(),
+        commit2_short,
+    );
+    let expected_env_msg_2 = serde_json::json!({
+        "type": "message",
+        "id": serde_json::Value::Null,
+        "role": "user",
+        "content": [ { "type": "input_text", "text": expected_env_text_2 } ]
+    });
+    let expected_user_message_2 = serde_json::json!({
+        "type": "message",
+        "id": serde_json::Value::Null,
+        "role": "user",
+        "content": [ { "type": "input_text", "text": "hello 2" } ]
+    });
+
+    // body2 should equal body1's full input concatenated with the new env ctx and user message
+    let expected_body2 = serde_json::json!(
+        [
+            body1["input"].as_array().unwrap().as_slice(),
+            [expected_env_msg_2, expected_user_message_2].as_slice(),
+        ]
+        .concat()
+    );
+    assert_eq!(body2["input"], expected_body2);
+}
+
 /// Build minimal SSE stream with completed marker using the JSON fixture.
 fn sse_completed(id: &str) -> String {
     load_sse_fixture_with_id("tests/fixtures/completed_template.json", id)
@@ -86,7 +276,7 @@ async fn prefixes_context_and_instructions_once_and_consistently_across_requests
     assert_eq!(requests.len(), 2, "expected two POST requests");
 
     let expected_env_text = format!(
-        "<environment_context>\nCurrent working directory: {}\nApproval policy: on-request\nSandbox mode: read-only\nNetwork access: restricted\n</environment_context>",
+        "<environment_context>\nCurrent working directory: {}\nApproval policy: on-request\nSandbox mode: read-only\nNetwork access: restricted\nGit info: none\n</environment_context>",
         cwd.path().to_string_lossy()
     );
     let expected_ui_text =
@@ -123,11 +313,17 @@ async fn prefixes_context_and_instructions_once_and_consistently_across_requests
         "role": "user",
         "content": [ { "type": "input_text", "text": "hello 2" } ]
     });
+    let expected_env_msg_2 = serde_json::json!({
+        "type": "message",
+        "id": serde_json::Value::Null,
+        "role": "user",
+        "content": [ { "type": "input_text", "text": expected_env_text } ]
+    });
     let body2 = requests[1].body_json::<serde_json::Value>().unwrap();
     let expected_body2 = serde_json::json!(
         [
             body1["input"].as_array().unwrap().as_slice(),
-            [expected_user_message_2].as_slice(),
+            [expected_env_msg_2, expected_user_message_2].as_slice(),
         ]
         .concat()
     );
@@ -238,7 +434,7 @@ async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() {
     // After overriding the turn context, the environment context should be emitted again
     // reflecting the new cwd, approval policy and sandbox settings.
     let expected_env_text_2 = format!(
-        "<environment_context>\nCurrent working directory: {}\nApproval policy: never\nSandbox mode: workspace-write\nNetwork access: enabled\n</environment_context>",
+        "<environment_context>\nCurrent working directory: {}\nApproval policy: never\nSandbox mode: workspace-write\nNetwork access: enabled\nGit info: none\n</environment_context>",
         new_cwd.path().to_string_lossy()
     );
     let expected_env_msg_2 = serde_json::json!({
@@ -351,10 +547,21 @@ async fn per_turn_overrides_keep_cached_prefix_and_key_constant() {
         "role": "user",
         "content": [ { "type": "input_text", "text": "hello 2" } ]
     });
+    // After per-turn overrides, environment context is emitted again
+    let expected_env_text_2 = format!(
+        "<environment_context>\nCurrent working directory: {}\nApproval policy: never\nSandbox mode: workspace-write\nNetwork access: enabled\nGit info: none\n</environment_context>",
+        new_cwd.path().to_string_lossy()
+    );
+    let expected_env_msg_2 = serde_json::json!({
+        "type": "message",
+        "id": serde_json::Value::Null,
+        "role": "user",
+        "content": [ { "type": "input_text", "text": expected_env_text_2 } ]
+    });
     let expected_body2 = serde_json::json!(
         [
             body1["input"].as_array().unwrap().as_slice(),
-            [expected_user_message_2].as_slice(),
+            [expected_env_msg_2, expected_user_message_2].as_slice(),
         ]
         .concat()
     );

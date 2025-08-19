@@ -53,6 +53,7 @@ use crate::exec::StdoutStream;
 use crate::exec::StreamOutput;
 use crate::exec::process_exec_tool_call;
 use crate::exec_env::create_env;
+use crate::git_info::collect_git_info;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::mcp_tool_call::handle_mcp_tool_call;
 use crate::model_family::find_family_for_model;
@@ -267,6 +268,7 @@ pub(crate) struct TurnContext {
     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,
     pub(crate) disable_response_storage: bool,
     pub(crate) tools_config: ToolsConfig,
+    pub(crate) git_info: Option<crate::git_info::GitInfo>,
 }
 
 impl TurnContext {
@@ -472,6 +474,9 @@ impl Session {
             model_reasoning_summary,
             session_id,
         );
+        // Collect git info for the initial cwd
+        let git_info_val = collect_git_info(&cwd).await;
+
         let turn_context = TurnContext {
             client,
             tools_config: ToolsConfig::new(
@@ -488,6 +493,7 @@ impl Session {
             shell_environment_policy: config.shell_environment_policy.clone(),
             cwd,
             disable_response_storage,
+            git_info: git_info_val,
         };
         let sess = Arc::new(Session {
             session_id,
@@ -501,17 +507,11 @@ impl Session {
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
         });
 
-        // record the initial user instructions and environment context,
-        // regardless of whether we restored items.
-        let mut conversation_items = Vec::<ResponseItem>::with_capacity(2);
+        // record the initial user instructions (environment context is recorded per-turn)
+        let mut conversation_items = Vec::<ResponseItem>::with_capacity(1);
         if let Some(user_instructions) = turn_context.user_instructions.as_deref() {
             conversation_items.push(Prompt::format_user_instructions_message(user_instructions));
         }
-        conversation_items.push(ResponseItem::from(EnvironmentContext::new(
-            turn_context.cwd.to_path_buf(),
-            turn_context.approval_policy,
-            turn_context.sandbox_policy.clone(),
-        )));
         sess.record_conversation_items(&conversation_items).await;
 
         // Dispatch the SessionConfiguredEvent first and then report any errors.
@@ -1051,6 +1051,13 @@ async fn submission_loop(
                     config.include_apply_patch_tool,
                 );
 
+                // Recompute git info if cwd changed
+                let new_git_info = if cwd.is_some() {
+                    collect_git_info(&new_cwd).await
+                } else {
+                    prev.git_info.clone()
+                };
+
                 let new_turn_context = TurnContext {
                     client,
                     tools_config,
@@ -1061,18 +1068,12 @@ async fn submission_loop(
                     shell_environment_policy: prev.shell_environment_policy.clone(),
                     cwd: new_cwd.clone(),
                     disable_response_storage: prev.disable_response_storage,
+                    git_info: new_git_info,
                 };
 
                 // Install the new persistent context for subsequent tasks/turns.
                 turn_context = Arc::new(new_turn_context);
-                if cwd.is_some() || approval_policy.is_some() || sandbox_policy.is_some() {
-                    sess.record_conversation_items(&[ResponseItem::from(EnvironmentContext::new(
-                        new_cwd,
-                        new_approval_policy,
-                        new_sandbox_policy,
-                    ))])
-                    .await;
-                }
+                // Environment context is recorded at the start of each turn.
             }
             Op::UserInput { items } => {
                 // attempt to inject input into current task
@@ -1117,6 +1118,9 @@ async fn submission_loop(
                         sess.session_id,
                     );
 
+                    // Collect git info for the per-turn cwd
+                    let per_turn_git_info = collect_git_info(&cwd).await;
+
                     let fresh_turn_context = TurnContext {
                         client,
                         tools_config: ToolsConfig::new(
@@ -1133,8 +1137,8 @@ async fn submission_loop(
                         shell_environment_policy: turn_context.shell_environment_policy.clone(),
                         cwd,
                         disable_response_storage: turn_context.disable_response_storage,
+                        git_info: per_turn_git_info,
                     };
-                    // TODO: record the new environment context in the conversation history
                     // no current task, spawn a new one with the per‑turn context
                     let task =
                         AgentTask::spawn(sess.clone(), Arc::new(fresh_turn_context), sub.id, items);
@@ -1302,8 +1306,17 @@ async fn run_task(
     }
 
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
-    sess.record_conversation_items(&[initial_input_for_turn.clone().into()])
-        .await;
+    // Record environment context first, then the user's initial input for this turn.
+    sess.record_conversation_items(&[
+        ResponseItem::from(EnvironmentContext::new(
+            turn_context.cwd.clone(),
+            turn_context.approval_policy,
+            turn_context.sandbox_policy.clone(),
+            turn_context.git_info.clone(),
+        )),
+        initial_input_for_turn.clone().into(),
+    ])
+    .await;
 
     let mut last_agent_message: Option<String> = None;
     // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
