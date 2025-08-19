@@ -339,8 +339,9 @@ async fn binary_size_transcript_matches_ideal_fixture() {
                 }
             }
             "app_event" => {
-                if let Some(variant) = v.get("variant").and_then(|s| s.as_str()) {
-                    if variant == "CommitTick" {
+                if let Some(variant) = v.get("variant").and_then(|s| s.as_str())
+                    && variant == "CommitTick"
+                {
                         chat.on_commit_tick();
                         while let Ok(app_ev) = rx.try_recv() {
                             if let AppEvent::InsertHistory(lines) = app_ev {
@@ -352,7 +353,6 @@ async fn binary_size_transcript_matches_ideal_fixture() {
                                 );
                             }
                         }
-                    }
                 }
             }
             _ => {}
