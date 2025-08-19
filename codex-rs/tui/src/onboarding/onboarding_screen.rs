@@ -29,7 +29,6 @@ enum Step {
     Auth(AuthModeWidget),
     TrustDirectory(TrustDirectoryWidget),
     ContinueToChat(ContinueToChatWidget),
-    // Free plan message is now handled as an Auth sign-in state
 }
 
 pub(crate) trait KeyboardHandler {
