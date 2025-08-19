@@ -133,9 +133,9 @@ impl FileSearchManager {
             let latest_query_opt = {
                 #[expect(clippy::unwrap_used)]
                 let mut st = state.lock().unwrap();
-                let q = st.latest_query.clone();
+                let query = st.latest_query.clone();
                 st.is_search_scheduled = false;
-                q
+                query
             };
 
             let Some(query) = latest_query_opt else {
