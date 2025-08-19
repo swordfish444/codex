@@ -688,8 +688,8 @@ pub(crate) fn new_mcp_tools_output(
             ]));
         }
 
-        if let Some(env) = cfg.env.as_ref() {
-            if !env.is_empty() {
+        if let Some(env) = cfg.env.as_ref()
+            && !env.is_empty() {
                 let mut env_pairs: Vec<String> =
                     env.iter().map(|(k, v)| format!("{k}={v}")).collect();
                 env_pairs.sort();
@@ -698,7 +698,6 @@ pub(crate) fn new_mcp_tools_output(
                     env_pairs.join(" ").into(),
                 ]));
             }
-        }
 
         if names.is_empty() {
             lines.push(Line::from("    • Tools: (none)"));
