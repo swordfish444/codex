@@ -71,4 +71,3 @@ pub fn paste_image_to_temp_png() -> Result<(PathBuf, PastedImageInfo), PasteImag
     std::fs::write(&path, &png).map_err(|e| PasteImageError::IoError(e.to_string()))?;
     Ok((path, info))
 }
-
