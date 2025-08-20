@@ -1,6 +1,6 @@
 use clap::Parser;
 use codex_common::CliConfigOverrides;
-use codex_exec::Cli as ExecCli;
+use codex_tui::Cli as TuiCli;
 use std::path::PathBuf;
 use tokio::process::Command;
 
@@ -9,27 +9,20 @@ pub struct ReviewCommand {
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 
-    /// Branch merge spec in the form: source->target
-    #[arg(
-        value_name = "MERGE",
-        help = "Format: branch1->branch2 (source->target)",
-        required_unless_present = "target"
-    )]
-    pub merge_spec: Option<String>,
-
     /// Source branch (defaults to current branch when omitted)
     #[arg(long = "source", short = 's', value_name = "BRANCH")]
     pub source: Option<String>,
 
-    /// Target branch (alternative to MERGE positional)
+    /// Target branch to review merging into
     #[arg(
         long = "target",
         short = 't',
         value_name = "BRANCH",
         visible_alias = "into",
-        alias = "to"
+        alias = "to",
+        required = true
     )]
-    pub target: Option<String>,
+    pub target: String,
 }
 
 pub async fn run_review_command(
@@ -38,23 +31,14 @@ pub async fn run_review_command(
 ) -> anyhow::Result<()> {
     let ReviewCommand {
         mut config_overrides,
-        merge_spec,
         source,
         target,
     } = cli;
-
-    let (source, target) = match (source, target, merge_spec) {
-        (Some(s), Some(t), _) => (s, t),
-        (maybe_s, Some(t), None) => {
-            let s = match maybe_s {
-                Some(s) => s,
-                None => current_branch().await?,
-            };
-            (s, t)
-        }
-        (_, _, Some(spec)) => parse_merge_spec(&spec)?,
-        _ => unreachable!("clap should enforce required arguments"),
+    let source = match source {
+        Some(s) => s,
+        None => current_branch().await?,
     };
+    let target = target;
 
     // Compute the patch representing merging `source` into `target`.
     // Use the triple-dot diff to compare source against the merge base with target.
@@ -67,12 +51,26 @@ pub async fn run_review_command(
 
     let prompt = build_review_prompt(&source, &target, &patch);
 
-    // Reuse the non-interactive exec runner with our constructed prompt.
-    // Build the default CLI via clap parsing to avoid reaching into private types.
-    let mut exec_cli = ExecCli::parse_from(["codex-exec", &prompt]);
-    exec_cli.config_overrides = std::mem::take(&mut config_overrides);
+    // Launch the interactive TUI with the constructed prompt, like normal codex.
+    let tui_cli = TuiCli {
+        prompt: Some(prompt),
+        images: vec![],
+        model: None,
+        oss: false,
+        config_profile: None,
+        sandbox_mode: None,
+        approval_policy: None,
+        full_auto: false,
+        dangerously_bypass_approvals_and_sandbox: false,
+        cwd: None,
+        config_overrides: std::mem::take(&mut config_overrides),
+    };
 
-    codex_exec::run_main(exec_cli, codex_linux_sandbox_exe).await
+    let usage = codex_tui::run_main(tui_cli, codex_linux_sandbox_exe).await?;
+    if !usage.is_zero() {
+        println!("{}", codex_core::protocol::FinalOutput::from(usage));
+    }
+    Ok(())
 }
 
 fn build_review_prompt(source: &str, target: &str, patch: &str) -> String {
@@ -82,16 +80,32 @@ fn build_review_prompt(source: &str, target: &str, patch: &str) -> String {
         - 4 thoughtful questions a senior software engineer would ask.\n\
         Consider correctness, performance, security, readability, testing, and documentation.\n\
         Structure the output with two sections: 'Areas of Improvement' (numbered 1-4) and 'Questions' (numbered 1-4).";
-    let diff_block = format!("```patch\n{patch}\n```\n");
+    // Truncate the patch to ~80k tokens (approximate via 4 chars per token)
+    let (truncated_patch, was_truncated) = truncate_patch_to_tokens(patch, 80_000);
+    let diff_block = if was_truncated {
+        format!("```patch\n{truncated_patch}\n...\n```\n")
+    } else {
+        format!("```patch\n{truncated_patch}\n```\n")
+    };
     format!("{header}\n\n{instructions}\n\n{diff_block}")
 }
 
-fn parse_merge_spec(spec: &str) -> anyhow::Result<(String, String)> {
-    let parts: Vec<&str> = spec.split("->").collect();
-    if parts.len() != 2 || parts[0].trim().is_empty() || parts[1].trim().is_empty() {
-        anyhow::bail!("Invalid merge spec: {spec}. Expected format: source->target");
+fn truncate_patch_to_tokens(patch: &str, max_tokens: usize) -> (String, bool) {
+    // Heuristic: ~4 characters per token
+    let max_chars = max_tokens.saturating_mul(4);
+    let mut count = 0usize;
+    if patch.chars().count() <= max_chars {
+        return (patch.to_string(), false);
     }
-    Ok((parts[0].trim().to_string(), parts[1].trim().to_string()))
+    let mut out = String::with_capacity(max_chars);
+    for ch in patch.chars() {
+        if count >= max_chars {
+            break;
+        }
+        out.push(ch);
+        count += 1;
+    }
+    (out, true)
 }
 
 async fn git_diff_patch(target: &str, source: &str) -> anyhow::Result<String> {
