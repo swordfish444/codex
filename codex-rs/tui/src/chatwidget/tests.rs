@@ -170,6 +170,34 @@ fn lines_to_single_string(lines: &[ratatui::text::Line<'static>]) -> String {
     s
 }
 
+#[test]
+fn extract_trailing_windows_drive_path_token_end() {
+    let input = r"Check this C:\\Users\\me\\pic.png".to_string();
+    let res = ChatWidget::extract_trailing_path_candidate(&input).expect("candidate");
+    let (_, _, cand) = res;
+    assert!(cand.ends_with("pic.png"));
+    assert!(cand.starts_with("C:"));
+}
+
+#[test]
+fn extract_trailing_windows_drive_path_with_spaces() {
+    let input = r"Please use C:\\Users\\John Doe\\Pictures\\image 1.png".to_string();
+    let res = ChatWidget::extract_trailing_path_candidate(&input).expect("candidate");
+    let (_, _, cand) = res;
+    assert!(cand.starts_with("C:"));
+    assert!(cand.contains("John Doe"));
+    assert!(cand.ends_with("image 1.png"));
+}
+
+#[test]
+fn extract_trailing_unc_path() {
+    let input = r"See \\\\server\\share\\img.jpg".to_string();
+    let res = ChatWidget::extract_trailing_path_candidate(&input).expect("candidate");
+    let (_, _, cand) = res;
+    assert!(cand.starts_with("\\\\"));
+    assert!(cand.ends_with("img.jpg"));
+}
+
 fn open_fixture(name: &str) -> std::fs::File {
     // 1) Prefer fixtures within this crate
     {
