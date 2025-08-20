@@ -663,7 +663,13 @@ fn is_free_plan(login_status: &LoginStatus) -> bool {
     }
 }
 
-fn should_show_login_screen(login_status: &LoginStatus, config: &Config) -> bool {
+fn should_show_login_screen(login_status: LoginStatus, config: &Config) -> bool {
+    // Only show the login screen for providers that actually require OpenAI auth
+    // (OpenAI or equivalents). For OSS/other providers, skip login entirely.
+    if !config.model_provider.requires_openai_auth {
+        return false;
+    }
+
     match login_status {
         LoginStatus::NotAuthenticated => true,
         LoginStatus::Auth(auth) => {
