@@ -17,6 +17,7 @@ use ratatui::crossterm::terminal::disable_raw_mode;
 use ratatui::crossterm::terminal::enable_raw_mode;
 
 use crate::custom_terminal::Terminal;
+use crate::emoji_width;
 
 /// A type alias for the terminal type used in this application
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
@@ -44,6 +45,10 @@ pub fn init(_config: &Config) -> Result<Tui> {
 
     // Clear screen and move cursor to top-left before drawing UI
     execute!(stdout(), Clear(ClearType::All), MoveTo(0, 0))?;
+
+    // Proactively probe emoji widths so downstream rendering can pick icons
+    // safely without doing terminal mutations mid-render.
+    let _ = emoji_width::emojis_render_as_expected();
 
     let backend = CrosstermBackend::new(stdout());
     let tui = Terminal::with_options(backend)?;

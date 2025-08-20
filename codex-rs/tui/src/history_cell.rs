@@ -243,7 +243,7 @@ fn new_parsed_command(
     let mut lines: Vec<Line> = Vec::new();
     match output {
         None => {
-            let mut spans = vec!["⚙︎ Working".magenta().bold()];
+            let mut spans = vec![crate::icons::working().magenta().bold()];
             if let Some(st) = start_time {
                 let dur = exec_duration(st);
                 spans.push(format!(" • {dur}").dim());
@@ -251,11 +251,14 @@ fn new_parsed_command(
             lines.push(Line::from(spans));
         }
         Some(o) if o.exit_code == 0 => {
-            lines.push(Line::from(vec!["✓".green(), " Completed".into()]));
+            lines.push(Line::from(vec![
+                crate::icons::completed_label().green(),
+                " Completed".into(),
+            ]));
         }
         Some(o) => {
             lines.push(Line::from(vec![
-                "✗".red(),
+                crate::icons::failed_label().red(),
                 format!(" Failed (exit {})", o.exit_code).into(),
             ]));
         }
@@ -281,22 +284,22 @@ fn new_parsed_command(
 
     for (i, parsed) in parsed_commands.iter().enumerate() {
         let text = match parsed {
-            ParsedCommand::Read { name, .. } => format!("📖 {name}"),
+            ParsedCommand::Read { name, .. } => format!("{} {name}", crate::icons::book()),
             ParsedCommand::ListFiles { cmd, path } => match path {
-                Some(p) => format!("📂 {p}"),
-                None => format!("📂 {cmd}"),
+                Some(p) => format!("{} {p}", crate::icons::folder()),
+                None => format!("{} {cmd}", crate::icons::folder()),
             },
             ParsedCommand::Search { query, path, cmd } => match (query, path) {
-                (Some(q), Some(p)) => format!("🔎 {q} in {p}"),
-                (Some(q), None) => format!("🔎 {q}"),
-                (None, Some(p)) => format!("🔎 {p}"),
-                (None, None) => format!("🔎 {cmd}"),
+                (Some(q), Some(p)) => format!("{} {q} in {p}", crate::icons::search()),
+                (Some(q), None) => format!("{} {q}", crate::icons::search()),
+                (None, Some(p)) => format!("{} {p}", crate::icons::search()),
+                (None, None) => format!("{} {cmd}", crate::icons::search()),
             },
-            ParsedCommand::Format { .. } => "✨ Formatting".to_string(),
-            ParsedCommand::Test { cmd } => format!("🧪 {cmd}"),
-            ParsedCommand::Lint { cmd, .. } => format!("🧹 {cmd}"),
-            ParsedCommand::Unknown { cmd } => format!("⌨️ {cmd}"),
-            ParsedCommand::Noop { cmd } => format!("🔄 {cmd}"),
+            ParsedCommand::Format { .. } => format!("{} Formatting", crate::icons::formatting()),
+            ParsedCommand::Test { cmd } => format!("{} {cmd}", crate::icons::test()),
+            ParsedCommand::Lint { cmd, .. } => format!("{} {cmd}", crate::icons::lint()),
+            ParsedCommand::Unknown { cmd } => format!("{} {cmd}", crate::icons::keyboard_cmd()),
+            ParsedCommand::Noop { cmd } => format!("{} {cmd}", crate::icons::noop()),
         };
 
         let first_prefix = if i == 0 { "  └ " } else { "    " };
@@ -324,7 +327,7 @@ fn new_exec_command_generic(
     let command_escaped = strip_bash_lc_and_escape(command);
     let mut cmd_lines = command_escaped.lines();
     if let Some(first) = cmd_lines.next() {
-        let mut spans: Vec<Span> = vec!["⚡ Running".magenta()];
+        let mut spans: Vec<Span> = vec![crate::icons::running().magenta()];
         if let Some(st) = start_time {
             let dur = exec_duration(st);
             spans.push(format!(" • {dur}").dim());
@@ -513,7 +516,11 @@ pub(crate) fn new_status_output(
     };
 
     // 📂 Workspace
-    lines.push(Line::from(vec!["📂 ".into(), "Workspace".bold()]));
+    lines.push(Line::from(vec![
+        crate::icons::workspace().into(),
+        " ".into(),
+        "Workspace".bold(),
+    ]));
     // Path (home-relative, e.g., ~/code/project)
     let cwd_str = match relativize_to_home(&config.cwd) {
         Some(rel) if !rel.as_os_str().is_empty() => format!("~/{}", rel.display()),
@@ -550,7 +557,11 @@ pub(crate) fn new_status_output(
     let auth_file = get_auth_file(&config.codex_home);
     if let Ok(auth) = try_read_auth_json(&auth_file) {
         if let Some(tokens) = auth.tokens.clone() {
-            lines.push(Line::from(vec!["👤 ".into(), "Account".bold()]));
+            lines.push(Line::from(vec![
+                crate::icons::account().into(),
+                " ".into(),
+                "Account".bold(),
+            ]));
             lines.push(Line::from("  • Signed in with ChatGPT"));
 
             let info = tokens.id_token;
@@ -578,7 +589,11 @@ pub(crate) fn new_status_output(
     }
 
     // 🧠 Model
-    lines.push(Line::from(vec!["🧠 ".into(), "Model".bold()]));
+    lines.push(Line::from(vec![
+        crate::icons::model().into(),
+        " ".into(),
+        "Model".bold(),
+    ]));
     lines.push(Line::from(vec![
         "  • Name: ".into(),
         config.model.clone().into(),
@@ -607,7 +622,11 @@ pub(crate) fn new_status_output(
     lines.push(Line::from(""));
 
     // 📊 Token Usage
-    lines.push(Line::from(vec!["📊 ".into(), "Token Usage".bold()]));
+    lines.push(Line::from(vec![
+        crate::icons::token_usage().into(),
+        " ".into(),
+        "Token Usage".bold(),
+    ]));
     // Input: <input> [+ <cached> cached]
     let mut input_line_spans: Vec<Span<'static>> = vec![
         "  • Input: ".into(),
@@ -635,7 +654,14 @@ pub(crate) fn new_status_output(
 }
 
 pub(crate) fn new_error_event(message: String) -> PlainHistoryCell {
-    let lines: Vec<Line<'static>> = vec![vec!["🖐 ".red().bold(), message.into()].into(), "".into()];
+    let lines: Vec<Line<'static>> = vec![
+        vec![
+            format!("{} ", crate::icons::wave_error()).red().bold(),
+            message.into(),
+        ]
+        .into(),
+        "".into(),
+    ];
     PlainHistoryCell { lines }
 }
 
@@ -660,7 +686,7 @@ pub(crate) fn new_plan_update(update: UpdatePlanArgs) -> PlainHistoryCell {
     let empty = width.saturating_sub(filled);
 
     let mut header: Vec<Span> = Vec::new();
-    header.push(Span::raw("📋"));
+    header.push(Span::raw(crate::icons::clipboard()));
     header.push(Span::styled(
         " Update plan",
         Style::default().add_modifier(Modifier::BOLD).magenta(),
@@ -750,12 +776,12 @@ pub(crate) fn new_patch_event(
         PatchEventType::ApprovalRequest => "proposed patch",
         PatchEventType::ApplyBegin {
             auto_approved: true,
-        } => "✏️ Applying patch",
+        } => crate::icons::apply_patch(),
         PatchEventType::ApplyBegin {
             auto_approved: false,
         } => {
             let lines: Vec<Line<'static>> = vec![
-                Line::from("✏️ Applying patch".magenta().bold()),
+                Line::from(crate::icons::apply_patch().magenta().bold()),
                 Line::from(""),
             ];
             return PlainHistoryCell { lines };
