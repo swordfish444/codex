@@ -681,6 +681,7 @@ impl ChatWidget<'_> {
     }
 
     // Find a trailing quoted path or URL token at the end of the current input.
+    // Also handles Windows-style paths like C:\Users\... without quotes.
     // Returns (start_idx, end_idx, candidate_str) in byte indices if found.
     fn extract_trailing_path_candidate(s: &str) -> Option<(usize, usize, String)> {
         let trimmed_end = s.trim_end();
@@ -722,6 +723,35 @@ impl ChatWidget<'_> {
                     || token.starts_with("file://")
                 {
                     return Some((start_idx, end_idx, token.to_string()));
+                }
+            }
+
+            // Case 3: Heuristic for Windows drive-letter paths without quotes, possibly containing spaces.
+            // Look for a trailing pattern like <Letter>:\ or <Letter>:/ and treat the remainder
+            // of the line as the candidate path.
+            // Example: "See C:\\Users\\John Doe\\image 1.png" -> candidate starts at 'C'.
+            if let Some(colon_pos) = trimmed_end.rfind(':') {
+                if colon_pos > 0 && colon_pos + 1 < end {
+                    let bytes = trimmed_end.as_bytes();
+                    let prev = bytes[colon_pos - 1];
+                    let next = bytes[colon_pos + 1];
+                    let is_letter = (prev as char).is_ascii_alphabetic();
+                    let is_sep = next == b'\\' || next == b'/';
+                    if is_letter && is_sep {
+                        let start_idx = colon_pos - 1; // include the drive letter
+                        let end_idx = end; // take until end of line (may include spaces)
+                        let cand = &trimmed_end[start_idx..end_idx];
+                        return Some((start_idx, end_idx, cand.to_string()));
+                    }
+                }
+            }
+
+            // Case 4: UNC paths. Look for the last occurrence of \\\\ and consider the remainder
+            // of the line as the path candidate.
+            if let Some(pos) = trimmed_end.rfind("\\\\") {
+                if pos + 1 < end && &trimmed_end[pos..pos + 2] == "\\\\" {
+                    let cand = &trimmed_end[pos..end];
+                    return Some((pos, end, cand.to_string()));
                 }
             }
         }
