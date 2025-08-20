@@ -480,6 +480,7 @@ impl Session {
                 sandbox_policy.clone(),
                 config.include_plan_tool,
                 config.include_apply_patch_tool,
+                config.experimental_disable_built_in_shell_tool,
             ),
             user_instructions,
             base_instructions,
@@ -1049,6 +1050,7 @@ async fn submission_loop(
                     new_sandbox_policy.clone(),
                     config.include_plan_tool,
                     config.include_apply_patch_tool,
+                    config.experimental_disable_built_in_shell_tool,
                 );
 
                 let new_turn_context = TurnContext {
@@ -1125,6 +1127,7 @@ async fn submission_loop(
                             sandbox_policy.clone(),
                             config.include_plan_tool,
                             config.include_apply_patch_tool,
+                            config.experimental_disable_built_in_shell_tool,
                         ),
                         user_instructions: turn_context.user_instructions.clone(),
                         base_instructions: turn_context.base_instructions.clone(),
