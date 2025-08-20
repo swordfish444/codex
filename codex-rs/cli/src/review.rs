@@ -4,10 +4,19 @@ use codex_tui::Cli as TuiCli;
 use std::path::PathBuf;
 use tokio::process::Command;
 
+enum InputKind {
+    Branches { source: String, target: String },
+    Pr { repo: Option<String>, number: String },
+}
+
 #[derive(Debug, Parser)]
 pub struct ReviewCommand {
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
+
+    /// Optional subject: either `source->target`, a target branch, or a GitHub PR URL/number
+    #[arg(value_name = "SUBJECT")] 
+    pub subject: Option<String>,
 
     /// Source branch (defaults to current branch when omitted)
     #[arg(long = "source", short = 's', value_name = "BRANCH")]
@@ -19,37 +28,61 @@ pub struct ReviewCommand {
         short = 't',
         value_name = "BRANCH",
         visible_alias = "into",
-        alias = "to",
-        required = true
+        alias = "to"
     )]
-    pub target: String,
+    pub target: Option<String>,
 }
 
 pub async fn run_review_command(
     cli: ReviewCommand,
     codex_linux_sandbox_exe: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let ReviewCommand {
-        mut config_overrides,
-        source,
-        target,
-    } = cli;
-    let source = match source {
-        Some(s) => s,
-        None => current_branch().await?,
+    let ReviewCommand { mut config_overrides, subject, source, target } = cli;
+
+    let input = if let Some(s) = subject {
+        if looks_like_pr(&s) {
+            parse_pr_spec(&s)?
+        } else if s.contains("->") {
+            let (src, dst) = parse_merge_spec(&s)?;
+            InputKind::Branches { source: src, target: dst }
+        } else {
+            // Fallback: treat as target with default/current source
+            let src = source.unwrap_or(current_branch().await?);
+            InputKind::Branches { source: src, target: s }
+        }
+    } else {
+        match (source, target) {
+            (_, None) => {
+                anyhow::bail!("the following required arguments were not provided:\n  --target <BRANCH>\n\nUsage: codex review --target <BRANCH> <SUBJECT>")
+            }
+            (maybe_s, Some(t)) => {
+                let src = maybe_s.unwrap_or(current_branch().await?);
+                InputKind::Branches { source: src, target: t }
+            }
+        }
     };
-    let target = target;
 
-    // Compute the patch representing merging `source` into `target`.
-    // Use the triple-dot diff to compare source against the merge base with target.
-    let patch = git_diff_patch(&target, &source).await?;
+    let (context, patch) = match input {
+        InputKind::Branches { source, target } => {
+            let patch = git_diff_patch(&target, &source).await?;
+            if patch.trim().is_empty() {
+                eprintln!("No differences found between {source} and {target}.");
+                return Ok(());
+            }
+            (format!("proposed merge of '{source}' into '{target}'"), patch)
+        }
+        InputKind::Pr { repo, number } => {
+            let patch = gh_pr_diff(repo.as_deref(), &number).await?;
+            if patch.trim().is_empty() {
+                eprintln!("No differences found for PR #{number}.");
+                return Ok(());
+            }
+            let context = match repo { Some(r) => format!("GitHub PR {r}#{number}"), None => format!("GitHub PR #{number}") };
+            (context, patch)
+        }
+    };
 
-    if patch.trim().is_empty() {
-        eprintln!("No differences found between {source} and {target}.");
-        return Ok(());
-    }
-
-    let prompt = build_review_prompt(&source, &target, &patch);
+    let prompt = build_review_prompt(&context, &patch);
 
     // Launch the interactive TUI with the constructed prompt, like normal codex.
     let tui_cli = TuiCli {
@@ -73,8 +106,8 @@ pub async fn run_review_command(
     Ok(())
 }
 
-fn build_review_prompt(source: &str, target: &str, patch: &str) -> String {
-    let header = format!("You are reviewing a proposed merge of '{source}' into '{target}'.");
+fn build_review_prompt(context: &str, patch: &str) -> String {
+    let header = format!("You are reviewing a {context}.");
     let instructions = "Please analyze the following git diff patch in detail. Provide: \n\
         - 4 specific areas of improvement (actionable suggestions with rationale).\n\
         - 4 thoughtful questions a senior software engineer would ask.\n\
@@ -129,6 +162,52 @@ async fn git_diff_patch(target: &str, source: &str) -> anyhow::Result<String> {
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+async fn gh_pr_diff(repo: Option<&str>, pr_number: &str) -> anyhow::Result<String> {
+    let mut cmd = Command::new("gh");
+    cmd.arg("pr").arg("diff").arg(pr_number).arg("--patch").arg("--color=never");
+    if let Some(r) = repo {
+        cmd.arg("--repo").arg(r);
+    }
+    let output = cmd.output().await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Failed to run 'gh pr diff': {stderr}");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn looks_like_pr(s: &str) -> bool {
+    s.contains("://github.com/") && s.contains("/pull/") || s.chars().all(|c| c.is_ascii_digit())
+}
+
+fn parse_pr_spec(spec: &str) -> anyhow::Result<InputKind> {
+    if spec.chars().all(|c| c.is_ascii_digit()) {
+        return Ok(InputKind::Pr { repo: None, number: spec.to_string() });
+    }
+    if let Some(idx) = spec.find("github.com/") {
+        let tail = &spec[idx + "github.com/".len()..];
+        let parts: Vec<&str> = tail.split('/').collect();
+        if parts.len() >= 4 && parts[2] == "pull" {
+            let owner = parts[0];
+            let repo = parts[1];
+            let number = parts[3];
+            if !number.chars().all(|c| c.is_ascii_digit()) {
+                anyhow::bail!("Invalid PR number in URL: {number}");
+            }
+            return Ok(InputKind::Pr { repo: Some(format!("{owner}/{repo}")), number: number.to_string() });
+        }
+    }
+    anyhow::bail!("Unrecognized PR spec: {spec}")
+}
+
+fn parse_merge_spec(spec: &str) -> anyhow::Result<(String, String)> {
+    let parts: Vec<&str> = spec.split("->").collect();
+    if parts.len() != 2 || parts[0].trim().is_empty() || parts[1].trim().is_empty() {
+        anyhow::bail!("Invalid merge spec: {spec}. Expected format: source->target");
+    }
+    Ok((parts[0].trim().to_string(), parts[1].trim().to_string()))
 }
 
 async fn current_branch() -> anyhow::Result<String> {
