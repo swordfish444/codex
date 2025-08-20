@@ -760,11 +760,7 @@ impl ChatWidget<'_> {
     }
 
     pub(crate) fn handle_paste(&mut self, text: String) {
-        // First, attempt to interpret the pasted text as a file path to an image
-        // and attach it. This mirrors the logic previously handled at the app level.
-        let mut handled = false;
-
-        // Helper to attach an image if the path looks valid, returning true if handled.
+        // Helper: attempt to attach image and return true if attached.
         fn try_attach_image(widget: &mut ChatWidget<'_>, path: std::path::PathBuf) -> bool {
             if path.is_file() {
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
@@ -784,9 +780,9 @@ impl ChatWidget<'_> {
             false
         }
 
-        // Trim and strip quotes for the most direct case.
-        let mut s = text.trim().to_string();
-        if !s.is_empty() {
+        // Normalize a candidate string into possible paths to try.
+        fn candidate_paths(candidate: &str) -> Vec<std::path::PathBuf> {
+            let mut s = candidate.trim().to_string();
             if s.len() >= 2
                 && ((s.starts_with('"') && s.ends_with('"'))
                     || (s.starts_with('\'') && s.ends_with('\'')))
@@ -800,56 +796,73 @@ impl ChatWidget<'_> {
                     s = p.to_string_lossy().into_owned();
                 }
             }
-            handled = try_attach_image(self, std::path::PathBuf::from(&s));
+            let mut try_paths: Vec<std::path::PathBuf> = Vec::new();
+            if let Some(p) = file_url_to_path(&s) {
+                try_paths.push(p);
+            }
+            try_paths.push(std::path::PathBuf::from(&s));
+            let unescaped = unescape_backslashes(&s);
+            if unescaped != s {
+                try_paths.push(std::path::PathBuf::from(unescaped));
+            }
+            try_paths
         }
 
-        // If not handled yet, try multiple candidate interpretations: shlex tokens,
-        // URL-style paths, and unescaped variants.
-        if !handled {
-            let candidates: Vec<String> = if let Some(tokens) = shlex::split(&text) {
-                tokens
-            } else {
-                vec![text.clone()]
-            };
+        let mut any_attached = false;
 
-            'outer: for raw in candidates {
-                let mut s = raw.trim().to_string();
-                if s.len() >= 2
-                    && ((s.starts_with('"') && s.ends_with('"'))
-                        || (s.starts_with('\'') && s.ends_with('\'')))
-                {
-                    s = s[1..s.len() - 1].to_string();
-                }
-                if let Some(rest) = s.strip_prefix("~/") {
-                    if let Ok(home) = std::env::var("HOME") {
-                        let mut p = std::path::PathBuf::from(home);
-                        p.push(rest);
-                        s = p.to_string_lossy().into_owned();
+        // Strategy:
+        // - If multiple lines were pasted (drag-and-drop often does this),
+        //   treat each line as a single candidate path. Attach images for lines
+        //   that resolve to valid image files; keep other lines as leftover text.
+        // - Otherwise, try tokenizing the single line using shlex and attach
+        //   images for any token that resolves to a valid image file; paste
+        //   any remaining tokens as text.
+
+        if text.contains('\n') {
+            let mut leftover_lines: Vec<&str> = Vec::new();
+            for line in text.lines() {
+                let mut attached_this_line = false;
+                for p in candidate_paths(line) {
+                    if try_attach_image(self, p) {
+                        any_attached = true;
+                        attached_this_line = true;
+                        break;
                     }
                 }
-
-                let mut try_paths: Vec<std::path::PathBuf> = Vec::new();
-                if let Some(p) = file_url_to_path(&s) {
-                    try_paths.push(p);
-                }
-                try_paths.push(std::path::PathBuf::from(&s));
-                let unescaped = unescape_backslashes(&s);
-                if unescaped != s {
-                    try_paths.push(std::path::PathBuf::from(unescaped));
-                }
-
-                for path in try_paths {
-                    if try_attach_image(self, path) {
-                        handled = true;
-                        break 'outer;
-                    }
+                if !attached_this_line {
+                    leftover_lines.push(line);
                 }
             }
-        }
-
-        // If still not handled, treat it as a normal textual paste.
-        if !handled {
-            self.bottom_pane.handle_paste(text);
+            let leftover = leftover_lines.join("\n");
+            if !leftover.trim().is_empty() {
+                self.bottom_pane.handle_paste(leftover);
+            } else if !any_attached {
+                // Nothing attached and no leftover: forward original text.
+                self.bottom_pane.handle_paste(text);
+            }
+        } else {
+            // Single line: consider shlex tokens to support quoted paths.
+            let tokens: Vec<String> = shlex::split(&text).unwrap_or_else(|| vec![text.clone()]);
+            let mut leftover_tokens: Vec<String> = Vec::new();
+            for tok in tokens {
+                let mut attached_this_token = false;
+                for p in candidate_paths(&tok) {
+                    if try_attach_image(self, p) {
+                        any_attached = true;
+                        attached_this_token = true;
+                        break;
+                    }
+                }
+                if !attached_this_token {
+                    leftover_tokens.push(tok);
+                }
+            }
+            let leftover = leftover_tokens.join(" ");
+            if !leftover.trim().is_empty() {
+                self.bottom_pane.handle_paste(leftover);
+            } else if !any_attached {
+                self.bottom_pane.handle_paste(text);
+            }
         }
     }
 

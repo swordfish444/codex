@@ -198,6 +198,82 @@ fn extract_trailing_unc_path() {
     assert!(cand.ends_with("img.jpg"));
 }
 
+#[test]
+fn paste_multiple_lines_attaches_multiple_images_and_no_text() {
+    use image::ImageBuffer;
+    use image::Rgba;
+    // Create two temp images
+    let dir = std::env::temp_dir();
+    let p1 = dir.join(format!("codex_multi_a_{}.png", uuid::Uuid::new_v4()));
+    let p2 = dir.join(format!("codex_multi_b_{}.png", uuid::Uuid::new_v4()));
+    let img1: ImageBuffer<Rgba<u8>, Vec<u8>> =
+        ImageBuffer::from_fn(2, 3, |_x, _y| Rgba([255, 0, 0, 255]));
+    image::DynamicImage::ImageRgba8(img1)
+        .save_with_format(&p1, image::ImageFormat::Png)
+        .expect("write png");
+    let img2: ImageBuffer<Rgba<u8>, Vec<u8>> =
+        ImageBuffer::from_fn(4, 1, |_x, _y| Rgba([0, 255, 0, 255]));
+    image::DynamicImage::ImageRgba8(img2)
+        .save_with_format(&p2, image::ImageFormat::Png)
+        .expect("write png");
+
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual();
+    let paste = format!("{}\n{}\n", p1.display(), p2.display());
+    chat.handle_paste(paste);
+
+    // Expect composer text to contain two image placeholders and no literal paths.
+    let composer_text = chat.bottom_pane.current_input_text();
+    assert!(
+        composer_text.contains("[image 2x3 PNG]"),
+        "missing png placeholder: {composer_text}"
+    );
+    assert!(
+        composer_text.contains("[image 4x1 PNG]"),
+        "missing png placeholder (second): {composer_text}"
+    );
+    assert!(!composer_text.contains("a.png"));
+    assert!(!composer_text.contains("b.jpg"));
+}
+
+#[test]
+fn paste_single_line_two_quoted_paths_attaches_both_and_keeps_other_text() {
+    use image::ImageBuffer;
+    use image::Rgba;
+    let dir = std::env::temp_dir();
+    let p1 = dir.join(format!("codex_multi_c_{}.png", uuid::Uuid::new_v4()));
+    let p2 = dir.join(format!("codex_multi_d_{}.png", uuid::Uuid::new_v4()));
+    let img1: ImageBuffer<Rgba<u8>, Vec<u8>> =
+        ImageBuffer::from_fn(1, 1, |_x, _y| Rgba([1, 2, 3, 255]));
+    image::DynamicImage::ImageRgba8(img1)
+        .save_with_format(&p1, image::ImageFormat::Png)
+        .expect("write png");
+    let img2: ImageBuffer<Rgba<u8>, Vec<u8>> =
+        ImageBuffer::from_fn(3, 2, |_x, _y| Rgba([4, 5, 6, 255]));
+    image::DynamicImage::ImageRgba8(img2)
+        .save_with_format(&p2, image::ImageFormat::Png)
+        .expect("write png");
+
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual();
+    let paste = format!(
+        "Please see \"{}\" and \"{}\" now",
+        p1.display(),
+        p2.display()
+    );
+    chat.handle_paste(paste);
+
+    let composer_text = chat.bottom_pane.current_input_text();
+    assert!(
+        composer_text.contains("Please see"),
+        "leftover text missing: {composer_text}"
+    );
+    assert!(
+        composer_text.contains("now"),
+        "leftover text missing: {composer_text}"
+    );
+    assert!(composer_text.contains("[image 1x1 PNG]"));
+    assert!(composer_text.contains("[image 3x2 PNG]"));
+}
+
 fn open_fixture(name: &str) -> std::fs::File {
     // 1) Prefer fixtures within this crate
     {
