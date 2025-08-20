@@ -2,6 +2,7 @@
 // The standalone `codex-tui` binary prints a short help message before the
 // alternate‑screen mode starts; that file opts‑out locally via `allow`.
 #![deny(clippy::print_stdout, clippy::print_stderr)]
+#![deny(clippy::disallowed_methods)]
 use app::App;
 use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_core::config::Config;
@@ -9,12 +10,12 @@ use codex_core::config::ConfigOverrides;
 use codex_core::config::ConfigToml;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_config_as_toml_with_cli_overrides;
-use codex_core::config_types::SandboxMode;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::SandboxPolicy;
+use codex_login::AuthMode;
 use codex_login::CodexAuth;
 use codex_ollama::DEFAULT_OSS_MODEL;
-use log_layer::TuiLogLayer;
+use codex_protocol::config_types::SandboxMode;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use tracing::error;
@@ -31,23 +32,32 @@ mod citation_regex;
 mod cli;
 mod clipboard_paste;
 mod colors;
+mod common;
 pub mod custom_terminal;
+mod diff_render;
 mod exec_command;
 mod file_search;
 mod get_git_diff;
 mod history_cell;
 pub mod insert_history;
 pub mod live_wrap;
-mod log_layer;
 mod markdown;
+mod markdown_stream;
 pub mod onboarding;
+mod render;
+mod session_log;
 mod shimmer;
 mod slash_command;
 mod status_indicator_widget;
-mod text_block;
+mod streaming;
 mod text_formatting;
 mod tui;
 mod user_approval_widget;
+
+// Internal vt100-based replay tests live as a separate source file to keep them
+// close to the widget code. Include them in unit tests.
+#[cfg(test)]
+mod chatwidget_stream_tests;
 
 #[cfg(not(debug_assertions))]
 mod updates;
@@ -55,6 +65,8 @@ mod updates;
 use color_eyre::owo_colors::OwoColorize;
 
 pub use cli::Cli;
+
+// (tests access modules directly within the crate)
 
 pub async fn run_main(
     cli: Cli,
@@ -107,6 +119,7 @@ pub async fn run_main(
         codex_linux_sandbox_exe,
         base_instructions: None,
         include_plan_tool: Some(true),
+        include_apply_patch_tool: None,
         disable_response_storage: cli.oss.then_some(true),
         show_raw_agent_reasoning: cli.oss.then_some(true),
     };
@@ -201,14 +214,7 @@ pub async fn run_main(
             .map_err(|e| std::io::Error::other(format!("OSS setup failed: {e}")))?;
     }
 
-    // Channel that carries formatted log lines to the UI.
-    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let tui_layer = TuiLogLayer::new(log_tx.clone(), 120).with_filter(env_filter());
-
-    let _ = tracing_subscriber::registry()
-        .with(file_layer)
-        .with(tui_layer)
-        .try_init();
+    let _ = tracing_subscriber::registry().with(file_layer).try_init();
 
     #[allow(clippy::print_stderr)]
     #[cfg(not(debug_assertions))]
@@ -242,7 +248,7 @@ pub async fn run_main(
         eprintln!("");
     }
 
-    run_ratatui_app(cli, config, should_show_trust_screen, log_rx)
+    run_ratatui_app(cli, config, should_show_trust_screen)
         .map_err(|err| std::io::Error::other(err.to_string()))
 }
 
@@ -250,7 +256,6 @@ fn run_ratatui_app(
     cli: Cli,
     config: Config,
     should_show_trust_screen: bool,
-    mut log_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
 ) -> color_eyre::Result<codex_core::protocol::TokenUsage> {
     color_eyre::install()?;
 
@@ -266,23 +271,18 @@ fn run_ratatui_app(
     let mut terminal = tui::init(&config)?;
     terminal.clear()?;
 
+    // Initialize high-fidelity session event logging if enabled.
+    session_log::maybe_init(&config);
+
     let Cli { prompt, images, .. } = cli;
     let mut app = App::new(config.clone(), prompt, images, should_show_trust_screen);
-
-    // Bridge log receiver into the AppEvent channel so latest log lines update the UI.
-    {
-        let app_event_tx = app.event_sender();
-        tokio::spawn(async move {
-            while let Some(line) = log_rx.recv().await {
-                app_event_tx.send(crate::app_event::AppEvent::LatestLog(line));
-            }
-        });
-    }
 
     let app_result = app.run(&mut terminal);
     let usage = app.token_usage();
 
     restore();
+    // Mark the end of the recorded session.
+    session_log::log_session_end();
     // ignore error when collecting usage – report underlying error instead
     app_result.map(|_| usage)
 }
@@ -299,22 +299,27 @@ fn restore() {
     }
 }
 
-#[allow(clippy::unwrap_used)]
-fn should_show_login_screen(config: &Config) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginStatus {
+    AuthMode(AuthMode),
+    NotAuthenticated,
+}
+
+fn get_login_status(config: &Config) -> LoginStatus {
     if config.model_provider.requires_openai_auth {
         // Reading the OpenAI API key is an async operation because it may need
         // to refresh the token. Block on it.
         let codex_home = config.codex_home.clone();
-        match CodexAuth::from_codex_home(&codex_home) {
-            Ok(Some(_)) => false,
-            Ok(None) => true,
+        match CodexAuth::from_codex_home(&codex_home, config.preferred_auth_method) {
+            Ok(Some(auth)) => LoginStatus::AuthMode(auth.mode),
+            Ok(None) => LoginStatus::NotAuthenticated,
             Err(err) => {
                 error!("Failed to read auth.json: {err}");
-                true
+                LoginStatus::NotAuthenticated
             }
         }
     } else {
-        false
+        LoginStatus::NotAuthenticated
     }
 }
 

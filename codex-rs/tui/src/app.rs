@@ -1,17 +1,18 @@
+use crate::LoginStatus;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::chatwidget::ChatWidget;
 use crate::file_search::FileSearchManager;
 use crate::get_git_diff::get_git_diff;
+use crate::get_login_status;
 use crate::onboarding::onboarding_screen::KeyboardHandler;
 use crate::onboarding::onboarding_screen::OnboardingScreen;
 use crate::onboarding::onboarding_screen::OnboardingScreenArgs;
-use crate::should_show_login_screen;
 use crate::slash_command::SlashCommand;
 use crate::tui;
+use codex_core::ConversationManager;
 use codex_core::config::Config;
 use codex_core::protocol::Event;
-use codex_core::protocol::EventMsg;
 use codex_core::protocol::Op;
 use color_eyre::eyre::Result;
 use crossterm::SynchronizedUpdate;
@@ -30,9 +31,10 @@ use std::sync::mpsc::Receiver;
 use std::sync::mpsc::channel;
 use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 
 /// Time window for debouncing redraw requests.
-const REDRAW_DEBOUNCE: Duration = Duration::from_millis(10);
+const REDRAW_DEBOUNCE: Duration = Duration::from_millis(1);
 
 // Testable helper: generic over paste function so we can inject stubs in unit tests.
 fn try_handle_ctrl_v_with<F>(
@@ -98,6 +100,7 @@ enum AppState<'a> {
 }
 
 pub(crate) struct App<'a> {
+    server: Arc<ConversationManager>,
     app_event_tx: AppEventSender,
     app_event_rx: Receiver<AppEvent>,
     app_state: AppState<'a>,
@@ -107,12 +110,16 @@ pub(crate) struct App<'a> {
 
     file_search: FileSearchManager,
 
-    /// True when a redraw has been scheduled but not yet executed.
-    pending_redraw: Arc<AtomicBool>,
-
     pending_history_lines: Vec<Line<'static>>,
 
     enhanced_keys_supported: bool,
+
+    /// Controls the animation thread that sends CommitTick events.
+    commit_anim_running: Arc<AtomicBool>,
+
+    /// Channel to schedule one-shot animation frames; coalesced by a single
+    /// scheduler thread.
+    frame_schedule_tx: std::sync::mpsc::Sender<Instant>,
 }
 
 /// Aggregate parameters needed to create a `ChatWidget`, as creation may be
@@ -132,9 +139,10 @@ impl App<'_> {
         initial_images: Vec<std::path::PathBuf>,
         show_trust_screen: bool,
     ) -> Self {
+        let conversation_manager = Arc::new(ConversationManager::default());
+
         let (app_event_tx, app_event_rx) = channel();
         let app_event_tx = AppEventSender::new(app_event_tx);
-        let pending_redraw = Arc::new(AtomicBool::new(false));
 
         let enhanced_keys_supported = supports_keyboard_enhancement().unwrap_or(false);
 
@@ -163,10 +171,8 @@ impl App<'_> {
                                     app_event_tx.send(AppEvent::RequestRedraw);
                                 }
                                 crossterm::event::Event::Paste(pasted) => {
-                                    // Many terminals convert newlines to \r when
-                                    // pasting, e.g. [iTerm2][]. But [tui-textarea
-                                    // expects \n][tui-textarea]. This seems like a bug
-                                    // in tui-textarea IMO, but work around it for now.
+                                    // Many terminals convert newlines to \r when pasting (e.g., iTerm2),
+                                    // but tui-textarea expects \n. Normalize CR to LF.
                                     // [tui-textarea]: https://github.com/rhysd/tui-textarea/blob/4d18622eeac13b309e0ff6a55a46ac6706da68cf/src/textarea.rs#L782-L783
                                     // [iTerm2]: https://github.com/gnachman/iTerm2/blob/5d0c0d9f68523cbd0494dad5422998964a2ecd8d/sources/iTermPasteHelper.m#L206-L216
                                     let pasted = pasted.replace("\r", "\n");
@@ -184,8 +190,11 @@ impl App<'_> {
             });
         }
 
-        let show_login_screen = should_show_login_screen(&config);
-        let app_state = if show_login_screen || show_trust_screen {
+        let login_status = get_login_status(&config);
+        let should_show_onboarding =
+            should_show_onboarding(login_status, &config, show_trust_screen);
+        let app_state = if should_show_onboarding {
+            let show_login_screen = should_show_login_screen(login_status, &config);
             let chat_widget_args = ChatWidgetArgs {
                 config: config.clone(),
                 initial_prompt,
@@ -197,14 +206,16 @@ impl App<'_> {
                     event_tx: app_event_tx.clone(),
                     codex_home: config.codex_home.clone(),
                     cwd: config.cwd.clone(),
-                    show_login_screen,
                     show_trust_screen,
+                    show_login_screen,
                     chat_widget_args,
+                    login_status,
                 }),
             }
         } else {
             let chat_widget = ChatWidget::new(
                 config.clone(),
+                conversation_manager.clone(),
                 app_event_tx.clone(),
                 initial_prompt,
                 initial_images,
@@ -216,50 +227,68 @@ impl App<'_> {
         };
 
         let file_search = FileSearchManager::new(config.cwd.clone(), app_event_tx.clone());
+
+        // Spawn a single scheduler thread that coalesces both debounced redraw
+        // requests and animation frame requests, and emits a single Redraw event
+        // at the earliest requested time.
+        let (frame_tx, frame_rx) = channel::<Instant>();
+        {
+            let app_event_tx = app_event_tx.clone();
+            std::thread::spawn(move || {
+                use std::sync::mpsc::RecvTimeoutError;
+                let mut next_deadline: Option<Instant> = None;
+                loop {
+                    if next_deadline.is_none() {
+                        match frame_rx.recv() {
+                            Ok(deadline) => next_deadline = Some(deadline),
+                            Err(_) => break,
+                        }
+                    }
+
+                    #[expect(clippy::expect_used)]
+                    let deadline = next_deadline.expect("deadline set");
+                    let now = Instant::now();
+                    let timeout = if deadline > now {
+                        deadline - now
+                    } else {
+                        Duration::from_millis(0)
+                    };
+
+                    match frame_rx.recv_timeout(timeout) {
+                        Ok(new_deadline) => {
+                            next_deadline =
+                                Some(next_deadline.map_or(new_deadline, |d| d.min(new_deadline)));
+                        }
+                        Err(RecvTimeoutError::Timeout) => {
+                            app_event_tx.send(AppEvent::Redraw);
+                            next_deadline = None;
+                        }
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            });
+        }
         Self {
+            server: conversation_manager,
             app_event_tx,
             pending_history_lines: Vec::new(),
             app_event_rx,
             app_state,
             config,
             file_search,
-            pending_redraw,
             enhanced_keys_supported,
+            commit_anim_running: Arc::new(AtomicBool::new(false)),
+            frame_schedule_tx: frame_tx,
         }
     }
 
-    /// Clone of the internal event sender so external tasks (e.g. log bridge)
-    /// can inject `AppEvent`s.
-    pub fn event_sender(&self) -> AppEventSender {
-        self.app_event_tx.clone()
-    }
-
-    /// Schedule a redraw if one is not already pending.
-    #[allow(clippy::unwrap_used)]
-    fn schedule_redraw(&self) {
-        // Attempt to set the flag to `true`. If it was already `true`, another
-        // redraw is already pending so we can return early.
-        if self
-            .pending_redraw
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return;
-        }
-
-        let tx = self.app_event_tx.clone();
-        let pending_redraw = self.pending_redraw.clone();
-        thread::spawn(move || {
-            thread::sleep(REDRAW_DEBOUNCE);
-            tx.send(AppEvent::Redraw);
-            pending_redraw.store(false, Ordering::SeqCst);
-        });
+    fn schedule_frame_in(&self, dur: Duration) {
+        let _ = self.frame_schedule_tx.send(Instant::now() + dur);
     }
 
     pub(crate) fn run(&mut self, terminal: &mut tui::Tui) -> Result<()> {
-        // Insert an event to trigger the first render.
-        let app_event_tx = self.app_event_tx.clone();
-        app_event_tx.send(AppEvent::RequestRedraw);
+        // Schedule the first render immediately.
+        let _ = self.frame_schedule_tx.send(Instant::now());
 
         while let Ok(event) = self.app_event_rx.recv() {
             match event {
@@ -268,10 +297,37 @@ impl App<'_> {
                     self.app_event_tx.send(AppEvent::RequestRedraw);
                 }
                 AppEvent::RequestRedraw => {
-                    self.schedule_redraw();
+                    self.schedule_frame_in(REDRAW_DEBOUNCE);
+                }
+                AppEvent::ScheduleFrameIn(dur) => {
+                    self.schedule_frame_in(dur);
                 }
                 AppEvent::Redraw => {
                     std::io::stdout().sync_update(|_| self.draw_next_frame(terminal))??;
+                }
+                AppEvent::StartCommitAnimation => {
+                    if self
+                        .commit_anim_running
+                        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        let tx = self.app_event_tx.clone();
+                        let running = self.commit_anim_running.clone();
+                        thread::spawn(move || {
+                            while running.load(Ordering::Relaxed) {
+                                thread::sleep(Duration::from_millis(50));
+                                tx.send(AppEvent::CommitTick);
+                            }
+                        });
+                    }
+                }
+                AppEvent::StopCommitAnimation => {
+                    self.commit_anim_running.store(false, Ordering::Release);
+                }
+                AppEvent::CommitTick => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.on_commit_tick();
+                    }
                 }
                 AppEvent::KeyEvent(key_event) => {
                     match key_event {
@@ -289,28 +345,16 @@ impl App<'_> {
                             }
                         },
                         KeyEvent {
-                            code: KeyCode::Esc,
-                            kind: KeyEventKind::Press,
-                            ..
-                        } => match &mut self.app_state {
-                            AppState::Chat { widget } => {
-                                if !widget.on_esc() {
-                                    self.dispatch_key_event(key_event);
-                                }
-                            }
-                            AppState::Onboarding { .. } => {
-                                self.dispatch_key_event(key_event);
-                            }
-                        },
-                        KeyEvent {
                             code: KeyCode::Char('z'),
                             modifiers: crossterm::event::KeyModifiers::CONTROL,
                             kind: KeyEventKind::Press,
                             ..
                         } => {
-                            if let AppState::Chat { widget } = &mut self.app_state {
-                                widget.on_ctrl_z();
+                            #[cfg(unix)]
+                            {
+                                self.suspend(terminal)?;
                             }
+                            // No-op on non-Unix platforms.
                         }
                         KeyEvent {
                             code: KeyCode::Char('d'),
@@ -341,7 +385,7 @@ impl App<'_> {
                             self.dispatch_key_event(key_event);
                         }
                         _ => {
-                            // Ignore Release key events for now.
+                            // Ignore Release key events.
                         }
                     };
                 }
@@ -358,15 +402,17 @@ impl App<'_> {
                     AppState::Chat { widget } => widget.submit_op(op),
                     AppState::Onboarding { .. } => {}
                 },
-                AppEvent::LatestLog(line) => match &mut self.app_state {
-                    AppState::Chat { widget } => widget.update_latest_log(line),
-                    AppState::Onboarding { .. } => {}
-                },
+                AppEvent::DiffResult(text) => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.add_diff_output(text);
+                    }
+                }
                 AppEvent::DispatchCommand(command) => match command {
                     SlashCommand::New => {
                         // User accepted – switch to chat view.
                         let new_widget = Box::new(ChatWidget::new(
                             self.config.clone(),
+                            self.server.clone(),
                             self.app_event_tx.clone(),
                             None,
                             Vec::new(),
@@ -398,24 +444,28 @@ impl App<'_> {
                         break;
                     }
                     SlashCommand::Diff => {
-                        let (is_git_repo, diff_text) = match get_git_diff() {
-                            Ok(v) => v,
-                            Err(e) => {
-                                let msg = format!("Failed to compute diff: {e}");
-                                if let AppState::Chat { widget } = &mut self.app_state {
-                                    widget.add_diff_output(msg);
-                                }
-                                continue;
-                            }
-                        };
-
                         if let AppState::Chat { widget } = &mut self.app_state {
-                            let text = if is_git_repo {
-                                diff_text
-                            } else {
-                                "`/diff` — _not inside a git repository_".to_string()
+                            widget.add_diff_in_progress();
+                        }
+
+                        let tx = self.app_event_tx.clone();
+                        tokio::spawn(async move {
+                            let text = match get_git_diff().await {
+                                Ok((is_git_repo, diff_text)) => {
+                                    if is_git_repo {
+                                        diff_text
+                                    } else {
+                                        "`/diff` — _not inside a git repository_".to_string()
+                                    }
+                                }
+                                Err(e) => format!("Failed to compute diff: {e}"),
                             };
-                            widget.add_diff_output(text);
+                            tx.send(AppEvent::DiffResult(text));
+                        });
+                    }
+                    SlashCommand::Mention => {
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.insert_str("@");
                         }
                     }
                     SlashCommand::Status => {
@@ -423,13 +473,14 @@ impl App<'_> {
                             widget.add_status_output();
                         }
                     }
-                    SlashCommand::Prompts => {
+                    SlashCommand::Mcp => {
                         if let AppState::Chat { widget } = &mut self.app_state {
-                            widget.add_prompts_output();
+                            widget.add_mcp_output();
                         }
                     }
                     #[cfg(debug_assertions)]
                     SlashCommand::TestApproval => {
+                        use codex_core::protocol::EventMsg;
                         use std::collections::HashMap;
 
                         use codex_core::protocol::ApplyPatchApprovalRequestEvent;
@@ -482,7 +533,8 @@ impl App<'_> {
                     self.app_state = AppState::Chat {
                         widget: Box::new(ChatWidget::new(
                             config,
-                            app_event_tx.clone(),
+                            self.server.clone(),
+                            self.app_event_tx.clone(),
                             initial_prompt,
                             initial_images,
                             enhanced_keys_supported,
@@ -516,6 +568,23 @@ impl App<'_> {
         Ok(())
     }
 
+    #[cfg(unix)]
+    fn suspend(&mut self, terminal: &mut tui::Tui) -> Result<()> {
+        tui::restore()?;
+        // SAFETY: Unix-only code path. We intentionally send SIGTSTP to the
+        // current process group (pid 0) to trigger standard job-control
+        // suspension semantics. This FFI does not involve any raw pointers,
+        // is not called from a signal handler, and uses a constant signal.
+        // Errors from kill are acceptable (e.g., if already stopped) — the
+        // subsequent re-init path will still leave the terminal in a good state.
+        // We considered `nix`, but didn't think it was worth pulling in for this one call.
+        unsafe { libc::kill(0, libc::SIGTSTP) };
+        *terminal = tui::init(&self.config)?;
+        terminal.clear()?;
+        self.app_event_tx.send(AppEvent::RequestRedraw);
+        Ok(())
+    }
+
     pub(crate) fn token_usage(&self) -> codex_core::protocol::TokenUsage {
         match &self.app_state {
             AppState::Chat { widget } => widget.token_usage().clone(),
@@ -524,6 +593,10 @@ impl App<'_> {
     }
 
     fn draw_next_frame(&mut self, terminal: &mut tui::Tui) -> Result<()> {
+        if matches!(self.app_state, AppState::Onboarding { .. }) {
+            terminal.clear()?;
+        }
+
         let screen_size = terminal.size()?;
         let last_known_screen_size = terminal.last_known_screen_size;
         if screen_size != last_known_screen_size {
@@ -613,10 +686,79 @@ impl App<'_> {
     }
 }
 
+fn should_show_onboarding(
+    login_status: LoginStatus,
+    config: &Config,
+    show_trust_screen: bool,
+) -> bool {
+    if show_trust_screen {
+        return true;
+    }
+
+    should_show_login_screen(login_status, config)
+}
+
+fn should_show_login_screen(login_status: LoginStatus, config: &Config) -> bool {
+    match login_status {
+        LoginStatus::NotAuthenticated => true,
+        LoginStatus::AuthMode(method) => method != config.preferred_auth_method,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_core::config::ConfigOverrides;
+    use codex_core::config::ConfigToml;
+    use codex_login::AuthMode;
     use crossterm::event::KeyModifiers;
+
+    fn make_config(preferred: AuthMode) -> Config {
+        let mut cfg = Config::load_from_base_config_with_overrides(
+            ConfigToml::default(),
+            ConfigOverrides::default(),
+            std::env::temp_dir(),
+        )
+        .expect("load default config");
+        cfg.preferred_auth_method = preferred;
+        cfg
+    }
+
+    #[test]
+    fn shows_login_when_not_authenticated() {
+        let cfg = make_config(AuthMode::ChatGPT);
+        assert!(should_show_login_screen(
+            LoginStatus::NotAuthenticated,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn shows_login_when_api_key_but_prefers_chatgpt() {
+        let cfg = make_config(AuthMode::ChatGPT);
+        assert!(should_show_login_screen(
+            LoginStatus::AuthMode(AuthMode::ApiKey),
+            &cfg
+        ))
+    }
+
+    #[test]
+    fn hides_login_when_api_key_and_prefers_api_key() {
+        let cfg = make_config(AuthMode::ApiKey);
+        assert!(!should_show_login_screen(
+            LoginStatus::AuthMode(AuthMode::ApiKey),
+            &cfg
+        ))
+    }
+
+    #[test]
+    fn hides_login_when_chatgpt_and_prefers_chatgpt() {
+        let cfg = make_config(AuthMode::ChatGPT);
+        assert!(!should_show_login_screen(
+            LoginStatus::AuthMode(AuthMode::ChatGPT),
+            &cfg
+        ))
+    }
 
     #[test]
     fn ctrl_v_success_attaches_image() {

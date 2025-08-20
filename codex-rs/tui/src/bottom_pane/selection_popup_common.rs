@@ -93,9 +93,7 @@ pub(crate) fn render_rows(
                 spans.push(Span::raw("  "));
                 spans.push(Span::styled(
                     desc.clone(),
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::DIM),
+                    Style::default().add_modifier(Modifier::DIM),
                 ));
             }
 
@@ -103,7 +101,7 @@ pub(crate) fn render_rows(
             if Some(i) == state.selected_idx {
                 cell = cell.style(
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 );
             } else if *is_current {
@@ -118,7 +116,7 @@ pub(crate) fn render_rows(
             Block::default()
                 .borders(Borders::LEFT)
                 .border_type(BorderType::QuadrantOutside)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().add_modifier(Modifier::DIM)),
         )
         .widths([Constraint::Percentage(100)]);
 
