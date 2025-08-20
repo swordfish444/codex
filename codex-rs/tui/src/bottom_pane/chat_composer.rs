@@ -215,8 +215,7 @@ impl ChatComposer {
     pub fn take_recent_submission_images_with_placeholders(
         &mut self,
     ) -> Vec<(String, std::path::PathBuf)> {
-        let images = std::mem::take(&mut self.attached_images);
-        images
+        std::mem::take(&mut self.attached_images)
     }
 
     pub fn take_last_submitted_display(&mut self) -> Option<String> {
