@@ -543,11 +543,14 @@ impl ChatWidget<'_> {
 
         match self.bottom_pane.handle_key_event(key_event) {
             InputResult::Submitted(text) => {
-                let images = self.bottom_pane.take_recent_submission_images();
-                self.submit_user_message(UserMessage {
-                    text,
-                    image_paths: images,
-                });
+                let images = self
+                    .bottom_pane
+                    .take_recent_submission_images_with_placeholders();
+                let display = self
+                    .bottom_pane
+                    .take_last_submitted_display()
+                    .unwrap_or_else(|| text.clone());
+                self.submit_user_message_with_display(text, images, display);
             }
             InputResult::None => {}
         }
@@ -626,6 +629,38 @@ impl ChatWidget<'_> {
         if !text.is_empty() {
             self.add_to_history(&history_cell::new_user_prompt(text.clone()));
         }
+    }
+
+    fn submit_user_message_with_display(
+        &mut self,
+        text: String,
+        images: Vec<(String, std::path::PathBuf)>,
+        display_text: String,
+    ) {
+        let mut items: Vec<InputItem> = Vec::new();
+        if !text.is_empty() {
+            items.push(InputItem::Text { text: text.clone() });
+        }
+        for (_, path) in &images {
+            items.push(InputItem::LocalImage { path: path.clone() });
+        }
+        if items.is_empty() {
+            return;
+        }
+        self.codex_op_tx
+            .send(Op::UserInput { items })
+            .unwrap_or_else(|e| {
+                tracing::error!("failed to send message: {e}");
+            });
+        if !text.is_empty() {
+            self.codex_op_tx
+                .send(Op::AddToHistory { text: text.clone() })
+                .unwrap_or_else(|e| {
+                    tracing::error!("failed to send AddHistory op: {e}");
+                });
+        }
+        // Show the original display text (with inline image placeholders) in history.
+        self.add_to_history(&history_cell::new_user_prompt(display_text));
     }
 
     pub(crate) fn handle_codex_event(&mut self, event: Event) {

@@ -72,6 +72,7 @@ pub(crate) struct ChatComposer {
     has_focus: bool,
     attached_images: Vec<(String, std::path::PathBuf)>,
     placeholder_text: String,
+    last_submitted_display: Option<String>,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -105,6 +106,7 @@ impl ChatComposer {
             has_focus: has_input_focus,
             attached_images: Vec::new(),
             placeholder_text,
+            last_submitted_display: None,
         }
     }
 
@@ -210,9 +212,15 @@ impl ChatComposer {
         true
     }
 
-    pub fn take_recent_submission_images(&mut self) -> Vec<std::path::PathBuf> {
+    pub fn take_recent_submission_images_with_placeholders(
+        &mut self,
+    ) -> Vec<(String, std::path::PathBuf)> {
         let images = std::mem::take(&mut self.attached_images);
-        images.into_iter().map(|(_, path)| path).collect()
+        images
+    }
+
+    pub fn take_last_submitted_display(&mut self) -> Option<String> {
+        self.last_submitted_display.take()
     }
 
     /// Integrate results from an asynchronous file search.
@@ -605,18 +613,23 @@ impl ChatComposer {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                let mut text = self.textarea.text().to_string();
-                self.textarea.set_text("");
+                // Build display string that preserves inline image placeholders
+                let mut display = self.textarea.text().to_string();
+                for (placeholder, actual) in &self.pending_pastes {
+                    if display.contains(placeholder) {
+                        display = display.replace(placeholder, actual);
+                    }
+                }
+                self.last_submitted_display = Some(display);
 
-                // Replace all pending pastes in the text
+                // Build the agent text: remove image placeholders, trim
+                let mut text = self.textarea.text().to_string();
                 for (placeholder, actual) in &self.pending_pastes {
                     if text.contains(placeholder) {
                         text = text.replace(placeholder, actual);
                     }
                 }
                 self.pending_pastes.clear();
-
-                // Strip image placeholders from the submitted text; images are retrieved via take_recent_submission_images()
                 for (placeholder, _) in &self.attached_images {
                     if text.contains(placeholder) {
                         text = text.replace(placeholder, "");
@@ -627,7 +640,8 @@ impl ChatComposer {
                 if !text.is_empty() {
                     self.history.record_local_submission(&text);
                 }
-                // Do not clear attached_images here; ChatWidget drains them via take_recent_submission_images().
+                // Clear textarea after capturing content
+                self.textarea.set_text("");
                 (InputResult::Submitted(text), true)
             }
             input => self.handle_input_basic(input),
@@ -1487,9 +1501,9 @@ mod tests {
             InputResult::Submitted(text) => assert_eq!(text, "hi"),
             _ => panic!("expected Submitted"),
         }
-        let imgs = composer.take_recent_submission_images();
+        let imgs = composer.take_recent_submission_images_with_placeholders();
         assert_eq!(imgs.len(), 1);
-        assert_eq!(imgs[0], path);
+        assert_eq!(imgs[0].1, path);
     }
 
     #[test]
@@ -1509,9 +1523,9 @@ mod tests {
             InputResult::Submitted(text) => assert!(text.is_empty()),
             _ => panic!("expected Submitted"),
         }
-        let imgs = composer.take_recent_submission_images();
+        let imgs = composer.take_recent_submission_images_with_placeholders();
         assert_eq!(imgs.len(), 1);
-        assert_eq!(imgs[0], path);
+        assert_eq!(imgs[0].1, path);
         assert!(composer.attached_images.is_empty());
     }
 

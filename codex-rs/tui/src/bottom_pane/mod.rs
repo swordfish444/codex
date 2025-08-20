@@ -314,8 +314,15 @@ impl BottomPane<'_> {
         }
     }
 
-    pub(crate) fn take_recent_submission_images(&mut self) -> Vec<std::path::PathBuf> {
-        self.composer.take_recent_submission_images()
+    pub(crate) fn take_recent_submission_images_with_placeholders(
+        &mut self,
+    ) -> Vec<(String, std::path::PathBuf)> {
+        self.composer
+            .take_recent_submission_images_with_placeholders()
+    }
+
+    pub(crate) fn take_last_submitted_display(&mut self) -> Option<String> {
+        self.composer.take_last_submitted_display()
     }
 }
 
