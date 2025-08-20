@@ -162,6 +162,8 @@ pub struct Config {
     /// model family's default preference.
     pub include_apply_patch_tool: bool,
 
+    pub experimental_disable_built_in_shell_tool: bool,
+
     /// The value for the `originator` header included with Responses API requests.
     pub internal_originator: Option<String>,
 
@@ -408,6 +410,8 @@ pub struct ConfigToml {
 
     /// Experimental path to a file whose contents replace the built-in BASE_INSTRUCTIONS.
     pub experimental_instructions_file: Option<PathBuf>,
+
+    pub experimental_disable_built_in_shell_tool: Option<bool>,
 
     /// The value for the `originator` header included with Responses API requests.
     pub internal_originator: Option<String>,
@@ -678,6 +682,9 @@ impl Config {
             experimental_resume,
             include_plan_tool: include_plan_tool.unwrap_or(false),
             include_apply_patch_tool: include_apply_patch_tool_val,
+            experimental_disable_built_in_shell_tool: cfg
+                .experimental_disable_built_in_shell_tool
+                .unwrap_or(false),
             internal_originator: cfg.internal_originator,
             preferred_auth_method: cfg.preferred_auth_method.unwrap_or(AuthMode::ChatGPT),
         };
@@ -1043,6 +1050,7 @@ disable_response_storage = true
                 base_instructions: None,
                 include_plan_tool: false,
                 include_apply_patch_tool: false,
+                experimental_disable_built_in_shell_tool: false,
                 internal_originator: None,
                 preferred_auth_method: AuthMode::ChatGPT,
             },
@@ -1096,6 +1104,7 @@ disable_response_storage = true
             base_instructions: None,
             include_plan_tool: false,
             include_apply_patch_tool: false,
+            experimental_disable_built_in_shell_tool: false,
             internal_originator: None,
             preferred_auth_method: AuthMode::ChatGPT,
         };
@@ -1164,6 +1173,7 @@ disable_response_storage = true
             base_instructions: None,
             include_plan_tool: false,
             include_apply_patch_tool: false,
+            experimental_disable_built_in_shell_tool: false,
             internal_originator: None,
             preferred_auth_method: AuthMode::ChatGPT,
         };
