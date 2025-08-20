@@ -116,34 +116,6 @@ where
         || mods.contains(crossterm::event::KeyModifiers::SUPER);
 
     if key_event.kind == KeyEventKind::Press && is_v && has_paste_modifier {
-        // On macOS, prefer attaching a file URL from the pasteboard if present.
-        #[cfg(target_os = "macos")]
-        {
-            if let Some(path) = crate::clipboard_paste::image_file_from_clipboard_macos() {
-                let (mut w, mut h) = (0u32, 0u32);
-                if let Ok((dw, dh)) = image::image_dimensions(&path) {
-                    w = dw;
-                    h = dh;
-                }
-                let fmt = match path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|s| s.to_ascii_lowercase())
-                    .as_deref()
-                {
-                    Some("png") => "PNG",
-                    Some("jpg") | Some("jpeg") => "JPEG",
-                    _ => "IMG",
-                };
-                app_event_tx.send(AppEvent::AttachImage {
-                    path,
-                    width: w,
-                    height: h,
-                    format_label: fmt,
-                });
-                return true;
-            }
-        }
         match paste_fn() {
             Ok((path, info)) => {
                 tracing::info!(
