@@ -97,6 +97,8 @@ struct UserMessage {
 }
 
 use crate::streaming::StreamKind;
+use crate::string_utils::file_url_to_path;
+use crate::string_utils::unescape_backslashes;
 
 impl From<String> for UserMessage {
     fn from(text: String) -> Self {
@@ -578,7 +580,103 @@ impl ChatWidget<'_> {
     }
 
     pub(crate) fn handle_paste(&mut self, text: String) {
-        self.bottom_pane.handle_paste(text);
+        // First, attempt to interpret the pasted text as a file path to an image
+        // and attach it. This mirrors the logic previously handled at the app level.
+        let mut handled = false;
+
+        // Helper to attach an image if the path looks valid, returning true if handled.
+        fn try_attach_image(widget: &mut ChatWidget<'_>, path: std::path::PathBuf) -> bool {
+            if path.is_file() {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    let ext_l = ext.to_ascii_lowercase();
+                    if matches!(ext_l.as_str(), "png" | "jpg" | "jpeg") {
+                        let (mut w, mut h) = (0u32, 0u32);
+                        if let Ok((dw, dh)) = image::image_dimensions(&path) {
+                            w = dw;
+                            h = dh;
+                        }
+                        let fmt = if ext_l == "png" { "PNG" } else { "JPEG" };
+                        widget.attach_image(path, w, h, fmt);
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+
+        // Trim and strip quotes for the most direct case.
+        let mut s = text.trim().to_string();
+        if !s.is_empty() {
+            if (s.starts_with('"') && s.ends_with('"'))
+                || (s.starts_with('\'') && s.ends_with('\''))
+            {
+                s = s[1..s.len() - 1].to_string();
+            }
+            if let Some(rest) = s.strip_prefix("~/") {
+                if let Ok(home) = std::env::var("HOME") {
+                    let mut p = std::path::PathBuf::from(home);
+                    p.push(rest);
+                    s = p.to_string_lossy().into_owned();
+                }
+            }
+            handled = try_attach_image(self, std::path::PathBuf::from(&s));
+        }
+
+        // If not handled yet, try multiple candidate interpretations: shlex tokens,
+        // URL-style paths, and unescaped variants.
+        if !handled {
+            let candidates: Vec<String> = if let Some(tokens) = shlex::split(&text) {
+                tokens
+            } else {
+                vec![text.clone()]
+            };
+
+            'outer: for raw in candidates {
+                let mut s = raw.trim().to_string();
+                if (s.starts_with('"') && s.ends_with('"'))
+                    || (s.starts_with('\'') && s.ends_with('\''))
+                {
+                    s = s[1..s.len() - 1].to_string();
+                }
+                if let Some(rest) = s.strip_prefix("~/") {
+                    if let Ok(home) = std::env::var("HOME") {
+                        let mut p = std::path::PathBuf::from(home);
+                        p.push(rest);
+                        s = p.to_string_lossy().into_owned();
+                    }
+                }
+
+                let mut try_paths: Vec<std::path::PathBuf> = Vec::new();
+                if let Some(p) = file_url_to_path(&s) {
+                    try_paths.push(p);
+                }
+                try_paths.push(std::path::PathBuf::from(&s));
+                let unescaped = unescape_backslashes(&s);
+                if unescaped != s {
+                    try_paths.push(std::path::PathBuf::from(unescaped));
+                }
+
+                for path in try_paths {
+                    if try_attach_image(self, path) {
+                        handled = true;
+                        break 'outer;
+                    }
+                }
+            }
+        }
+
+        // If still not handled, try to read an image bitmap from the clipboard.
+        if !handled {
+            match crate::clipboard_paste::paste_image_to_temp_png() {
+                Ok((path, info)) => {
+                    self.attach_image(path, info.width, info.height, info.encoded_format_label);
+                }
+                Err(_) => {
+                    // Fall back to textual paste into the composer.
+                    self.bottom_pane.handle_paste(text);
+                }
+            }
+        }
     }
 
     fn flush_active_exec_cell(&mut self) {
