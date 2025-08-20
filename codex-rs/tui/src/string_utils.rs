@@ -35,9 +35,7 @@ pub(crate) fn percent_decode_to_string(input: &str) -> Option<String> {
 // - On Unix, require absolute paths (leading '/').
 // - On Windows, support forms like file:///C:/path and file://localhost/C:/path.
 pub(crate) fn file_url_to_path(s: &str) -> Option<std::path::PathBuf> {
-    let Some(mut rest) = s.strip_prefix("file://") else {
-        return None;
-    };
+    let mut rest = s.strip_prefix("file://")?;
 
     // Handle optional host (e.g., file://localhost/...). Only allow empty or localhost.
     if let Some(after_host) = rest.strip_prefix("localhost") {

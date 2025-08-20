@@ -24,7 +24,8 @@ impl std::error::Error for PasteImageError {}
 pub struct PastedImageInfo {
     pub width: u32,
     pub height: u32,
-    pub encoded_format_label: &'static str, // Always PNG for now.
+    #[allow(dead_code)]
+    pub encoded_format_label: &'static str, // Used in tests; always "PNG" currently.
 }
 
 /// Capture image from system clipboard, encode to PNG, and return bytes + info.
