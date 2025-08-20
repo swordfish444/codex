@@ -5,8 +5,14 @@ use std::path::PathBuf;
 use tokio::process::Command;
 
 enum InputKind {
-    Branches { source: String, target: String },
-    Pr { repo: Option<String>, number: String },
+    Branches {
+        source: String,
+        target: String,
+    },
+    Pr {
+        repo: Option<String>,
+        number: String,
+    },
 }
 
 #[derive(Debug, Parser)]
@@ -15,7 +21,7 @@ pub struct ReviewCommand {
     pub config_overrides: CliConfigOverrides,
 
     /// Optional subject: either `source->target`, a target branch, or a GitHub PR URL/number
-    #[arg(value_name = "SUBJECT")] 
+    #[arg(value_name = "SUBJECT")]
     pub subject: Option<String>,
 
     /// Source branch (defaults to current branch when omitted)
@@ -37,27 +43,43 @@ pub async fn run_review_command(
     cli: ReviewCommand,
     codex_linux_sandbox_exe: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let ReviewCommand { mut config_overrides, subject, source, target } = cli;
+    let ReviewCommand {
+        mut config_overrides,
+        subject,
+        source,
+        target,
+    } = cli;
 
     let input = if let Some(s) = subject {
         if looks_like_pr(&s) {
             parse_pr_spec(&s)?
         } else if s.contains("->") {
             let (src, dst) = parse_merge_spec(&s)?;
-            InputKind::Branches { source: src, target: dst }
+            InputKind::Branches {
+                source: src,
+                target: dst,
+            }
         } else {
             // Fallback: treat as target with default/current source
             let src = source.unwrap_or(current_branch().await?);
-            InputKind::Branches { source: src, target: s }
+            InputKind::Branches {
+                source: src,
+                target: s,
+            }
         }
     } else {
         match (source, target) {
             (_, None) => {
-                anyhow::bail!("the following required arguments were not provided:\n  --target <BRANCH>\n\nUsage: codex review --target <BRANCH> <SUBJECT>")
+                anyhow::bail!(
+                    "the following required arguments were not provided:\n  --target <BRANCH>\n\nUsage: codex review --target <BRANCH> <SUBJECT>"
+                )
             }
             (maybe_s, Some(t)) => {
                 let src = maybe_s.unwrap_or(current_branch().await?);
-                InputKind::Branches { source: src, target: t }
+                InputKind::Branches {
+                    source: src,
+                    target: t,
+                }
             }
         }
     };
@@ -69,7 +91,10 @@ pub async fn run_review_command(
                 eprintln!("No differences found between {source} and {target}.");
                 return Ok(());
             }
-            (format!("proposed merge of '{source}' into '{target}'"), patch)
+            (
+                format!("proposed merge of '{source}' into '{target}'"),
+                patch,
+            )
         }
         InputKind::Pr { repo, number } => {
             let patch = gh_pr_diff(repo.as_deref(), &number).await?;
@@ -77,7 +102,10 @@ pub async fn run_review_command(
                 eprintln!("No differences found for PR #{number}.");
                 return Ok(());
             }
-            let context = match repo { Some(r) => format!("GitHub PR {r}#{number}"), None => format!("GitHub PR #{number}") };
+            let context = match repo {
+                Some(r) => format!("GitHub PR {r}#{number}"),
+                None => format!("GitHub PR #{number}"),
+            };
             (context, patch)
         }
     };
@@ -126,17 +154,15 @@ fn build_review_prompt(context: &str, patch: &str) -> String {
 fn truncate_patch_to_tokens(patch: &str, max_tokens: usize) -> (String, bool) {
     // Heuristic: ~4 characters per token
     let max_chars = max_tokens.saturating_mul(4);
-    let mut count = 0usize;
     if patch.chars().count() <= max_chars {
         return (patch.to_string(), false);
     }
     let mut out = String::with_capacity(max_chars);
-    for ch in patch.chars() {
-        if count >= max_chars {
+    for (i, ch) in patch.chars().enumerate() {
+        if i >= max_chars {
             break;
         }
         out.push(ch);
-        count += 1;
     }
     (out, true)
 }
@@ -166,7 +192,11 @@ async fn git_diff_patch(target: &str, source: &str) -> anyhow::Result<String> {
 
 async fn gh_pr_diff(repo: Option<&str>, pr_number: &str) -> anyhow::Result<String> {
     let mut cmd = Command::new("gh");
-    cmd.arg("pr").arg("diff").arg(pr_number).arg("--patch").arg("--color=never");
+    cmd.arg("pr")
+        .arg("diff")
+        .arg(pr_number)
+        .arg("--patch")
+        .arg("--color=never");
     if let Some(r) = repo {
         cmd.arg("--repo").arg(r);
     }
@@ -184,7 +214,10 @@ fn looks_like_pr(s: &str) -> bool {
 
 fn parse_pr_spec(spec: &str) -> anyhow::Result<InputKind> {
     if spec.chars().all(|c| c.is_ascii_digit()) {
-        return Ok(InputKind::Pr { repo: None, number: spec.to_string() });
+        return Ok(InputKind::Pr {
+            repo: None,
+            number: spec.to_string(),
+        });
     }
     if let Some(idx) = spec.find("github.com/") {
         let tail = &spec[idx + "github.com/".len()..];
@@ -196,7 +229,10 @@ fn parse_pr_spec(spec: &str) -> anyhow::Result<InputKind> {
             if !number.chars().all(|c| c.is_ascii_digit()) {
                 anyhow::bail!("Invalid PR number in URL: {number}");
             }
-            return Ok(InputKind::Pr { repo: Some(format!("{owner}/{repo}")), number: number.to_string() });
+            return Ok(InputKind::Pr {
+                repo: Some(format!("{owner}/{repo}")),
+                number: number.to_string(),
+            });
         }
     }
     anyhow::bail!("Unrecognized PR spec: {spec}")
