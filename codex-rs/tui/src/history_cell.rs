@@ -572,10 +572,8 @@ pub(crate) fn new_status_output(
 
     // 🧠 Model
     lines.push(Line::from(vec!["🧠 ".into(), "Model".bold()]));
-    lines.push(Line::from(vec![
-        "  • Name: ".into(),
-        config.model.clone().into(),
-    ]));
+    let model_name = lookup("model");
+    lines.push(Line::from(vec!["  • Name: ".into(), model_name.into()]));
     let provider_disp = pretty_provider_name(&config.model_provider_id);
     lines.push(Line::from(vec![
         "  • Provider: ".into(),
