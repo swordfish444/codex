@@ -36,6 +36,67 @@ use std::time::Instant;
 /// Time window for debouncing redraw requests.
 const REDRAW_DEBOUNCE: Duration = Duration::from_millis(1);
 
+/// Naive percent-decoding for file:// URL paths; returns None on invalid UTF-8.
+fn percent_decode_to_string(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let h1 = bytes[i + 1];
+            let h2 = bytes[i + 2];
+            let hex = |c: u8| -> Option<u8> {
+                match c {
+                    b'0'..=b'9' => Some(c - b'0'),
+                    b'a'..=b'f' => Some(c - b'a' + 10),
+                    b'A'..=b'F' => Some(c - b'A' + 10),
+                    _ => None,
+                }
+            };
+            if let (Some(x), Some(y)) = (hex(h1), hex(h2)) {
+                out.push(x * 16 + y);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Convert a file:// URL into a local path (macOS/Unix only, UTF-8).
+fn file_url_to_path(s: &str) -> Option<PathBuf> {
+    if let Some(rest) = s.strip_prefix("file://") {
+        // Strip optional host like file://localhost/...
+        let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+        // Ensure leading slash remains for absolute paths
+        let decoded = percent_decode_to_string(rest)?;
+        let p = PathBuf::from(decoded);
+        return Some(p);
+    }
+    None
+}
+
+/// Unescape simple bash-style backslash escapes (e.g., spaces, parens).
+fn unescape_backslashes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(n) = chars.next() {
+                out.push(n);
+            } else {
+                // Trailing backslash; keep it.
+                out.push('\\');
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 // Testable helper: generic over paste function so we can inject stubs in unit tests.
 fn try_handle_ctrl_v_with<F>(
     app_event_tx: &AppEventSender,
@@ -558,21 +619,81 @@ impl App<'_> {
                     }
 
                     if !handled {
-                        // If no usable path was pasted, try to read an image bitmap
-                        // from the clipboard; otherwise, fall back to text paste.
-                        match crate::clipboard_paste::paste_image_to_temp_png() {
-                            Ok((path, info)) => {
-                                if let AppState::Chat { widget } = &mut self.app_state {
-                                    widget.attach_image(
-                                        path,
-                                        info.width,
-                                        info.height,
-                                        info.encoded_format_label,
-                                    );
+                        // Try to parse shell-escaped or URL-style file paths from the paste.
+                        let candidates: Vec<String> = if let Some(tokens) = shlex::split(&text) {
+                            tokens
+                        } else {
+                            vec![text.clone()]
+                        };
+
+                        'outer: for raw in candidates {
+                            let mut s = raw.trim().to_string();
+                            // Strip surrounding quotes if present (redundant with shlex, but safe)
+                            if (s.starts_with('"') && s.ends_with('"'))
+                                || (s.starts_with('\'') && s.ends_with('\''))
+                            {
+                                s = s[1..s.len() - 1].to_string();
+                            }
+                            // Expand leading ~/ to HOME
+                            if let Some(rest) = s.strip_prefix("~/") {
+                                if let Ok(home) = std::env::var("HOME") {
+                                    let mut p = std::path::PathBuf::from(home);
+                                    p.push(rest);
+                                    s = p.to_string_lossy().into_owned();
                                 }
                             }
-                            Err(_) => {
-                                self.dispatch_paste_event(text);
+
+                            let mut try_paths: Vec<PathBuf> = Vec::new();
+                            if let Some(p) = file_url_to_path(&s) {
+                                try_paths.push(p);
+                            }
+                            // As-is path
+                            try_paths.push(PathBuf::from(&s));
+                            // Unescaped variant (e.g., My\ Photo.png)
+                            let unescaped = unescape_backslashes(&s);
+                            if unescaped != s {
+                                try_paths.push(PathBuf::from(unescaped));
+                            }
+
+                            for path in try_paths {
+                                if path.is_file() {
+                                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                                        let ext_l = ext.to_ascii_lowercase();
+                                        if matches!(ext_l.as_str(), "png" | "jpg" | "jpeg") {
+                                            let (mut w, mut h) = (0u32, 0u32);
+                                            if let Ok((dw, dh)) = image::image_dimensions(&path) {
+                                                w = dw;
+                                                h = dh;
+                                            }
+                                            let fmt = if ext_l == "png" { "PNG" } else { "JPEG" };
+                                            if let AppState::Chat { widget } = &mut self.app_state {
+                                                widget.attach_image(path, w, h, fmt);
+                                            }
+                                            handled = true;
+                                            break 'outer;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if !handled {
+                            // If no usable path was pasted, try to read an image bitmap
+                            // from the clipboard; otherwise, fall back to text paste.
+                            match crate::clipboard_paste::paste_image_to_temp_png() {
+                                Ok((path, info)) => {
+                                    if let AppState::Chat { widget } = &mut self.app_state {
+                                        widget.attach_image(
+                                            path,
+                                            info.width,
+                                            info.height,
+                                            info.encoded_format_label,
+                                        );
+                                    }
+                                }
+                                Err(_) => {
+                                    self.dispatch_paste_event(text);
+                                }
                             }
                         }
                     }
