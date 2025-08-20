@@ -37,6 +37,7 @@ pub enum ConfigShellToolType {
     DefaultShell,
     ShellWithRequest { sandbox_policy: SandboxPolicy },
     LocalShell,
+    NoBuiltInShellTool,
 }
 
 #[derive(Debug, Clone)]
@@ -53,8 +54,11 @@ impl ToolsConfig {
         sandbox_policy: SandboxPolicy,
         include_plan_tool: bool,
         include_apply_patch_tool: bool,
+        experimental_disable_built_in_shell_tool: bool,
     ) -> Self {
-        let mut shell_type = if model_family.uses_local_shell_tool {
+        let mut shell_type = if experimental_disable_built_in_shell_tool {
+            ConfigShellToolType::NoBuiltInShellTool
+        } else if model_family.uses_local_shell_tool {
             ConfigShellToolType::LocalShell
         } else {
             ConfigShellToolType::DefaultShell
@@ -533,6 +537,9 @@ pub(crate) fn get_openai_tools(
         ConfigShellToolType::LocalShell => {
             tools.push(OpenAiTool::LocalShell {});
         }
+        ConfigShellToolType::NoBuiltInShellTool => {
+            // Do not add a shell tool
+        }
     }
 
     if config.plan_tool {
@@ -597,6 +604,7 @@ mod tests {
             SandboxPolicy::ReadOnly,
             true,
             model_family.uses_apply_patch_tool,
+            /*experimental_disable_built_in_shell_tool*/ false,
         );
         let tools = get_openai_tools(&config, Some(HashMap::new()));
 
@@ -612,6 +620,7 @@ mod tests {
             SandboxPolicy::ReadOnly,
             true,
             model_family.uses_apply_patch_tool,
+            /*experimental_disable_built_in_shell_tool*/ false,
         );
         let tools = get_openai_tools(&config, Some(HashMap::new()));
 
@@ -627,6 +636,7 @@ mod tests {
             SandboxPolicy::ReadOnly,
             false,
             model_family.uses_apply_patch_tool,
+            /*experimental_disable_built_in_shell_tool*/ false,
         );
         let tools = get_openai_tools(
             &config,
@@ -721,6 +731,7 @@ mod tests {
             SandboxPolicy::ReadOnly,
             false,
             model_family.uses_apply_patch_tool,
+            /*experimental_disable_built_in_shell_tool*/ false,
         );
 
         let tools = get_openai_tools(
@@ -777,6 +788,7 @@ mod tests {
             SandboxPolicy::ReadOnly,
             false,
             model_family.uses_apply_patch_tool,
+            /*experimental_disable_built_in_shell_tool*/ false,
         );
 
         let tools = get_openai_tools(
@@ -828,6 +840,7 @@ mod tests {
             SandboxPolicy::ReadOnly,
             false,
             model_family.uses_apply_patch_tool,
+            /*experimental_disable_built_in_shell_tool*/ false,
         );
 
         let tools = get_openai_tools(
@@ -882,6 +895,7 @@ mod tests {
             SandboxPolicy::ReadOnly,
             false,
             model_family.uses_apply_patch_tool,
+            /*experimental_disable_built_in_shell_tool*/ false,
         );
 
         let tools = get_openai_tools(
