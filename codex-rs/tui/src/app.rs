@@ -48,12 +48,41 @@ where
         crate::clipboard_paste::PasteImageError,
     >,
 {
-    if key_event.kind == KeyEventKind::Press
-        && key_event.code == KeyCode::Char('v')
-        && key_event
-            .modifiers
-            .contains(crossterm::event::KeyModifiers::CONTROL)
-    {
+    // Treat both Ctrl+V and Cmd+V (SUPER on macOS) as the "paste image" hotkey.
+    let is_v = matches!(key_event.code, KeyCode::Char('v'));
+    let mods = key_event.modifiers;
+    let has_paste_modifier = mods.contains(crossterm::event::KeyModifiers::CONTROL)
+        || mods.contains(crossterm::event::KeyModifiers::SUPER);
+
+    if key_event.kind == KeyEventKind::Press && is_v && has_paste_modifier {
+        // On macOS, prefer attaching a file URL from the pasteboard if present.
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(path) = crate::clipboard_paste::image_file_from_clipboard_macos() {
+                let (mut w, mut h) = (0u32, 0u32);
+                if let Ok((dw, dh)) = image::image_dimensions(&path) {
+                    w = dw;
+                    h = dh;
+                }
+                let fmt = match path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|s| s.to_ascii_lowercase())
+                    .as_deref()
+                {
+                    Some("png") => "PNG",
+                    Some("jpg") | Some("jpeg") => "JPEG",
+                    _ => "IMG",
+                };
+                app_event_tx.send(AppEvent::AttachImage {
+                    path,
+                    width: w,
+                    height: h,
+                    format_label: fmt,
+                });
+                return true;
+            }
+        }
         match paste_fn() {
             Ok((path, info)) => {
                 tracing::info!(
@@ -390,7 +419,65 @@ impl App<'_> {
                     };
                 }
                 AppEvent::Paste(text) => {
-                    self.dispatch_paste_event(text);
+                    // Prefer attaching a pasted image file path, if the text looks
+                    // like an existing image file. This avoids grabbing the Finder
+                    // icon bitmap from the clipboard when a user copied a file.
+                    let mut handled = false;
+                    let mut s = text.trim().to_string();
+                    if !s.is_empty() {
+                        // Strip surrounding quotes (common for paths with spaces)
+                        if (s.starts_with('"') && s.ends_with('"'))
+                            || (s.starts_with('\'') && s.ends_with('\''))
+                        {
+                            s = s[1..s.len() - 1].to_string();
+                        }
+                        // Expand leading ~/ to HOME
+                        if let Some(rest) = s.strip_prefix("~/") {
+                            if let Ok(home) = std::env::var("HOME") {
+                                let mut p = std::path::PathBuf::from(home);
+                                p.push(rest);
+                                s = p.to_string_lossy().into_owned();
+                            }
+                        }
+                        let path = std::path::PathBuf::from(&s);
+                        if path.is_file() {
+                            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                                let ext_l = ext.to_ascii_lowercase();
+                                if matches!(ext_l.as_str(), "png" | "jpg" | "jpeg") {
+                                    let (mut w, mut h) = (0u32, 0u32);
+                                    if let Ok((dw, dh)) = image::image_dimensions(&path) {
+                                        w = dw;
+                                        h = dh;
+                                    }
+                                    let fmt = if ext_l == "png" { "PNG" } else { "JPEG" };
+                                    if let AppState::Chat { widget } = &mut self.app_state {
+                                        widget.attach_image(path, w, h, fmt);
+                                    }
+                                    handled = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if !handled {
+                        // If no usable path was pasted, try to read an image bitmap
+                        // from the clipboard; otherwise, fall back to text paste.
+                        match crate::clipboard_paste::paste_image_to_temp_png() {
+                            Ok((path, info)) => {
+                                if let AppState::Chat { widget } = &mut self.app_state {
+                                    widget.attach_image(
+                                        path,
+                                        info.width,
+                                        info.height,
+                                        info.encoded_format_label,
+                                    );
+                                }
+                            }
+                            Err(_) => {
+                                self.dispatch_paste_event(text);
+                            }
+                        }
+                    }
                 }
                 AppEvent::CodexEvent(event) => {
                     self.dispatch_codex_event(event);
@@ -790,6 +877,42 @@ mod tests {
                 assert_eq!(path, std::path::PathBuf::from("/tmp/test.png"));
                 assert_eq!(width, 10);
                 assert_eq!(height, 5);
+                assert_eq!(format_label, "PNG");
+            }
+            _ => panic!("unexpected event (not AttachImage)"),
+        }
+    }
+
+    #[test]
+    fn cmd_v_success_attaches_image() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let key_event = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::SUPER);
+        let dummy_info = crate::clipboard_paste::PastedImageInfo {
+            width: 12,
+            height: 8,
+            encoded_format_label: "PNG",
+        };
+        let handled = try_handle_ctrl_v_with(&sender, &key_event, || {
+            Ok((
+                std::path::PathBuf::from("/tmp/test2.png"),
+                dummy_info.clone(),
+            ))
+        });
+        assert!(handled, "expected cmd+v to be handled on success");
+        match rx
+            .recv()
+            .unwrap_or_else(|e| panic!("failed to receive event: {e}"))
+        {
+            AppEvent::AttachImage {
+                path,
+                width,
+                height,
+                format_label,
+            } => {
+                assert_eq!(path, std::path::PathBuf::from("/tmp/test2.png"));
+                assert_eq!(width, 12);
+                assert_eq!(height, 8);
                 assert_eq!(format_label, "PNG");
             }
             _ => panic!("unexpected event (not AttachImage)"),
