@@ -45,7 +45,7 @@ pub async fn collect_git_info(cwd: &Path) -> Option<GitInfo> {
         run_git_command_with_timeout(&["rev-parse", "HEAD"], cwd),
         run_git_command_with_timeout(&["rev-parse", "--abbrev-ref", "HEAD"], cwd),
         run_git_command_with_timeout(&["remote", "get-url", "origin"], cwd),
-        run_git_command_with_timeout(&["diff", "--stat", "HEAD"], cwd),
+        run_git_command_with_timeout(&["status", "-unormal", "--porcelain"], cwd),
     );
 
     let mut git_info = GitInfo {
@@ -83,13 +83,11 @@ pub async fn collect_git_info(cwd: &Path) -> Option<GitInfo> {
     }
 
     // Process diff stat
-    if let Some(output) = diff_result {
-        if output.status.success() {
-            if let Ok(diff_stat) = String::from_utf8(output.stdout) {
+    if let Some(output) = diff_result
+        && output.status.success()
+            && let Ok(diff_stat) = String::from_utf8(output.stdout) {
                 git_info.diff_stat = Some(diff_stat.trim().to_string());
             }
-        }
-    }
 
     Some(git_info)
 }
