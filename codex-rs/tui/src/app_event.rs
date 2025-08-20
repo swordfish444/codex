@@ -9,7 +9,6 @@ use crate::slash_command::SlashCommand;
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
 pub(crate) enum AppEvent {
     CodexEvent(Event),
 

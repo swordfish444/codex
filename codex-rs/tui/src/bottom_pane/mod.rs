@@ -318,17 +318,6 @@ impl BottomPane<'_> {
     pub(crate) fn take_recent_submission_images(&mut self) -> Vec<std::path::PathBuf> {
         self.composer.take_recent_submission_images()
     }
-    /// Set the rows and cap for the transient live ring overlay.
-    pub(crate) fn set_live_ring_rows(&mut self, max_rows: u16, rows: Vec<Line<'static>>) {
-        let mut w = live_ring_widget::LiveRingWidget::new();
-        w.set_max_rows(max_rows);
-        w.set_rows(rows);
-        self.live_ring = Some(w);
-    }
-
-    pub(crate) fn clear_live_ring(&mut self) {
-        self.live_ring = None;
-    }
 
     // Removed restart_live_status_with_text – no longer used by the current streaming UI.
 }

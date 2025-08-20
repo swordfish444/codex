@@ -1478,7 +1478,8 @@ mod tests {
         use crossterm::event::KeyModifiers;
         let (tx, _rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(true, sender, false);
+        let mut composer =
+            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
         let path = std::path::PathBuf::from("/tmp/image1.png");
         assert!(composer.attach_image(path.clone(), 32, 16, "PNG"));
         composer.handle_paste(" hi".into());
@@ -1500,7 +1501,8 @@ mod tests {
         use crossterm::event::KeyModifiers;
         let (tx, _rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(true, sender, false);
+        let mut composer =
+            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
         let path = std::path::PathBuf::from("/tmp/image2.png");
         assert!(composer.attach_image(path.clone(), 10, 5, "PNG"));
         let (result, _) =
@@ -1522,7 +1524,8 @@ mod tests {
         use crossterm::event::KeyModifiers;
         let (tx, _rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(true, sender, false);
+        let mut composer =
+            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
         let path = std::path::PathBuf::from("/tmp/image3.png");
         assert!(composer.attach_image(path.clone(), 20, 10, "PNG"));
         let placeholder = composer.attached_images[0].0.clone();
