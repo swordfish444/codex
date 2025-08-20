@@ -194,6 +194,11 @@ impl BottomPane<'_> {
         self.request_redraw();
     }
 
+    pub(crate) fn move_cursor_to_end(&mut self) {
+        self.composer.set_cursor_to_end();
+        self.request_redraw();
+    }
+
     pub(crate) fn ctrl_c_quit_hint_visible(&self) -> bool {
         self.ctrl_c_quit_hint
     }

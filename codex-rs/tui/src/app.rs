@@ -9,6 +9,8 @@ use crate::onboarding::onboarding_screen::KeyboardHandler;
 use crate::onboarding::onboarding_screen::OnboardingScreen;
 use crate::onboarding::onboarding_screen::OnboardingScreenArgs;
 use crate::slash_command::SlashCommand;
+use crate::string_utils::file_url_to_path;
+use crate::string_utils::unescape_backslashes;
 use crate::tui;
 use codex_core::ConversationManager;
 use codex_core::config::Config;
@@ -40,7 +42,7 @@ const REDRAW_DEBOUNCE: Duration = Duration::from_millis(1);
 fn try_handle_ctrl_v_with<F>(
     app_event_tx: &AppEventSender,
     key_event: &KeyEvent,
-    paste_fn: F,
+    _paste_fn: F,
 ) -> bool
 where
     F: Fn() -> Result<
@@ -65,25 +67,50 @@ where
         mods.contains(crossterm::event::KeyModifiers::CONTROL) || has_cmd_on_macos;
 
     if key_event.kind == KeyEventKind::Press && is_v && has_paste_modifier {
-        match paste_fn() {
-            Ok((path, info)) => {
-                tracing::info!(
-                    "ctrl_v_image imported path={:?} width={} height={} format={}",
-                    path,
-                    info.width,
-                    info.height,
-                    info.encoded_format_label
-                );
-                app_event_tx.send(AppEvent::AttachImage {
-                    path,
-                    width: info.width,
-                    height: info.height,
-                    format_label: info.encoded_format_label,
-                });
-                return true; // consumed
+        // Prefer attaching an image by path if the clipboard contains a file path/URL.
+        // This avoids grabbing the file icon bitmap that some apps (e.g. VS Code) place
+        // on the clipboard when copying a file.
+        #[cfg(not(test))]
+        {
+            if let Ok(mut cb) = arboard::Clipboard::new() {
+                if let Ok(txt) = cb.get_text() {
+                    if let Some((path, w, h, fmt)) = try_parse_image_path_from_text(&txt) {
+                        tracing::info!(
+                            "ctrl_v_path attaching image via path={:?} size={}x{} format={}",
+                            path,
+                            w,
+                            h,
+                            fmt
+                        );
+                        app_event_tx.send(AppEvent::AttachImage {
+                            path,
+                            width: w,
+                            height: h,
+                            format_label: fmt,
+                        });
+                        return true; // consumed
+                    }
+                }
             }
-            Err(err) => {
-                tracing::debug!("Ctrl+V image import failed: {err}");
+        }
+
+        // In production, do not read bitmaps from the clipboard for Ctrl/Cmd+V.
+        // Allow the normal bracketed paste event to deliver any text content instead.
+        #[cfg(test)]
+        {
+            match _paste_fn() {
+                Ok((path, info)) => {
+                    app_event_tx.send(AppEvent::AttachImage {
+                        path,
+                        width: info.width,
+                        height: info.height,
+                        format_label: info.encoded_format_label,
+                    });
+                    return true; // consumed
+                }
+                Err(_err) => {
+                    // Not handled in tests either.
+                }
             }
         }
     }
@@ -94,6 +121,64 @@ fn try_handle_ctrl_v(app_event_tx: &AppEventSender, key_event: &KeyEvent) -> boo
     try_handle_ctrl_v_with(app_event_tx, key_event, || {
         crate::clipboard_paste::paste_image_to_temp_png()
     })
+}
+
+// Best-effort parse of clipboard text to locate a single local image path or file:// URL.
+// Returns path + dimensions + format if it resolves to an existing PNG/JPEG file.
+fn try_parse_image_path_from_text(
+    txt: &str,
+) -> Option<(std::path::PathBuf, u32, u32, &'static str)> {
+    let mut candidates: Vec<String> = Vec::new();
+    if let Some(tokens) = shlex::split(txt) {
+        candidates.extend(tokens);
+    } else {
+        candidates.push(txt.to_string());
+    }
+
+    for raw in candidates {
+        let mut s = raw.trim().to_string();
+        if s.len() >= 2
+            && ((s.starts_with('"') && s.ends_with('"'))
+                || (s.starts_with('\'') && s.ends_with('\'')))
+        {
+            s = s[1..s.len() - 1].to_string();
+        }
+        if let Some(rest) = s.strip_prefix("~/") {
+            if let Ok(home) = std::env::var("HOME") {
+                let mut p = std::path::PathBuf::from(home);
+                p.push(rest);
+                s = p.to_string_lossy().into_owned();
+            }
+        }
+
+        let mut try_paths: Vec<std::path::PathBuf> = Vec::new();
+        if let Some(p) = file_url_to_path(&s) {
+            try_paths.push(p);
+        }
+        try_paths.push(std::path::PathBuf::from(&s));
+        let unescaped = unescape_backslashes(&s);
+        if unescaped != s {
+            try_paths.push(std::path::PathBuf::from(unescaped));
+        }
+
+        for path in try_paths {
+            if path.is_file() {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    let ext_l = ext.to_ascii_lowercase();
+                    if matches!(ext_l.as_str(), "png" | "jpg" | "jpeg") {
+                        let (mut w, mut h) = (0u32, 0u32);
+                        if let Ok((dw, dh)) = image::image_dimensions(&path) {
+                            w = dw;
+                            h = dh;
+                        }
+                        let fmt: &'static str = if ext_l == "png" { "PNG" } else { "JPEG" };
+                        return Some((path, w, h, fmt));
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Top-level application state: which full-screen view is currently active.

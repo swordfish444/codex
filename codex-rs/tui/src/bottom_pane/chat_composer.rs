@@ -207,6 +207,11 @@ impl ChatComposer {
         self.textarea.set_text(text);
     }
 
+    pub fn set_cursor_to_end(&mut self) {
+        let len = self.textarea.text().chars().count();
+        self.textarea.set_cursor(len);
+    }
+
     pub fn attach_image(
         &mut self,
         path: std::path::PathBuf,

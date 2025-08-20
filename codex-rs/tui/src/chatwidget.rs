@@ -572,15 +572,29 @@ impl ChatWidget<'_> {
             }
             InputResult::None => {
                 // Inline detection: if the current input exactly matches a single
-                // quoted path or file:// URL to a local PNG/JPEG, convert it
-                // immediately into an image attachment.
+                // quoted path or file:// URL to a local PNG/JPEG, or if the
+                // last token at the end looks like one, convert it immediately
+                // into an image attachment.
                 let current = self.bottom_pane.current_input_text();
                 if let Some((path, width, height, fmt)) =
                     Self::try_interpret_as_single_image_path(&current)
                 {
-                    // Clear the typed path and insert the image placeholder.
                     self.bottom_pane.replace_input_text("");
+                    self.bottom_pane.move_cursor_to_end();
                     self.attach_image(path, width, height, &fmt);
+                } else if let Some((start, end, candidate)) =
+                    Self::extract_trailing_path_candidate(&current)
+                {
+                    if let Some((path, width, height, fmt)) =
+                        Self::try_interpret_as_single_image_path(&candidate)
+                    {
+                        let mut new_text = String::new();
+                        new_text.push_str(&current[..start]);
+                        new_text.push_str(&current[end..]);
+                        self.bottom_pane.replace_input_text(&new_text);
+                        self.bottom_pane.move_cursor_to_end();
+                        self.attach_image(path, width, height, &fmt);
+                    }
                 }
             }
         }
@@ -663,6 +677,55 @@ impl ChatWidget<'_> {
                 }
             }
         }
+        None
+    }
+
+    // Find a trailing quoted path or URL token at the end of the current input.
+    // Returns (start_idx, end_idx, candidate_str) in byte indices if found.
+    fn extract_trailing_path_candidate(s: &str) -> Option<(usize, usize, String)> {
+        let trimmed_end = s.trim_end();
+        if trimmed_end.is_empty() {
+            return None;
+        }
+        let end = trimmed_end.len();
+
+        // Case 1: ends with a quoted segment '...'/"..."
+        if trimmed_end.ends_with('"') {
+            if let Some(start_q) = trimmed_end[..end - 1].rfind('"') {
+                if end - start_q >= 2 {
+                    let cand = &trimmed_end[start_q..end];
+                    let start_idx = start_q;
+                    let end_idx = end;
+                    return Some((start_idx, end_idx, cand.to_string()));
+                }
+            }
+        } else if trimmed_end.ends_with('\'') {
+            if let Some(start_q) = trimmed_end[..end - 1].rfind('\'') {
+                if end - start_q >= 2 {
+                    let cand = &trimmed_end[start_q..end];
+                    let start_idx = start_q;
+                    let end_idx = end;
+                    return Some((start_idx, end_idx, cand.to_string()));
+                }
+            }
+        } else {
+            // Case 2: last whitespace-delimited token
+            let token = trimmed_end.split_whitespace().last().unwrap_or("");
+            if !token.is_empty() {
+                let start_idx = trimmed_end.rfind(token).unwrap_or(end - token.len());
+                let end_idx = start_idx + token.len();
+                // Only consider likely file paths/URLs to reduce false positives.
+                if token.starts_with('/')
+                    || token.starts_with("./")
+                    || token.starts_with("../")
+                    || token.starts_with("~/")
+                    || token.starts_with("file://")
+                {
+                    return Some((start_idx, end_idx, token.to_string()));
+                }
+            }
+        }
+
         None
     }
 
@@ -754,17 +817,9 @@ impl ChatWidget<'_> {
             }
         }
 
-        // If still not handled, try to read an image bitmap from the clipboard.
+        // If still not handled, treat it as a normal textual paste.
         if !handled {
-            match crate::clipboard_paste::paste_image_to_temp_png() {
-                Ok((path, info)) => {
-                    self.attach_image(path, info.width, info.height, info.encoded_format_label);
-                }
-                Err(_) => {
-                    // Fall back to textual paste into the composer.
-                    self.bottom_pane.handle_paste(text);
-                }
-            }
+            self.bottom_pane.handle_paste(text);
         }
     }
 
