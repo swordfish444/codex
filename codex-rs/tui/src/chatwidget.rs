@@ -545,16 +545,44 @@ impl ChatWidget<'_> {
 
         match self.bottom_pane.handle_key_event(key_event) {
             InputResult::Submitted(text) => {
-                let images = self
+                let mut images = self
                     .bottom_pane
                     .take_recent_submission_images_with_placeholders();
                 let display = self
                     .bottom_pane
                     .take_last_submitted_display()
                     .unwrap_or_else(|| text.clone());
+                // If there are no images yet, and the submitted text looks like
+                // a single quoted path or file:// URL to a local image, treat
+                // it as an image attachment instead of plain text.
+                if images.is_empty() {
+                    if let Some((path, width, height, fmt)) =
+                        Self::try_interpret_as_single_image_path(&text)
+                    {
+                        // Attach the detected image and clear the agent text.
+                        self.attach_image(path.clone(), width, height, &fmt);
+                        images.push((String::new(), path));
+                        // Keep display unchanged so the user sees what they typed.
+                        self.submit_user_message_with_display(String::new(), images, display);
+                        return;
+                    }
+                }
+
                 self.submit_user_message_with_display(text, images, display);
             }
-            InputResult::None => {}
+            InputResult::None => {
+                // Inline detection: if the current input exactly matches a single
+                // quoted path or file:// URL to a local PNG/JPEG, convert it
+                // immediately into an image attachment.
+                let current = self.bottom_pane.current_input_text();
+                if let Some((path, width, height, fmt)) =
+                    Self::try_interpret_as_single_image_path(&current)
+                {
+                    // Clear the typed path and insert the image placeholder.
+                    self.bottom_pane.replace_input_text("");
+                    self.attach_image(path, width, height, &fmt);
+                }
+            }
         }
     }
 
@@ -577,6 +605,65 @@ impl ChatWidget<'_> {
         self.bottom_pane
             .attach_image(path.clone(), width, height, format_label);
         self.request_redraw();
+    }
+
+    // Heuristic: interpret the entire submitted text as a single image path/URL
+    // when it is quoted or looks like a standalone path. Returns (path, w, h, fmt)
+    // if it resolves to a local PNG/JPEG image.
+    fn try_interpret_as_single_image_path(
+        text: &str,
+    ) -> Option<(std::path::PathBuf, u32, u32, String)> {
+        let s = text.trim();
+        if s.is_empty() || s.contains('\n') {
+            return None;
+        }
+
+        // Strip surrounding quotes if present.
+        let mut candidate = s.to_string();
+        if candidate.len() >= 2
+            && ((candidate.starts_with('"') && candidate.ends_with('"'))
+                || (candidate.starts_with('\'') && candidate.ends_with('\'')))
+        {
+            candidate = candidate[1..candidate.len() - 1].to_string();
+        }
+
+        // Expand ~/ to $HOME
+        if let Some(rest) = candidate.strip_prefix("~/") {
+            if let Ok(home) = std::env::var("HOME") {
+                let mut p = std::path::PathBuf::from(home);
+                p.push(rest);
+                candidate = p.to_string_lossy().into_owned();
+            }
+        }
+
+        // Consider multiple representations
+        let mut try_paths: Vec<std::path::PathBuf> = Vec::new();
+        if let Some(p) = file_url_to_path(&candidate) {
+            try_paths.push(p);
+        }
+        try_paths.push(std::path::PathBuf::from(&candidate));
+        let unescaped = unescape_backslashes(&candidate);
+        if unescaped != candidate {
+            try_paths.push(std::path::PathBuf::from(unescaped));
+        }
+
+        for path in try_paths {
+            if path.is_file() {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    let ext_l = ext.to_ascii_lowercase();
+                    if matches!(ext_l.as_str(), "png" | "jpg" | "jpeg") {
+                        let (mut w, mut h) = (0u32, 0u32);
+                        if let Ok((dw, dh)) = image::image_dimensions(&path) {
+                            w = dw;
+                            h = dh;
+                        }
+                        let fmt = if ext_l == "png" { "PNG" } else { "JPEG" }.to_string();
+                        return Some((path, w, h, fmt));
+                    }
+                }
+            }
+        }
+        None
     }
 
     pub(crate) fn handle_paste(&mut self, text: String) {
@@ -607,8 +694,9 @@ impl ChatWidget<'_> {
         // Trim and strip quotes for the most direct case.
         let mut s = text.trim().to_string();
         if !s.is_empty() {
-            if (s.starts_with('"') && s.ends_with('"'))
-                || (s.starts_with('\'') && s.ends_with('\''))
+            if s.len() >= 2
+                && ((s.starts_with('"') && s.ends_with('"'))
+                    || (s.starts_with('\'') && s.ends_with('\'')))
             {
                 s = s[1..s.len() - 1].to_string();
             }
@@ -633,8 +721,9 @@ impl ChatWidget<'_> {
 
             'outer: for raw in candidates {
                 let mut s = raw.trim().to_string();
-                if (s.starts_with('"') && s.ends_with('"'))
-                    || (s.starts_with('\'') && s.ends_with('\''))
+                if s.len() >= 2
+                    && ((s.starts_with('"') && s.ends_with('"'))
+                        || (s.starts_with('\'') && s.ends_with('\'')))
                 {
                     s = s[1..s.len() - 1].to_string();
                 }
@@ -758,7 +847,7 @@ impl ChatWidget<'_> {
                 });
         }
         // Show the original display text (with inline image placeholders) in history.
-        self.add_to_history(&history_cell::new_user_prompt(display_text));
+        self.add_to_history(&history_cell::new_user_prompt_with_images(display_text));
     }
 
     pub(crate) fn handle_codex_event(&mut self, event: Event) {

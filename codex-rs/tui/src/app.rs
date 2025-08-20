@@ -48,11 +48,21 @@ where
         crate::clipboard_paste::PasteImageError,
     >,
 {
-    // Treat both Ctrl+V and Cmd+V (SUPER on macOS) as the "paste image" hotkey.
+    // Treat Ctrl+V as paste everywhere; treat Cmd+V (SUPER) as paste only on macOS.
     let is_v = matches!(key_event.code, KeyCode::Char('v'));
     let mods = key_event.modifiers;
-    let has_paste_modifier = mods.contains(crossterm::event::KeyModifiers::CONTROL)
-        || mods.contains(crossterm::event::KeyModifiers::SUPER);
+    let has_cmd_on_macos = {
+        #[cfg(target_os = "macos")]
+        {
+            mods.contains(crossterm::event::KeyModifiers::SUPER)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    };
+    let has_paste_modifier =
+        mods.contains(crossterm::event::KeyModifiers::CONTROL) || has_cmd_on_macos;
 
     if key_event.kind == KeyEventKind::Press && is_v && has_paste_modifier {
         match paste_fn() {
@@ -799,6 +809,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn cmd_v_success_attaches_image() {
         let (tx, rx) = std::sync::mpsc::channel();
         let sender = AppEventSender::new(tx);
@@ -834,6 +845,23 @@ mod tests {
         }
     }
 
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn super_v_not_handled_on_non_macos() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let key_event = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::SUPER);
+        let handled = try_handle_ctrl_v_with(&sender, &key_event, || {
+            Err(crate::clipboard_paste::PasteImageError::NoImage(
+                "none".into(),
+            ))
+        });
+        assert!(
+            !handled,
+            "SUPER should not be treated as paste on non-macOS"
+        );
+        assert!(rx.try_recv().is_err());
+    }
     #[test]
     fn ctrl_v_failure_not_consumed() {
         let (tx, rx) = std::sync::mpsc::channel();

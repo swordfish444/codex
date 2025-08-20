@@ -199,6 +199,14 @@ impl ChatComposer {
         true
     }
 
+    pub fn current_text(&self) -> String {
+        self.textarea.text().to_string()
+    }
+
+    pub fn set_text(&mut self, text: &str) {
+        self.textarea.set_text(text);
+    }
+
     pub fn attach_image(
         &mut self,
         path: std::path::PathBuf,

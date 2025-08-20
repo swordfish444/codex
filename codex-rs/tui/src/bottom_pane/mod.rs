@@ -185,6 +185,15 @@ impl BottomPane<'_> {
         }
     }
 
+    pub(crate) fn current_input_text(&self) -> String {
+        self.composer.current_text()
+    }
+
+    pub(crate) fn replace_input_text(&mut self, text: &str) {
+        self.composer.set_text(text);
+        self.request_redraw();
+    }
+
     pub(crate) fn ctrl_c_quit_hint_visible(&self) -> bool {
         self.ctrl_c_quit_hint
     }

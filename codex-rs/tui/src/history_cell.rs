@@ -194,6 +194,11 @@ pub(crate) fn new_user_prompt(message: String) -> PlainHistoryCell {
     PlainHistoryCell { lines }
 }
 
+pub(crate) fn new_user_prompt_with_images(message: String) -> PlainHistoryCell {
+    // Currently identical to new_user_prompt; kept separate for clarity when images are present.
+    new_user_prompt(message)
+}
+
 pub(crate) fn new_active_exec_command(
     command: Vec<String>,
     parsed: Vec<ParsedCommand>,
