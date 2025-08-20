@@ -22,6 +22,7 @@ use codex_core::protocol::McpToolCallBeginEvent;
 use codex_core::protocol::McpToolCallEndEvent;
 use codex_core::protocol::Op;
 use codex_core::protocol::PatchApplyBeginEvent;
+use codex_core::protocol::StreamRetryEvent;
 use codex_core::protocol::TaskCompleteEvent;
 use codex_core::protocol::TokenUsage;
 use codex_core::protocol::TurnDiffEvent;
@@ -652,6 +653,17 @@ impl ChatWidget<'_> {
             EventMsg::TurnDiff(TurnDiffEvent { unified_diff }) => self.on_turn_diff(unified_diff),
             EventMsg::BackgroundEvent(BackgroundEventEvent { message }) => {
                 self.on_background_event(message)
+            }
+            EventMsg::StreamRetry(StreamRetryEvent {
+                attempt,
+                max_attempts,
+                delay,
+                cause,
+            }) => {
+                let text = format!(
+                    "stream error: {cause}; retrying {attempt}/{max_attempts} in {delay:?}…"
+                );
+                self.on_background_event(text)
             }
         }
         // Coalesce redraws: issue at most one after handling the event

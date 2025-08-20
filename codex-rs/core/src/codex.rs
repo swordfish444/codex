@@ -94,6 +94,7 @@ use crate::protocol::PatchApplyEndEvent;
 use crate::protocol::ReviewDecision;
 use crate::protocol::SandboxPolicy;
 use crate::protocol::SessionConfiguredEvent;
+use crate::protocol::StreamRetryEvent;
 use crate::protocol::Submission;
 use crate::protocol::TaskCompleteEvent;
 use crate::protocol::TurnDiffEvent;
@@ -1501,16 +1502,17 @@ async fn run_turn(
                         "stream disconnected - retrying turn ({retries}/{max_retries} in {delay:?})...",
                     );
 
-                    // Surface retry information to any UI/front‑end so the
-                    // user understands what is happening instead of staring
-                    // at a seemingly frozen screen.
-                    sess.notify_background_event(
-                        &sub_id,
-                        format!(
-                            "stream error: {e}; retrying {retries}/{max_retries} in {delay:?}…"
-                        ),
-                    )
-                    .await;
+                    // Surface retry information to any UI/front‑end in a structured way.
+                    let event = Event {
+                        id: sub_id.to_string(),
+                        msg: EventMsg::StreamRetry(StreamRetryEvent {
+                            attempt: retries as u32,
+                            max_attempts: max_retries as u32,
+                            delay,
+                            cause: e.to_string(),
+                        }),
+                    };
+                    let _ = sess.tx_event.send(event).await;
 
                     tokio::time::sleep(delay).await;
                 } else {
@@ -1739,13 +1741,16 @@ async fn run_compact_task(
                 if retries < max_retries {
                     retries += 1;
                     let delay = backoff(retries);
-                    sess.notify_background_event(
-                        &sub_id,
-                        format!(
-                            "stream error: {e}; retrying {retries}/{max_retries} in {delay:?}…"
-                        ),
-                    )
-                    .await;
+                    let event = Event {
+                        id: sub_id.clone(),
+                        msg: EventMsg::StreamRetry(StreamRetryEvent {
+                            attempt: retries as u32,
+                            max_attempts: max_retries as u32,
+                            delay,
+                            cause: e.to_string(),
+                        }),
+                    };
+                    sess.send_event(event).await;
                     tokio::time::sleep(delay).await;
                     continue;
                 } else {

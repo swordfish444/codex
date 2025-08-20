@@ -439,6 +439,9 @@ pub enum EventMsg {
 
     ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent),
 
+    /// Notification that a streaming response failed transiently and will be retried.
+    StreamRetry(StreamRetryEvent),
+
     BackgroundEvent(BackgroundEventEvent),
 
     /// Notification that the agent is about to apply a code patch. Mirrors
@@ -679,6 +682,14 @@ pub struct ApplyPatchApprovalRequestEvent {
     /// When set, the agent is asking the user to allow writes under this root for the remainder of the session.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grant_root: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct StreamRetryEvent {
+    pub attempt: u32,
+    pub max_attempts: u32,
+    pub delay: Duration,
+    pub cause: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

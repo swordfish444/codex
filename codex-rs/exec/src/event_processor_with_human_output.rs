@@ -20,6 +20,7 @@ use codex_core::protocol::McpToolCallEndEvent;
 use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::PatchApplyEndEvent;
 use codex_core::protocol::SessionConfiguredEvent;
+use codex_core::protocol::StreamRetryEvent;
 use codex_core::protocol::TaskCompleteEvent;
 use codex_core::protocol::TurnAbortReason;
 use codex_core::protocol::TurnDiffEvent;
@@ -173,6 +174,21 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             }
             EventMsg::BackgroundEvent(BackgroundEventEvent { message }) => {
                 ts_println!(self, "{}", message.style(self.dimmed));
+            }
+            EventMsg::StreamRetry(StreamRetryEvent {
+                attempt,
+                max_attempts,
+                delay,
+                cause,
+            }) => {
+                ts_println!(
+                    self,
+                    "{}",
+                    format!(
+                        "stream error: {cause}; retrying {attempt}/{max_attempts} in {delay:?}…"
+                    )
+                    .style(self.dimmed)
+                );
             }
             EventMsg::TaskStarted => {
                 // Ignore.
