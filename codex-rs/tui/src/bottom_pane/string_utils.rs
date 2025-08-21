@@ -9,10 +9,9 @@ pub fn normalize_pasted_path(pasted: &str) -> Option<PathBuf> {
     }
 
     // shell-escaped single path → unescaped
-    if let Ok(mut parts) = shell_words::split(pasted) {
-        if parts.len() == 1 {
-            return Some(PathBuf::from(parts.remove(0)));
-        }
+    let parts: Vec<String> = shlex::Shlex::new(pasted).collect();
+    if parts.len() == 1 {
+        return parts.into_iter().next().map(PathBuf::from);
     }
 
     // simple quoted path fallback
