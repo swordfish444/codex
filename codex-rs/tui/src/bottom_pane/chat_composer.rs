@@ -191,7 +191,7 @@ impl ChatComposer {
             let placeholder = format!("[Pasted Content {char_count} chars]");
             self.textarea.insert_element(&placeholder);
             self.pending_pastes.push((placeholder, pasted));
-        } else if self.handle_paste_image_paths(pasted.clone()) {
+        } else if self.handle_paste_image_path(pasted.clone()) {
             self.textarea.insert_str(" ");
         } else {
             self.textarea.insert_str(&pasted);
@@ -201,7 +201,7 @@ impl ChatComposer {
         true
     }
 
-    pub fn handle_paste_image_paths(&mut self, pasted: String) -> bool {
+    pub fn handle_paste_image_path(&mut self, pasted: String) -> bool {
         let Some(path_buf) = normalize_pasted_path(&pasted) else {
             return false;
         };

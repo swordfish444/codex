@@ -14,8 +14,7 @@ pub fn normalize_pasted_path(pasted: &str) -> Option<PathBuf> {
         return parts.into_iter().next().map(PathBuf::from);
     }
 
-    // simple quoted path fallback
-    Some(PathBuf::from(pasted.trim_matches('"')))
+    None
 }
 
 pub fn get_img_format_label(path: PathBuf) -> String {
@@ -69,6 +68,14 @@ mod tests {
         let result =
             normalize_pasted_path(input).expect("should trim single quotes on windows path");
         assert_eq!(result, PathBuf::from(r"C:\Users\Alice\My File.jpeg"));
+    }
+
+    #[test]
+    fn normalize_multiple_tokens_returns_none() {
+        // Two tokens after shell splitting → not a single path
+        let input = "/home/user/a\\ b.png /home/user/c.png";
+        let result = normalize_pasted_path(input);
+        assert!(result.is_none());
     }
 
     #[test]
