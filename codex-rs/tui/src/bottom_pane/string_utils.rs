@@ -30,3 +30,38 @@ pub fn get_img_format_label(path: PathBuf) -> String {
     }
     .into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_file_url() {
+        let input = "file:///tmp/example.png";
+        let result = normalize_pasted_path(input).expect("should parse file URL");
+        assert_eq!(result, PathBuf::from("/tmp/example.png"));
+    }
+
+    #[test]
+    fn normalize_shell_escaped_single_path() {
+        let input = "/home/user/My\\ File.png";
+        let result = normalize_pasted_path(input).expect("should unescape shell-escaped path");
+        assert_eq!(result, PathBuf::from("/home/user/My File.png"));
+    }
+
+    #[test]
+    fn normalize_simple_quoted_path_fallback() {
+        let input = "\"/home/user/My File.png\"";
+        let result = normalize_pasted_path(input).expect("should trim simple quotes");
+        assert_eq!(result, PathBuf::from("/home/user/My File.png"));
+    }
+
+    #[test]
+    fn img_format_label_png_jpeg_unknown() {
+        assert_eq!(get_img_format_label(PathBuf::from("/a/b/c.PNG")), "PNG");
+        assert_eq!(get_img_format_label(PathBuf::from("/a/b/c.jpg")), "JPEG");
+        assert_eq!(get_img_format_label(PathBuf::from("/a/b/c.JPEG")), "JPEG");
+        assert_eq!(get_img_format_label(PathBuf::from("/a/b/c")), "IMG");
+        assert_eq!(get_img_format_label(PathBuf::from("/a/b/c.webp")), "IMG");
+    }
+}
