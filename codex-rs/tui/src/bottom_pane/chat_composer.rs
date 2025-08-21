@@ -210,11 +210,7 @@ impl ChatComposer {
             Ok((w, h)) => {
                 tracing::info!("OK: {pasted}");
                 let format_label = get_img_format_label(path_buf.clone());
-                if self.attach_image(path_buf, w, h, &format_label) {
-                    self.pending_pastes.push(("image".into(), "image".into()));
-                    return true;
-                }
-                false
+                self.attach_image(path_buf, w, h, &format_label)
             }
             Err(err) => {
                 tracing::info!("ERR: {err}");
