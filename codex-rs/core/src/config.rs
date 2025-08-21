@@ -261,7 +261,8 @@ pub fn set_project_trusted(codex_home: &Path, project_path: &Path) -> anyhow::Re
 
     // Mark the project as trusted. toml_edit is very good at handling
     // missing properties
-    let project_key = project_path.to_string_lossy().to_string();
+    let normalized = crate::util::normalized_trust_project_root(project_path);
+    let project_key = normalized.to_string_lossy().to_string();
     doc["projects"][project_key.as_str()]["trust_level"] = toml_edit::value("trusted");
 
     // ensure codex_home exists
@@ -454,8 +455,13 @@ impl ConfigToml {
     pub fn is_cwd_trusted(&self, resolved_cwd: &Path) -> bool {
         let projects = self.projects.clone().unwrap_or_default();
 
+        // Prefer a normalized project key that points to the main git repo root when applicable.
+        let normalized_root = crate::util::normalized_trust_project_root(resolved_cwd);
+        let normalized_key = normalized_root.to_string_lossy().to_string();
+
         projects
-            .get(&resolved_cwd.to_string_lossy().to_string())
+            .get(&normalized_key)
+            .or_else(|| projects.get(&resolved_cwd.to_string_lossy().to_string()))
             .map(|p| p.trust_level.clone().unwrap_or("".to_string()) == "trusted")
             .unwrap_or(false)
     }
