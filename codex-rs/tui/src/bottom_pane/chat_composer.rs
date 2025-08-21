@@ -1506,7 +1506,7 @@ mod tests {
         let (result, _) =
             composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         match result {
-            InputResult::Submitted(text) => assert_eq!(text, "hi"),
+            InputResult::Submitted(text) => assert_eq!(text, "[image 32x16 PNG] hi"),
             _ => panic!("expected Submitted"),
         }
         let imgs = composer.take_recent_submission_images();
@@ -1528,7 +1528,7 @@ mod tests {
         let (result, _) =
             composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         match result {
-            InputResult::Submitted(text) => assert!(text.is_empty()),
+            InputResult::Submitted(text) => assert_eq!(text, "[image 10x5 PNG]"),
             _ => panic!("expected Submitted"),
         }
         let imgs = composer.take_recent_submission_images();
