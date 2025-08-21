@@ -26,6 +26,8 @@ use super::file_search_popup::FileSearchPopup;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::bottom_pane::string_utils::get_img_format_label;
+use crate::bottom_pane::string_utils::normalize_pasted_path;
 use crate::bottom_pane::textarea::TextArea;
 use crate::bottom_pane::textarea::TextAreaState;
 use codex_file_search::FileMatch;
@@ -189,12 +191,33 @@ impl ChatComposer {
             let placeholder = format!("[Pasted Content {char_count} chars]");
             self.textarea.insert_element(&placeholder);
             self.pending_pastes.push((placeholder, pasted));
+        } else if self.handle_paste_image_paths(pasted.clone()) {
+            self.textarea.insert_str(" ");
         } else {
             self.textarea.insert_str(&pasted);
         }
         self.sync_command_popup();
         self.sync_file_search_popup();
         true
+    }
+
+    pub fn handle_paste_image_paths(&mut self, pasted: String) -> bool {
+        tracing::info!("pasted: {pasted}");
+        let Some(path_buf) = normalize_pasted_path(&pasted) else {
+            return false;
+        };
+
+        match image::image_dimensions(&path_buf) {
+            Ok((w, h)) => {
+                tracing::info!("OK: {pasted}");
+                let format_label = get_img_format_label(path_buf.clone());
+                self.attach_image(path_buf, w, h, &format_label)
+            }
+            Err(err) => {
+                tracing::info!("ERR: {err}");
+                false
+            }
+        }
     }
 
     pub fn attach_image(
