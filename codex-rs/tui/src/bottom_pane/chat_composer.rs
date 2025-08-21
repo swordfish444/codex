@@ -211,7 +211,11 @@ impl ChatComposer {
             Ok((w, h)) => {
                 tracing::info!("OK: {pasted}");
                 let format_label = get_img_format_label(path_buf.clone());
-                self.attach_image(path_buf, w, h, &format_label)
+                if self.attach_image(path_buf, w, h, &format_label) {
+                    self.pending_pastes.push(("image".into(), "image".into()));
+                    return true;
+                }
+                false
             }
             Err(err) => {
                 tracing::info!("ERR: {err}");
@@ -638,13 +642,6 @@ impl ChatComposer {
                     }
                 }
                 self.pending_pastes.clear();
-
-                // Strip image placeholders from the submitted text; images are retrieved via take_recent_submission_images()
-                for (placeholder, _) in &self.attached_images {
-                    if text.contains(placeholder) {
-                        text = text.replace(placeholder, "");
-                    }
-                }
 
                 text = text.trim().to_string();
                 if !text.is_empty() {
