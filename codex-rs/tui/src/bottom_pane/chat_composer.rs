@@ -202,7 +202,6 @@ impl ChatComposer {
     }
 
     pub fn handle_paste_image_paths(&mut self, pasted: String) -> bool {
-        tracing::info!("pasted: {pasted}");
         let Some(path_buf) = normalize_pasted_path(&pasted) else {
             return false;
         };
