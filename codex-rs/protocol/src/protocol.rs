@@ -376,6 +376,14 @@ pub enum InputItem {
     LocalImage {
         path: std::path::PathBuf,
     },
+
+    /// A reference to a file in the user's workspace.
+    FileReference {
+        /// The name of the file
+        name: String,
+        /// The relative path to the file in the user's workspace.
+        path: PathBuf,
+    },
 }
 
 /// Event Queue Entry - events from agent

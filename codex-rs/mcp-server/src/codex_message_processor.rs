@@ -417,6 +417,9 @@ impl CodexMessageProcessor {
                 WireInputItem::Text { text } => CoreInputItem::Text { text },
                 WireInputItem::Image { image_url } => CoreInputItem::Image { image_url },
                 WireInputItem::LocalImage { path } => CoreInputItem::LocalImage { path },
+                WireInputItem::FileReference { name, path } => {
+                    CoreInputItem::FileReference { name, path }
+                }
             })
             .collect();
 
@@ -465,6 +468,9 @@ impl CodexMessageProcessor {
                 WireInputItem::Text { text } => CoreInputItem::Text { text },
                 WireInputItem::Image { image_url } => CoreInputItem::Image { image_url },
                 WireInputItem::LocalImage { path } => CoreInputItem::LocalImage { path },
+                WireInputItem::FileReference { name, path } => {
+                    CoreInputItem::FileReference { name, path }
+                }
             })
             .collect();
 

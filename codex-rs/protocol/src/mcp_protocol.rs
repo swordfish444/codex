@@ -292,6 +292,14 @@ pub enum InputItem {
     LocalImage {
         path: PathBuf,
     },
+
+    /// A reference to a file in the user's workspace.
+    FileReference {
+        /// The name of the file
+        name: String,
+        /// The relative path to the file in the user's workspace.
+        path: PathBuf,
+    },
 }
 
 // TODO(mbolin): Need test to ensure these constants match the enum variants.

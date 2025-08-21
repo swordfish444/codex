@@ -183,6 +183,9 @@ impl From<Vec<InputItem>> for ResponseInputItem {
                             None
                         }
                     },
+                    InputItem::FileReference { name, path } => Some(ContentItem::InputText {
+                        text: format!("[{name}]({})", path.to_string_lossy()),
+                    }),
                     _ => None,
                 })
                 .collect::<Vec<ContentItem>>(),
