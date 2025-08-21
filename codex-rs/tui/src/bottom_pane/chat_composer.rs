@@ -1571,4 +1571,31 @@ mod tests {
             panic!("Placeholder not found in textarea");
         }
     }
+
+    #[test]
+    fn pasting_filepath_attaches_image() {
+        use image::ImageBuffer;
+        use image::Rgba;
+        use std::fs;
+        use std::path::PathBuf;
+
+        let tmp_path: PathBuf = std::env::temp_dir().join("codex_tui_test_paste_image.png");
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_fn(3, 2, |_x, _y| Rgba([1, 2, 3, 255]));
+        img.save(&tmp_path).expect("failed to write temp png");
+
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let sender = AppEventSender::new(tx);
+        let mut composer =
+            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+
+        let needs_redraw = composer.handle_paste(tmp_path.to_string_lossy().to_string());
+        assert!(needs_redraw);
+        assert!(composer.textarea.text().starts_with("[image 3x2 PNG] "));
+
+        let imgs = composer.take_recent_submission_images();
+        assert_eq!(imgs, vec![tmp_path.clone()]);
+
+        let _ = fs::remove_file(tmp_path);
+    }
 }
