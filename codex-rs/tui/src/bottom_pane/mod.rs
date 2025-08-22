@@ -117,6 +117,7 @@ impl BottomPane {
         // While recording, route all keys to the composer so it can stop on release or next key.
         if self.composer.is_recording() {
             let (_ir, needs_redraw) = self.composer.handle_key_event(key_event);
+            self.composer.sync_popups();
             if needs_redraw {
                 self.request_redraw();
             }
@@ -139,6 +140,7 @@ impl BottomPane {
             InputResult::None
         } else {
             let (input_result, needs_redraw) = self.composer.handle_key_event(key_event);
+            self.composer.sync_popups();
             if needs_redraw {
                 self.request_redraw();
             }
@@ -181,6 +183,7 @@ impl BottomPane {
     pub fn handle_paste(&mut self, pasted: String) {
         if self.active_view.is_none() {
             let needs_redraw = self.composer.handle_paste(pasted);
+            self.composer.sync_popups();
             if needs_redraw {
                 self.request_redraw();
             }
@@ -189,17 +192,20 @@ impl BottomPane {
 
     pub(crate) fn insert_str(&mut self, text: &str) {
         self.composer.insert_str(text);
+        self.composer.sync_popups();
         self.request_redraw();
     }
 
     pub(crate) fn replace_transcription(&mut self, id: &str, text: &str) {
         self.composer.replace_transcription(id, text);
+        self.composer.sync_popups();
         self.request_redraw();
     }
 
     pub(crate) fn update_transcription_in_place(&mut self, id: &str, text: &str) -> bool {
         let updated = self.composer.update_transcription_in_place(id, text);
         if updated {
+            self.composer.sync_popups();
             self.request_redraw();
         }
         updated
@@ -207,6 +213,7 @@ impl BottomPane {
 
     pub(crate) fn remove_transcription_placeholder(&mut self, id: &str) {
         self.composer.remove_transcription_placeholder(id);
+        self.composer.sync_popups();
         self.request_redraw();
     }
 
@@ -214,6 +221,7 @@ impl BottomPane {
     pub(crate) fn pre_draw_tick(&mut self) {
         // Allow composer to process any time-based transitions before drawing
         self.composer.process_space_hold_trigger();
+        self.composer.sync_popups();
     }
 
     /// Update the animated header shown to the left of the brackets in the
@@ -368,6 +376,7 @@ impl BottomPane {
             .on_history_entry_response(log_id, offset, entry);
 
         if updated {
+            self.composer.sync_popups();
             self.request_redraw();
         }
     }

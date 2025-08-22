@@ -33,8 +33,8 @@ use crate::bottom_pane::textarea::TextAreaState;
 use crate::tui::FrameRequester;
 use codex_file_search::FileMatch;
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
@@ -101,7 +101,6 @@ enum ActivePopup {
 }
 
 impl ChatComposer {
-    
     pub fn new(
         has_input_focus: bool,
         app_event_tx: AppEventSender,
@@ -254,8 +253,6 @@ impl ChatComposer {
 
     pub(crate) fn insert_str(&mut self, text: &str) {
         self.textarea.insert_str(text);
-        self.sync_command_popup();
-        self.sync_file_search_popup();
     }
 
     /// Handle a key event coming from the main UI.
@@ -272,23 +269,9 @@ impl ChatComposer {
             };
             if should_stop {
                 let needs_redraw = self.stop_recording_and_start_transcription();
-                // Sync after event then return
-                self.sync_command_popup();
-                if matches!(self.active_popup, ActivePopup::Command(_)) {
-                    self.dismissed_file_popup_token = None;
-                } else {
-                    self.sync_file_search_popup();
-                }
                 return (InputResult::None, needs_redraw);
             }
             // Swallow non-stopping keys while recording
-            // Sync after event then return
-            self.sync_command_popup();
-            if matches!(self.active_popup, ActivePopup::Command(_)) {
-                self.dismissed_file_popup_token = None;
-            } else {
-                self.sync_file_search_popup();
-            }
             return (InputResult::None, false);
         }
 
@@ -302,20 +285,14 @@ impl ChatComposer {
             self.space_hold_trigger = None;
             // fall through to normal handling of this other key
         }
+        
         let result = match &mut self.active_popup {
             ActivePopup::Command(_) => self.handle_key_event_with_slash_popup(key_event),
             ActivePopup::File(_) => self.handle_key_event_with_file_popup(key_event),
             ActivePopup::None => self.handle_key_event_without_popup(key_event),
         };
-
-        // Update (or hide/show) popup after processing the key.
-        self.sync_command_popup();
-        if matches!(self.active_popup, ActivePopup::Command(_)) {
-            self.dismissed_file_popup_token = None;
-        } else {
-            self.sync_file_search_popup();
-        }
-
+        // Always sync popups after handling a key event.
+        self.sync_popups();
         result
     }
 
@@ -340,8 +317,6 @@ impl ChatComposer {
                 if duration_seconds < MIN_DURATION_SECONDS {
                     if let Some(id) = self.recording_placeholder_id.take() {
                         let _ = self.textarea.replace_element_by_id(&id, "");
-                        self.sync_command_popup();
-                        self.sync_file_search_popup();
                     }
                     return true;
                 }
@@ -353,8 +328,6 @@ impl ChatComposer {
                     .unwrap_or_else(|| Uuid::new_v4().to_string());
                 // Initialize with first spinner frame immediately.
                 let _ = self.textarea.update_named_element_by_id(&id, "⠋");
-                self.sync_command_popup();
-                self.sync_file_search_popup();
                 // Spawn animated braille spinner until transcription finishes (or times out).
                 self.spawn_transcribing_spinner(id.clone());
                 let tx = self.app_event_tx.clone();
@@ -377,11 +350,6 @@ impl ChatComposer {
                 // Insert visible placeholder for the meter (no label)
                 let id = Uuid::new_v4().to_string();
                 self.textarea.insert_named_element("", id.clone());
-                self.sync_command_popup();
-                self.sync_file_search_popup();
-                // Since this is an internal mutation, keep popups in sync here.
-                self.sync_command_popup();
-                self.sync_file_search_popup();
                 self.recording_placeholder_id = Some(id);
                 // Spawn metering animation
                 if let Some(v) = &self.voice {
@@ -738,25 +706,11 @@ impl ChatComposer {
                         // Fall back to normal input handling for space
                         self.handle_input_basic(key_event)
                     };
-                    // Sync after event then return
-                    self.sync_command_popup();
-                    if matches!(self.active_popup, ActivePopup::Command(_)) {
-                        self.dismissed_file_popup_token = None;
-                    } else {
-                        self.sync_file_search_popup();
-                    }
                     return out;
                 }
                 // If a hold is already pending, swallow further press events to
                 // avoid inserting multiple spaces and resetting the timer on key repeat.
                 if self.space_hold_started_at.is_some() {
-                    // Sync after event then return
-                    self.sync_command_popup();
-                    if matches!(self.active_popup, ActivePopup::Command(_)) {
-                        self.dismissed_file_popup_token = None;
-                    } else {
-                        self.sync_file_search_popup();
-                    }
                     return (InputResult::None, false);
                 }
 
@@ -764,8 +718,6 @@ impl ChatComposer {
                 // remove it on timeout or convert it to a plain space on release.
                 let elem_id = Uuid::new_v4().to_string();
                 self.textarea.insert_named_element(" ", elem_id.clone());
-                self.sync_command_popup();
-                self.sync_file_search_popup();
 
                 // Record pending hold metadata.
                 self.space_hold_started_at = Some(Instant::now());
@@ -827,8 +779,6 @@ impl ChatComposer {
             // Remove the previously inserted space element if present.
             if let Some(id) = self.space_hold_element_id.take() {
                 let _ = self.textarea.replace_element_by_id(&id, "");
-                self.sync_command_popup();
-                self.sync_file_search_popup();
             }
             // Clear pending state before starting capture
             self.space_hold_started_at = None;
@@ -920,9 +870,7 @@ impl ChatComposer {
         let tx = self.app_event_tx.clone();
         tokio::spawn(async move {
             use std::time::Duration;
-            let frames: Vec<&'static str> = vec![
-                "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
-            ];
+            let frames: Vec<&'static str> = vec!["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let mut i: usize = 0;
             // Safety stop after ~60s to avoid a runaway task if events are lost.
             let max_ticks = 600usize; // 600 * 100ms = 60s
@@ -940,26 +888,16 @@ impl ChatComposer {
 
     pub fn replace_transcription(&mut self, id: &str, text: &str) {
         let _ = self.textarea.replace_element_by_id(id, text);
-        self.sync_command_popup();
-        self.sync_file_search_popup();
     }
 
     pub fn update_transcription_in_place(&mut self, id: &str, text: &str) -> bool {
-        let updated = self.textarea.update_named_element_by_id(id, text);
-        if updated {
-            self.sync_command_popup();
-            self.sync_file_search_popup();
-        }
-        updated
+        
+        self.textarea.update_named_element_by_id(id, text)
     }
-
-    
 
     pub fn remove_transcription_placeholder(&mut self, id: &str) {
         // Replace with empty string to delete the placeholder if present.
         let _ = self.textarea.replace_element_by_id(id, "");
-        self.sync_command_popup();
-        self.sync_file_search_popup();
     }
 
     /// Handle generic Input events that modify the textarea content.
@@ -1043,6 +981,17 @@ impl ChatComposer {
 
         self.current_file_query = Some(query);
         self.dismissed_file_popup_token = None;
+    }
+
+    /// Public wrapper to sync both popups based on current text and state.
+    pub(crate) fn sync_popups(&mut self) {
+        self.sync_command_popup();
+        if matches!(self.active_popup, ActivePopup::Command(_)) {
+            // When the command popup is visible, suppress the file popup and reset dismissal.
+            self.dismissed_file_popup_token = None;
+        } else {
+            self.sync_file_search_popup();
+        }
     }
 
     fn set_has_focus(&mut self, has_focus: bool) {
@@ -1163,9 +1112,10 @@ impl Drop for ChatComposer {
         // If recording is active, stop capture and clean up placeholder.
         if let Some(vc) = self.voice.take()
             && let Ok(_audio) = vc.stop()
-                && let Some(id) = self.recording_placeholder_id.take() {
-                    let _ = self.textarea.replace_element_by_id(&id, "");
-                }
+            && let Some(id) = self.recording_placeholder_id.take()
+        {
+            let _ = self.textarea.replace_element_by_id(&id, "");
+        }
     }
 }
 
@@ -1590,14 +1540,13 @@ mod tests {
 
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(
-                true,
-                sender,
-                false,
-                "Ask Codex to do anything".to_string(),
-                crate::tui::FrameRequester::test_dummy(),
-            );
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            crate::tui::FrameRequester::test_dummy(),
+        );
 
         // Define test cases: (paste content, is_large)
         let test_cases = [
@@ -1670,14 +1619,13 @@ mod tests {
 
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(
-                true,
-                sender,
-                false,
-                "Ask Codex to do anything".to_string(),
-                crate::tui::FrameRequester::test_dummy(),
-            );
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            crate::tui::FrameRequester::test_dummy(),
+        );
 
         // Define test cases: (content, is_large)
         let test_cases = [
@@ -1743,14 +1691,13 @@ mod tests {
 
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(
-                true,
-                sender,
-                false,
-                "Ask Codex to do anything".to_string(),
-                crate::tui::FrameRequester::test_dummy(),
-            );
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            crate::tui::FrameRequester::test_dummy(),
+        );
 
         // Define test cases: (cursor_position_from_end, expected_pending_count)
         let test_cases = [
