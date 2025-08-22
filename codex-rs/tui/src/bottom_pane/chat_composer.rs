@@ -101,6 +101,52 @@ enum ActivePopup {
 }
 
 impl ChatComposer {
+    #[inline]
+    fn after_text_change(&mut self) {
+        self.sync_command_popup();
+        if matches!(self.active_popup, ActivePopup::Command(_)) {
+            self.dismissed_file_popup_token = None;
+        } else {
+            self.sync_file_search_popup();
+        }
+    }
+
+    // TextArea helper wrappers that auto-sync popups after mutations
+    #[inline]
+    fn ta_insert_str(&mut self, text: &str) {
+        self.textarea.insert_str(text);
+        self.after_text_change();
+    }
+
+    #[inline]
+    fn ta_insert_named_element(&mut self, text: &str, id: String) {
+        self.textarea.insert_named_element(text, id);
+        self.after_text_change();
+    }
+
+    #[inline]
+    fn ta_replace_element_by_id(&mut self, id: &str, text: &str) -> bool {
+        let changed = self.textarea.replace_element_by_id(id, text);
+        if changed {
+            self.after_text_change();
+        }
+        changed
+    }
+
+    #[inline]
+    fn ta_update_named_element_by_id(&mut self, id: &str, text: &str) -> bool {
+        let changed = self.textarea.update_named_element_by_id(id, text);
+        if changed {
+            self.after_text_change();
+        }
+        changed
+    }
+
+    #[inline]
+    fn ta_set_text(&mut self, text: &str) {
+        self.textarea.set_text(text);
+        self.after_text_change();
+    }
     pub fn new(
         has_input_focus: bool,
         app_event_tx: AppEventSender,
@@ -208,7 +254,7 @@ impl ChatComposer {
         let Some(text) = self.history.on_entry_response(log_id, offset, entry) else {
             return false;
         };
-        self.textarea.set_text(&text);
+        self.ta_set_text(&text);
         self.textarea.set_cursor(0);
         true
     }
@@ -222,12 +268,11 @@ impl ChatComposer {
         if char_count > LARGE_PASTE_CHAR_THRESHOLD {
             let placeholder = format!("[Pasted Content {char_count} chars]");
             self.textarea.insert_element(&placeholder);
+            self.after_text_change();
             self.pending_pastes.push((placeholder, pasted));
         } else {
-            self.textarea.insert_str(&pasted);
+            self.ta_insert_str(&pasted);
         }
-        self.sync_command_popup();
-        self.sync_file_search_popup();
         true
     }
 
@@ -326,10 +371,7 @@ impl ChatComposer {
                 const MIN_DURATION_SECONDS: f32 = 1.0;
                 if duration_seconds < MIN_DURATION_SECONDS {
                     if let Some(id) = self.recording_placeholder_id.take() {
-                        let _ = self.textarea.replace_element_by_id(&id, "");
-                        // Ensure UI state updates after removing placeholder
-                        self.sync_command_popup();
-                        self.sync_file_search_popup();
+                        let _ = self.ta_replace_element_by_id(&id, "");
                     }
                     return true;
                 }
@@ -340,7 +382,7 @@ impl ChatComposer {
                     .take()
                     .unwrap_or_else(|| Uuid::new_v4().to_string());
                 // Initialize with first spinner frame immediately.
-                let _ = self.textarea.update_named_element_by_id(&id, "⠋");
+                let _ = self.ta_update_named_element_by_id(&id, "⠋");
                 // Spawn animated braille spinner until transcription finishes (or times out).
                 self.spawn_transcribing_spinner(id.clone());
                 let tx = self.app_event_tx.clone();
@@ -362,7 +404,7 @@ impl ChatComposer {
                 self.voice = Some(vc);
                 // Insert visible placeholder for the meter (no label)
                 let id = Uuid::new_v4().to_string();
-                self.textarea.insert_named_element("", id.clone());
+                self.ta_insert_named_element("", id.clone());
                 self.recording_placeholder_id = Some(id);
                 // Spawn metering animation
                 if let Some(v) = &self.voice {
@@ -729,9 +771,7 @@ impl ChatComposer {
                 // Insert a named element that renders as a space so we can later
                 // remove it on timeout or convert it to a plain space on release.
                 let elem_id = Uuid::new_v4().to_string();
-                self.textarea.insert_named_element(" ", elem_id.clone());
-                self.sync_command_popup();
-                self.sync_file_search_popup();
+                self.ta_insert_named_element(" ", elem_id.clone());
 
                 // Record pending hold metadata.
                 self.space_hold_started_at = Some(Instant::now());
@@ -774,7 +814,7 @@ impl ChatComposer {
                 // If a hold is pending, convert the element to a plain space and clear state.
                 self.space_hold_started_at = None;
                 if let Some(id) = self.space_hold_element_id.take() {
-                    let _ = self.textarea.replace_element_by_id(&id, " ");
+                    let _ = self.ta_replace_element_by_id(&id, " ");
                 }
                 self.space_hold_trigger = None;
                 (InputResult::None, true)
@@ -792,7 +832,7 @@ impl ChatComposer {
         if self.space_hold_started_at.is_some() {
             // Remove the previously inserted space element if present.
             if let Some(id) = self.space_hold_element_id.take() {
-                let _ = self.textarea.replace_element_by_id(&id, "");
+                let _ = self.ta_replace_element_by_id(&id, "");
             }
             // Clear pending state before starting capture
             self.space_hold_started_at = None;
@@ -880,10 +920,8 @@ impl ChatComposer {
         });
     }
 
-    fn spawn_transcribing_spinner(&mut self, id: String) {
+    fn spawn_transcribing_spinner(&self, id: String) {
         let tx = self.app_event_tx.clone();
-        let stop = Arc::new(AtomicBool::new(false));
-        self.spinner_stop_flags.insert(id.clone(), stop.clone());
         tokio::spawn(async move {
             use std::time::Duration;
             let frames: Vec<&'static str> = vec![
@@ -893,9 +931,6 @@ impl ChatComposer {
             // Safety stop after ~60s to avoid a runaway task if events are lost.
             let max_ticks = 600usize; // 600 * 100ms = 60s
             for _ in 0..max_ticks {
-                if stop.load(Ordering::Relaxed) {
-                    break;
-                }
                 let text = frames[i % frames.len()].to_string();
                 tx.send(crate::app_event::AppEvent::RecordingMeter {
                     id: id.clone(),
@@ -907,44 +942,19 @@ impl ChatComposer {
         });
     }
 
-    fn stop_spinner_if_any(&mut self, id: &str) {
-        if let Some(flag) = self.spinner_stop_flags.remove(id) {
-            flag.store(true, Ordering::Relaxed);
-        }
-    }
-
     pub fn replace_transcription(&mut self, id: &str, text: &str) {
-        // Only replace if the placeholder still exists; otherwise do nothing.
-        let replaced = self.textarea.replace_element_by_id(id, text);
-        if replaced {
-            self.stop_spinner_if_any(id);
-            self.sync_command_popup();
-            self.sync_file_search_popup();
-        }
+        let _ = self.ta_replace_element_by_id(id, text);
     }
 
     pub fn update_transcription_in_place(&mut self, id: &str, text: &str) -> bool {
-        // Update element text but keep its id so future updates can find it.
-        let updated = self.textarea.update_named_element_by_id(id, text);
-        if updated {
-            self.sync_command_popup();
-            self.sync_file_search_popup();
-        } else {
-            // If placeholder disappeared, proactively stop spinner task.
-            self.stop_spinner_if_any(id);
-        }
-        updated
+        self.ta_update_named_element_by_id(id, text)
     }
 
     
 
     pub fn remove_transcription_placeholder(&mut self, id: &str) {
         // Replace with empty string to delete the placeholder if present.
-        if self.textarea.replace_element_by_id(id, "") {
-            self.stop_spinner_if_any(id);
-            self.sync_command_popup();
-            self.sync_file_search_popup();
-        }
+        let _ = self.ta_replace_element_by_id(id, "");
     }
 
     /// Handle generic Input events that modify the textarea content.
