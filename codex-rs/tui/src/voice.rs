@@ -1,10 +1,9 @@
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use codex_core::config::find_codex_home;
+use codex_core::user_agent::get_codex_user_agent;
 use codex_login::AuthMode;
 use codex_login::CodexAuth;
-use codex_login::get_auth_file;
-use codex_login::try_read_auth_json;
 use cpal::traits::DeviceTrait;
 use cpal::traits::HostTrait;
 use cpal::traits::StreamTrait;
@@ -207,23 +206,19 @@ pub fn transcribe_async(id: String, audio: RecordedAudio, tx: AppEventSender) {
                 find_codex_home().map_err(|e| format!("failed to find codex home: {e}"))?;
             let auth_opt = CodexAuth::from_codex_home(&codex_home, AuthMode::ChatGPT)
                 .map_err(|e| format!("failed to read auth.json: {e}"))?;
-            let api_key = match auth_opt {
-                Some(auth) => match auth.mode {
-                    AuthMode::ApiKey => auth
+            let (bearer_token, chatgpt_account_id) = match auth_opt {
+                Some(auth) => {
+                    let token = auth
                         .get_token()
                         .await
-                        .map_err(|e| format!("failed to get API key token: {e}"))?,
-                    AuthMode::ChatGPT => {
-                        // Attempt to read a persisted OPENAI_API_KEY from auth.json
-                        let auth_file = get_auth_file(&codex_home);
-                        let dot = try_read_auth_json(&auth_file)
-                            .map_err(|e| format!("failed to read auth.json: {e}"))?;
-                        dot.openai_api_key.ok_or_else(|| {
-                            "OPENAI_API_KEY not available in auth.json; cannot transcribe audio"
-                                .to_string()
-                        })?
-                    }
-                },
+                        .map_err(|e| format!("failed to get auth token: {e}"))?;
+                    let account_id = if matches!(auth.mode, AuthMode::ChatGPT) {
+                        auth.get_account_id()
+                    } else {
+                        None
+                    };
+                    (token, account_id)
+                }
                 None => {
                     return Err("No Codex auth is configured; please run `codex login`".to_string());
                 }
@@ -239,10 +234,17 @@ pub fn transcribe_async(id: String, audio: RecordedAudio, tx: AppEventSender) {
                 .text("model", "gpt-4o-transcribe")
                 .part("file", part);
 
-            let resp = client
+            let mut req = client
                 .post("https://api.openai.com/v1/audio/transcriptions")
-                .bearer_auth(api_key)
+                .bearer_auth(bearer_token)
                 .multipart(form)
+                .header("User-Agent", get_codex_user_agent(None));
+
+            if let Some(acc) = chatgpt_account_id {
+                req = req.header("chatgpt-account-id", acc);
+            }
+
+            let resp = req
                 .send()
                 .await
                 .map_err(|e| format!("transcription request failed: {e}"))?;
