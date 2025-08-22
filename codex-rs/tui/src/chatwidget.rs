@@ -976,10 +976,14 @@ impl ChatWidget {
 
     pub(crate) fn replace_transcription(&mut self, id: &str, text: &str) {
         self.bottom_pane.replace_transcription(id, text);
+        // Ensure the UI redraws to reflect the updated transcription.
+        self.request_redraw();
     }
 
     pub(crate) fn remove_transcription_placeholder(&mut self, id: &str) {
         self.bottom_pane.remove_transcription_placeholder(id);
+        // Ensure the UI redraws to reflect placeholder removal.
+        self.request_redraw();
     }
     /// Forward an `Op` directly to codex.
     pub(crate) fn submit_op(&self, op: Op) {
