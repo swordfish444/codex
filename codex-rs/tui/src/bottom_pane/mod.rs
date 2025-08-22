@@ -112,6 +112,7 @@ impl BottomPane {
 
     /// Forward a key event to the active view or the composer.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> InputResult {
+        // Do not globally intercept space; only composer handles hold-to-talk.
         // While recording, route all keys to the composer so it can stop on release or next key.
         if self.composer.is_recording() {
             let (_ir, needs_redraw) = self.composer.handle_key_event(key_event);
@@ -192,6 +193,11 @@ impl BottomPane {
 
     pub(crate) fn replace_transcription(&mut self, id: &str, text: &str) {
         self.composer.replace_transcription(id, text);
+        self.request_redraw();
+    }
+
+    pub(crate) fn update_transcription_in_place(&mut self, id: &str, text: &str) {
+        self.composer.update_transcription_in_place(id, text);
         self.request_redraw();
     }
 

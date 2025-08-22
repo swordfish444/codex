@@ -266,6 +266,11 @@ impl App {
             AppEvent::TranscriptionFailed { id, error: _ } => {
                 self.chat_widget.remove_transcription_placeholder(&id);
             }
+            AppEvent::RecordingMeter { id, text } => {
+                // Update in place to preserve the element id for subsequent frames.
+                self.chat_widget.update_transcription_in_place(&id, &text);
+                tui.frame_requester().schedule_frame();
+            }
         }
         Ok(true)
     }

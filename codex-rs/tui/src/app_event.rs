@@ -76,4 +76,11 @@ pub(crate) enum AppEvent {
     SpaceHoldTimeout {
         id: String,
     },
+
+    /// Live update for the in-progress voice recording placeholder. Carries
+    /// the placeholder `id` and the text to display (e.g., an ASCII meter).
+    RecordingMeter {
+        id: String,
+        text: String,
+    },
 }

@@ -985,6 +985,11 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    pub(crate) fn update_transcription_in_place(&mut self, id: &str, text: &str) {
+        self.bottom_pane.update_transcription_in_place(id, text);
+        self.request_redraw();
+    }
+
     pub(crate) fn remove_transcription_placeholder(&mut self, id: &str) {
         self.bottom_pane.remove_transcription_placeholder(id);
         // Ensure the UI redraws to reflect placeholder removal.
