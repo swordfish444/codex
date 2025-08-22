@@ -10,7 +10,6 @@ use cpal::traits::StreamTrait;
 use hound::SampleFormat;
 use hound::WavSpec;
 use hound::WavWriter;
-use std::convert::TryFrom;
 use std::io::Cursor;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -19,9 +18,6 @@ use std::sync::atomic::AtomicU16;
 use std::sync::atomic::Ordering;
 use tracing::error;
 use tracing::info;
-use webrtc_vad::SampleRate;
-use webrtc_vad::Vad;
-use webrtc_vad::VadMode;
 
 pub struct RecordedAudio {
     pub data: Vec<i16>,
@@ -210,7 +206,7 @@ pub fn transcribe_async(id: String, audio: RecordedAudio, tx: AppEventSender) {
             return;
         }
 
-        // Disable VAD: always send the full clip without trimming or rejecting.
+        // Always send the full clip without trimming or rejecting.
         let (start_sample, end_sample) = (0, audio.data.len());
 
         // Serialize WAV (trimmed segment) to memory
@@ -346,132 +342,4 @@ pub fn transcribe_async(id: String, audio: RecordedAudio, tx: AppEventSender) {
             info!("voice transcription succeeded");
         }
     });
-}
-
-/// Downmix interleaved i16 samples to mono by averaging channels.
-fn to_mono_i16(interleaved: &[i16], channels: u16) -> Vec<i16> {
-    if channels <= 1 {
-        return interleaved.to_vec();
-    }
-    let ch = channels as usize;
-    let frames = interleaved.len() / ch;
-    let mut mono = Vec::with_capacity(frames);
-    for f in 0..frames {
-        let mut acc: i32 = 0;
-        for c in 0..ch {
-            acc += interleaved[f * ch + c] as i32;
-        }
-        let avg = (acc / ch as i32) as i16;
-        mono.push(avg);
-    }
-    mono
-}
-
-/// Linear resample from `src_sr` to `dst_sr` for mono i16 PCM.
-fn resample_linear_i16(input: &[i16], src_sr: u32, dst_sr: u32) -> Vec<i16> {
-    if src_sr == dst_sr || input.is_empty() {
-        return input.to_vec();
-    }
-    let src_len = input.len();
-    // Compute output length proportional to rates
-    let out_len = ((input.len() as u64) * (dst_sr as u64) / (src_sr as u64)) as usize;
-    if out_len == 0 {
-        return Vec::new();
-    }
-    let mut out = Vec::with_capacity(out_len);
-    let scale = (src_len - 1) as f64 / (out_len - 1).max(1) as f64;
-    for i in 0..out_len {
-        let pos = i as f64 * scale;
-        let idx = pos.floor() as usize;
-        let frac = pos - idx as f64;
-        let s0 = input[idx] as f64;
-        let s1 = input[idx.min(src_len - 1).saturating_add(1).min(src_len - 1)] as f64;
-        let v = s0 * (1.0 - frac) + s1 * frac;
-        out.push(v.round().clamp(i16::MIN as f64, i16::MAX as f64) as i16);
-    }
-    out
-}
-
-/// Use WebRTC VAD to compute voiced region and return sample bounds in the
-/// original interleaved buffer (with channels) including padding.
-fn detect_voiced_bounds_webrtc(audio: &RecordedAudio) -> Result<Option<(usize, usize)>, String> {
-    if audio.data.is_empty() || audio.sample_rate == 0 || audio.channels == 0 {
-        return Ok(None);
-    }
-    // Downmix to mono for VAD processing
-    let mono = to_mono_i16(&audio.data, audio.channels);
-
-    // Choose a VAD-supported rate
-    let allowed = [8000u32, 16000, 32000, 48000];
-    let vad_sr = if allowed.contains(&audio.sample_rate) {
-        audio.sample_rate
-    } else {
-        16000
-    };
-    let mono_for_vad = if vad_sr == audio.sample_rate {
-        mono
-    } else {
-        resample_linear_i16(&mono, audio.sample_rate, vad_sr)
-    };
-
-    // Frame at 10ms for tighter endpoints
-    let frame_len = (vad_sr as usize) / 100; // 10ms
-    if frame_len == 0 {
-        return Ok(None);
-    }
-
-    // Initialize VAD on highest aggressiveness
-    let mut vad = Vad::new();
-    let sr_enum = SampleRate::try_from(vad_sr as i32)
-        .map_err(|_| format!("unsupported VAD sample rate: {vad_sr}"))?;
-    vad.set_sample_rate(sr_enum);
-    vad.set_mode(VadMode::Aggressive);
-
-    let mut first_voiced: Option<usize> = None;
-    let mut last_voiced: Option<usize> = None;
-
-    let mut i = 0usize;
-    while i + frame_len <= mono_for_vad.len() {
-        let frame = &mono_for_vad[i..i + frame_len];
-        // is_voice_segment requires frames of 10/20/30ms at the configured rate
-        let speech = vad
-            .is_voice_segment(frame)
-            .map_err(|_| "invalid frame length for VAD".to_string())?;
-        if speech {
-            if first_voiced.is_none() {
-                first_voiced = Some(i / frame_len);
-            }
-            last_voiced = Some(i / frame_len);
-        }
-        i += frame_len;
-    }
-
-    let (first, last) = match (first_voiced, last_voiced) {
-        (Some(f), Some(l)) => (f, l),
-        _ => return Ok(None),
-    };
-
-    // Add 200ms padding to avoid clipping quiet phonemes
-    let pad_frames = 20usize; // 20 * 10ms = 200ms
-    let start_frame = first.saturating_sub(pad_frames);
-    let end_frame = last.saturating_add(pad_frames);
-
-    // Map frame indices at vad_sr to time bounds and then to original sample indices
-    let frame_dur_s = 0.020f64;
-    let start_time = (start_frame as f64) * frame_dur_s;
-    let end_time = ((end_frame + 1) as f64) * frame_dur_s; // exclusive
-    let total_samples = audio.data.len();
-    let samples_per_second = (audio.sample_rate as usize) * (audio.channels as usize);
-    let mut start_sample = (start_time * samples_per_second as f64).round() as usize;
-    let mut end_sample = (end_time * samples_per_second as f64).round() as usize;
-    if start_sample > total_samples {
-        start_sample = total_samples;
-    }
-    if end_sample > total_samples {
-        end_sample = total_samples;
-    }
-    if start_sample >= end_sample {
-        return Ok(None);
-    }
-    Ok(Some((start_sample, end_sample)))
 }
