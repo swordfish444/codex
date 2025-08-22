@@ -13,7 +13,7 @@ use async_channel::Sender;
 use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::MaybeApplyPatchVerified;
 use codex_apply_patch::maybe_parse_apply_patch_verified;
-use codex_login::CodexAuth;
+use codex_login::AuthManager;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
 use futures::prelude::*;
@@ -52,6 +52,11 @@ use crate::exec::SandboxType;
 use crate::exec::StdoutStream;
 use crate::exec::StreamOutput;
 use crate::exec::process_exec_tool_call;
+use crate::exec_command::EXEC_COMMAND_TOOL_NAME;
+use crate::exec_command::ExecCommandParams;
+use crate::exec_command::SESSION_MANAGER;
+use crate::exec_command::WRITE_STDIN_TOOL_NAME;
+use crate::exec_command::WriteStdinParams;
 use crate::exec_env::create_env;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::mcp_tool_call::handle_mcp_tool_call;
@@ -144,7 +149,10 @@ pub(crate) const INITIAL_SUBMIT_ID: &str = "";
 
 impl Codex {
     /// Spawn a new [`Codex`] and initialize the session.
-    pub async fn spawn(config: Config, auth: Option<CodexAuth>) -> CodexResult<CodexSpawnOk> {
+    pub async fn spawn(
+        config: Config,
+        auth_manager: Arc<AuthManager>,
+    ) -> CodexResult<CodexSpawnOk> {
         let (tx_sub, rx_sub) = async_channel::bounded(64);
         let (tx_event, rx_event) = async_channel::unbounded();
 
@@ -169,13 +177,17 @@ impl Codex {
         };
 
         // Generate a unique ID for the lifetime of this Codex session.
-        let (session, turn_context) =
-            Session::new(configure_session, config.clone(), auth, tx_event.clone())
-                .await
-                .map_err(|e| {
-                    error!("Failed to create session: {e:#}");
-                    CodexErr::InternalAgentDied
-                })?;
+        let (session, turn_context) = Session::new(
+            configure_session,
+            config.clone(),
+            auth_manager.clone(),
+            tx_event.clone(),
+        )
+        .await
+        .map_err(|e| {
+            error!("Failed to create session: {e:#}");
+            CodexErr::InternalAgentDied
+        })?;
         let session_id = session.session_id;
 
         // This task will run until Op::Shutdown is received.
@@ -323,7 +335,7 @@ impl Session {
     async fn new(
         configure_session: ConfigureSession,
         config: Arc<Config>,
-        auth: Option<CodexAuth>,
+        auth_manager: Arc<AuthManager>,
         tx_event: Sender<Event>,
     ) -> anyhow::Result<(Arc<Self>, TurnContext)> {
         let ConfigureSession {
@@ -467,7 +479,7 @@ impl Session {
         // construct the model client.
         let client = ModelClient::new(
             config.clone(),
-            auth.clone(),
+            Some(auth_manager.clone()),
             provider.clone(),
             model_reasoning_effort,
             model_reasoning_summary,
@@ -481,6 +493,7 @@ impl Session {
                 sandbox_policy.clone(),
                 config.include_plan_tool,
                 config.include_apply_patch_tool,
+                config.use_experimental_streamable_shell_tool,
             ),
             user_instructions,
             base_instructions,
@@ -1034,7 +1047,8 @@ async fn submission_loop(
                 let effective_effort = effort.unwrap_or(prev.client.get_reasoning_effort());
                 let effective_summary = summary.unwrap_or(prev.client.get_reasoning_summary());
 
-                let auth = prev.client.get_auth();
+                let auth_manager = prev.client.get_auth_manager();
+
                 // Build updated config for the client
                 let mut updated_config = (*config).clone();
                 updated_config.model = effective_model.clone();
@@ -1042,7 +1056,7 @@ async fn submission_loop(
 
                 let client = ModelClient::new(
                     Arc::new(updated_config),
-                    auth,
+                    auth_manager,
                     provider,
                     effective_effort,
                     effective_summary,
@@ -1061,6 +1075,7 @@ async fn submission_loop(
                     new_sandbox_policy.clone(),
                     config.include_plan_tool,
                     config.include_apply_patch_tool,
+                    config.use_experimental_streamable_shell_tool,
                 );
 
                 let new_turn_context = TurnContext {
@@ -1139,6 +1154,7 @@ async fn submission_loop(
                             sandbox_policy.clone(),
                             config.include_plan_tool,
                             config.include_apply_patch_tool,
+                            config.use_experimental_streamable_shell_tool,
                         ),
                         user_instructions: turn_context.user_instructions.clone(),
                         base_instructions: turn_context.base_instructions.clone(),
@@ -1996,6 +2012,51 @@ async fn handle_function_call(
             .await
         }
         "update_plan" => handle_update_plan(sess, arguments, sub_id, call_id).await,
+        EXEC_COMMAND_TOOL_NAME => {
+            // TODO(mbolin): Sandbox check.
+            let exec_params = match serde_json::from_str::<ExecCommandParams>(&arguments) {
+                Ok(params) => params,
+                Err(e) => {
+                    return ResponseInputItem::FunctionCallOutput {
+                        call_id,
+                        output: FunctionCallOutputPayload {
+                            content: format!("failed to parse function arguments: {e}"),
+                            success: Some(false),
+                        },
+                    };
+                }
+            };
+            let result = SESSION_MANAGER
+                .handle_exec_command_request(exec_params)
+                .await;
+            let function_call_output: FunctionCallOutputPayload = result.into();
+            ResponseInputItem::FunctionCallOutput {
+                call_id,
+                output: function_call_output,
+            }
+        }
+        WRITE_STDIN_TOOL_NAME => {
+            let write_stdin_params = match serde_json::from_str::<WriteStdinParams>(&arguments) {
+                Ok(params) => params,
+                Err(e) => {
+                    return ResponseInputItem::FunctionCallOutput {
+                        call_id,
+                        output: FunctionCallOutputPayload {
+                            content: format!("failed to parse function arguments: {e}"),
+                            success: Some(false),
+                        },
+                    };
+                }
+            };
+            let result = SESSION_MANAGER
+                .handle_write_stdin_request(write_stdin_params)
+                .await;
+            let function_call_output: FunctionCallOutputPayload = result.into();
+            ResponseInputItem::FunctionCallOutput {
+                call_id,
+                output: function_call_output,
+            }
+        }
         _ => {
             match sess.mcp_connection_manager.parse_tool_name(&name) {
                 Some((server, tool_name)) => {
