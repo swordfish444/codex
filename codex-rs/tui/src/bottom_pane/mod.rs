@@ -197,9 +197,12 @@ impl BottomPane {
         self.request_redraw();
     }
 
-    pub(crate) fn update_transcription_in_place(&mut self, id: &str, text: &str) {
-        self.composer.update_transcription_in_place(id, text);
-        self.request_redraw();
+    pub(crate) fn update_transcription_in_place(&mut self, id: &str, text: &str) -> bool {
+        let updated = self.composer.update_transcription_in_place(id, text);
+        if updated {
+            self.request_redraw();
+        }
+        updated
     }
 
     pub(crate) fn remove_transcription_placeholder(&mut self, id: &str) {

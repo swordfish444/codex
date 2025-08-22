@@ -34,6 +34,7 @@ use crate::tui::FrameRequester;
 use codex_file_search::FileMatch;
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
@@ -88,6 +89,8 @@ pub(crate) struct ChatComposer {
     space_hold_started_at: Option<Instant>,
     space_hold_element_id: Option<String>,
     space_hold_trigger: Option<Arc<AtomicBool>>,
+    // Spinner control flags keyed by placeholder id; set to true to stop.
+    spinner_stop_flags: HashMap<String, Arc<AtomicBool>>,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -127,6 +130,7 @@ impl ChatComposer {
             space_hold_started_at: None,
             space_hold_element_id: None,
             space_hold_trigger: None,
+            spinner_stop_flags: HashMap::new(),
         }
     }
 
@@ -876,17 +880,22 @@ impl ChatComposer {
         });
     }
 
-    fn spawn_transcribing_spinner(&self, id: String) {
+    fn spawn_transcribing_spinner(&mut self, id: String) {
         let tx = self.app_event_tx.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        self.spinner_stop_flags.insert(id.clone(), stop.clone());
         tokio::spawn(async move {
             use std::time::Duration;
             let frames: Vec<&'static str> = vec![
                 "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
             ];
             let mut i: usize = 0;
-            // Safety stop after ~60s to avoid a runaway task if something goes wrong.
+            // Safety stop after ~60s to avoid a runaway task if events are lost.
             let max_ticks = 600usize; // 600 * 100ms = 60s
             for _ in 0..max_ticks {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
                 let text = frames[i % frames.len()].to_string();
                 tx.send(crate::app_event::AppEvent::RecordingMeter {
                     id: id.clone(),
@@ -898,23 +907,41 @@ impl ChatComposer {
         });
     }
 
-    pub fn replace_transcription(&mut self, id: &str, text: &str) {
-        // Only replace if the placeholder still exists; otherwise do nothing.
-        let _ = self.textarea.replace_element_by_id(id, text);
-        self.sync_command_popup();
-        self.sync_file_search_popup();
+    fn stop_spinner_if_any(&mut self, id: &str) {
+        if let Some(flag) = self.spinner_stop_flags.remove(id) {
+            flag.store(true, Ordering::Relaxed);
+        }
     }
 
-    pub fn update_transcription_in_place(&mut self, id: &str, text: &str) {
-        // Update element text but keep its id so future updates can find it.
-        let _ = self.textarea.update_named_element_by_id(id, text);
-        self.sync_command_popup();
-        self.sync_file_search_popup();
+    pub fn replace_transcription(&mut self, id: &str, text: &str) {
+        // Only replace if the placeholder still exists; otherwise do nothing.
+        let replaced = self.textarea.replace_element_by_id(id, text);
+        if replaced {
+            self.stop_spinner_if_any(id);
+            self.sync_command_popup();
+            self.sync_file_search_popup();
+        }
     }
+
+    pub fn update_transcription_in_place(&mut self, id: &str, text: &str) -> bool {
+        // Update element text but keep its id so future updates can find it.
+        let updated = self.textarea.update_named_element_by_id(id, text);
+        if updated {
+            self.sync_command_popup();
+            self.sync_file_search_popup();
+        } else {
+            // If placeholder disappeared, proactively stop spinner task.
+            self.stop_spinner_if_any(id);
+        }
+        updated
+    }
+
+    
 
     pub fn remove_transcription_placeholder(&mut self, id: &str) {
         // Replace with empty string to delete the placeholder if present.
         if self.textarea.replace_element_by_id(id, "") {
+            self.stop_spinner_if_any(id);
             self.sync_command_popup();
             self.sync_file_search_popup();
         }
@@ -1109,6 +1136,21 @@ impl WidgetRef for &ChatComposer {
                 .style(Style::default().dim())
                 .render_ref(textarea_rect.inner(Margin::new(1, 0)), buf);
         }
+    }
+}
+
+impl Drop for ChatComposer {
+    fn drop(&mut self) {
+        // Stop any running spinner tasks.
+        for (_id, flag) in self.spinner_stop_flags.drain() {
+            flag.store(true, Ordering::Relaxed);
+        }
+        // If recording is active, stop capture and clean up placeholder.
+        if let Some(vc) = self.voice.take()
+            && let Ok(_audio) = vc.stop()
+                && let Some(id) = self.recording_placeholder_id.take() {
+                    let _ = self.textarea.replace_element_by_id(&id, "");
+                }
     }
 }
 
