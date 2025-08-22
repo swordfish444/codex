@@ -1,5 +1,26 @@
 use ratatui::text::Line;
 
+// Public helpers (most important first)
+
+/// Convenience: compute the highlight range for the Nth last user message.
+pub(crate) fn highlight_range_for_nth_last_user(
+    lines: &[Line<'_>],
+    n: usize,
+) -> Option<(usize, usize)> {
+    let header = find_nth_last_user_header_index(lines, n)?;
+    Some(highlight_range_from_header(lines, header))
+}
+
+/// Compute the wrapped display-line offset before `header_idx`, for a given width.
+pub(crate) fn wrapped_offset_before(
+    lines: &[Line<'_>],
+    header_idx: usize,
+    width: u16,
+) -> usize {
+    let before = &lines[0..header_idx];
+    crate::insert_history::word_wrap_lines(before, width).len()
+}
+
 /// Find the header index for the Nth last user message in the transcript.
 /// Returns `None` if `n == 0` or there are fewer than `n` user messages.
 pub(crate) fn find_nth_last_user_header_index(lines: &[Line<'_>], n: usize) -> Option<usize> {
@@ -32,11 +53,10 @@ pub(crate) fn nth_last_user_text(lines: &[Line<'_>], n: usize) -> Option<String>
     extract_message_text_after_header(lines, header_idx)
 }
 
+// Private helpers
+
 /// Extract message text starting after `header_idx` until the first blank line.
-pub(crate) fn extract_message_text_after_header(
-    lines: &[Line<'_>],
-    header_idx: usize,
-) -> Option<String> {
+fn extract_message_text_after_header(lines: &[Line<'_>], header_idx: usize) -> Option<String> {
     let start = header_idx + 1;
     let mut out: Vec<String> = Vec::new();
     for line in lines.iter().skip(start) {
@@ -58,20 +78,10 @@ pub(crate) fn extract_message_text_after_header(
     if out.is_empty() { None } else { Some(out.join("\n")) }
 }
 
-/// Compute the wrapped display-line offset before `header_idx`, for a given width.
-pub(crate) fn wrapped_offset_before(
-    lines: &[Line<'_>],
-    header_idx: usize,
-    width: u16,
-) -> usize {
-    let before = &lines[0..header_idx];
-    crate::insert_history::word_wrap_lines(before, width).len()
-}
-
 /// Given a header index, return the inclusive range for the message block
 /// [header_idx, end) where end is the first blank line after the header or the
 /// end of the transcript.
-pub(crate) fn highlight_range_from_header(lines: &[Line<'_>], header_idx: usize) -> (usize, usize) {
+fn highlight_range_from_header(lines: &[Line<'_>], header_idx: usize) -> (usize, usize) {
     let mut end = header_idx + 1;
     while end < lines.len() {
         let is_blank = lines[end]
@@ -85,13 +95,3 @@ pub(crate) fn highlight_range_from_header(lines: &[Line<'_>], header_idx: usize)
     }
     (header_idx, end)
 }
-
-/// Convenience: compute the highlight range for the Nth last user message.
-pub(crate) fn highlight_range_for_nth_last_user(
-    lines: &[Line<'_>],
-    n: usize,
-) -> Option<(usize, usize)> {
-    let header = find_nth_last_user_header_index(lines, n)?;
-    Some(highlight_range_from_header(lines, header))
-}
-

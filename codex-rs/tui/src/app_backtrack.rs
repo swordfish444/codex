@@ -12,6 +12,8 @@ use crossterm::terminal::EnterAlternateScreen;
 use crossterm::terminal::LeaveAlternateScreen;
 
 impl App {
+    // Public entrypoints first (most important)
+
     /// Route TUI events to the overlay when present, handling backtrack preview
     /// interactions (Esc to step target, Enter to confirm) and overlay lifecycle.
     pub(crate) async fn handle_backtrack_overlay_event(
@@ -141,41 +143,7 @@ impl App {
         }
     }
 
-    /// Re-render the full transcript into the terminal scrollback in one call.
-    /// Useful when switching sessions to ensure prior history remains visible.
-    pub(crate) fn render_transcript_once(&mut self, tui: &mut tui::Tui) {
-        if !self.transcript_lines.is_empty() {
-            tui.insert_history_lines(self.transcript_lines.clone());
-        }
-    }
-
-    pub(crate) fn open_transcript_overlay(&mut self, tui: &mut tui::Tui) {
-        // Enter alternate screen and set viewport to full size.
-        let _ = execute!(tui.terminal.backend_mut(), EnterAlternateScreen);
-        if let Ok(size) = tui.terminal.size() {
-            self.transcript_saved_viewport = Some(tui.terminal.viewport_area);
-            tui.terminal
-                .set_viewport_area(ratatui::layout::Rect::new(0, 0, size.width, size.height));
-            let _ = tui.terminal.clear();
-        }
-        self.transcript_overlay = Some(TranscriptApp::new(self.transcript_lines.clone()));
-        tui.frame_requester().schedule_frame();
-    }
-
-    pub(crate) fn close_transcript_overlay(&mut self, tui: &mut tui::Tui) {
-        // Exit alternate screen and restore viewport.
-        let _ = execute!(tui.terminal.backend_mut(), LeaveAlternateScreen);
-        if let Some(saved) = self.transcript_saved_viewport.take() {
-            tui.terminal.set_viewport_area(saved);
-        }
-        if !self.deferred_history_lines.is_empty() {
-            let lines = std::mem::take(&mut self.deferred_history_lines);
-            tui.insert_history_lines(lines);
-        }
-        self.transcript_overlay = None;
-        self.transcript_overlay_is_backtrack = false;
-    }
-
+    /// Fork the conversation and render the trimmed history; prefill composer.
     pub(crate) async fn fork_and_render_backtrack(
         &mut self,
         tui: &mut tui::Tui,
@@ -221,5 +189,42 @@ impl App {
         }
         tui.frame_requester().schedule_frame();
         Ok(())
+    }
+
+    // Internal helpers
+
+    pub(crate) fn open_transcript_overlay(&mut self, tui: &mut tui::Tui) {
+        // Enter alternate screen and set viewport to full size.
+        let _ = execute!(tui.terminal.backend_mut(), EnterAlternateScreen);
+        if let Ok(size) = tui.terminal.size() {
+            self.transcript_saved_viewport = Some(tui.terminal.viewport_area);
+            tui.terminal
+                .set_viewport_area(ratatui::layout::Rect::new(0, 0, size.width, size.height));
+            let _ = tui.terminal.clear();
+        }
+        self.transcript_overlay = Some(TranscriptApp::new(self.transcript_lines.clone()));
+        tui.frame_requester().schedule_frame();
+    }
+
+    pub(crate) fn close_transcript_overlay(&mut self, tui: &mut tui::Tui) {
+        // Exit alternate screen and restore viewport.
+        let _ = execute!(tui.terminal.backend_mut(), LeaveAlternateScreen);
+        if let Some(saved) = self.transcript_saved_viewport.take() {
+            tui.terminal.set_viewport_area(saved);
+        }
+        if !self.deferred_history_lines.is_empty() {
+            let lines = std::mem::take(&mut self.deferred_history_lines);
+            tui.insert_history_lines(lines);
+        }
+        self.transcript_overlay = None;
+        self.transcript_overlay_is_backtrack = false;
+    }
+
+    /// Re-render the full transcript into the terminal scrollback in one call.
+    /// Useful when switching sessions to ensure prior history remains visible.
+    pub(crate) fn render_transcript_once(&mut self, tui: &mut tui::Tui) {
+        if !self.transcript_lines.is_empty() {
+            tui.insert_history_lines(self.transcript_lines.clone());
+        }
     }
 }
