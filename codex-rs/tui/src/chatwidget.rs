@@ -859,8 +859,6 @@ impl ChatWidget {
         }
     }
 
-    // Removed unused render_conversation_history (handled by existing streaming path).
-
     fn request_redraw(&mut self) {
         self.frame_requester.schedule_frame();
     }

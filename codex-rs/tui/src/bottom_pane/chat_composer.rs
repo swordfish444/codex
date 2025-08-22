@@ -1323,6 +1323,4 @@ mod tests {
             ]
         );
     }
-
-    // Esc backtracking is handled at the app layer (conversation fork); no composer test here.
 }

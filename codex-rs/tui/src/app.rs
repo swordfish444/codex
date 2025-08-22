@@ -244,21 +244,16 @@ impl App {
                 self.chat_widget.apply_file_search_result(query, matches);
             }
             AppEvent::UpdateReasoningEffort(effort) => {
-                // Keep App-level config in sync with TUI so forks/new sessions inherit overrides.
                 self.chat_widget.set_reasoning_effort(effort);
-                self.config.model_reasoning_effort = effort;
             }
             AppEvent::UpdateModel(model) => {
-                self.chat_widget.set_model(model.clone());
-                self.config.model = model;
+                self.chat_widget.set_model(model);
             }
             AppEvent::UpdateAskForApprovalPolicy(policy) => {
                 self.chat_widget.set_approval_policy(policy);
-                self.config.approval_policy = policy;
             }
             AppEvent::UpdateSandboxPolicy(policy) => {
-                self.chat_widget.set_sandbox_policy(policy.clone());
-                self.config.sandbox_policy = policy;
+                self.chat_widget.set_sandbox_policy(policy);
             }
         }
         Ok(true)

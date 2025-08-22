@@ -42,8 +42,6 @@ impl ChatComposerHistory {
         }
     }
 
-    // Removed unused reset_browsing; browsing state is reset by call sites as needed.
-
     /// Update metadata when a new session is configured.
     pub fn set_metadata(&mut self, log_id: u64, entry_count: usize) {
         self.history_log_id = Some(log_id);
