@@ -63,7 +63,7 @@ impl ToolsConfig {
         } else {
             ConfigShellToolType::DefaultShell
         };
-        if matches!(approval_policy, AskForApproval::OnRequest) {
+        if matches!(approval_policy, AskForApproval::OnRequest) && !use_streamable_shell_tool {
             shell_type = ConfigShellToolType::ShellWithRequest {
                 sandbox_policy: sandbox_policy.clone(),
             }

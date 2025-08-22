@@ -101,6 +101,7 @@ impl ModelClient {
                     &self.config.model_family,
                     &self.client,
                     &self.provider,
+                    self.config.use_experimental_streamable_shell_tool,
                 )
                 .await?;
 
@@ -146,7 +147,10 @@ impl ModelClient {
 
         let store = prompt.store && auth_mode != Some(AuthMode::ChatGPT);
 
-        let full_instructions = prompt.get_full_instructions(&self.config.model_family);
+        let full_instructions = prompt.get_full_instructions(
+            &self.config.model_family,
+            self.config.use_experimental_streamable_shell_tool,
+        );
         let tools_json = create_tools_json_for_responses_api(&prompt.tools)?;
         let reasoning = create_reasoning_param_for_request(
             &self.config.model_family,

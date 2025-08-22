@@ -34,11 +34,12 @@ pub(crate) async fn stream_chat_completions(
     model_family: &ModelFamily,
     client: &reqwest::Client,
     provider: &ModelProviderInfo,
+    use_streamable_shell_tool: bool,
 ) -> Result<ResponseStream> {
     // Build messages array
     let mut messages = Vec::<serde_json::Value>::new();
 
-    let full_instructions = prompt.get_full_instructions(model_family);
+    let full_instructions = prompt.get_full_instructions(model_family, use_streamable_shell_tool);
     messages.push(json!({"role": "system", "content": full_instructions}));
 
     let input = prompt.get_formatted_input();
