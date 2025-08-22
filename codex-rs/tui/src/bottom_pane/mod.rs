@@ -112,18 +112,6 @@ impl BottomPane {
 
     /// Forward a key event to the active view or the composer.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> InputResult {
-        // Intercept PageDown to start/stop recording even if a view is active.
-        if let KeyEvent {
-            code: crossterm::event::KeyCode::PageDown,
-            ..
-        } = key_event
-        {
-            let (_ir, needs_redraw) = self.composer.handle_key_event(key_event);
-            if needs_redraw {
-                self.request_redraw();
-            }
-            return InputResult::None;
-        }
         // While recording, route all keys to the composer so it can stop on release or next key.
         if self.composer.is_recording() {
             let (_ir, needs_redraw) = self.composer.handle_key_event(key_event);
@@ -210,6 +198,12 @@ impl BottomPane {
     pub(crate) fn remove_transcription_placeholder(&mut self, id: &str) {
         self.composer.remove_transcription_placeholder(id);
         self.request_redraw();
+    }
+
+    pub(crate) fn on_space_hold_timeout(&mut self, id: &str) {
+        if self.composer.on_space_hold_timeout(id) {
+            self.request_redraw();
+        }
     }
 
     /// Update the animated header shown to the left of the brackets in the

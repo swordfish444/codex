@@ -32,6 +32,7 @@ use crate::bottom_pane::textarea::TextArea;
 use crate::bottom_pane::textarea::TextAreaState;
 use codex_file_search::FileMatch;
 use std::cell::RefCell;
+use std::time::Instant;
 use uuid::Uuid;
 
 /// If the pasted content exceeds this number of characters, replace it with a
@@ -76,6 +77,10 @@ pub(crate) struct ChatComposer {
     voice: Option<crate::voice::VoiceCapture>,
     recording_placeholder_id: Option<String>,
     placeholder_text: String,
+    // Spacebar hold-to-talk state
+    space_hold_started_at: Option<Instant>,
+    space_hold_id: Option<String>,
+    space_insert_pos: Option<usize>,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -110,6 +115,9 @@ impl ChatComposer {
             voice: None,
             recording_placeholder_id: None,
             placeholder_text,
+            space_hold_started_at: None,
+            space_hold_id: None,
+            space_insert_pos: None,
         }
     }
 
@@ -236,13 +244,13 @@ impl ChatComposer {
 
     /// Handle a key event coming from the main UI.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
-        // If recording, attempt to stop on PageDown release, or on the next key press
+        // If recording, attempt to stop on Space release, or on the next key press
         // (some terminals do not emit Release events).
         if self.voice.is_some() {
             let should_stop = match key_event.kind {
-                KeyEventKind::Release => matches!(key_event.code, KeyCode::PageDown),
+                KeyEventKind::Release => matches!(key_event.code, KeyCode::Char(' ')),
                 KeyEventKind::Press | KeyEventKind::Repeat => {
-                    !matches!(key_event.code, KeyCode::PageDown)
+                    !matches!(key_event.code, KeyCode::Char(' '))
                 }
             };
             if should_stop {
@@ -270,33 +278,13 @@ impl ChatComposer {
             // Swallow non-stopping keys while recording
             return (InputResult::None, false);
         }
-        // While recording, swallow all input except Space release to finish.
-        if self.voice.is_some() {
-            if let KeyEvent {
-                code: KeyCode::PageDown,
-                kind: KeyEventKind::Release,
-                ..
-            } = key_event
-            {
-                if let Some(vc) = self.voice.take() {
-                    match vc.stop() {
-                        Ok(audio) => {
-                            // Insert a placeholder element tied to a unique id
-                            let id = Uuid::new_v4().to_string();
-                            let placeholder = "[...transcribing...]".to_string();
-                            self.textarea.insert_named_element(&placeholder, id.clone());
-                            let tx = self.app_event_tx.clone();
-                            crate::voice::transcribe_async(id, audio, tx);
-                        }
-                        Err(e) => {
-                            tracing::error!("failed to stop voice capture: {e}");
-                        }
-                    }
-                }
-                return (InputResult::None, true);
-            }
-            // Swallow everything else while recording
-            return (InputResult::None, false);
+
+        // If a space hold is pending and another non-space key is pressed, cancel the hold.
+        if self.space_hold_started_at.is_some() && !matches!(key_event.code, KeyCode::Char(' ')) {
+            self.space_hold_started_at = None;
+            self.space_hold_id = None;
+            self.space_insert_pos = None;
+            // fall through to normal handling of this other key
         }
         let result = match &mut self.active_popup {
             ActivePopup::Command(_) => self.handle_key_event_with_slash_popup(key_event),
@@ -624,62 +612,116 @@ impl ChatComposer {
                     (InputResult::Submitted(text), true)
                 }
             }
-            // PageDown handling for push-to-talk voice input
+            // Spacebar hold-to-talk: begin pending hold on initial press
             KeyEvent {
-                code: KeyCode::PageDown,
+                code: KeyCode::Char(' '),
                 kind: KeyEventKind::Press,
                 ..
             } => {
-                if self.voice.is_none() {
-                    match crate::voice::VoiceCapture::start() {
-                        Ok(vc) => {
-                            self.voice = Some(vc);
-                            // Insert a visible placeholder immediately showing "recording"
-                            let id = Uuid::new_v4().to_string();
-                            self.textarea.insert_named_element("recording", id.clone());
-                            self.recording_placeholder_id = Some(id);
-                            // Do not insert a space
-                            return (InputResult::None, true);
-                        }
-                        Err(e) => {
-                            tracing::error!("failed to start voice capture: {e}");
-                            // Fall through to normal input handling if capture fails
-                        }
-                    }
+                // If a hold is already pending, swallow further press events to
+                // avoid inserting multiple spaces and resetting the timer on key repeat.
+                if self.space_hold_started_at.is_some() {
+                    return (InputResult::None, false);
                 }
+
+                // Insert space immediately so normal typing works.
+                let insert_pos = self.textarea.cursor();
+                self.textarea.insert_str(" ");
+                self.sync_command_popup();
+                self.sync_file_search_popup();
+
+                // Record pending hold metadata.
+                let id = Uuid::new_v4().to_string();
+                self.space_hold_started_at = Some(Instant::now());
+                self.space_hold_id = Some(id.clone());
+                self.space_insert_pos = Some(insert_pos);
+
+                // Spawn a delayed task to notify after threshold without relying on repeats.
+                let tx = self.app_event_tx.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    tx.send(AppEvent::SpaceHoldTimeout { id });
+                });
+
+                (InputResult::None, true)
+            }
+            // If we see a repeat before release, handling occurs in the top-level pending block.
+            KeyEvent {
+                code: KeyCode::Char(' '),
+                kind: KeyEventKind::Repeat,
+                ..
+            } => {
+                // Swallow repeats while a hold is pending to avoid extra spaces.
+                if self.space_hold_started_at.is_some() {
+                    return (InputResult::None, false);
+                }
+                // Fallback: if no pending hold, treat as normal input
                 self.handle_input_basic(key_event)
             }
+            // Space release without pending (fallback): treat as normal input
             KeyEvent {
-                code: KeyCode::PageDown,
+                code: KeyCode::Char(' '),
                 kind: KeyEventKind::Release,
                 ..
             } => {
-                if let Some(vc) = self.voice.take() {
-                    match vc.stop() {
-                        Ok(audio) => {
-                            // Update the existing placeholder to show "transcribing" and preserve id
-                            let id = self
-                                .recording_placeholder_id
-                                .take()
-                                .unwrap_or_else(|| Uuid::new_v4().to_string());
-                            let _ = self
-                                .textarea
-                                .update_named_element_by_id(&id, "transcribing");
-                            let tx = self.app_event_tx.clone();
-                            crate::voice::transcribe_async(id, audio, tx);
-                        }
-                        Err(e) => {
-                            tracing::error!("failed to stop voice capture: {e}");
-                        }
-                    }
-                    // Swallow the key event; don't insert a space
-                    (InputResult::None, true)
-                } else {
-                    // Not recording; treat as normal release
-                    (InputResult::None, false)
-                }
+                // Clear any pending state; the space was already inserted on press.
+                self.space_hold_started_at = None;
+                self.space_hold_id = None;
+                self.space_insert_pos = None;
+                (InputResult::None, true)
             }
             input => self.handle_input_basic(input),
+        }
+    }
+
+    /// Called when the 500ms space hold timeout elapses. If still pending and matching id,
+    /// remove the inserted space and begin voice capture.
+    pub(crate) fn on_space_hold_timeout(&mut self, id: &str) -> bool {
+        if self.voice.is_some() {
+            return false;
+        }
+        if self.space_hold_started_at.is_some() && self.space_hold_id.as_deref() == Some(id) {
+            // Remove the previously inserted space if possible.
+            if let Some(pos) = self.space_insert_pos.take() {
+                let text = self.textarea.text().to_string();
+                if pos < text.len()
+                    && let Some(ch) = text[pos..].chars().next()
+                    && ch == ' '
+                {
+                    let next = pos + ch.len_utf8();
+                    let mut new_text =
+                        String::with_capacity(text.len().saturating_sub(ch.len_utf8()));
+                    new_text.push_str(&text[..pos]);
+                    new_text.push_str(&text[next..]);
+                    let mut cursor = self.textarea.cursor();
+                    if cursor > pos {
+                        cursor = cursor.saturating_sub(ch.len_utf8());
+                    }
+                    self.textarea.set_text(&new_text);
+                    self.textarea.set_cursor(cursor);
+                }
+            }
+            // Clear pending state before starting capture
+            self.space_hold_started_at = None;
+            self.space_hold_id = None;
+
+            // Start voice capture
+            match crate::voice::VoiceCapture::start() {
+                Ok(vc) => {
+                    self.voice = Some(vc);
+                    // Insert a visible placeholder immediately showing "recording"
+                    let id = Uuid::new_v4().to_string();
+                    self.textarea.insert_named_element("recording", id.clone());
+                    self.recording_placeholder_id = Some(id);
+                    true
+                }
+                Err(e) => {
+                    tracing::error!("failed to start voice capture: {e}");
+                    false
+                }
+            }
+        } else {
+            false
         }
     }
 

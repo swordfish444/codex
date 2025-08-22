@@ -256,6 +256,10 @@ impl App {
             AppEvent::UpdateSandboxPolicy(policy) => {
                 self.chat_widget.set_sandbox_policy(policy);
             }
+            AppEvent::SpaceHoldTimeout { id } => {
+                self.chat_widget.bottom_pane_on_space_hold_timeout(&id);
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::TranscriptionComplete { id, text } => {
                 self.chat_widget.replace_transcription(&id, &text);
             }
