@@ -1,8 +1,8 @@
 use crate::app::App;
 use crate::backtrack_helpers;
+use crate::transcript_app::TranscriptApp;
 use crate::tui;
 use crate::tui::TuiEvent;
-use crate::transcript_app::TranscriptApp;
 use color_eyre::eyre::Result;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -25,31 +25,43 @@ impl App {
         let mut handled = false;
         if self.transcript_overlay_is_backtrack {
             match event {
-                TuiEvent::Key(KeyEvent { code: KeyCode::Esc, kind: KeyEventKind::Press | KeyEventKind::Repeat, .. }) => {
+                TuiEvent::Key(KeyEvent {
+                    code: KeyCode::Esc,
+                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                    ..
+                }) => {
                     if self.esc_backtrack_base.is_some() {
                         self.esc_backtrack_count = self.esc_backtrack_count.saturating_add(1);
                         let header_idx = backtrack_helpers::find_nth_last_user_header_index(
                             &self.transcript_lines,
                             self.esc_backtrack_count,
                         );
-                        let offset = header_idx.map(|idx| backtrack_helpers::wrapped_offset_before(
-                            &self.transcript_lines,
-                            idx,
-                            tui.terminal.viewport_area.width,
-                        ));
+                        let offset = header_idx.map(|idx| {
+                            backtrack_helpers::wrapped_offset_before(
+                                &self.transcript_lines,
+                                idx,
+                                tui.terminal.viewport_area.width,
+                            )
+                        });
                         let hl = backtrack_helpers::highlight_range_for_nth_last_user(
                             &self.transcript_lines,
                             self.esc_backtrack_count,
                         );
                         if let Some(overlay) = &mut self.transcript_overlay {
-                            if let Some(off) = offset { overlay.scroll_offset = off; }
+                            if let Some(off) = offset {
+                                overlay.scroll_offset = off;
+                            }
                             overlay.set_highlight_range(hl);
                         }
                         tui.frame_requester().schedule_frame();
                         handled = true;
                     }
                 }
-                TuiEvent::Key(KeyEvent { code: KeyCode::Enter, kind: KeyEventKind::Press, .. }) => {
+                TuiEvent::Key(KeyEvent {
+                    code: KeyCode::Enter,
+                    kind: KeyEventKind::Press,
+                    ..
+                }) => {
                     // Confirm the backtrack: close overlay, fork, and prefill.
                     let base = self.esc_backtrack_base;
                     let count = self.esc_backtrack_count;
@@ -70,9 +82,7 @@ impl App {
             }
         }
         // Forward to overlay if not handled
-        if !handled
-            && let Some(overlay) = &mut self.transcript_overlay
-        {
+        if !handled && let Some(overlay) = &mut self.transcript_overlay {
             overlay.handle_event(tui, event)?;
             if overlay.is_done {
                 self.close_transcript_overlay(tui);
@@ -105,17 +115,21 @@ impl App {
                     &self.transcript_lines,
                     self.esc_backtrack_count,
                 );
-                let offset = header_idx.map(|idx| backtrack_helpers::wrapped_offset_before(
-                    &self.transcript_lines,
-                    idx,
-                    tui.terminal.viewport_area.width,
-                ));
+                let offset = header_idx.map(|idx| {
+                    backtrack_helpers::wrapped_offset_before(
+                        &self.transcript_lines,
+                        idx,
+                        tui.terminal.viewport_area.width,
+                    )
+                });
                 let hl = backtrack_helpers::highlight_range_for_nth_last_user(
                     &self.transcript_lines,
                     self.esc_backtrack_count,
                 );
                 if let Some(overlay) = &mut self.transcript_overlay {
-                    if let Some(off) = offset { overlay.scroll_offset = off; }
+                    if let Some(off) = offset {
+                        overlay.scroll_offset = off;
+                    }
                     overlay.set_highlight_range(hl);
                 }
             } else if self.transcript_overlay_is_backtrack {
@@ -125,17 +139,21 @@ impl App {
                     &self.transcript_lines,
                     self.esc_backtrack_count,
                 );
-                let offset = header_idx.map(|idx| backtrack_helpers::wrapped_offset_before(
-                    &self.transcript_lines,
-                    idx,
-                    tui.terminal.viewport_area.width,
-                ));
+                let offset = header_idx.map(|idx| {
+                    backtrack_helpers::wrapped_offset_before(
+                        &self.transcript_lines,
+                        idx,
+                        tui.terminal.viewport_area.width,
+                    )
+                });
                 let hl = backtrack_helpers::highlight_range_for_nth_last_user(
                     &self.transcript_lines,
                     self.esc_backtrack_count,
                 );
                 if let Some(overlay) = &mut self.transcript_overlay {
-                    if let Some(off) = offset { overlay.scroll_offset = off; }
+                    if let Some(off) = offset {
+                        overlay.scroll_offset = off;
+                    }
                     overlay.set_highlight_range(hl);
                 }
             }
@@ -151,7 +169,8 @@ impl App {
     ) -> color_eyre::eyre::Result<()> {
         // Compute the text to prefill by extracting the N-th last user message
         // from the UI transcript lines already rendered.
-        let prefill = backtrack_helpers::nth_last_user_text(&self.transcript_lines, drop_last_messages);
+        let prefill =
+            backtrack_helpers::nth_last_user_text(&self.transcript_lines, drop_last_messages);
 
         // Fork conversation with the requested drop.
         let fork = self
@@ -197,8 +216,12 @@ impl App {
         let _ = execute!(tui.terminal.backend_mut(), EnterAlternateScreen);
         if let Ok(size) = tui.terminal.size() {
             self.transcript_saved_viewport = Some(tui.terminal.viewport_area);
-            tui.terminal
-                .set_viewport_area(ratatui::layout::Rect::new(0, 0, size.width, size.height));
+            tui.terminal.set_viewport_area(ratatui::layout::Rect::new(
+                0,
+                0,
+                size.width,
+                size.height,
+            ));
             let _ = tui.terminal.clear();
         }
         self.transcript_overlay = Some(TranscriptApp::new(self.transcript_lines.clone()));

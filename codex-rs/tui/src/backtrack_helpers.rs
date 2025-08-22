@@ -12,11 +12,7 @@ pub(crate) fn highlight_range_for_nth_last_user(
 }
 
 /// Compute the wrapped display-line offset before `header_idx`, for a given width.
-pub(crate) fn wrapped_offset_before(
-    lines: &[Line<'_>],
-    header_idx: usize,
-    width: u16,
-) -> usize {
+pub(crate) fn wrapped_offset_before(lines: &[Line<'_>], header_idx: usize, width: u16) -> usize {
     let before = &lines[0..header_idx];
     crate::insert_history::word_wrap_lines(before, width).len()
 }
@@ -75,7 +71,11 @@ fn extract_message_text_after_header(lines: &[Line<'_>], header_idx: usize) -> O
             .join("");
         out.push(text);
     }
-    if out.is_empty() { None } else { Some(out.join("\n")) }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out.join("\n"))
+    }
 }
 
 /// Given a header index, return the inclusive range for the message block
