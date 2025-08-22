@@ -292,14 +292,17 @@ impl ChatComposer {
                                 return (InputResult::None, true);
                             }
 
-                            // Otherwise, update the placeholder to show "transcribing" and proceed.
+                            // Otherwise, update the placeholder to show a spinner and proceed.
                             let id = self
                                 .recording_placeholder_id
                                 .take()
                                 .unwrap_or_else(|| Uuid::new_v4().to_string());
+                            // Initialize with first spinner frame immediately.
                             let _ = self
                                 .textarea
-                                .update_named_element_by_id(&id, "transcribing");
+                                .update_named_element_by_id(&id, "⠋");
+                            // Spawn animated braille spinner until transcription finishes (or times out).
+                            self.spawn_transcribing_spinner(id.clone());
                             let tx = self.app_event_tx.clone();
                             crate::voice::transcribe_async(id, audio, tx);
                         }
@@ -893,6 +896,28 @@ impl ChatComposer {
                     text,
                 });
 
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+    }
+
+    fn spawn_transcribing_spinner(&self, id: String) {
+        let tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            use std::time::Duration;
+            let frames: Vec<&'static str> = vec![
+                "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
+            ];
+            let mut i: usize = 0;
+            // Safety stop after ~60s to avoid a runaway task if something goes wrong.
+            let max_ticks = 600usize; // 600 * 100ms = 60s
+            for _ in 0..max_ticks {
+                let text = frames[i % frames.len()].to_string();
+                tx.send(crate::app_event::AppEvent::RecordingMeter {
+                    id: id.clone(),
+                    text,
+                });
+                i = i.wrapping_add(1);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
