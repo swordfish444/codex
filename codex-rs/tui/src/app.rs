@@ -286,18 +286,34 @@ impl App {
             } if self.chat_widget.composer_is_empty() => {
                 self.app_event_tx.send(AppEvent::ExitRequest);
             }
-            KeyEvent { code: KeyCode::Char('t'), modifiers: crossterm::event::KeyModifiers::CONTROL, kind: KeyEventKind::Press, .. } => {
+            KeyEvent {
+                code: KeyCode::Char('t'),
+                modifiers: crossterm::event::KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                ..
+            } => {
                 self.open_transcript_overlay(tui);
             }
-            KeyEvent { code: KeyCode::Esc, kind: KeyEventKind::Press | KeyEventKind::Repeat, .. } => {
+            KeyEvent {
+                code: KeyCode::Esc,
+                kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                ..
+            } => {
                 self.handle_backtrack_esc_key(tui);
             }
             // Enter confirms backtrack when primed + count > 0. Otherwise pass to widget.
-            KeyEvent { code: KeyCode::Enter, kind: KeyEventKind::Press, .. }
-                if self.esc_backtrack_primed && self.esc_backtrack_count > 0 && self.chat_widget.composer_is_empty() =>
+            KeyEvent {
+                code: KeyCode::Enter,
+                kind: KeyEventKind::Press,
+                ..
+            } if self.esc_backtrack_primed
+                && self.esc_backtrack_count > 0
+                && self.chat_widget.composer_is_empty() =>
             {
                 if let Some(base_id) = self.esc_backtrack_base
-                    && let Err(e) = self.fork_and_render_backtrack(tui, base_id, self.esc_backtrack_count).await
+                    && let Err(e) = self
+                        .fork_and_render_backtrack(tui, base_id, self.esc_backtrack_count)
+                        .await
                 {
                     tracing::error!("Backtrack confirm failed: {e:#}");
                 }
