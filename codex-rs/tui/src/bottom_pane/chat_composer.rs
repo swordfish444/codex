@@ -257,19 +257,7 @@ impl ChatComposer {
 
     /// Handle a key event coming from the main UI.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
-        // Process any elapsed hold timer so state is up-to-date for this input.
-        self.process_space_hold_trigger();
-        // If a pending hold's timer elapsed, convert to recording now.
-        if let Some(flag) = self.space_hold_trigger.as_ref()
-            && flag.load(Ordering::Relaxed)
-            && self.space_hold_started_at.is_some()
-            && self.voice.is_none()
-        {
-            self.space_hold_trigger = None;
-            let _changed = self.on_space_hold_timeout();
-            // Ensure UI updates after starting capture
-            return (InputResult::None, true);
-        }
+        // Timer-based conversion is handled in the pre-draw tick.
         // If recording, attempt to stop on Space release, or on the next key press
         // (some terminals do not emit Release events).
         if self.voice.is_some() {
