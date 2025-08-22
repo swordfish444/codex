@@ -77,6 +77,7 @@ impl BottomPane {
                 params.app_event_tx.clone(),
                 enhanced_keys_supported,
                 params.placeholder_text,
+                params.frame_requester.clone(),
             ),
             active_view: None,
             app_event_tx: params.app_event_tx,
@@ -206,7 +207,11 @@ impl BottomPane {
         self.request_redraw();
     }
 
-    // Space hold timeout is now handled inside ChatComposer via an internal timer.
+    // Space hold timeout is handled inside ChatComposer via an internal timer.
+    pub(crate) fn pre_draw_tick(&mut self) {
+        // Allow composer to process any time-based transitions before drawing
+        self.composer.process_space_hold_trigger();
+    }
 
     /// Update the animated header shown to the left of the brackets in the
     /// status indicator (defaults to "Working"). This will update the active

@@ -30,6 +30,7 @@ use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::textarea::TextArea;
 use crate::bottom_pane::textarea::TextAreaState;
+use crate::tui::FrameRequester;
 use codex_file_search::FileMatch;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -79,14 +80,14 @@ pub(crate) struct ChatComposer {
     pending_pastes: Vec<(String, String)>,
     token_usage_info: Option<TokenUsageInfo>,
     has_focus: bool,
+    frame_requester: FrameRequester,
     voice: Option<crate::voice::VoiceCapture>,
     recording_placeholder_id: Option<String>,
     placeholder_text: String,
     // Spacebar hold-to-talk state
     space_hold_started_at: Option<Instant>,
-    space_hold_id: Option<String>,
     space_insert_pos: Option<usize>,
-    space_hold_trigger: Option<(String, Arc<AtomicBool>)>,
+    space_hold_trigger: Option<Arc<AtomicBool>>,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -102,6 +103,7 @@ impl ChatComposer {
         app_event_tx: AppEventSender,
         enhanced_keys_supported: bool,
         placeholder_text: String,
+        frame_requester: FrameRequester,
     ) -> Self {
         let use_shift_enter_hint = enhanced_keys_supported;
 
@@ -118,11 +120,11 @@ impl ChatComposer {
             pending_pastes: Vec::new(),
             token_usage_info: None,
             has_focus: has_input_focus,
+            frame_requester,
             voice: None,
             recording_placeholder_id: None,
             placeholder_text,
             space_hold_started_at: None,
-            space_hold_id: None,
             space_insert_pos: None,
             space_hold_trigger: None,
         }
@@ -255,21 +257,19 @@ impl ChatComposer {
 
     /// Handle a key event coming from the main UI.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        // Process any elapsed hold timer so state is up-to-date for this input.
+        self.process_space_hold_trigger();
         // If a pending hold's timer elapsed, convert to recording now.
-        if let Some((id, flag)) = self.space_hold_trigger.as_ref()
+        if let Some(flag) = self.space_hold_trigger.as_ref()
             && flag.load(Ordering::Relaxed)
-                && self.space_hold_started_at.is_some()
-                && self.space_hold_id.as_deref() == Some(id)
-                && self.voice.is_none()
-            {
-                // Take ownership to prevent double-triggering
-                let id = self.space_hold_id.clone().unwrap_or_default();
-                self.space_hold_trigger = None;
-                let _changed = self.on_space_hold_timeout(&id);
-                // Ensure UI updates after starting capture
-                // We rely on caller to schedule a frame via return value
-                return (InputResult::None, true);
-            }
+            && self.space_hold_started_at.is_some()
+            && self.voice.is_none()
+        {
+            self.space_hold_trigger = None;
+            let _changed = self.on_space_hold_timeout();
+            // Ensure UI updates after starting capture
+            return (InputResult::None, true);
+        }
         // If recording, attempt to stop on Space release, or on the next key press
         // (some terminals do not emit Release events).
         if self.voice.is_some() {
@@ -329,8 +329,8 @@ impl ChatComposer {
         // If a space hold is pending and another non-space key is pressed, cancel the hold.
         if self.space_hold_started_at.is_some() && !matches!(key_event.code, KeyCode::Char(' ')) {
             self.space_hold_started_at = None;
-            self.space_hold_id = None;
             self.space_insert_pos = None;
+            self.space_hold_trigger = None;
             // fall through to normal handling of this other key
         }
         let result = match &mut self.active_popup {
@@ -348,6 +348,17 @@ impl ChatComposer {
         }
 
         result
+    }
+
+    /// Process the space-hold timer if elapsed and start recording.
+    pub(crate) fn process_space_hold_trigger(&mut self) {
+        if let Some(flag) = self.space_hold_trigger.as_ref()
+            && flag.load(Ordering::Relaxed)
+            && self.space_hold_started_at.is_some()
+            && self.voice.is_none()
+        {
+            let _ = self.on_space_hold_timeout();
+        }
     }
 
     /// Handle key event when the slash-command popup is visible.
@@ -715,23 +726,21 @@ impl ChatComposer {
                 self.sync_file_search_popup();
 
                 // Record pending hold metadata.
-                let id = Uuid::new_v4().to_string();
                 self.space_hold_started_at = Some(Instant::now());
-                self.space_hold_id = Some(id.clone());
                 self.space_insert_pos = Some(insert_pos);
 
                 // Spawn a delayed task to flip an atomic flag; we check it on next key event.
                 let flag = Arc::new(AtomicBool::new(false));
                 let flag_clone = flag.clone();
-                let id_clone = id.clone();
+                let frame = self.frame_requester.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                     // Signal timer elapsed for this id
                     flag_clone.store(true, Ordering::Relaxed);
-                    // No direct mutation here; ChatComposer picks this up on next input event
-                    let _ = id_clone; // retain move for clarity
+                    // Request a frame so the draw loop can process the conversion without key repeats
+                    frame.schedule_frame();
                 });
-                self.space_hold_trigger = Some((id, flag));
+                self.space_hold_trigger = Some(flag);
 
                 (InputResult::None, true)
             }
@@ -756,8 +765,8 @@ impl ChatComposer {
             } => {
                 // Clear any pending state; the space was already inserted on press.
                 self.space_hold_started_at = None;
-                self.space_hold_id = None;
                 self.space_insert_pos = None;
+                self.space_hold_trigger = None;
                 (InputResult::None, true)
             }
             input => self.handle_input_basic(input),
@@ -766,11 +775,11 @@ impl ChatComposer {
 
     /// Called when the 500ms space hold timeout elapses. If still pending and matching id,
     /// remove the inserted space and begin voice capture.
-    pub(crate) fn on_space_hold_timeout(&mut self, id: &str) -> bool {
+    pub(crate) fn on_space_hold_timeout(&mut self) -> bool {
         if self.voice.is_some() {
             return false;
         }
-        if self.space_hold_started_at.is_some() && self.space_hold_id.as_deref() == Some(id) {
+        if self.space_hold_started_at.is_some() {
             // Remove the previously inserted space if possible.
             if let Some(pos) = self.space_insert_pos.take() {
                 let text = self.textarea.text().to_string();
@@ -793,7 +802,7 @@ impl ChatComposer {
             }
             // Clear pending state before starting capture
             self.space_hold_started_at = None;
-            self.space_hold_id = None;
+            self.space_hold_trigger = None;
 
             // Start voice capture
             match crate::voice::VoiceCapture::start() {
@@ -1282,8 +1291,13 @@ mod tests {
 
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            crate::tui::FrameRequester::test_dummy(),
+        );
 
         let needs_redraw = composer.handle_paste("hello".to_string());
         assert!(needs_redraw);
@@ -1306,8 +1320,13 @@ mod tests {
 
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            crate::tui::FrameRequester::test_dummy(),
+        );
 
         let large = "x".repeat(LARGE_PASTE_CHAR_THRESHOLD + 10);
         let needs_redraw = composer.handle_paste(large.clone());
@@ -1336,8 +1355,13 @@ mod tests {
         let large = "y".repeat(LARGE_PASTE_CHAR_THRESHOLD + 1);
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            crate::tui::FrameRequester::test_dummy(),
+        );
 
         composer.handle_paste(large);
         assert_eq!(composer.pending_pastes.len(), 1);
@@ -1378,6 +1402,7 @@ mod tests {
                 sender.clone(),
                 false,
                 "Ask Codex to do anything".to_string(),
+                crate::tui::FrameRequester::test_dummy(),
             );
 
             if let Some(text) = input {
@@ -1415,8 +1440,13 @@ mod tests {
 
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            crate::tui::FrameRequester::test_dummy(),
+        );
 
         // Type the slash command.
         for ch in [
@@ -1451,8 +1481,13 @@ mod tests {
 
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            crate::tui::FrameRequester::test_dummy(),
+        );
 
         for ch in ['/', 'c'] {
             let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
@@ -1473,8 +1508,13 @@ mod tests {
 
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
-        let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            crate::tui::FrameRequester::test_dummy(),
+        );
 
         for ch in ['/', 'm', 'e', 'n', 't', 'i', 'o', 'n'] {
             let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
@@ -1506,7 +1546,13 @@ mod tests {
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+            ChatComposer::new(
+                true,
+                sender,
+                false,
+                "Ask Codex to do anything".to_string(),
+                crate::tui::FrameRequester::test_dummy(),
+            );
 
         // Define test cases: (paste content, is_large)
         let test_cases = [
@@ -1580,7 +1626,13 @@ mod tests {
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+            ChatComposer::new(
+                true,
+                sender,
+                false,
+                "Ask Codex to do anything".to_string(),
+                crate::tui::FrameRequester::test_dummy(),
+            );
 
         // Define test cases: (content, is_large)
         let test_cases = [
@@ -1647,7 +1699,13 @@ mod tests {
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer =
-            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+            ChatComposer::new(
+                true,
+                sender,
+                false,
+                "Ask Codex to do anything".to_string(),
+                crate::tui::FrameRequester::test_dummy(),
+            );
 
         // Define test cases: (cursor_position_from_end, expected_pending_count)
         let test_cases = [
