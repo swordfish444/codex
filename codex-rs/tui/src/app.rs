@@ -299,14 +299,9 @@ impl App {
                 self.transcript_overlay = Some(TranscriptApp::new(self.transcript_lines.clone()));
                 tui.frame_requester().schedule_frame();
             }
-            KeyEvent {
-                kind: KeyEventKind::Press | KeyEventKind::Repeat,
-                ..
-            } => {
-                self.chat_widget.handle_key_event(key_event);
-            }
+            // Forward all other key events (including Release) to the chat widget.
             _ => {
-                // Ignore Release key events.
+                self.chat_widget.handle_key_event(key_event);
             }
         };
     }
