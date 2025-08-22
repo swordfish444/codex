@@ -86,7 +86,7 @@ pub(crate) struct ChatComposer {
     placeholder_text: String,
     // Spacebar hold-to-talk state
     space_hold_started_at: Option<Instant>,
-    space_insert_pos: Option<usize>,
+    space_hold_element_id: Option<String>,
     space_hold_trigger: Option<Arc<AtomicBool>>,
 }
 
@@ -125,7 +125,7 @@ impl ChatComposer {
             recording_placeholder_id: None,
             placeholder_text,
             space_hold_started_at: None,
-            space_insert_pos: None,
+            space_hold_element_id: None,
             space_hold_trigger: None,
         }
     }
@@ -317,10 +317,13 @@ impl ChatComposer {
             return (InputResult::None, false);
         }
 
-        // If a space hold is pending and another non-space key is pressed, cancel the hold.
+        // If a space hold is pending and another non-space key is pressed, cancel the hold
+        // and convert the element into a plain space.
         if self.space_hold_started_at.is_some() && !matches!(key_event.code, KeyCode::Char(' ')) {
             self.space_hold_started_at = None;
-            self.space_insert_pos = None;
+            if let Some(id) = self.space_hold_element_id.take() {
+                let _ = self.textarea.replace_element_by_id(&id, " ");
+            }
             self.space_hold_trigger = None;
             // fall through to normal handling of this other key
         }
@@ -710,15 +713,16 @@ impl ChatComposer {
                     return (InputResult::None, false);
                 }
 
-                // Insert space immediately so normal typing works.
-                let insert_pos = self.textarea.cursor();
-                self.textarea.insert_str(" ");
+                // Insert a named element that renders as a space so we can later
+                // remove it on timeout or convert it to a plain space on release.
+                let elem_id = Uuid::new_v4().to_string();
+                self.textarea.insert_named_element(" ", elem_id.clone());
                 self.sync_command_popup();
                 self.sync_file_search_popup();
 
                 // Record pending hold metadata.
                 self.space_hold_started_at = Some(Instant::now());
-                self.space_insert_pos = Some(insert_pos);
+                self.space_hold_element_id = Some(elem_id);
 
                 // Spawn a delayed task to flip an atomic flag; we check it on next key event.
                 let flag = Arc::new(AtomicBool::new(false));
@@ -754,9 +758,11 @@ impl ChatComposer {
                 kind: KeyEventKind::Release,
                 ..
             } => {
-                // Clear any pending state; the space was already inserted on press.
+                // If a hold is pending, convert the element to a plain space and clear state.
                 self.space_hold_started_at = None;
-                self.space_insert_pos = None;
+                if let Some(id) = self.space_hold_element_id.take() {
+                    let _ = self.textarea.replace_element_by_id(&id, " ");
+                }
                 self.space_hold_trigger = None;
                 (InputResult::None, true)
             }
@@ -771,25 +777,9 @@ impl ChatComposer {
             return false;
         }
         if self.space_hold_started_at.is_some() {
-            // Remove the previously inserted space if possible.
-            if let Some(pos) = self.space_insert_pos.take() {
-                let text = self.textarea.text().to_string();
-                if pos < text.len()
-                    && let Some(ch) = text[pos..].chars().next()
-                    && ch == ' '
-                {
-                    let next = pos + ch.len_utf8();
-                    let mut new_text =
-                        String::with_capacity(text.len().saturating_sub(ch.len_utf8()));
-                    new_text.push_str(&text[..pos]);
-                    new_text.push_str(&text[next..]);
-                    let mut cursor = self.textarea.cursor();
-                    if cursor > pos {
-                        cursor = cursor.saturating_sub(ch.len_utf8());
-                    }
-                    self.textarea.set_text(&new_text);
-                    self.textarea.set_cursor(cursor);
-                }
+            // Remove the previously inserted space element if present.
+            if let Some(id) = self.space_hold_element_id.take() {
+                let _ = self.textarea.replace_element_by_id(&id, "");
             }
             // Clear pending state before starting capture
             self.space_hold_started_at = None;
