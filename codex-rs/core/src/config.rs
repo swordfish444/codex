@@ -173,6 +173,8 @@ pub struct Config {
 
     /// If set to `true`, the API key will be signed with the `originator` header.
     pub preferred_auth_method: AuthMode,
+
+    pub use_experimental_streamable_shell_tool: bool,
 }
 
 impl Config {
@@ -460,6 +462,8 @@ pub struct ConfigToml {
     /// Experimental path to a file whose contents replace the built-in BASE_INSTRUCTIONS.
     pub experimental_instructions_file: Option<PathBuf>,
 
+    pub experimental_use_exec_command_tool: Option<bool>,
+
     /// The value for the `originator` header included with Responses API requests.
     pub responses_originator_header_internal_override: Option<String>,
 
@@ -735,6 +739,9 @@ impl Config {
             include_apply_patch_tool: include_apply_patch_tool_val,
             responses_originator_header,
             preferred_auth_method: cfg.preferred_auth_method.unwrap_or(AuthMode::ChatGPT),
+            use_experimental_streamable_shell_tool: cfg
+                .experimental_use_exec_command_tool
+                .unwrap_or(false),
         };
         Ok(config)
     }
@@ -1101,6 +1108,7 @@ disable_response_storage = true
                 include_apply_patch_tool: false,
                 responses_originator_header: "codex_cli_rs".to_string(),
                 preferred_auth_method: AuthMode::ChatGPT,
+                use_experimental_streamable_shell_tool: false,
             },
             o3_profile_config
         );
@@ -1155,6 +1163,7 @@ disable_response_storage = true
             include_apply_patch_tool: false,
             responses_originator_header: "codex_cli_rs".to_string(),
             preferred_auth_method: AuthMode::ChatGPT,
+            use_experimental_streamable_shell_tool: false,
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -1224,6 +1233,7 @@ disable_response_storage = true
             include_apply_patch_tool: false,
             responses_originator_header: "codex_cli_rs".to_string(),
             preferred_auth_method: AuthMode::ChatGPT,
+            use_experimental_streamable_shell_tool: false,
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);
