@@ -206,11 +206,7 @@ impl BottomPane {
         self.request_redraw();
     }
 
-    pub(crate) fn on_space_hold_timeout(&mut self, id: &str) {
-        if self.composer.on_space_hold_timeout(id) {
-            self.request_redraw();
-        }
-    }
+    // Space hold timeout is now handled inside ChatComposer via an internal timer.
 
     /// Update the animated header shown to the left of the brackets in the
     /// status indicator (defaults to "Working"). This will update the active

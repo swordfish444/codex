@@ -337,10 +337,6 @@ impl ChatWidget {
         self.mark_needs_redraw();
     }
 
-    pub(crate) fn bottom_pane_on_space_hold_timeout(&mut self, id: &str) {
-        self.bottom_pane.on_space_hold_timeout(id);
-        self.mark_needs_redraw();
-    }
     /// Periodic tick to commit at most one queued line to history with a small delay,
     /// animating the output.
     pub(crate) fn on_commit_tick(&mut self) {

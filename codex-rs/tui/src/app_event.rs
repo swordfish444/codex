@@ -71,12 +71,6 @@ pub(crate) enum AppEvent {
     /// Update the current sandbox policy in the running app and widget.
     UpdateSandboxPolicy(SandboxPolicy),
 
-    /// Internal: Fired 500ms after a Space key press to trigger hold-to-talk
-    /// if the space is still held. Carries a unique id to avoid races.
-    SpaceHoldTimeout {
-        id: String,
-    },
-
     /// Live update for the in-progress voice recording placeholder. Carries
     /// the placeholder `id` and the text to display (e.g., an ASCII meter).
     RecordingMeter {

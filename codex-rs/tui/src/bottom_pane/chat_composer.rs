@@ -35,6 +35,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 use uuid::Uuid;
@@ -85,6 +86,7 @@ pub(crate) struct ChatComposer {
     space_hold_started_at: Option<Instant>,
     space_hold_id: Option<String>,
     space_insert_pos: Option<usize>,
+    space_hold_trigger: Option<(String, Arc<AtomicBool>)>,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -122,6 +124,7 @@ impl ChatComposer {
             space_hold_started_at: None,
             space_hold_id: None,
             space_insert_pos: None,
+            space_hold_trigger: None,
         }
     }
 
@@ -252,6 +255,21 @@ impl ChatComposer {
 
     /// Handle a key event coming from the main UI.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        // If a pending hold's timer elapsed, convert to recording now.
+        if let Some((id, flag)) = self.space_hold_trigger.as_ref()
+            && flag.load(Ordering::Relaxed)
+                && self.space_hold_started_at.is_some()
+                && self.space_hold_id.as_deref() == Some(id)
+                && self.voice.is_none()
+            {
+                // Take ownership to prevent double-triggering
+                let id = self.space_hold_id.clone().unwrap_or_default();
+                self.space_hold_trigger = None;
+                let _changed = self.on_space_hold_timeout(&id);
+                // Ensure UI updates after starting capture
+                // We rely on caller to schedule a frame via return value
+                return (InputResult::None, true);
+            }
         // If recording, attempt to stop on Space release, or on the next key press
         // (some terminals do not emit Release events).
         if self.voice.is_some() {
@@ -702,12 +720,18 @@ impl ChatComposer {
                 self.space_hold_id = Some(id.clone());
                 self.space_insert_pos = Some(insert_pos);
 
-                // Spawn a delayed task to notify after threshold without relying on repeats.
-                let tx = self.app_event_tx.clone();
+                // Spawn a delayed task to flip an atomic flag; we check it on next key event.
+                let flag = Arc::new(AtomicBool::new(false));
+                let flag_clone = flag.clone();
+                let id_clone = id.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    tx.send(AppEvent::SpaceHoldTimeout { id });
+                    // Signal timer elapsed for this id
+                    flag_clone.store(true, Ordering::Relaxed);
+                    // No direct mutation here; ChatComposer picks this up on next input event
+                    let _ = id_clone; // retain move for clarity
                 });
+                self.space_hold_trigger = Some((id, flag));
 
                 (InputResult::None, true)
             }
