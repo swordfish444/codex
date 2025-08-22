@@ -272,9 +272,23 @@ impl ChatComposer {
             };
             if should_stop {
                 let needs_redraw = self.stop_recording_and_start_transcription();
+                // Sync after event then return
+                self.sync_command_popup();
+                if matches!(self.active_popup, ActivePopup::Command(_)) {
+                    self.dismissed_file_popup_token = None;
+                } else {
+                    self.sync_file_search_popup();
+                }
                 return (InputResult::None, needs_redraw);
             }
             // Swallow non-stopping keys while recording
+            // Sync after event then return
+            self.sync_command_popup();
+            if matches!(self.active_popup, ActivePopup::Command(_)) {
+                self.dismissed_file_popup_token = None;
+            } else {
+                self.sync_file_search_popup();
+            }
             return (InputResult::None, false);
         }
 
@@ -718,16 +732,31 @@ impl ChatComposer {
             } => {
                 // If textarea is empty, start recording immediately without inserting a space
                 if self.textarea.text().is_empty() {
-                    if self.start_recording_with_placeholder() {
-                        return (InputResult::None, true);
+                    let out = if self.start_recording_with_placeholder() {
+                        (InputResult::None, true)
                     } else {
                         // Fall back to normal input handling for space
-                        return self.handle_input_basic(key_event);
+                        self.handle_input_basic(key_event)
+                    };
+                    // Sync after event then return
+                    self.sync_command_popup();
+                    if matches!(self.active_popup, ActivePopup::Command(_)) {
+                        self.dismissed_file_popup_token = None;
+                    } else {
+                        self.sync_file_search_popup();
                     }
+                    return out;
                 }
                 // If a hold is already pending, swallow further press events to
                 // avoid inserting multiple spaces and resetting the timer on key repeat.
                 if self.space_hold_started_at.is_some() {
+                    // Sync after event then return
+                    self.sync_command_popup();
+                    if matches!(self.active_popup, ActivePopup::Command(_)) {
+                        self.dismissed_file_popup_token = None;
+                    } else {
+                        self.sync_file_search_popup();
+                    }
                     return (InputResult::None, false);
                 }
 
@@ -780,8 +809,6 @@ impl ChatComposer {
                 self.space_hold_started_at = None;
                 if let Some(id) = self.space_hold_element_id.take() {
                     let _ = self.textarea.replace_element_by_id(&id, " ");
-                    self.sync_command_popup();
-                    self.sync_file_search_popup();
                 }
                 self.space_hold_trigger = None;
                 (InputResult::None, true)
