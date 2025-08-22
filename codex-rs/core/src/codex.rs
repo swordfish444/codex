@@ -1407,14 +1407,32 @@ async fn run_task(
                                 Ok(CallToolResult {
                                     content,
                                     is_error,
-                                    structured_content: _,
-                                }) => match serde_json::to_string(content) {
-                                    Ok(content) => (content, *is_error),
-                                    Err(e) => {
-                                        warn!("Failed to serialize MCP tool call output: {e}");
-                                        (e.to_string(), Some(true))
-                                    }
-                                },
+                                    structured_content,
+                                }) => {
+                                    // In terms of what to send back to the
+                                    // model, we prefer structured_content, if
+                                    // available, and fal back to content,
+                                    // otherwise.
+                                    let mut is_error = *is_error;
+                                    let content = if let Some(structured_content) =
+                                        structured_content
+                                        && let Ok(serialized_structured_content) =
+                                            serde_json::to_string(&structured_content)
+                                    {
+                                        serialized_structured_content
+                                    } else if let Ok(serialized_content) =
+                                        serde_json::to_string(content)
+                                    {
+                                        serialized_content
+                                    } else {
+                                        // If we could not serialize either
+                                        // content or structured_content to
+                                        // JSON, flag this as an error.
+                                        is_error = Some(true);
+                                        "".to_owned()
+                                    };
+                                    (content, is_error)
+                                }
                                 Err(e) => (e.clone(), Some(true)),
                             };
                             items_to_record_in_conversation_history.push(
