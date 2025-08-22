@@ -41,14 +41,30 @@ pub struct Prompt {
 }
 
 impl Prompt {
-    pub(crate) fn get_full_instructions(&self, model: &ModelFamily) -> Cow<'_, str> {
+    pub(crate) fn get_full_instructions(
+        &self,
+        model: &ModelFamily,
+        use_streamable_shell_tool: bool,
+    ) -> Cow<'_, str> {
         let base = self
-            .base_instructions_override
-            .as_deref()
-            .unwrap_or(BASE_INSTRUCTIONS);
-        let mut sections: Vec<&str> = vec![base];
+            .base_instructions_override.clone()
+            .unwrap_or_else(||
+                if use_streamable_shell_tool {
+                    BASE_INSTRUCTIONS.replace("SHELL_COMMAND_INSTRUCTIONS_HERE", "Do NOT use `shell`. Use only `exec_command` and `write_stdin`.")
+                } else {
+                    BASE_INSTRUCTIONS.replace("SHELL_COMMAND_INSTRUCTIONS_HERE", r#"When using the shell, you must adhere to the following guidelines:
+
+- When searching for text or files, prefer using `rg` or `rg --files` respectively because `rg` is much faster than alternatives like `grep`. (If the `rg` command is not found, then use alternatives.)
+- Read files in chunks with a max chunk size of 250 lines. Do not use python scripts to attempt to output larger chunks of a file. Command line output will be truncated after 10 kilobytes or 256 lines of output, regardless of the command used.
+"#)
+                }
+            );
+
+        // Do NOT use `shell`. Use only `exec_command` and `write_stdin`.
+
+        let mut sections: Vec<String> = vec![base];
         if model.needs_special_apply_patch_instructions {
-            sections.push(APPLY_PATCH_TOOL_INSTRUCTIONS);
+            sections.push(APPLY_PATCH_TOOL_INSTRUCTIONS.to_owned());
         }
         Cow::Owned(sections.join("\n"))
     }
@@ -148,7 +164,8 @@ mod tests {
         };
         let expected = format!("{BASE_INSTRUCTIONS}\n{APPLY_PATCH_TOOL_INSTRUCTIONS}");
         let model_family = find_family_for_model("gpt-4.1").expect("known model slug");
-        let full = prompt.get_full_instructions(&model_family);
+        let full =
+            prompt.get_full_instructions(&model_family, /*use_streamable_shell_tool*/ false);
         assert_eq!(full, expected);
     }
 }
