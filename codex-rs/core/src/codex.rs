@@ -52,6 +52,11 @@ use crate::exec::SandboxType;
 use crate::exec::StdoutStream;
 use crate::exec::StreamOutput;
 use crate::exec::process_exec_tool_call;
+use crate::exec_command::EXEC_COMMAND_TOOL_NAME;
+use crate::exec_command::ExecCommandParams;
+use crate::exec_command::SESSION_MANAGER;
+use crate::exec_command::WRITE_STDIN_TOOL_NAME;
+use crate::exec_command::WriteStdinParams;
 use crate::exec_env::create_env;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::mcp_tool_call::handle_mcp_tool_call;
@@ -481,6 +486,7 @@ impl Session {
                 sandbox_policy.clone(),
                 config.include_plan_tool,
                 config.include_apply_patch_tool,
+                config.use_experimental_streamable_shell_tool,
             ),
             user_instructions,
             base_instructions,
@@ -1061,6 +1067,7 @@ async fn submission_loop(
                     new_sandbox_policy.clone(),
                     config.include_plan_tool,
                     config.include_apply_patch_tool,
+                    config.use_experimental_streamable_shell_tool,
                 );
 
                 let new_turn_context = TurnContext {
@@ -1139,6 +1146,7 @@ async fn submission_loop(
                             sandbox_policy.clone(),
                             config.include_plan_tool,
                             config.include_apply_patch_tool,
+                            config.use_experimental_streamable_shell_tool,
                         ),
                         user_instructions: turn_context.user_instructions.clone(),
                         base_instructions: turn_context.base_instructions.clone(),
@@ -1999,6 +2007,41 @@ async fn handle_function_call(
             .await
         }
         "update_plan" => handle_update_plan(sess, arguments, sub_id, call_id).await,
+        EXEC_COMMAND_TOOL_NAME => {
+            // TODO(mbolin): Sandbox check.
+            let exec_params = match serde_json::from_str::<ExecCommandParams>(&arguments) {
+                Ok(params) => params,
+                Err(e) => {
+                    return ResponseInputItem::FunctionCallOutput {
+                        call_id,
+                        output: FunctionCallOutputPayload {
+                            content: format!("failed to parse function arguments: {e}"),
+                            success: Some(false),
+                        },
+                    };
+                }
+            };
+            SESSION_MANAGER
+                .handle_exec_command_request(call_id, exec_params)
+                .await
+        }
+        WRITE_STDIN_TOOL_NAME => {
+            let write_stdin_params = match serde_json::from_str::<WriteStdinParams>(&arguments) {
+                Ok(params) => params,
+                Err(e) => {
+                    return ResponseInputItem::FunctionCallOutput {
+                        call_id,
+                        output: FunctionCallOutputPayload {
+                            content: format!("failed to parse function arguments: {e}"),
+                            success: Some(false),
+                        },
+                    };
+                }
+            };
+            SESSION_MANAGER
+                .handle_write_stdin_request(call_id, write_stdin_params)
+                .await
+        }
         _ => {
             match sess.mcp_connection_manager.parse_tool_name(&name) {
                 Some((server, tool_name)) => {
