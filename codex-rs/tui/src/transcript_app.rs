@@ -81,9 +81,9 @@ impl TranscriptApp {
                 let mut spans = Vec::with_capacity(line.spans.len());
                 for (i, s) in line.spans.iter().enumerate() {
                     let mut style = s.style;
-                    style.add_modifier = style.add_modifier | Modifier::REVERSED;
+                    style.add_modifier |= Modifier::REVERSED;
                     if idx == start && i == 0 {
-                        style.add_modifier = style.add_modifier | Modifier::BOLD;
+                        style.add_modifier |= Modifier::BOLD;
                     }
                     spans.push(ratatui::text::Span {
                         style,

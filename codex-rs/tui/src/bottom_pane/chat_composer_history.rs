@@ -42,12 +42,7 @@ impl ChatComposerHistory {
         }
     }
 
-    /// Reset transient browsing state so the next navigation starts from the
-    /// most recent entry again.
-    pub fn reset_browsing(&mut self) {
-        self.history_cursor = None;
-        self.last_history_text = None;
-    }
+    // Removed unused reset_browsing; browsing state is reset by call sites as needed.
 
     /// Update metadata when a new session is configured.
     pub fn set_metadata(&mut self, log_id: u64, entry_count: usize) {

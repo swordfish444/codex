@@ -56,10 +56,9 @@ impl App {
                     self.close_transcript_overlay(tui);
                     if let Some(base_id) = base
                         && count > 0
+                        && let Err(e) = self.fork_and_render_backtrack(tui, base_id, count).await
                     {
-                        if let Err(e) = self.fork_and_render_backtrack(tui, base_id, count).await {
-                            tracing::error!("Backtrack confirm failed: {e:#}");
-                        }
+                        tracing::error!("Backtrack confirm failed: {e:#}");
                     }
                     // Reset backtrack state after confirming.
                     self.esc_backtrack_primed = false;
@@ -71,16 +70,16 @@ impl App {
             }
         }
         // Forward to overlay if not handled
-        if !handled {
-            if let Some(overlay) = &mut self.transcript_overlay {
-                overlay.handle_event(tui, event)?;
-                if overlay.is_done {
-                    self.close_transcript_overlay(tui);
-                    if self.transcript_overlay_is_backtrack {
-                        self.esc_backtrack_primed = false;
-                        self.esc_backtrack_base = None;
-                        self.esc_backtrack_count = 0;
-                    }
+        if !handled
+            && let Some(overlay) = &mut self.transcript_overlay
+        {
+            overlay.handle_event(tui, event)?;
+            if overlay.is_done {
+                self.close_transcript_overlay(tui);
+                if self.transcript_overlay_is_backtrack {
+                    self.esc_backtrack_primed = false;
+                    self.esc_backtrack_base = None;
+                    self.esc_backtrack_count = 0;
                 }
             }
         }
