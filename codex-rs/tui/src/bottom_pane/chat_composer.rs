@@ -350,6 +350,36 @@ impl ChatComposer {
         }
     }
 
+    /// Start voice capture and insert a placeholder element for the live meter.
+    /// Returns true if recording began and UI should redraw; false on failure.
+    fn start_recording_with_placeholder(&mut self) -> bool {
+        match crate::voice::VoiceCapture::start() {
+            Ok(vc) => {
+                self.voice = Some(vc);
+                // Insert visible placeholder for the meter (no label)
+                let id = Uuid::new_v4().to_string();
+                self.textarea.insert_named_element("", id.clone());
+                self.recording_placeholder_id = Some(id);
+                // Spawn metering animation
+                if let Some(v) = &self.voice {
+                    let data = v.data_arc();
+                    let stop = v.stopped_flag();
+                    let sr = v.sample_rate();
+                    let ch = v.channels();
+                    let peak = v.last_peak_arc();
+                    if let Some(idref) = &self.recording_placeholder_id {
+                        self.spawn_recording_meter(idref.clone(), sr, ch, data, peak, stop);
+                    }
+                }
+                true
+            }
+            Err(e) => {
+                tracing::error!("failed to start voice capture: {e}");
+                false
+            }
+        }
+    }
+
     /// Process the space-hold timer if elapsed and start recording.
     pub(crate) fn process_space_hold_trigger(&mut self) {
         if let Some(flag) = self.space_hold_trigger.as_ref()
@@ -679,38 +709,11 @@ impl ChatComposer {
             } => {
                 // If textarea is empty, start recording immediately without inserting a space
                 if self.textarea.text().is_empty() {
-                    match crate::voice::VoiceCapture::start() {
-                        Ok(vc) => {
-                            self.voice = Some(vc);
-                            // Insert visible placeholder for the meter (no label)
-                            let id = Uuid::new_v4().to_string();
-                            self.textarea.insert_named_element("", id.clone());
-                            self.recording_placeholder_id = Some(id);
-                            // Spawn metering animation
-                            if let Some(v) = &self.voice {
-                                let data = v.data_arc();
-                                let stop = v.stopped_flag();
-                                let sr = v.sample_rate();
-                                let ch = v.channels();
-                                let peak = v.last_peak_arc();
-                                if let Some(idref) = &self.recording_placeholder_id {
-                                    self.spawn_recording_meter(
-                                        idref.clone(),
-                                        sr,
-                                        ch,
-                                        data,
-                                        peak,
-                                        stop,
-                                    );
-                                }
-                            }
-                            return (InputResult::None, true);
-                        }
-                        Err(e) => {
-                            tracing::error!("failed to start voice capture: {e}");
-                            // Fall back to normal input handling for space
-                            return self.handle_input_basic(key_event);
-                        }
+                    if self.start_recording_with_placeholder() {
+                        return (InputResult::None, true);
+                    } else {
+                        // Fall back to normal input handling for space
+                        return self.handle_input_basic(key_event);
                     }
                 }
                 // If a hold is already pending, swallow further press events to
@@ -792,31 +795,7 @@ impl ChatComposer {
             self.space_hold_trigger = None;
 
             // Start voice capture
-            match crate::voice::VoiceCapture::start() {
-                Ok(vc) => {
-                    self.voice = Some(vc);
-                    // Insert a visible placeholder for the meter (no label)
-                    let id = Uuid::new_v4().to_string();
-                    self.textarea.insert_named_element("", id.clone());
-                    self.recording_placeholder_id = Some(id);
-                    // Spawn metering animation
-                    if let Some(v) = &self.voice {
-                        let data = v.data_arc();
-                        let stop = v.stopped_flag();
-                        let sr = v.sample_rate();
-                        let ch = v.channels();
-                        let peak = v.last_peak_arc();
-                        if let Some(idref) = &self.recording_placeholder_id {
-                            self.spawn_recording_meter(idref.clone(), sr, ch, data, peak, stop);
-                        }
-                    }
-                    true
-                }
-                Err(e) => {
-                    tracing::error!("failed to start voice capture: {e}");
-                    false
-                }
-            }
+            self.start_recording_with_placeholder()
         } else {
             false
         }
