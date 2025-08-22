@@ -34,6 +34,8 @@ use crate::config_types::HistoryPersistence;
 use std::os::unix::fs::OpenOptionsExt;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 
 /// Filename that stores the message history inside `~/.codex`.
 const HISTORY_FILENAME: &str = "history.jsonl";
@@ -125,11 +127,12 @@ pub(crate) async fn append_entry(text: &str, session_id: &Uuid, config: &Config)
 /// times if the lock is currently held by another process. This prevents a
 /// potential indefinite wait while still giving other writers some time to
 /// finish their operation.
-async fn acquire_exclusive_lock_with_retry(file: &std::fs::File) -> Result<()> {
+#[cfg(unix)]
+async fn acquire_exclusive_lock_with_retry(file: &File) -> Result<()> {
     use tokio::time::sleep;
 
     for _ in 0..MAX_RETRIES {
-        match fs2::FileExt::try_lock_exclusive(file) {
+        match try_flock_exclusive(file) {
             Ok(()) => return Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 sleep(RETRY_SLEEP).await;
@@ -142,6 +145,12 @@ async fn acquire_exclusive_lock_with_retry(file: &std::fs::File) -> Result<()> {
         std::io::ErrorKind::WouldBlock,
         "could not acquire exclusive lock on history file after multiple attempts",
     ))
+}
+
+#[cfg(not(unix))]
+async fn acquire_exclusive_lock_with_retry(_file: &File) -> Result<()> {
+    // On non-Unix, skip locking; appends are still atomic with O_APPEND.
+    Ok(())
 }
 
 /// Asynchronously fetch the history file's *identifier* (inode on Unix) and
@@ -259,7 +268,7 @@ pub(crate) fn lookup(log_id: u64, offset: usize, config: &Config) -> Option<Hist
 #[cfg(unix)]
 fn acquire_shared_lock_with_retry(file: &File) -> Result<()> {
     for _ in 0..MAX_RETRIES {
-        match fs2::FileExt::try_lock_shared(file) {
+        match try_flock_shared(file) {
             Ok(()) => return Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(RETRY_SLEEP);
@@ -272,6 +281,45 @@ fn acquire_shared_lock_with_retry(file: &File) -> Result<()> {
         std::io::ErrorKind::WouldBlock,
         "could not acquire shared lock on history file after multiple attempts",
     ))
+}
+
+#[cfg(not(unix))]
+fn acquire_shared_lock_with_retry(_file: &File) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn try_flock_exclusive(file: &File) -> Result<()> {
+    let fd = file.as_raw_fd();
+    let rc = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        let err = std::io::Error::last_os_error();
+        match err.raw_os_error() {
+            Some(code) if code == libc::EWOULDBLOCK || code == libc::EAGAIN => Err(
+                std::io::Error::new(std::io::ErrorKind::WouldBlock, "lock would block"),
+            ),
+            _ => Err(err),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn try_flock_shared(file: &File) -> Result<()> {
+    let fd = file.as_raw_fd();
+    let rc = unsafe { libc::flock(fd, libc::LOCK_SH | libc::LOCK_NB) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        let err = std::io::Error::last_os_error();
+        match err.raw_os_error() {
+            Some(code) if code == libc::EWOULDBLOCK || code == libc::EAGAIN => Err(
+                std::io::Error::new(std::io::ErrorKind::WouldBlock, "lock would block"),
+            ),
+            _ => Err(err),
+        }
+    }
 }
 
 /// On Unix systems ensure the file permissions are `0o600` (rw-------). If the

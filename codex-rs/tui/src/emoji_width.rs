@@ -11,7 +11,13 @@ static EMOJI_OK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 /// Returns true if common emoji we use advance the cursor by the same number of
 /// columns as reported by `unicode-width` on this terminal. The value is cached.
 pub fn emojis_render_as_expected() -> bool {
-    *EMOJI_OK.get_or_init(detect)
+    // Optimistic default: render emoji unless we have measured otherwise.
+    EMOJI_OK.get().copied().unwrap_or(true)
+}
+
+/// Ensure that emoji width has been probed and cached. Call during TUI init.
+pub fn ensure_probed() {
+    let _ = EMOJI_OK.get_or_init(detect);
 }
 
 /// Run a small runtime probe by printing a few glyphs at (0,0) and reading the
