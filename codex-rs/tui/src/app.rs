@@ -132,8 +132,22 @@ impl App {
                     TuiEvent::Key(KeyEvent { code: KeyCode::Esc, kind: KeyEventKind::Press | KeyEventKind::Repeat, .. }) => {
                         if self.esc_backtrack_base.is_some() {
                             self.esc_backtrack_count = self.esc_backtrack_count.saturating_add(1);
-                            let offset = self.compute_backtrack_overlay_offset(tui, self.esc_backtrack_count);
-                            let hl = self.backtrack_highlight_range(self.esc_backtrack_count);
+                            let header_idx =
+                                crate::backtrack_helpers::find_nth_last_user_header_index(
+                                    &self.transcript_lines,
+                                    self.esc_backtrack_count,
+                                );
+                            let offset = header_idx.map(|idx| {
+                                crate::backtrack_helpers::wrapped_offset_before(
+                                    &self.transcript_lines,
+                                    idx,
+                                    tui.terminal.viewport_area.width,
+                                )
+                            });
+                            let hl = crate::backtrack_helpers::highlight_range_for_nth_last_user(
+                                &self.transcript_lines,
+                                self.esc_backtrack_count,
+                            );
                             if let Some(overlay) = &mut self.transcript_overlay {
                                 if let Some(off) = offset { overlay.scroll_offset = off; }
                                 overlay.set_highlight_range(hl);
@@ -376,8 +390,22 @@ impl App {
                         self.open_transcript_overlay(tui);
                         self.transcript_overlay_is_backtrack = true;
                         self.esc_backtrack_count = self.esc_backtrack_count.saturating_add(1);
-                        let offset = self.compute_backtrack_overlay_offset(tui, self.esc_backtrack_count);
-                        let hl = self.backtrack_highlight_range(self.esc_backtrack_count);
+                        let header_idx =
+                            crate::backtrack_helpers::find_nth_last_user_header_index(
+                                &self.transcript_lines,
+                                self.esc_backtrack_count,
+                            );
+                        let offset = header_idx.map(|idx| {
+                            crate::backtrack_helpers::wrapped_offset_before(
+                                &self.transcript_lines,
+                                idx,
+                                tui.terminal.viewport_area.width,
+                            )
+                        });
+                        let hl = crate::backtrack_helpers::highlight_range_for_nth_last_user(
+                            &self.transcript_lines,
+                            self.esc_backtrack_count,
+                        );
                         if let Some(overlay) = &mut self.transcript_overlay {
                             if let Some(off) = offset { overlay.scroll_offset = off; }
                             overlay.set_highlight_range(hl);
@@ -385,8 +413,22 @@ impl App {
                     } else if self.transcript_overlay_is_backtrack {
                         // Already previewing: step to the next older message.
                         self.esc_backtrack_count = self.esc_backtrack_count.saturating_add(1);
-                        let offset = self.compute_backtrack_overlay_offset(tui, self.esc_backtrack_count);
-                        let hl = self.backtrack_highlight_range(self.esc_backtrack_count);
+                        let header_idx =
+                            crate::backtrack_helpers::find_nth_last_user_header_index(
+                                &self.transcript_lines,
+                                self.esc_backtrack_count,
+                            );
+                        let offset = header_idx.map(|idx| {
+                            crate::backtrack_helpers::wrapped_offset_before(
+                                &self.transcript_lines,
+                                idx,
+                                tui.terminal.viewport_area.width,
+                            )
+                        });
+                        let hl = crate::backtrack_helpers::highlight_range_for_nth_last_user(
+                            &self.transcript_lines,
+                            self.esc_backtrack_count,
+                        );
                         if let Some(overlay) = &mut self.transcript_overlay {
                             if let Some(off) = offset { overlay.scroll_offset = off; }
                             overlay.set_highlight_range(hl);
@@ -463,7 +505,10 @@ impl App {
     ) -> color_eyre::eyre::Result<()> {
         // Compute the text to prefill by extracting the N-th last user message
         // from the UI transcript lines already rendered.
-        let prefill = self.nth_last_user_text_from_transcript(drop_last_messages);
+        let prefill = crate::backtrack_helpers::nth_last_user_text(
+            &self.transcript_lines,
+            drop_last_messages,
+        );
 
         // Fork conversation with the requested drop.
         let fork = self
@@ -481,7 +526,10 @@ impl App {
         );
 
         // Trim transcript to preserve only content up to the selected user message.
-        if let Some(cut_idx) = self.nth_last_user_header_index(drop_last_messages) {
+        if let Some(cut_idx) = crate::backtrack_helpers::find_nth_last_user_header_index(
+            &self.transcript_lines,
+            drop_last_messages,
+        ) {
             self.transcript_lines.truncate(cut_idx);
         } else {
             self.transcript_lines.clear();
@@ -499,98 +547,5 @@ impl App {
         Ok(())
     }
 
-    /// Compute the overlay scroll offset for the Nth last user message.
-    fn compute_backtrack_overlay_offset(&self, tui: &mut tui::Tui, n: usize) -> Option<usize> {
-        if n == 0 {
-            return None;
-        }
-        let header_idx = self.nth_last_user_header_index(n)?;
-        // Compute wrapped offset up to header_idx with current overlay width.
-        let width = tui.terminal.viewport_area.width;
-        let wrapped_before =
-            crate::insert_history::word_wrap_lines(&self.transcript_lines[0..header_idx], width);
-        Some(wrapped_before.len())
-    }
-
-    fn nth_last_user_text_from_transcript(&self, n: usize) -> Option<String> {
-        if n == 0 {
-            return None;
-        }
-        let mut found = 0usize;
-        let mut header_idx: Option<usize> = None;
-        for (idx, line) in self.transcript_lines.iter().enumerate().rev() {
-            let content: String = line
-                .spans
-                .iter()
-                .map(|s| s.content.as_ref())
-                .collect::<Vec<_>>()
-                .join("");
-            if content.trim() == "user" {
-                found += 1;
-                if found == n {
-                    header_idx = Some(idx);
-                    break;
-                }
-            }
-        }
-        let start = header_idx? + 1;
-        let mut out: Vec<String> = Vec::new();
-        for line in self.transcript_lines.iter().skip(start) {
-            let is_blank = line.spans.iter().all(|s| s.content.trim().is_empty());
-            if is_blank {
-                break;
-            }
-            let text = line
-                .spans
-                .iter()
-                .map(|s| s.content.as_ref())
-                .collect::<Vec<_>>()
-                .join("");
-            out.push(text);
-        }
-        if out.is_empty() {
-            None
-        } else {
-            Some(out.join("\n"))
-        }
-    }
-
-    fn nth_last_user_header_index(&self, n: usize) -> Option<usize> {
-        if n == 0 {
-            return None;
-        }
-        let mut found = 0usize;
-        for (idx, line) in self.transcript_lines.iter().enumerate().rev() {
-            let content: String = line
-                .spans
-                .iter()
-                .map(|s| s.content.as_ref())
-                .collect::<Vec<_>>()
-                .join("");
-            if content.trim() == "user" {
-                found += 1;
-                if found == n {
-                    return Some(idx);
-                }
-            }
-        }
-        None
-    }
-
-    fn backtrack_highlight_range(&self, n: usize) -> Option<(usize, usize)> {
-        let header = self.nth_last_user_header_index(n)?;
-        // Include header and the following message lines up to the first blank line.
-        let mut end = header + 1;
-        while end < self.transcript_lines.len() {
-            let is_blank = self.transcript_lines[end]
-                .spans
-                .iter()
-                .all(|s| s.content.trim().is_empty());
-            if is_blank {
-                break;
-            }
-            end += 1;
-        }
-        Some((header, end))
-    }
+    // (moved helper functions to backtrack_helpers.rs)
 }
