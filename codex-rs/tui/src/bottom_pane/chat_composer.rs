@@ -268,50 +268,8 @@ impl ChatComposer {
                 }
             };
             if should_stop {
-                if let Some(vc) = self.voice.take() {
-                    match vc.stop() {
-                        Ok(audio) => {
-                            // If the recording is too short, remove the placeholder immediately
-                            // and skip the transcribing state entirely.
-                            let total_samples = audio.data.len() as f32;
-                            let samples_per_second =
-                                (audio.sample_rate as f32) * (audio.channels as f32);
-                            let duration_seconds = if samples_per_second > 0.0 {
-                                total_samples / samples_per_second
-                            } else {
-                                0.0
-                            };
-                            const MIN_DURATION_SECONDS: f32 = 1.0;
-                            if duration_seconds < MIN_DURATION_SECONDS {
-                                if let Some(id) = self.recording_placeholder_id.take() {
-                                    let _ = self.textarea.replace_element_by_id(&id, "");
-                                    // Ensure UI state updates after removing placeholder
-                                    self.sync_command_popup();
-                                    self.sync_file_search_popup();
-                                }
-                                return (InputResult::None, true);
-                            }
-
-                            // Otherwise, update the placeholder to show a spinner and proceed.
-                            let id = self
-                                .recording_placeholder_id
-                                .take()
-                                .unwrap_or_else(|| Uuid::new_v4().to_string());
-                            // Initialize with first spinner frame immediately.
-                            let _ = self
-                                .textarea
-                                .update_named_element_by_id(&id, "⠋");
-                            // Spawn animated braille spinner until transcription finishes (or times out).
-                            self.spawn_transcribing_spinner(id.clone());
-                            let tx = self.app_event_tx.clone();
-                            crate::voice::transcribe_async(id, audio, tx);
-                        }
-                        Err(e) => {
-                            tracing::error!("failed to stop voice capture: {e}");
-                        }
-                    }
-                }
-                return (InputResult::None, true);
+                let needs_redraw = self.stop_recording_and_start_transcription();
+                return (InputResult::None, needs_redraw);
             }
             // Swallow non-stopping keys while recording
             return (InputResult::None, false);
@@ -342,6 +300,54 @@ impl ChatComposer {
         }
 
         result
+    }
+
+    /// Stop recording if active, update the placeholder, and spawn background transcription.
+    /// Returns true if the UI should redraw.
+    fn stop_recording_and_start_transcription(&mut self) -> bool {
+        let Some(vc) = self.voice.take() else {
+            return false;
+        };
+        match vc.stop() {
+            Ok(audio) => {
+                // If the recording is too short, remove the placeholder immediately
+                // and skip the transcribing state entirely.
+                let total_samples = audio.data.len() as f32;
+                let samples_per_second = (audio.sample_rate as f32) * (audio.channels as f32);
+                let duration_seconds = if samples_per_second > 0.0 {
+                    total_samples / samples_per_second
+                } else {
+                    0.0
+                };
+                const MIN_DURATION_SECONDS: f32 = 1.0;
+                if duration_seconds < MIN_DURATION_SECONDS {
+                    if let Some(id) = self.recording_placeholder_id.take() {
+                        let _ = self.textarea.replace_element_by_id(&id, "");
+                        // Ensure UI state updates after removing placeholder
+                        self.sync_command_popup();
+                        self.sync_file_search_popup();
+                    }
+                    return true;
+                }
+
+                // Otherwise, update the placeholder to show a spinner and proceed.
+                let id = self
+                    .recording_placeholder_id
+                    .take()
+                    .unwrap_or_else(|| Uuid::new_v4().to_string());
+                // Initialize with first spinner frame immediately.
+                let _ = self.textarea.update_named_element_by_id(&id, "⠋");
+                // Spawn animated braille spinner until transcription finishes (or times out).
+                self.spawn_transcribing_spinner(id.clone());
+                let tx = self.app_event_tx.clone();
+                crate::voice::transcribe_async(id, audio, tx);
+                true
+            }
+            Err(e) => {
+                tracing::error!("failed to stop voice capture: {e}");
+                true
+            }
+        }
     }
 
     /// Process the space-hold timer if elapsed and start recording.
