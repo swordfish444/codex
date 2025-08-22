@@ -54,7 +54,7 @@ impl ConversationManager {
         let CodexSpawnOk {
             codex,
             session_id: conversation_id,
-        } = Codex::spawn(config, auth).await?;
+        } = Codex::spawn(config, auth, None).await?;
 
         // The first event must be `SessionInitialized`. Validate and forward it
         // to the caller so that they can display it in the conversation
@@ -92,5 +92,150 @@ impl ConversationManager {
             .get(&conversation_id)
             .cloned()
             .ok_or_else(|| CodexErr::ConversationNotFound(conversation_id))
+    }
+
+    /// Fork an existing conversation by dropping the last `drop_last_messages`
+    /// user/assistant messages from its transcript and starting a new
+    /// conversation with identical configuration (unless overridden by the
+    /// caller's `config`). The new conversation will have a fresh id.
+    pub async fn fork_conversation(
+        &self,
+        base_conversation_id: Uuid,
+        drop_last_messages: usize,
+        config: Config,
+    ) -> CodexResult<NewConversation> {
+        // Obtain base conversation currently managed in memory.
+        let base = self.get_conversation(base_conversation_id).await?;
+        let items = base.history_contents();
+
+        // Compute the prefix up to the cut point.
+        let fork_items = truncate_after_dropping_last_messages(items, drop_last_messages);
+
+        // Spawn a new conversation with the computed initial history.
+        let auth = CodexAuth::from_codex_home(&config.codex_home, config.preferred_auth_method)?;
+        let CodexSpawnOk {
+            codex,
+            session_id: conversation_id,
+        } = Codex::spawn(config, auth, Some(fork_items)).await?;
+
+        // The first event must be `SessionInitialized`. Validate and forward it
+        // to the caller so that they can display it in the conversation
+        // history.
+        let event = codex.next_event().await?;
+        let session_configured = match event {
+            Event {
+                id,
+                msg: EventMsg::SessionConfigured(session_configured),
+            } if id == INITIAL_SUBMIT_ID => session_configured,
+            _ => {
+                return Err(CodexErr::SessionConfiguredNotFirstEvent);
+            }
+        };
+
+        let conversation = Arc::new(CodexConversation::new(codex));
+        self.conversations
+            .write()
+            .await
+            .insert(conversation_id, conversation.clone());
+
+        Ok(NewConversation {
+            conversation_id,
+            conversation,
+            session_configured,
+        })
+    }
+}
+
+/// Return a prefix of `items` obtained by dropping the last `n` user messages
+/// and all items that follow them.
+fn truncate_after_dropping_last_messages(
+    items: Vec<crate::models::ResponseItem>,
+    n: usize,
+) -> Vec<crate::models::ResponseItem> {
+    if n == 0 || items.is_empty() {
+        return items;
+    }
+
+    // Walk backwards counting only `user` Message items, find cut index.
+    let mut count = 0usize;
+    let mut cut_index = 0usize;
+    for (idx, item) in items.iter().enumerate().rev() {
+        if let crate::models::ResponseItem::Message { role, .. } = item
+            && role == "user"
+        {
+            count += 1;
+            if count == n {
+                // Cut everything from this user message to the end.
+                cut_index = idx;
+                break;
+            }
+        }
+    }
+    if count < n {
+        // If fewer than n messages exist, drop everything.
+        return Vec::new();
+    }
+    items.into_iter().take(cut_index).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::ContentItem;
+    use crate::models::ReasoningItemReasoningSummary;
+    use crate::models::ResponseItem;
+
+    fn user_msg(text: &str) -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: text.to_string(),
+            }],
+        }
+    }
+    fn assistant_msg(text: &str) -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: text.to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn drops_from_last_user_only() {
+        let items = vec![
+            user_msg("u1"),
+            assistant_msg("a1"),
+            assistant_msg("a2"),
+            user_msg("u2"),
+            assistant_msg("a3"),
+            ResponseItem::Reasoning {
+                id: "r1".to_string(),
+                summary: vec![ReasoningItemReasoningSummary::SummaryText {
+                    text: "s".to_string(),
+                }],
+                content: None,
+                encrypted_content: None,
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "tool".to_string(),
+                arguments: "{}".to_string(),
+                call_id: "c1".to_string(),
+            },
+            assistant_msg("a4"),
+        ];
+
+        let truncated = truncate_after_dropping_last_messages(items.clone(), 1);
+        assert_eq!(
+            truncated,
+            vec![items[0].clone(), items[1].clone(), items[2].clone()]
+        );
+
+        let truncated2 = truncate_after_dropping_last_messages(items, 2);
+        assert!(truncated2.is_empty());
     }
 }

@@ -130,6 +130,7 @@ pub struct Codex {
     next_id: AtomicU64,
     tx_sub: Sender<Submission>,
     rx_event: Receiver<Event>,
+    session: Arc<Session>,
 }
 
 /// Wrapper returned by [`Codex::spawn`] containing the spawned [`Codex`],
@@ -144,7 +145,11 @@ pub(crate) const INITIAL_SUBMIT_ID: &str = "";
 
 impl Codex {
     /// Spawn a new [`Codex`] and initialize the session.
-    pub async fn spawn(config: Config, auth: Option<CodexAuth>) -> CodexResult<CodexSpawnOk> {
+    pub async fn spawn(
+        config: Config,
+        auth: Option<CodexAuth>,
+        initial_history: Option<Vec<ResponseItem>>,
+    ) -> CodexResult<CodexSpawnOk> {
         let (tx_sub, rx_sub) = async_channel::bounded(64);
         let (tx_event, rx_event) = async_channel::unbounded();
 
@@ -169,21 +174,32 @@ impl Codex {
         };
 
         // Generate a unique ID for the lifetime of this Codex session.
-        let (session, turn_context) =
-            Session::new(configure_session, config.clone(), auth, tx_event.clone())
-                .await
-                .map_err(|e| {
-                    error!("Failed to create session: {e:#}");
-                    CodexErr::InternalAgentDied
-                })?;
+        let (session, turn_context) = Session::new(
+            configure_session,
+            config.clone(),
+            auth,
+            tx_event.clone(),
+            initial_history,
+        )
+        .await
+        .map_err(|e| {
+            error!("Failed to create session: {e:#}");
+            CodexErr::InternalAgentDied
+        })?;
         let session_id = session.session_id;
 
         // This task will run until Op::Shutdown is received.
-        tokio::spawn(submission_loop(session, turn_context, config, rx_sub));
+        tokio::spawn(submission_loop(
+            Arc::clone(&session),
+            turn_context,
+            config,
+            rx_sub,
+        ));
         let codex = Codex {
             next_id: AtomicU64::new(0),
             tx_sub,
             rx_event,
+            session: Arc::clone(&session),
         };
 
         Ok(CodexSpawnOk { codex, session_id })
@@ -217,6 +233,11 @@ impl Codex {
             .await
             .map_err(|_| CodexErr::InternalAgentDied)?;
         Ok(event)
+    }
+
+    /// Snapshot of the conversation history (oldest → newest).
+    pub(crate) fn history_contents(&self) -> Vec<ResponseItem> {
+        self.session.state.lock_unchecked().history.contents()
     }
 }
 
@@ -325,6 +346,7 @@ impl Session {
         config: Arc<Config>,
         auth: Option<CodexAuth>,
         tx_event: Sender<Event>,
+        initial_history: Option<Vec<ResponseItem>>,
     ) -> anyhow::Result<(Arc<Self>, TurnContext)> {
         let ConfigureSession {
             provider,
@@ -384,14 +406,16 @@ impl Session {
         }
         let rollout_result = match rollout_res {
             Ok((session_id, maybe_saved, recorder)) => {
-                let restored_items: Option<Vec<ResponseItem>> =
-                    maybe_saved.and_then(|saved_session| {
+                let restored_items: Option<Vec<ResponseItem>> = match initial_history {
+                    Some(items) => Some(items),
+                    None => maybe_saved.and_then(|saved_session| {
                         if saved_session.items.is_empty() {
                             None
                         } else {
                             Some(saved_session.items)
                         }
-                    });
+                    }),
+                };
                 RolloutResult {
                     session_id,
                     rollout_recorder: Some(recorder),
