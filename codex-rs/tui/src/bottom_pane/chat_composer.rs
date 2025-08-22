@@ -251,6 +251,13 @@ impl ChatComposer {
 
         match key_event {
             KeyEvent {
+                code: KeyCode::Esc, ..
+            } => {
+                // Close the popup.
+                self.active_popup = ActivePopup::None;
+                (InputResult::None, true)
+            }
+            KeyEvent {
                 code: KeyCode::Up, ..
             } => {
                 popup.move_up();
@@ -503,6 +510,10 @@ impl ChatComposer {
     /// Handle key event when no popup is visible.
     fn handle_key_event_without_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
         match key_event {
+            // Esc is handled at the app layer (conversation backtracking); ignore here.
+            KeyEvent {
+                code: KeyCode::Esc, ..
+            } => (InputResult::None, false),
             // -------------------------------------------------------------
             // History navigation (Up / Down) – only when the composer is not
             // empty or when the cursor is at the correct position, to avoid
@@ -1312,4 +1323,6 @@ mod tests {
             ]
         );
     }
+
+    // Esc backtracking is handled at the app layer (conversation fork); no composer test here.
 }

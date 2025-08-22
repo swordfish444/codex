@@ -62,6 +62,7 @@ mod interrupts;
 use self::interrupts::InterruptManager;
 mod agent;
 use self::agent::spawn_agent;
+use self::agent::spawn_agent_from_existing;
 use crate::streaming::controller::AppEventHistorySink;
 use crate::streaming::controller::StreamController;
 use codex_common::approval_presets::ApprovalPreset;
@@ -105,6 +106,8 @@ pub(crate) struct ChatWidget {
     full_reasoning_buffer: String,
     session_id: Option<Uuid>,
     frame_requester: FrameRequester,
+    // Whether to include the initial welcome banner on session configured
+    show_welcome_banner: bool,
 }
 
 struct UserMessage {
@@ -143,7 +146,11 @@ impl ChatWidget {
         self.bottom_pane
             .set_history_metadata(event.history_log_id, event.history_entry_count);
         self.session_id = Some(event.session_id);
-        self.add_to_history(history_cell::new_session_info(&self.config, event, true));
+        self.add_to_history(history_cell::new_session_info(
+            &self.config,
+            event,
+            self.show_welcome_banner,
+        ));
         if let Some(user_message) = self.initial_user_message.take() {
             self.submit_user_message(user_message);
         }
@@ -565,6 +572,7 @@ impl ChatWidget {
             reasoning_buffer: String::new(),
             full_reasoning_buffer: String::new(),
             session_id: None,
+            show_welcome_banner: true,
         }
     }
 
@@ -574,6 +582,50 @@ impl ChatWidget {
                 .active_exec_cell
                 .as_ref()
                 .map_or(0, |c| c.desired_height(width))
+    }
+
+    /// Create a ChatWidget attached to an existing conversation (e.g., a fork).
+    pub(crate) fn new_from_existing(
+        config: Config,
+        conversation: std::sync::Arc<codex_core::CodexConversation>,
+        session_configured: codex_core::protocol::SessionConfiguredEvent,
+        frame_requester: FrameRequester,
+        app_event_tx: AppEventSender,
+        enhanced_keys_supported: bool,
+    ) -> Self {
+        let mut rng = rand::rng();
+        let placeholder = EXAMPLE_PROMPTS[rng.random_range(0..EXAMPLE_PROMPTS.len())].to_string();
+
+        let codex_op_tx =
+            spawn_agent_from_existing(conversation, session_configured, app_event_tx.clone());
+
+        Self {
+            app_event_tx: app_event_tx.clone(),
+            frame_requester: frame_requester.clone(),
+            codex_op_tx,
+            bottom_pane: BottomPane::new(BottomPaneParams {
+                frame_requester,
+                app_event_tx,
+                has_input_focus: true,
+                enhanced_keys_supported,
+                placeholder_text: placeholder,
+            }),
+            active_exec_cell: None,
+            config: config.clone(),
+            initial_user_message: None,
+            total_token_usage: TokenUsage::default(),
+            last_token_usage: TokenUsage::default(),
+            stream: StreamController::new(config),
+            running_commands: HashMap::new(),
+            pending_exec_completions: Vec::new(),
+            task_complete_pending: false,
+            interrupts: InterruptManager::new(),
+            needs_redraw: false,
+            reasoning_buffer: String::new(),
+            full_reasoning_buffer: String::new(),
+            session_id: None,
+            show_welcome_banner: false,
+        }
     }
 
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
@@ -807,6 +859,80 @@ impl ChatWidget {
         }
     }
 
+    /// Render a conversation history snapshot (e.g., restored items from a forked
+    /// conversation) into the UI history. Only user/assistant messages and
+    /// reasoning blocks are displayed; tool calls and other items are skipped.
+    pub(crate) fn render_conversation_history(&mut self, items: Vec<serde_json::Value>) {
+        let sink = AppEventHistorySink(self.app_event_tx.clone());
+        for item in items.into_iter() {
+            let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            match item_type {
+                "message" => {
+                    let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("");
+                    let mut text_parts: Vec<String> = Vec::new();
+                    if let Some(contents) = item.get("content").and_then(|v| v.as_array()) {
+                        for c in contents {
+                            if let Some(ct) = c.get("type").and_then(|v| v.as_str())
+                                && (ct == "input_text" || ct == "output_text")
+                                && c.get("text").and_then(|t| t.as_str()).is_some()
+                            {
+                                if let Some(t) = c.get("text").and_then(|t| t.as_str()) {
+                                    text_parts.push(t.to_string());
+                                }
+                            }
+                        }
+                    }
+                    let text = text_parts.join("\n");
+                    if role == "user" {
+                        if !text.is_empty() {
+                            self.add_to_history(history_cell::new_user_prompt(text));
+                        }
+                    } else if role == "assistant" {
+                        let _ = self.stream.apply_final_answer(&text, &sink);
+                    }
+                }
+                "reasoning" => {
+                    let mut buf = String::new();
+                    if let Some(parts) = item.get("content").and_then(|v| v.as_array()) {
+                        for p in parts {
+                            if let Some(pt) = p.get("type").and_then(|v| v.as_str())
+                                && (pt == "reasoning_text" || pt == "text")
+                                && p.get("text").and_then(|t| t.as_str()).is_some()
+                            {
+                                if !buf.is_empty() {
+                                    buf.push('\n');
+                                }
+                                if let Some(t) = p.get("text").and_then(|t| t.as_str()) {
+                                    buf.push_str(t);
+                                }
+                            }
+                        }
+                    }
+                    if buf.is_empty() {
+                        if let Some(sum) = item.get("summary").and_then(|v| v.as_array()) {
+                            for s in sum {
+                                if s.get("type").and_then(|v| v.as_str()) == Some("summary_text")
+                                    && s.get("text").and_then(|t| t.as_str()).is_some()
+                                {
+                                    if !buf.is_empty() {
+                                        buf.push('\n');
+                                    }
+                                    if let Some(t) = s.get("text").and_then(|t| t.as_str()) {
+                                        buf.push_str(t);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !buf.is_empty() {
+                        self.add_to_history(history_cell::new_reasoning_block(buf, &self.config));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn request_redraw(&mut self) {
         self.frame_requester.schedule_frame();
     }
@@ -999,6 +1125,10 @@ impl ChatWidget {
 
     pub(crate) fn token_usage(&self) -> &TokenUsage {
         &self.total_token_usage
+    }
+
+    pub(crate) fn session_id(&self) -> Option<Uuid> {
+        self.session_id
     }
 
     pub(crate) fn clear_token_usage(&mut self) {
