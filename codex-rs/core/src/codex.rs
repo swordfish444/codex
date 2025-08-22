@@ -1403,24 +1403,21 @@ async fn run_task(
                             Some(ResponseInputItem::McpToolCallOutput { call_id, result }),
                         ) => {
                             items_to_record_in_conversation_history.push(item);
-                            let (content, success): (String, Option<bool>) = match result {
-                                Ok(CallToolResult {
-                                    content,
-                                    is_error,
-                                    structured_content: _,
-                                }) => match serde_json::to_string(content) {
-                                    Ok(content) => (content, *is_error),
-                                    Err(e) => {
-                                        warn!("Failed to serialize MCP tool call output: {e}");
-                                        (e.to_string(), Some(true))
-                                    }
+                            let output = match result {
+                                Ok(call_tool_result) => {
+                                    convert_call_tool_result_to_function_call_output_payload(
+                                        call_tool_result,
+                                    )
+                                }
+                                Err(e) => FunctionCallOutputPayload {
+                                    content: e.clone(),
+                                    success: Some(false),
                                 },
-                                Err(e) => (e.clone(), Some(true)),
                             };
                             items_to_record_in_conversation_history.push(
                                 ResponseItem::FunctionCallOutput {
                                     call_id: call_id.clone(),
-                                    output: FunctionCallOutputPayload { content, success },
+                                    output,
                                 },
                             );
                         }
@@ -2544,5 +2541,37 @@ async fn drain_to_completed(
             Ok(_) => continue,
             Err(e) => return Err(e),
         }
+    }
+}
+
+fn convert_call_tool_result_to_function_call_output_payload(
+    call_tool_result: &CallToolResult,
+) -> FunctionCallOutputPayload {
+    let CallToolResult {
+        content,
+        is_error,
+        structured_content,
+    } = call_tool_result;
+
+    // In terms of what to send back to the model, we prefer structured_content,
+    // if available, and fallback to content, otherwise.
+    let mut is_success = is_error != &Some(true);
+    let content = if let Some(structured_content) = structured_content
+        && structured_content != &serde_json::Value::Null
+        && let Ok(serialized_structured_content) = serde_json::to_string(&structured_content)
+    {
+        serialized_structured_content
+    } else if let Ok(serialized_content) = serde_json::to_string(&content) {
+        serialized_content
+    } else {
+        // If we could not serialize either content or structured_content to
+        // JSON, flag this as an error.
+        is_success = false;
+        "".to_owned()
+    };
+
+    FunctionCallOutputPayload {
+        content,
+        success: Some(is_success),
     }
 }
