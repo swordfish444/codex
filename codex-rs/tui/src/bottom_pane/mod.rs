@@ -1,7 +1,7 @@
 //! Bottom pane: shows the ChatComposer or a BottomPaneView, if one is active.
 
-use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::tui::FrameRequester;
 use crate::user_approval_widget::ApprovalRequest;
 use bottom_pane_view::BottomPaneView;
 use codex_core::protocol::TokenUsage;
@@ -17,6 +17,7 @@ mod chat_composer;
 mod chat_composer_history;
 mod command_popup;
 mod file_search_popup;
+mod list_selection_view;
 mod popup_consts;
 mod scroll_state;
 mod selection_popup_common;
@@ -33,18 +34,22 @@ pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
 
 use approval_modal_view::ApprovalModalView;
+pub(crate) use list_selection_view::SelectionAction;
+pub(crate) use list_selection_view::SelectionItem;
 use status_indicator_view::StatusIndicatorView;
 
 /// Pane displayed in the lower half of the chat UI.
-pub(crate) struct BottomPane<'a> {
+pub(crate) struct BottomPane {
     /// Composer is retained even when a BottomPaneView is displayed so the
     /// input state is retained when the view is closed.
     composer: ChatComposer,
 
     /// If present, this is displayed instead of the `composer`.
-    active_view: Option<Box<dyn BottomPaneView<'a> + 'a>>,
+    active_view: Option<Box<dyn BottomPaneView>>,
 
     app_event_tx: AppEventSender,
+    frame_requester: FrameRequester,
+
     has_input_focus: bool,
     is_task_running: bool,
     ctrl_c_quit_hint: bool,
@@ -56,11 +61,13 @@ pub(crate) struct BottomPane<'a> {
 
 pub(crate) struct BottomPaneParams {
     pub(crate) app_event_tx: AppEventSender,
+    pub(crate) frame_requester: FrameRequester,
     pub(crate) has_input_focus: bool,
     pub(crate) enhanced_keys_supported: bool,
+    pub(crate) placeholder_text: String,
 }
 
-impl BottomPane<'_> {
+impl BottomPane {
     const BOTTOM_PAD_LINES: u16 = 2;
     pub fn new(params: BottomPaneParams) -> Self {
         let enhanced_keys_supported = params.enhanced_keys_supported;
@@ -69,9 +76,11 @@ impl BottomPane<'_> {
                 params.has_input_focus,
                 params.app_event_tx.clone(),
                 enhanced_keys_supported,
+                params.placeholder_text,
             ),
             active_view: None,
             app_event_tx: params.app_event_tx,
+            frame_requester: params.frame_requester,
             has_input_focus: params.has_input_focus,
             is_task_running: false,
             ctrl_c_quit_hint: false,
@@ -128,7 +137,10 @@ impl BottomPane<'_> {
             if !view.is_complete() {
                 self.active_view = Some(view);
             } else if self.is_task_running {
-                let mut v = StatusIndicatorView::new(self.app_event_tx.clone());
+                let mut v = StatusIndicatorView::new(
+                    self.app_event_tx.clone(),
+                    self.frame_requester.clone(),
+                );
                 v.update_text("waiting for model".to_string());
                 self.active_view = Some(Box::new(v));
                 self.status_view_active = true;
@@ -159,7 +171,10 @@ impl BottomPane<'_> {
                     self.active_view = Some(view);
                 } else if self.is_task_running {
                     // Modal aborted but task still running – restore status indicator.
-                    let mut v = StatusIndicatorView::new(self.app_event_tx.clone());
+                    let mut v = StatusIndicatorView::new(
+                        self.app_event_tx.clone(),
+                        self.frame_requester.clone(),
+                    );
                     v.update_text("waiting for model".to_string());
                     self.active_view = Some(Box::new(v));
                     self.status_view_active = true;
@@ -197,6 +212,17 @@ impl BottomPane<'_> {
         self.request_redraw();
     }
 
+    /// Update the animated header shown to the left of the brackets in the
+    /// status indicator (defaults to "Working"). This will update the active
+    /// StatusIndicatorView if present; otherwise, if a live overlay is active,
+    /// it will update that. If neither is present, this call is a no-op.
+    pub(crate) fn update_status_header(&mut self, header: String) {
+        if let Some(view) = self.active_view.as_mut() {
+            view.update_status_header(header.clone());
+            self.request_redraw();
+        }
+    }
+
     pub(crate) fn show_ctrl_c_quit_hint(&mut self) {
         self.ctrl_c_quit_hint = true;
         self.composer
@@ -224,6 +250,7 @@ impl BottomPane<'_> {
             if self.active_view.is_none() {
                 self.active_view = Some(Box::new(StatusIndicatorView::new(
                     self.app_event_tx.clone(),
+                    self.frame_requester.clone(),
                 )));
                 self.status_view_active = true;
             }
@@ -237,6 +264,39 @@ impl BottomPane<'_> {
                 }
                 self.status_view_active = false;
             }
+        }
+    }
+
+    /// Show a generic list selection view with the provided items.
+    pub(crate) fn show_selection_view(
+        &mut self,
+        title: String,
+        subtitle: Option<String>,
+        footer_hint: Option<String>,
+        items: Vec<SelectionItem>,
+    ) {
+        let view = list_selection_view::ListSelectionView::new(
+            title,
+            subtitle,
+            footer_hint,
+            items,
+            self.app_event_tx.clone(),
+        );
+        self.active_view = Some(Box::new(view));
+        self.status_view_active = false;
+        self.request_redraw();
+    }
+
+    /// Update the live status text shown while a task is running.
+    /// If a modal view is active (i.e., not the status indicator), this is a no‑op.
+    pub(crate) fn update_status_text(&mut self, text: String) {
+        if !self.is_task_running || !self.status_view_active {
+            return;
+        }
+        if let Some(mut view) = self.active_view.take() {
+            view.update_status_text(text);
+            self.active_view = Some(view);
+            self.request_redraw();
         }
     }
 
@@ -284,7 +344,7 @@ impl BottomPane<'_> {
 
     /// Height (terminal rows) required by the current bottom pane.
     pub(crate) fn request_redraw(&self) {
-        self.app_event_tx.send(AppEvent::RequestRedraw)
+        self.frame_requester.schedule_frame();
     }
 
     // --- History helpers ---
@@ -314,7 +374,7 @@ impl BottomPane<'_> {
     }
 }
 
-impl WidgetRef for &BottomPane<'_> {
+impl WidgetRef for &BottomPane {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         if let Some(view) = &self.active_view {
             // Reserve bottom padding lines; keep at least 1 line for the view.
@@ -351,7 +411,7 @@ mod tests {
     use crate::app_event::AppEvent;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
-    use std::sync::mpsc::channel;
+    use tokio::sync::mpsc::unbounded_channel;
 
     fn exec_request() -> ApprovalRequest {
         ApprovalRequest::Exec {
@@ -363,12 +423,14 @@ mod tests {
 
     #[test]
     fn ctrl_c_on_modal_consumes_and_shows_quit_hint() {
-        let (tx_raw, _rx) = channel::<AppEvent>();
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut pane = BottomPane::new(BottomPaneParams {
             app_event_tx: tx,
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            placeholder_text: "Ask Codex to do anything".to_string(),
         });
         pane.push_approval_request(exec_request());
         assert_eq!(CancellationEvent::Handled, pane.on_ctrl_c());
@@ -380,12 +442,14 @@ mod tests {
 
     #[test]
     fn overlay_not_shown_above_approval_modal() {
-        let (tx_raw, _rx) = channel::<AppEvent>();
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut pane = BottomPane::new(BottomPaneParams {
             app_event_tx: tx,
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            placeholder_text: "Ask Codex to do anything".to_string(),
         });
 
         // Create an approval modal (active view).
@@ -408,12 +472,14 @@ mod tests {
 
     #[test]
     fn composer_not_shown_after_denied_if_task_running() {
-        let (tx_raw, rx) = channel::<AppEvent>();
+        let (tx_raw, rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut pane = BottomPane::new(BottomPaneParams {
             app_event_tx: tx.clone(),
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            placeholder_text: "Ask Codex to do anything".to_string(),
         });
 
         // Start a running task so the status indicator replaces the composer.
@@ -457,12 +523,14 @@ mod tests {
 
     #[test]
     fn status_indicator_visible_during_command_execution() {
-        let (tx_raw, _rx) = channel::<AppEvent>();
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut pane = BottomPane::new(BottomPaneParams {
             app_event_tx: tx,
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            placeholder_text: "Ask Codex to do anything".to_string(),
         });
 
         // Begin a task: show initial status.
@@ -488,12 +556,14 @@ mod tests {
 
     #[test]
     fn bottom_padding_present_for_status_view() {
-        let (tx_raw, _rx) = channel::<AppEvent>();
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut pane = BottomPane::new(BottomPaneParams {
             app_event_tx: tx,
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            placeholder_text: "Ask Codex to do anything".to_string(),
         });
 
         // Activate spinner (status view replaces composer) with no live ring.
@@ -539,12 +609,14 @@ mod tests {
 
     #[test]
     fn bottom_padding_shrinks_when_tiny() {
-        let (tx_raw, _rx) = channel::<AppEvent>();
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut pane = BottomPane::new(BottomPaneParams {
             app_event_tx: tx,
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            placeholder_text: "Ask Codex to do anything".to_string(),
         });
 
         pane.set_task_running(true);

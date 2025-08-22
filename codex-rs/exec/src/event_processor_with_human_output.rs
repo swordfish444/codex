@@ -20,7 +20,9 @@ use codex_core::protocol::McpToolCallEndEvent;
 use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::PatchApplyEndEvent;
 use codex_core::protocol::SessionConfiguredEvent;
+use codex_core::protocol::StreamErrorEvent;
 use codex_core::protocol::TaskCompleteEvent;
+use codex_core::protocol::TurnAbortReason;
 use codex_core::protocol::TurnDiffEvent;
 use owo_colors::OwoColorize;
 use owo_colors::Style;
@@ -171,6 +173,9 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 ts_println!(self, "{prefix} {message}");
             }
             EventMsg::BackgroundEvent(BackgroundEventEvent { message }) => {
+                ts_println!(self, "{}", message.style(self.dimmed));
+            }
+            EventMsg::StreamError(StreamErrorEvent { message }) => {
                 ts_println!(self, "{}", message.style(self.dimmed));
             }
             EventMsg::TaskStarted => {
@@ -522,6 +527,17 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             EventMsg::GetHistoryEntryResponse(_) => {
                 // Currently ignored in exec output.
             }
+            EventMsg::McpListToolsResponse(_) => {
+                // Currently ignored in exec output.
+            }
+            EventMsg::TurnAborted(abort_reason) => match abort_reason.reason {
+                TurnAbortReason::Interrupted => {
+                    ts_println!(self, "task interrupted");
+                }
+                TurnAbortReason::Replaced => {
+                    ts_println!(self, "task aborted: replaced by a new task");
+                }
+            },
             EventMsg::ShutdownComplete => return CodexStatus::Shutdown,
         }
         CodexStatus::Running

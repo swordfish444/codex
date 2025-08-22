@@ -43,6 +43,7 @@ pub enum ConfigShellToolType {
 pub struct ToolsConfig {
     pub shell_type: ConfigShellToolType,
     pub plan_tool: bool,
+    pub apply_patch_tool: bool,
 }
 
 impl ToolsConfig {
@@ -51,6 +52,7 @@ impl ToolsConfig {
         approval_policy: AskForApproval,
         sandbox_policy: SandboxPolicy,
         include_plan_tool: bool,
+        include_apply_patch_tool: bool,
     ) -> Self {
         let mut shell_type = if model_family.uses_local_shell_tool {
             ConfigShellToolType::LocalShell
@@ -66,6 +68,7 @@ impl ToolsConfig {
         Self {
             shell_type,
             plan_tool: include_plan_tool,
+            apply_patch_tool: include_apply_patch_tool || model_family.uses_apply_patch_tool,
         }
     }
 }
@@ -112,16 +115,20 @@ fn create_shell_tool() -> OpenAiTool {
         "command".to_string(),
         JsonSchema::Array {
             items: Box::new(JsonSchema::String { description: None }),
-            description: None,
+            description: Some("The command to execute".to_string()),
         },
     );
     properties.insert(
         "workdir".to_string(),
-        JsonSchema::String { description: None },
+        JsonSchema::String {
+            description: Some("The working directory to execute the command in".to_string()),
+        },
     );
     properties.insert(
-        "timeout".to_string(),
-        JsonSchema::Number { description: None },
+        "timeout_ms".to_string(),
+        JsonSchema::Number {
+            description: Some("The timeout for the command in milliseconds".to_string()),
+        },
     );
 
     OpenAiTool::Function(ResponsesApiTool {
@@ -152,7 +159,7 @@ fn create_shell_tool_for_sandbox(sandbox_policy: &SandboxPolicy) -> OpenAiTool {
         },
     );
     properties.insert(
-        "timeout".to_string(),
+        "timeout_ms".to_string(),
         JsonSchema::Number {
             description: Some("The timeout for the command in milliseconds".to_string()),
         },
@@ -168,7 +175,7 @@ fn create_shell_tool_for_sandbox(sandbox_policy: &SandboxPolicy) -> OpenAiTool {
         properties.insert(
         "justification".to_string(),
         JsonSchema::String {
-            description: Some("Only set if ask_for_escalated_permissions is true. 1-sentence explanation of why we want to run this command.".to_string()),
+            description: Some("Only set if with_escalated_permissions is true. 1-sentence explanation of why we want to run this command.".to_string()),
         },
     );
     }
@@ -235,10 +242,105 @@ The shell tool is used to execute shell commands.
     })
 }
 
+#[derive(Serialize, Deserialize)]
+pub(crate) struct ApplyPatchToolArgs {
+    pub(crate) input: String,
+}
+
+/// Returns a JSON tool that can be used to edit files. Public for testing, please use `get_openai_tools`.
+fn create_apply_patch_json_tool() -> OpenAiTool {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "input".to_string(),
+        JsonSchema::String {
+            description: Some(r#"The entire contents of the apply_patch command"#.to_string()),
+        },
+    );
+
+    OpenAiTool::Function(ResponsesApiTool {
+        name: "apply_patch".to_string(),
+        description: r#"Use the `apply_patch` tool to edit files.
+Your patch language is a stripped‑down, file‑oriented diff format designed to be easy to parse and safe to apply. You can think of it as a high‑level envelope:
+
+*** Begin Patch
+[ one or more file sections ]
+*** End Patch
+
+Within that envelope, you get a sequence of file operations.
+You MUST include a header to specify the action you are taking.
+Each operation starts with one of three headers:
+
+*** Add File: <path> - create a new file. Every following line is a + line (the initial contents).
+*** Delete File: <path> - remove an existing file. Nothing follows.
+*** Update File: <path> - patch an existing file in place (optionally with a rename).
+
+May be immediately followed by *** Move to: <new path> if you want to rename the file.
+Then one or more “hunks”, each introduced by @@ (optionally followed by a hunk header).
+Within a hunk each line starts with:
+
+For instructions on [context_before] and [context_after]:
+- By default, show 3 lines of code immediately above and 3 lines immediately below each change. If a change is within 3 lines of a previous change, do NOT duplicate the first change’s [context_after] lines in the second change’s [context_before] lines.
+- If 3 lines of context is insufficient to uniquely identify the snippet of code within the file, use the @@ operator to indicate the class or function to which the snippet belongs. For instance, we might have:
+@@ class BaseClass
+[3 lines of pre-context]
+- [old_code]
++ [new_code]
+[3 lines of post-context]
+
+- If a code block is repeated so many times in a class or function such that even a single `@@` statement and 3 lines of context cannot uniquely identify the snippet of code, you can use multiple `@@` statements to jump to the right context. For instance:
+
+@@ class BaseClass
+@@ 	 def method():
+[3 lines of pre-context]
+- [old_code]
++ [new_code]
+[3 lines of post-context]
+
+The full grammar definition is below:
+Patch := Begin { FileOp } End
+Begin := "*** Begin Patch" NEWLINE
+End := "*** End Patch" NEWLINE
+FileOp := AddFile | DeleteFile | UpdateFile
+AddFile := "*** Add File: " path NEWLINE { "+" line NEWLINE }
+DeleteFile := "*** Delete File: " path NEWLINE
+UpdateFile := "*** Update File: " path NEWLINE [ MoveTo ] { Hunk }
+MoveTo := "*** Move to: " newPath NEWLINE
+Hunk := "@@" [ header ] NEWLINE { HunkLine } [ "*** End of File" NEWLINE ]
+HunkLine := (" " | "-" | "+") text NEWLINE
+
+A full patch can combine several operations:
+
+*** Begin Patch
+*** Add File: hello.txt
++Hello world
+*** Update File: src/app.py
+*** Move to: src/main.py
+@@ def greet():
+-print("Hi")
++print("Hello, world!")
+*** Delete File: obsolete.txt
+*** End Patch
+
+It is important to remember:
+
+- You must include a header with your intended action (Add/Delete/Update)
+- You must prefix new lines with `+` even when creating a new file
+- File references can only be relative, NEVER ABSOLUTE.
+"#
+        .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["input".to_string()]),
+            additional_properties: Some(false),
+        },
+    })
+}
+
 /// Returns JSON values that are compatible with Function Calling in the
 /// Responses API:
 /// https://platform.openai.com/docs/guides/function-calling?api-mode=responses
-pub(crate) fn create_tools_json_for_responses_api(
+pub fn create_tools_json_for_responses_api(
     tools: &Vec<OpenAiTool>,
 ) -> crate::error::Result<Vec<serde_json::Value>> {
     let mut tools_json = Vec::new();
@@ -336,11 +438,11 @@ fn sanitize_json_schema(value: &mut JsonValue) {
         }
         JsonValue::Object(map) => {
             // First, recursively sanitize known nested schema holders
-            if let Some(props) = map.get_mut("properties") {
-                if let Some(props_map) = props.as_object_mut() {
-                    for (_k, v) in props_map.iter_mut() {
-                        sanitize_json_schema(v);
-                    }
+            if let Some(props) = map.get_mut("properties")
+                && let Some(props_map) = props.as_object_mut()
+            {
+                for (_k, v) in props_map.iter_mut() {
+                    sanitize_json_schema(v);
                 }
             }
             if let Some(items) = map.get_mut("items") {
@@ -360,18 +462,18 @@ fn sanitize_json_schema(value: &mut JsonValue) {
                 .map(|s| s.to_string());
 
             // If type is an array (union), pick first supported; else leave to inference
-            if ty.is_none() {
-                if let Some(JsonValue::Array(types)) = map.get("type") {
-                    for t in types {
-                        if let Some(tt) = t.as_str() {
-                            if matches!(
-                                tt,
-                                "object" | "array" | "string" | "number" | "integer" | "boolean"
-                            ) {
-                                ty = Some(tt.to_string());
-                                break;
-                            }
-                        }
+            if ty.is_none()
+                && let Some(JsonValue::Array(types)) = map.get("type")
+            {
+                for t in types {
+                    if let Some(tt) = t.as_str()
+                        && matches!(
+                            tt,
+                            "object" | "array" | "string" | "number" | "integer" | "boolean"
+                        )
+                    {
+                        ty = Some(tt.to_string());
+                        break;
                     }
                 }
             }
@@ -455,6 +557,10 @@ pub(crate) fn get_openai_tools(
         tools.push(PLAN_TOOL.clone());
     }
 
+    if config.apply_patch_tool {
+        tools.push(create_apply_patch_json_tool());
+    }
+
     if let Some(mcp_tools) = mcp_tools {
         for (name, tool) in mcp_tools {
             match mcp_tool_to_openai_tool(name.clone(), tool.clone()) {
@@ -508,6 +614,7 @@ mod tests {
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
             true,
+            model_family.uses_apply_patch_tool,
         );
         let tools = get_openai_tools(&config, Some(HashMap::new()));
 
@@ -522,6 +629,7 @@ mod tests {
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
             true,
+            model_family.uses_apply_patch_tool,
         );
         let tools = get_openai_tools(&config, Some(HashMap::new()));
 
@@ -536,6 +644,7 @@ mod tests {
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
             false,
+            model_family.uses_apply_patch_tool,
         );
         let tools = get_openai_tools(
             &config,
@@ -629,6 +738,7 @@ mod tests {
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
             false,
+            model_family.uses_apply_patch_tool,
         );
 
         let tools = get_openai_tools(
@@ -684,6 +794,7 @@ mod tests {
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
             false,
+            model_family.uses_apply_patch_tool,
         );
 
         let tools = get_openai_tools(
@@ -734,6 +845,7 @@ mod tests {
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
             false,
+            model_family.uses_apply_patch_tool,
         );
 
         let tools = get_openai_tools(
@@ -787,6 +899,7 @@ mod tests {
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
             false,
+            model_family.uses_apply_patch_tool,
         );
 
         let tools = get_openai_tools(

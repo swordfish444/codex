@@ -1,19 +1,24 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use codex_core::CodexConversation;
 use codex_core::ConversationManager;
 use codex_core::NewConversation;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
+use codex_core::git_info::git_diff_to_remote;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::ExecApprovalRequestEvent;
 use codex_core::protocol::ReviewDecision;
+use codex_protocol::mcp_protocol::AuthMode;
+use codex_protocol::mcp_protocol::GitDiffToRemoteResponse;
 use mcp_types::JSONRPCErrorError;
 use mcp_types::RequestId;
+use tokio::sync::Mutex;
 use tokio::sync::oneshot;
 use tracing::error;
 use uuid::Uuid;
@@ -23,34 +28,64 @@ use crate::error_code::INVALID_REQUEST_ERROR_CODE;
 use crate::json_to_toml::json_to_toml;
 use crate::outgoing_message::OutgoingMessageSender;
 use crate::outgoing_message::OutgoingNotification;
-use crate::wire_format::APPLY_PATCH_APPROVAL_METHOD;
-use crate::wire_format::AddConversationListenerParams;
-use crate::wire_format::AddConversationSubscriptionResponse;
-use crate::wire_format::ApplyPatchApprovalParams;
-use crate::wire_format::ApplyPatchApprovalResponse;
-use crate::wire_format::ClientRequest;
-use crate::wire_format::ConversationId;
-use crate::wire_format::EXEC_COMMAND_APPROVAL_METHOD;
-use crate::wire_format::ExecCommandApprovalParams;
-use crate::wire_format::ExecCommandApprovalResponse;
-use crate::wire_format::InputItem as WireInputItem;
-use crate::wire_format::InterruptConversationParams;
-use crate::wire_format::InterruptConversationResponse;
-use crate::wire_format::NewConversationParams;
-use crate::wire_format::NewConversationResponse;
-use crate::wire_format::RemoveConversationListenerParams;
-use crate::wire_format::RemoveConversationSubscriptionResponse;
-use crate::wire_format::SendUserMessageParams;
-use crate::wire_format::SendUserMessageResponse;
 use codex_core::protocol::InputItem as CoreInputItem;
 use codex_core::protocol::Op;
+use codex_login::CLIENT_ID;
+use codex_login::CodexAuth;
+use codex_login::ServerOptions as LoginServerOptions;
+use codex_login::ShutdownHandle;
+use codex_login::logout;
+use codex_login::run_login_server;
+use codex_protocol::mcp_protocol::APPLY_PATCH_APPROVAL_METHOD;
+use codex_protocol::mcp_protocol::AddConversationListenerParams;
+use codex_protocol::mcp_protocol::AddConversationSubscriptionResponse;
+use codex_protocol::mcp_protocol::ApplyPatchApprovalParams;
+use codex_protocol::mcp_protocol::ApplyPatchApprovalResponse;
+use codex_protocol::mcp_protocol::AuthStatusChangeNotification;
+use codex_protocol::mcp_protocol::ClientRequest;
+use codex_protocol::mcp_protocol::ConversationId;
+use codex_protocol::mcp_protocol::EXEC_COMMAND_APPROVAL_METHOD;
+use codex_protocol::mcp_protocol::ExecCommandApprovalParams;
+use codex_protocol::mcp_protocol::ExecCommandApprovalResponse;
+use codex_protocol::mcp_protocol::InputItem as WireInputItem;
+use codex_protocol::mcp_protocol::InterruptConversationParams;
+use codex_protocol::mcp_protocol::InterruptConversationResponse;
+use codex_protocol::mcp_protocol::LoginChatGptCompleteNotification;
+use codex_protocol::mcp_protocol::LoginChatGptResponse;
+use codex_protocol::mcp_protocol::NewConversationParams;
+use codex_protocol::mcp_protocol::NewConversationResponse;
+use codex_protocol::mcp_protocol::RemoveConversationListenerParams;
+use codex_protocol::mcp_protocol::RemoveConversationSubscriptionResponse;
+use codex_protocol::mcp_protocol::SendUserMessageParams;
+use codex_protocol::mcp_protocol::SendUserMessageResponse;
+use codex_protocol::mcp_protocol::SendUserTurnParams;
+use codex_protocol::mcp_protocol::SendUserTurnResponse;
+use codex_protocol::mcp_protocol::ServerNotification;
+
+// Duration before a ChatGPT login attempt is abandoned.
+const LOGIN_CHATGPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+struct ActiveLogin {
+    shutdown_handle: ShutdownHandle,
+    login_id: Uuid,
+}
+
+impl ActiveLogin {
+    fn drop(&self) {
+        self.shutdown_handle.shutdown();
+    }
+}
 
 /// Handles JSON-RPC messages for Codex conversations.
 pub(crate) struct CodexMessageProcessor {
     conversation_manager: Arc<ConversationManager>,
     outgoing: Arc<OutgoingMessageSender>,
     codex_linux_sandbox_exe: Option<PathBuf>,
+    config: Arc<Config>,
     conversation_listeners: HashMap<Uuid, oneshot::Sender<()>>,
+    active_login: Arc<Mutex<Option<ActiveLogin>>>,
+    // Queue of pending interrupt requests per conversation. We reply when TurnAborted arrives.
+    pending_interrupts: Arc<Mutex<HashMap<Uuid, Vec<RequestId>>>>,
 }
 
 impl CodexMessageProcessor {
@@ -58,12 +93,16 @@ impl CodexMessageProcessor {
         conversation_manager: Arc<ConversationManager>,
         outgoing: Arc<OutgoingMessageSender>,
         codex_linux_sandbox_exe: Option<PathBuf>,
+        config: Arc<Config>,
     ) -> Self {
         Self {
             conversation_manager,
             outgoing,
             codex_linux_sandbox_exe,
+            config,
             conversation_listeners: HashMap::new(),
+            active_login: Arc::new(Mutex::new(None)),
+            pending_interrupts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -78,6 +117,9 @@ impl CodexMessageProcessor {
             ClientRequest::SendUserMessage { request_id, params } => {
                 self.send_user_message(request_id, params).await;
             }
+            ClientRequest::SendUserTurn { request_id, params } => {
+                self.send_user_turn(request_id, params).await;
+            }
             ClientRequest::InterruptConversation { request_id, params } => {
                 self.interrupt_conversation(request_id, params).await;
             }
@@ -87,7 +129,214 @@ impl CodexMessageProcessor {
             ClientRequest::RemoveConversationListener { request_id, params } => {
                 self.remove_conversation_listener(request_id, params).await;
             }
+            ClientRequest::LoginChatGpt { request_id } => {
+                self.login_chatgpt(request_id).await;
+            }
+            ClientRequest::CancelLoginChatGpt { request_id, params } => {
+                self.cancel_login_chatgpt(request_id, params.login_id).await;
+            }
+            ClientRequest::LogoutChatGpt { request_id } => {
+                self.logout_chatgpt(request_id).await;
+            }
+            ClientRequest::GetAuthStatus { request_id } => {
+                self.get_auth_status(request_id).await;
+            }
+            ClientRequest::GitDiffToRemote { request_id, params } => {
+                self.git_diff_to_origin(request_id, params.cwd).await;
+            }
         }
+    }
+
+    async fn login_chatgpt(&mut self, request_id: RequestId) {
+        let config = self.config.as_ref();
+
+        let opts = LoginServerOptions {
+            open_browser: false,
+            ..LoginServerOptions::new(config.codex_home.clone(), CLIENT_ID.to_string())
+        };
+
+        enum LoginChatGptReply {
+            Response(LoginChatGptResponse),
+            Error(JSONRPCErrorError),
+        }
+
+        let reply = match run_login_server(opts) {
+            Ok(server) => {
+                let login_id = Uuid::new_v4();
+                let shutdown_handle = server.cancel_handle();
+
+                // Replace active login if present.
+                {
+                    let mut guard = self.active_login.lock().await;
+                    if let Some(existing) = guard.take() {
+                        existing.drop();
+                    }
+                    *guard = Some(ActiveLogin {
+                        shutdown_handle: shutdown_handle.clone(),
+                        login_id,
+                    });
+                }
+
+                let response = LoginChatGptResponse {
+                    login_id,
+                    auth_url: server.auth_url.clone(),
+                };
+
+                // Spawn background task to monitor completion.
+                let outgoing_clone = self.outgoing.clone();
+                let active_login = self.active_login.clone();
+                tokio::spawn(async move {
+                    let (success, error_msg) = match tokio::time::timeout(
+                        LOGIN_CHATGPT_TIMEOUT,
+                        server.block_until_done(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => (true, None),
+                        Ok(Err(err)) => (false, Some(format!("Login server error: {err}"))),
+                        Err(_elapsed) => {
+                            // Timeout: cancel server and report
+                            shutdown_handle.shutdown();
+                            (false, Some("Login timed out".to_string()))
+                        }
+                    };
+                    let payload = LoginChatGptCompleteNotification {
+                        login_id,
+                        success,
+                        error: error_msg,
+                    };
+                    outgoing_clone
+                        .send_server_notification(ServerNotification::LoginChatGptComplete(payload))
+                        .await;
+
+                    // Send an auth status change notification.
+                    if success {
+                        let payload = AuthStatusChangeNotification {
+                            auth_method: Some(AuthMode::ChatGPT),
+                        };
+                        outgoing_clone
+                            .send_server_notification(ServerNotification::AuthStatusChange(payload))
+                            .await;
+                    }
+
+                    // Clear the active login if it matches this attempt. It may have been replaced or cancelled.
+                    let mut guard = active_login.lock().await;
+                    if guard.as_ref().map(|l| l.login_id) == Some(login_id) {
+                        *guard = None;
+                    }
+                });
+
+                LoginChatGptReply::Response(response)
+            }
+            Err(err) => LoginChatGptReply::Error(JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: format!("failed to start login server: {err}"),
+                data: None,
+            }),
+        };
+
+        match reply {
+            LoginChatGptReply::Response(resp) => {
+                self.outgoing.send_response(request_id, resp).await
+            }
+            LoginChatGptReply::Error(err) => self.outgoing.send_error(request_id, err).await,
+        }
+    }
+
+    async fn cancel_login_chatgpt(&mut self, request_id: RequestId, login_id: Uuid) {
+        let mut guard = self.active_login.lock().await;
+        if guard.as_ref().map(|l| l.login_id) == Some(login_id) {
+            if let Some(active) = guard.take() {
+                active.drop();
+            }
+            drop(guard);
+            self.outgoing
+                .send_response(
+                    request_id,
+                    codex_protocol::mcp_protocol::CancelLoginChatGptResponse {},
+                )
+                .await;
+        } else {
+            drop(guard);
+            let error = JSONRPCErrorError {
+                code: INVALID_REQUEST_ERROR_CODE,
+                message: format!("login id not found: {login_id}"),
+                data: None,
+            };
+            self.outgoing.send_error(request_id, error).await;
+        }
+    }
+
+    async fn logout_chatgpt(&mut self, request_id: RequestId) {
+        {
+            // Cancel any active login attempt.
+            let mut guard = self.active_login.lock().await;
+            if let Some(active) = guard.take() {
+                active.drop();
+            }
+        }
+
+        // Load config to locate codex_home for persistent logout.
+        let config = self.config.as_ref();
+
+        if let Err(err) = logout(&config.codex_home) {
+            let error = JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: format!("logout failed: {err}"),
+                data: None,
+            };
+            self.outgoing.send_error(request_id, error).await;
+            return;
+        }
+
+        self.outgoing
+            .send_response(
+                request_id,
+                codex_protocol::mcp_protocol::LogoutChatGptResponse {},
+            )
+            .await;
+
+        // Send auth status change notification.
+        let payload = AuthStatusChangeNotification { auth_method: None };
+        self.outgoing
+            .send_server_notification(ServerNotification::AuthStatusChange(payload))
+            .await;
+    }
+
+    async fn get_auth_status(&self, request_id: RequestId) {
+        // Load config to determine codex_home and preferred auth method.
+        let config = self.config.as_ref();
+
+        let preferred_auth_method: AuthMode = config.preferred_auth_method;
+        let response =
+            match CodexAuth::from_codex_home(&config.codex_home, config.preferred_auth_method) {
+                Ok(Some(auth)) => {
+                    // Verify that the current auth mode has a valid, non-empty token.
+                    // If token acquisition fails or is empty, treat as unauthenticated.
+                    let reported_auth_method = match auth.get_token().await {
+                        Ok(token) if !token.is_empty() => Some(auth.mode),
+                        Ok(_) => None, // Empty token
+                        Err(err) => {
+                            tracing::warn!("failed to get token for auth status: {err}");
+                            None
+                        }
+                    };
+                    codex_protocol::mcp_protocol::GetAuthStatusResponse {
+                        auth_method: reported_auth_method,
+                        preferred_auth_method,
+                    }
+                }
+                Ok(None) => codex_protocol::mcp_protocol::GetAuthStatusResponse {
+                    auth_method: None,
+                    preferred_auth_method,
+                },
+                Err(_) => codex_protocol::mcp_protocol::GetAuthStatusResponse {
+                    auth_method: None,
+                    preferred_auth_method,
+                },
+            };
+
+        self.outgoing.send_response(request_id, response).await;
     }
 
     async fn process_new_conversation(&self, request_id: RequestId, params: NewConversationParams) {
@@ -169,6 +418,58 @@ impl CodexMessageProcessor {
             .await;
     }
 
+    async fn send_user_turn(&self, request_id: RequestId, params: SendUserTurnParams) {
+        let SendUserTurnParams {
+            conversation_id,
+            items,
+            cwd,
+            approval_policy,
+            sandbox_policy,
+            model,
+            effort,
+            summary,
+        } = params;
+
+        let Ok(conversation) = self
+            .conversation_manager
+            .get_conversation(conversation_id.0)
+            .await
+        else {
+            let error = JSONRPCErrorError {
+                code: INVALID_REQUEST_ERROR_CODE,
+                message: format!("conversation not found: {conversation_id}"),
+                data: None,
+            };
+            self.outgoing.send_error(request_id, error).await;
+            return;
+        };
+
+        let mapped_items: Vec<CoreInputItem> = items
+            .into_iter()
+            .map(|item| match item {
+                WireInputItem::Text { text } => CoreInputItem::Text { text },
+                WireInputItem::Image { image_url } => CoreInputItem::Image { image_url },
+                WireInputItem::LocalImage { path } => CoreInputItem::LocalImage { path },
+            })
+            .collect();
+
+        let _ = conversation
+            .submit(Op::UserTurn {
+                items: mapped_items,
+                cwd,
+                approval_policy,
+                sandbox_policy,
+                model,
+                effort,
+                summary,
+            })
+            .await;
+
+        self.outgoing
+            .send_response(request_id, SendUserTurnResponse {})
+            .await;
+    }
+
     async fn interrupt_conversation(
         &mut self,
         request_id: RequestId,
@@ -189,13 +490,14 @@ impl CodexMessageProcessor {
             return;
         };
 
-        let _ = conversation.submit(Op::Interrupt).await;
+        // Record the pending interrupt so we can reply when TurnAborted arrives.
+        {
+            let mut map = self.pending_interrupts.lock().await;
+            map.entry(conversation_id.0).or_default().push(request_id);
+        }
 
-        // Apparently CodexConversation does not send an ack for Op::Interrupt,
-        // so we can reply to the request right away.
-        self.outgoing
-            .send_response(request_id, InterruptConversationResponse {})
-            .await;
+        // Submit the interrupt; we'll respond upon TurnAborted.
+        let _ = conversation.submit(Op::Interrupt).await;
     }
 
     async fn add_conversation_listener(
@@ -223,6 +525,7 @@ impl CodexMessageProcessor {
         self.conversation_listeners
             .insert(subscription_id, cancel_tx);
         let outgoing_for_task = self.outgoing.clone();
+        let pending_interrupts = self.pending_interrupts.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -263,7 +566,7 @@ impl CodexMessageProcessor {
                         })
                         .await;
 
-                        apply_bespoke_event_handling(event, conversation_id, conversation.clone(), outgoing_for_task.clone()).await;
+                        apply_bespoke_event_handling(event.clone(), conversation_id, conversation.clone(), outgoing_for_task.clone(), pending_interrupts.clone()).await;
                     }
                 }
             }
@@ -295,6 +598,27 @@ impl CodexMessageProcessor {
             }
         }
     }
+
+    async fn git_diff_to_origin(&self, request_id: RequestId, cwd: PathBuf) {
+        let diff = git_diff_to_remote(&cwd).await;
+        match diff {
+            Some(value) => {
+                let response = GitDiffToRemoteResponse {
+                    sha: value.sha,
+                    diff: value.diff,
+                };
+                self.outgoing.send_response(request_id, response).await;
+            }
+            None => {
+                let error = JSONRPCErrorError {
+                    code: INVALID_REQUEST_ERROR_CODE,
+                    message: format!("failed to compute git diff to remote for cwd: {cwd:?}"),
+                    data: None,
+                };
+                self.outgoing.send_error(request_id, error).await;
+            }
+        }
+    }
 }
 
 async fn apply_bespoke_event_handling(
@@ -302,6 +626,7 @@ async fn apply_bespoke_event_handling(
     conversation_id: ConversationId,
     conversation: Arc<CodexConversation>,
     outgoing: Arc<OutgoingMessageSender>,
+    pending_interrupts: Arc<Mutex<HashMap<Uuid, Vec<RequestId>>>>,
 ) {
     let Event { id: event_id, msg } = event;
     match msg {
@@ -350,6 +675,22 @@ async fn apply_bespoke_event_handling(
                 on_exec_approval_response(event_id, rx, conversation).await;
             });
         }
+        // If this is a TurnAborted, reply to any pending interrupt requests.
+        EventMsg::TurnAborted(turn_aborted_event) => {
+            let pending = {
+                let mut map = pending_interrupts.lock().await;
+                map.remove(&conversation_id.0).unwrap_or_default()
+            };
+            if !pending.is_empty() {
+                let response = InterruptConversationResponse {
+                    abort_reason: turn_aborted_event.reason,
+                };
+                for rid in pending {
+                    outgoing.send_response(rid, response.clone()).await;
+                }
+            }
+        }
+
         _ => {}
     }
 }
@@ -363,21 +704,23 @@ fn derive_config_from_params(
         profile,
         cwd,
         approval_policy,
-        sandbox,
+        sandbox: sandbox_mode,
         config: cli_overrides,
         base_instructions,
         include_plan_tool,
+        include_apply_patch_tool,
     } = params;
     let overrides = ConfigOverrides {
         model,
         config_profile: profile,
         cwd: cwd.map(PathBuf::from),
-        approval_policy: approval_policy.map(Into::into),
-        sandbox_mode: sandbox.map(Into::into),
+        approval_policy,
+        sandbox_mode,
         model_provider: None,
         codex_linux_sandbox_exe,
         base_instructions,
         include_plan_tool,
+        include_apply_patch_tool,
         disable_response_storage: None,
         show_raw_agent_reasoning: None,
     };

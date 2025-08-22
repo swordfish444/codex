@@ -205,7 +205,7 @@ pub fn transcribe_async(id: String, audio: RecordedAudio, tx: AppEventSender) {
             // Resolve API key using existing Codex auth logic (do not read env).
             let codex_home =
                 find_codex_home().map_err(|e| format!("failed to find codex home: {e}"))?;
-            let auth_opt = CodexAuth::from_codex_home(&codex_home)
+            let auth_opt = CodexAuth::from_codex_home(&codex_home, AuthMode::ChatGPT)
                 .map_err(|e| format!("failed to read auth.json: {e}"))?;
             let api_key = match auth_opt {
                 Some(auth) => match auth.mode {
