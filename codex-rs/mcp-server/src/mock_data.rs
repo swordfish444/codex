@@ -109,7 +109,7 @@ fn review_findings_from_unified_diff(cwd: &Path, diff: &str) -> Vec<Finding> {
                         body,
                         confidence_score: confidence_for_index(template_index),
                         code_location: CodeLocation {
-                            absolute_file_path: path.display().to_string(),
+                            absolute_file_path: to_forward_slashes(path),
                             line_range: LineRange {
                                 start: new_line,
                                 end: new_line,
@@ -149,6 +149,10 @@ fn parse_start_count(text: &str) -> (u32, u32) {
         let start = text.trim().trim_start_matches('+').parse().unwrap_or(1);
         (start as u32, 1)
     }
+}
+
+fn to_forward_slashes(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 #[cfg(test)]
