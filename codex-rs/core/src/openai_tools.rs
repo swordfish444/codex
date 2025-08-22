@@ -56,6 +56,7 @@ pub enum ConfigShellToolType {
     DefaultShell,
     ShellWithRequest { sandbox_policy: SandboxPolicy },
     LocalShell,
+    StreamableShell,
 }
 
 #[derive(Debug, Clone)]
@@ -72,13 +73,16 @@ impl ToolsConfig {
         sandbox_policy: SandboxPolicy,
         include_plan_tool: bool,
         include_apply_patch_tool: bool,
+        use_streamable_shell_tool: bool,
     ) -> Self {
-        let mut shell_type = if model_family.uses_local_shell_tool {
+        let mut shell_type = if use_streamable_shell_tool {
+            ConfigShellToolType::StreamableShell
+        } else if model_family.uses_local_shell_tool {
             ConfigShellToolType::LocalShell
         } else {
             ConfigShellToolType::DefaultShell
         };
-        if matches!(approval_policy, AskForApproval::OnRequest) {
+        if matches!(approval_policy, AskForApproval::OnRequest) && !use_streamable_shell_tool {
             shell_type = ConfigShellToolType::ShellWithRequest {
                 sandbox_policy: sandbox_policy.clone(),
             }
@@ -492,6 +496,14 @@ pub(crate) fn get_openai_tools(
         ConfigShellToolType::LocalShell => {
             tools.push(OpenAiTool::LocalShell {});
         }
+        ConfigShellToolType::StreamableShell => {
+            tools.push(OpenAiTool::Function(
+                crate::exec_command::create_exec_command_tool_for_responses_api(),
+            ));
+            tools.push(OpenAiTool::Function(
+                crate::exec_command::create_write_stdin_tool_for_responses_api(),
+            ));
+        }
     }
 
     if config.plan_tool {
@@ -563,7 +575,8 @@ mod tests {
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
             true,
-            false,
+            model_family.uses_apply_patch_tool,
+            /*use_experimental_streamable_shell_tool*/ false,
         );
         let tools = get_openai_tools(&config, Some(HashMap::new()));
 
@@ -578,7 +591,8 @@ mod tests {
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
             true,
-            false,
+            model_family.uses_apply_patch_tool,
+            /*use_experimental_streamable_shell_tool*/ false,
         );
         let tools = get_openai_tools(&config, Some(HashMap::new()));
 
@@ -593,7 +607,8 @@ mod tests {
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
             false,
-            false,
+            model_family.uses_apply_patch_tool,
+            /*use_experimental_streamable_shell_tool*/ false,
         );
         let tools = get_openai_tools(
             &config,
@@ -687,7 +702,8 @@ mod tests {
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
             false,
-            false,
+            model_family.uses_apply_patch_tool,
+            /*use_experimental_streamable_shell_tool*/ false,
         );
 
         let tools = get_openai_tools(
@@ -743,7 +759,8 @@ mod tests {
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
             false,
-            false,
+            model_family.uses_apply_patch_tool,
+            /*use_experimental_streamable_shell_tool*/ false,
         );
 
         let tools = get_openai_tools(
@@ -794,7 +811,8 @@ mod tests {
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
             false,
-            false,
+            model_family.uses_apply_patch_tool,
+            /*use_experimental_streamable_shell_tool*/ false,
         );
 
         let tools = get_openai_tools(
@@ -848,7 +866,8 @@ mod tests {
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
             false,
-            false,
+            model_family.uses_apply_patch_tool,
+            /*use_experimental_streamable_shell_tool*/ false,
         );
 
         let tools = get_openai_tools(
