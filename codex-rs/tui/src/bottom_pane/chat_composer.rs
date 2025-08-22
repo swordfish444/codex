@@ -23,6 +23,7 @@ use ratatui::widgets::WidgetRef;
 use super::chat_composer_history::ChatComposerHistory;
 use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
+use crate::slash_command::SlashCommand;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -38,6 +39,7 @@ const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
 /// Result returned when the user interacts with the text area.
 pub enum InputResult {
     Submitted(String),
+    Command(SlashCommand),
     None,
 }
 
@@ -275,6 +277,11 @@ impl ChatComposer {
                         self.textarea.set_text(&format!("/{} ", cmd.command()));
                         self.textarea.set_cursor(self.textarea.text().len());
                     }
+                    // After completing the command, move cursor to the end.
+                    if !self.textarea.text().is_empty() {
+                        let end = self.textarea.text().len();
+                        self.textarea.set_cursor(end);
+                    }
                 }
                 (InputResult::None, true)
             }
@@ -284,15 +291,15 @@ impl ChatComposer {
                 ..
             } => {
                 if let Some(cmd) = popup.selected_command() {
-                    // Send command to the app layer.
-                    self.app_event_tx.send(AppEvent::DispatchCommand(*cmd));
-
                     // Clear textarea so no residual text remains.
                     self.textarea.set_text("");
 
+                    let result = (InputResult::Command(*cmd), true);
+
                     // Hide popup since the command has been dispatched.
                     self.active_popup = ActivePopup::None;
-                    return (InputResult::None, true);
+
+                    return result;
                 }
                 // Fallback to default newline handling if no command selected.
                 self.handle_key_event_without_popup(key_event)
@@ -745,6 +752,7 @@ mod tests {
     use crate::bottom_pane::InputResult;
     use crate::bottom_pane::chat_composer::LARGE_PASTE_CHAR_THRESHOLD;
     use crate::bottom_pane::textarea::TextArea;
+    use tokio::sync::mpsc::unbounded_channel;
 
     #[test]
     fn test_current_at_token_basic_cases() {
@@ -901,7 +909,7 @@ mod tests {
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
 
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer =
             ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
@@ -925,7 +933,7 @@ mod tests {
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
 
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer =
             ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
@@ -955,7 +963,7 @@ mod tests {
         use crossterm::event::KeyModifiers;
 
         let large = "y".repeat(LARGE_PASTE_CHAR_THRESHOLD + 1);
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer =
             ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
@@ -977,7 +985,7 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut terminal = match Terminal::new(TestBackend::new(100, 10)) {
             Ok(t) => t,
@@ -1033,9 +1041,8 @@ mod tests {
         use crossterm::event::KeyCode;
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
-        use std::sync::mpsc::TryRecvError;
 
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer =
             ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
@@ -1051,25 +1058,18 @@ mod tests {
         let (result, _needs_redraw) =
             composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
-        // When a slash command is dispatched, the composer should not submit
-        // literal text and should clear its textarea.
+        // When a slash command is dispatched, the composer should return a
+        // Command result (not submit literal text) and clear its textarea.
         match result {
-            InputResult::None => {}
+            InputResult::Command(cmd) => {
+                assert_eq!(cmd.command(), "init");
+            }
             InputResult::Submitted(text) => {
                 panic!("expected command dispatch, but composer submitted literal text: {text}")
             }
+            InputResult::None => panic!("expected Command result for '/init'"),
         }
         assert!(composer.textarea.is_empty(), "composer should be cleared");
-
-        // Verify a DispatchCommand event for the "init" command was sent.
-        match rx.try_recv() {
-            Ok(AppEvent::DispatchCommand(cmd)) => {
-                assert_eq!(cmd.command(), "init");
-            }
-            Ok(_other) => panic!("unexpected app event"),
-            Err(TryRecvError::Empty) => panic!("expected a DispatchCommand event for '/init'"),
-            Err(TryRecvError::Disconnected) => panic!("app event channel disconnected"),
-        }
     }
 
     #[test]
@@ -1078,7 +1078,7 @@ mod tests {
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
 
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer =
             ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
@@ -1099,9 +1099,8 @@ mod tests {
         use crossterm::event::KeyCode;
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
-        use std::sync::mpsc::TryRecvError;
 
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer =
             ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
@@ -1114,24 +1113,16 @@ mod tests {
             composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
         match result {
-            InputResult::None => {}
+            InputResult::Command(cmd) => {
+                assert_eq!(cmd.command(), "mention");
+            }
             InputResult::Submitted(text) => {
                 panic!("expected command dispatch, but composer submitted literal text: {text}")
             }
+            InputResult::None => panic!("expected Command result for '/mention'"),
         }
         assert!(composer.textarea.is_empty(), "composer should be cleared");
-
-        match rx.try_recv() {
-            Ok(AppEvent::DispatchCommand(cmd)) => {
-                assert_eq!(cmd.command(), "mention");
-                composer.insert_str("@");
-            }
-            Ok(_other) => panic!("unexpected app event"),
-            Err(TryRecvError::Empty) => panic!("expected a DispatchCommand event for '/mention'"),
-            Err(TryRecvError::Disconnected) => {
-                panic!("app event channel disconnected")
-            }
-        }
+        composer.insert_str("@");
         assert_eq!(composer.textarea.text(), "@");
     }
 
@@ -1141,7 +1132,7 @@ mod tests {
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
 
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer =
             ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
@@ -1215,7 +1206,7 @@ mod tests {
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
 
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer =
             ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
@@ -1282,7 +1273,7 @@ mod tests {
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
 
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer =
             ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
