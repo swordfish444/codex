@@ -2,6 +2,9 @@
 // Unified entry point for the Codex CLI.
 
 import path from "path";
+import os from "os";
+import fs from "fs";
+import { createRequire } from "module";
 import { fileURLToPath } from "url";
 
 // __dirname equivalent in ESM
@@ -56,7 +59,9 @@ if (!targetTriple) {
   throw new Error(`Unsupported platform: ${platform} (${arch})`);
 }
 
-const binaryPath = path.join(__dirname, "..", "bin", `codex-${targetTriple}`);
+const pkgRoot = path.join(__dirname, "..");
+const pkgBinDir = path.join(pkgRoot, "bin");
+const binaryPath = path.join(pkgBinDir, `codex-${targetTriple}`);
 
 // Use an asynchronous spawn instead of spawnSync so that Node is able to
 // respond to signals (e.g. Ctrl-C / SIGINT) while the native binary is
@@ -93,9 +98,34 @@ function getUpdatedPath(newDirs) {
 }
 
 const additionalDirs = [];
+// 1) Make packaged bin directory available on PATH for any helper binaries.
+additionalDirs.push(pkgBinDir);
 const rgDir = await resolveRgDir();
 if (rgDir) {
   additionalDirs.push(rgDir);
+}
+// 2) Ensure an `apply_patch` helper exists in $CODEX_HOME/<version>/ and add that directory to PATH.
+try {
+  const require = createRequire(import.meta.url);
+  // Load package.json to read the version string.
+  const { version } = require("../package.json");
+  const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  const versionDir = path.join(codexHome, version);
+  fs.mkdirSync(versionDir, { recursive: true });
+  const isWindows = platform === "win32";
+  const destName = isWindows ? "apply_patch.exe" : "apply_patch";
+  const destPath = path.join(versionDir, destName);
+  const srcPath = path.join(pkgBinDir, `apply-patch-${targetTriple}`);
+  // Only copy if missing; keep it simple and fast.
+  if (!fs.existsSync(destPath)) {
+    fs.copyFileSync(srcPath, destPath);
+    if (!isWindows) {
+      fs.chmodSync(destPath, 0o755);
+    }
+  }
+  additionalDirs.push(versionDir);
+} catch {
+  // Best-effort: if anything fails, continue without the helper.
 }
 const updatedPath = getUpdatedPath(additionalDirs);
 

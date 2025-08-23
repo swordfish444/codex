@@ -6,6 +6,10 @@ version = { workspace = true }
 [lib]
 name = "codex_apply_patch"
 path = "src/lib.rs"
+ 
+[[bin]]
+name = "apply-patch"
+path = "src/main.rs"
 
 [lints]
 workspace = true
