@@ -169,6 +169,9 @@ pub struct Config {
     /// model family's default preference.
     pub include_apply_patch_tool: bool,
 
+    /// Include the `subagent.run` tool allowing the model to invoke configured subagents.
+    pub include_subagent_tool: bool,
+
     /// The value for the `originator` header included with Responses API requests.
     pub responses_originator_header: String,
 
@@ -476,6 +479,9 @@ pub struct ConfigToml {
 
     /// If set to `true`, the API key will be signed with the `originator` header.
     pub preferred_auth_method: Option<AuthMode>,
+
+    /// Include the `subagent.run` tool allowing the model to invoke configured subagents.
+    pub include_subagent_tool: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -570,6 +576,7 @@ pub struct ConfigOverrides {
     pub base_instructions: Option<String>,
     pub include_plan_tool: Option<bool>,
     pub include_apply_patch_tool: Option<bool>,
+    pub include_subagent_tool: Option<bool>,
     pub disable_response_storage: Option<bool>,
     pub show_raw_agent_reasoning: Option<bool>,
 }
@@ -596,6 +603,7 @@ impl Config {
             base_instructions,
             include_plan_tool,
             include_apply_patch_tool,
+            include_subagent_tool,
             disable_response_storage,
             show_raw_agent_reasoning,
         } = overrides;
@@ -756,6 +764,11 @@ impl Config {
             experimental_resume,
             include_plan_tool: include_plan_tool.unwrap_or(false),
             include_apply_patch_tool: include_apply_patch_tool.unwrap_or(false),
+            include_subagent_tool: config_profile
+                .include_subagent_tool
+                .or(cfg.include_subagent_tool)
+                .or(include_subagent_tool)
+                .unwrap_or(false),
             responses_originator_header,
             preferred_auth_method: cfg.preferred_auth_method.unwrap_or(AuthMode::ChatGPT),
         };
@@ -1122,6 +1135,7 @@ disable_response_storage = true
                 base_instructions: None,
                 include_plan_tool: false,
                 include_apply_patch_tool: false,
+                include_subagent_tool: false,
                 responses_originator_header: "codex_cli_rs".to_string(),
                 preferred_auth_method: AuthMode::ChatGPT,
             },
@@ -1176,6 +1190,7 @@ disable_response_storage = true
             base_instructions: None,
             include_plan_tool: false,
             include_apply_patch_tool: false,
+            include_subagent_tool: false,
             responses_originator_header: "codex_cli_rs".to_string(),
             preferred_auth_method: AuthMode::ChatGPT,
         };
@@ -1245,6 +1260,7 @@ disable_response_storage = true
             base_instructions: None,
             include_plan_tool: false,
             include_apply_patch_tool: false,
+            include_subagent_tool: false,
             responses_originator_header: "codex_cli_rs".to_string(),
             preferred_auth_method: AuthMode::ChatGPT,
         };

@@ -836,7 +836,38 @@ impl ChatWidget {
             EventMsg::ShutdownComplete => self.on_shutdown_complete(),
             EventMsg::TurnDiff(TurnDiffEvent { unified_diff }) => self.on_turn_diff(unified_diff),
             EventMsg::BackgroundEvent(BackgroundEventEvent { message }) => {
+                // Also show background logs in the transcript for visibility.
+                self.add_to_history(history_cell::new_log_line(message.clone()));
                 self.on_background_event(message)
+            }
+            EventMsg::SubagentBegin(ev) => {
+                let msg = format!("subagent begin: {} ({})", ev.name, ev.subagent_id);
+                self.add_to_history(history_cell::new_log_line(msg));
+            }
+            EventMsg::SubagentForwarded(ev) => {
+                // Summarize forwarded event type; include message text when it is AgentMessage.
+                match *ev.event {
+                    EventMsg::AgentMessage(AgentMessageEvent { message }) => {
+                        let msg = format!("subagent {}: {}", ev.name, message);
+                        self.add_to_history(history_cell::new_log_line(msg));
+                    }
+                    EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { ref delta }) => {
+                        let msg = format!("subagent {}: {}", ev.name, delta);
+                        self.add_to_history(history_cell::new_log_line(msg));
+                    }
+                    ref other => {
+                        let msg = format!("subagent {} forwarded: {:?}", ev.name, other);
+                        self.add_to_history(history_cell::new_log_line(msg));
+                    }
+                }
+            }
+            EventMsg::SubagentEnd(ev) => {
+                let summary = ev.last_agent_message.as_deref().unwrap_or("");
+                let msg = format!(
+                    "subagent end: {} ({}) success={} {}",
+                    ev.name, ev.subagent_id, ev.success, summary
+                );
+                self.add_to_history(history_cell::new_log_line(msg));
             }
             EventMsg::StreamError(StreamErrorEvent { message }) => self.on_stream_error(message),
             EventMsg::ConversationHistory(_) => {}

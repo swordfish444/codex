@@ -174,6 +174,11 @@ async fn run_codex_tool_session_inner(
                     .await;
 
                 match event.msg {
+                    EventMsg::SubagentBegin(_)
+                    | EventMsg::SubagentForwarded(_)
+                    | EventMsg::SubagentEnd(_) => {
+                        // Ignore subagent orchestration for MCP echoing.
+                    }
                     EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
                         command,
                         cwd,

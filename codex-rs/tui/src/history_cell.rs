@@ -750,6 +750,14 @@ pub(crate) fn new_status_output(
     PlainHistoryCell { lines }
 }
 
+/// Simple one-line log entry (dim) to surface traces and diagnostics in the transcript.
+pub(crate) fn new_log_line(message: String) -> TranscriptOnlyHistoryCell {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    lines.push(Line::from(""));
+    lines.push(Line::from(message).dim());
+    TranscriptOnlyHistoryCell { lines }
+}
+
 /// Render a summary of configured MCP servers from the current `Config`.
 pub(crate) fn empty_mcp_output() -> PlainHistoryCell {
     let lines: Vec<Line<'static>> = vec![

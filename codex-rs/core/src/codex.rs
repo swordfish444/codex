@@ -263,6 +263,15 @@ pub(crate) struct Session {
     /// Manager for external MCP servers/tools.
     mcp_connection_manager: McpConnectionManager,
 
+    /// Loaded subagent definitions from project and user scope.
+    subagents_registry: crate::subagents::registry::SubagentRegistry,
+
+    /// Auth manager used to spawn nested sessions (e.g., subagents).
+    auth_manager: Arc<AuthManager>,
+
+    /// Base configuration used to derive nested session configs.
+    base_config: Arc<Config>,
+
     /// External notifier command (will be passed as args to exec()). When
     /// `None` this feature is disabled.
     notify: Option<Vec<String>>,
@@ -498,6 +507,31 @@ impl Session {
             model_reasoning_summary,
             session_id,
         );
+        // Build subagent registry paths and load once per session
+        let project_agents_dir = {
+            let mut p = cwd.clone();
+            p.push(".codex");
+            p.push("agents");
+            if p.exists() { Some(p) } else { None }
+        };
+        let user_agents_dir = {
+            let mut p = config.codex_home.clone();
+            p.push("agents");
+            if p.exists() { Some(p) } else { None }
+        };
+        let mut subagents_registry =
+            crate::subagents::registry::SubagentRegistry::new(project_agents_dir, user_agents_dir);
+        subagents_registry.load();
+        // Log discovered subagents for visibility in clients (e.g., TUI).
+        let _ = tx_event
+            .send(Event {
+                id: INITIAL_SUBMIT_ID.to_string(),
+                msg: EventMsg::BackgroundEvent(BackgroundEventEvent {
+                    message: format!("subagents discovered: {:?}", subagents_registry.all_names()),
+                }),
+            })
+            .await;
+
         let turn_context = TurnContext {
             client,
             tools_config: ToolsConfig::new(
@@ -506,6 +540,7 @@ impl Session {
                 sandbox_policy.clone(),
                 config.include_plan_tool,
                 config.include_apply_patch_tool,
+                config.include_subagent_tool,
             ),
             user_instructions,
             base_instructions,
@@ -519,6 +554,9 @@ impl Session {
             session_id,
             tx_event: tx_event.clone(),
             mcp_connection_manager,
+            subagents_registry,
+            auth_manager: auth_manager.clone(),
+            base_config: config.clone(),
             notify,
             state: Mutex::new(state),
             rollout: Mutex::new(rollout_recorder),
@@ -576,6 +614,16 @@ impl Session {
         {
             state.current_task.take();
         }
+    }
+
+    /// Access auth manager for nested sessions.
+    pub(crate) fn auth_manager(&self) -> Arc<AuthManager> {
+        self.auth_manager.clone()
+    }
+
+    /// Access base config for nested sessions.
+    pub(crate) fn base_config(&self) -> Arc<Config> {
+        self.base_config.clone()
     }
 
     /// Sends the given event to the client and swallows the send event, if
@@ -1090,6 +1138,7 @@ async fn submission_loop(
                     new_sandbox_policy.clone(),
                     config.include_plan_tool,
                     config.include_apply_patch_tool,
+                    config.include_subagent_tool,
                 );
 
                 let new_turn_context = TurnContext {
@@ -1168,6 +1217,7 @@ async fn submission_loop(
                             sandbox_policy.clone(),
                             config.include_plan_tool,
                             config.include_apply_patch_tool,
+                            config.include_subagent_tool,
                         ),
                         user_instructions: turn_context.user_instructions.clone(),
                         base_instructions: turn_context.base_instructions.clone(),
@@ -1554,6 +1604,26 @@ async fn run_turn(
         &turn_context.tools_config,
         Some(sess.mcp_connection_manager.list_all_tools()),
     );
+
+    // Log tool names for visibility in the TUI/debug logs.
+    #[allow(clippy::match_same_arms)]
+    let tool_names: Vec<String> = tools
+        .iter()
+        .map(|t| match t {
+            crate::openai_tools::OpenAiTool::Function(f) => f.name.clone(),
+            crate::openai_tools::OpenAiTool::LocalShell {} => "local_shell".to_string(),
+            crate::openai_tools::OpenAiTool::Freeform(f) => f.name.clone(),
+        })
+        .collect();
+    let _ = sess
+        .tx_event
+        .send(Event {
+            id: sub_id.clone(),
+            msg: EventMsg::BackgroundEvent(BackgroundEventEvent {
+                message: format!("tools available: {:?}", tool_names),
+            }),
+        })
+        .await;
 
     let prompt = Prompt {
         input,
@@ -2073,6 +2143,57 @@ async fn handle_function_call(
             .await
         }
         "update_plan" => handle_update_plan(sess, arguments, sub_id, call_id).await,
+        "subagent.run" => {
+            #[derive(serde::Deserialize)]
+            struct Args {
+                name: String,
+                input: String,
+                #[serde(default)]
+                context: Option<String>,
+            }
+            let args = match serde_json::from_str::<Args>(&arguments) {
+                Ok(a) => a,
+                Err(e) => {
+                    return ResponseInputItem::FunctionCallOutput {
+                        call_id,
+                        output: FunctionCallOutputPayload {
+                            content: format!("failed to parse function arguments: {e}"),
+                            success: Some(false),
+                        },
+                    };
+                }
+            };
+
+            let result = crate::subagents::runner::run(
+                sess,
+                turn_context,
+                &sess.subagents_registry,
+                crate::subagents::runner::RunSubagentArgs {
+                    name: args.name,
+                    input: args.input,
+                    context: args.context,
+                },
+                &sub_id,
+            )
+            .await;
+
+            match result {
+                Ok(message) => ResponseInputItem::FunctionCallOutput {
+                    call_id,
+                    output: FunctionCallOutputPayload {
+                        content: message,
+                        success: Some(true),
+                    },
+                },
+                Err(e) => ResponseInputItem::FunctionCallOutput {
+                    call_id,
+                    output: FunctionCallOutputPayload {
+                        content: format!("subagent failed: {e}"),
+                        success: Some(false),
+                    },
+                },
+            }
+        }
         _ => {
             match sess.mcp_connection_manager.parse_tool_name(&name) {
                 Some((server, tool_name)) => {
@@ -2182,6 +2303,8 @@ fn parse_container_exec_arguments(
         }
     }
 }
+
+// (helper run_one_turn_collect removed as unused)
 
 pub struct ExecInvokeArgs<'a> {
     pub params: ExecParams,

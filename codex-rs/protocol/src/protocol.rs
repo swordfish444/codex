@@ -478,6 +478,14 @@ pub enum EventMsg {
     ShutdownComplete,
 
     ConversationHistory(ConversationHistoryResponseEvent),
+
+    // --- Subagent orchestration events ---
+    /// Emitted when a subagent starts.
+    SubagentBegin(SubagentBeginEvent),
+    /// Forwards a nested event produced by a running subagent.
+    SubagentForwarded(SubagentForwardedEvent),
+    /// Emitted when a subagent finishes.
+    SubagentEnd(SubagentEndEvent),
 }
 
 // Individual event payload types matching each `EventMsg` variant.
@@ -499,6 +507,28 @@ pub struct TokenUsage {
     pub output_tokens: u64,
     pub reasoning_output_tokens: Option<u64>,
     pub total_tokens: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SubagentBeginEvent {
+    pub subagent_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SubagentEndEvent {
+    pub subagent_id: String,
+    pub name: String,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_agent_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SubagentForwardedEvent {
+    pub subagent_id: String,
+    pub name: String,
+    pub event: Box<EventMsg>,
 }
 
 impl TokenUsage {

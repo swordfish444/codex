@@ -63,6 +63,7 @@ pub struct ToolsConfig {
     pub shell_type: ConfigShellToolType,
     pub plan_tool: bool,
     pub apply_patch_tool_type: Option<ApplyPatchToolType>,
+    pub subagent_tool: bool,
 }
 
 impl ToolsConfig {
@@ -72,6 +73,7 @@ impl ToolsConfig {
         sandbox_policy: SandboxPolicy,
         include_plan_tool: bool,
         include_apply_patch_tool: bool,
+        include_subagent_tool: bool,
     ) -> Self {
         let mut shell_type = if model_family.uses_local_shell_tool {
             ConfigShellToolType::LocalShell
@@ -100,6 +102,7 @@ impl ToolsConfig {
             shell_type,
             plan_tool: include_plan_tool,
             apply_patch_tool_type,
+            subagent_tool: include_subagent_tool,
         }
     }
 }
@@ -509,6 +512,11 @@ pub(crate) fn get_openai_tools(
         }
     }
 
+    if config.subagent_tool {
+        tracing::trace!("Adding subagent tool");
+        tools.push(crate::subagents::SUBAGENT_TOOL.clone());
+    }
+
     if let Some(mcp_tools) = mcp_tools {
         for (name, tool) in mcp_tools {
             match mcp_tool_to_openai_tool(name.clone(), tool.clone()) {
@@ -520,6 +528,7 @@ pub(crate) fn get_openai_tools(
         }
     }
 
+    tracing::trace!("Tools: {tools:?}");
     tools
 }
 
@@ -564,6 +573,7 @@ mod tests {
             SandboxPolicy::ReadOnly,
             true,
             false,
+            false,
         );
         let tools = get_openai_tools(&config, Some(HashMap::new()));
 
@@ -579,6 +589,7 @@ mod tests {
             SandboxPolicy::ReadOnly,
             true,
             false,
+            false,
         );
         let tools = get_openai_tools(&config, Some(HashMap::new()));
 
@@ -592,6 +603,7 @@ mod tests {
             &model_family,
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
+            false,
             false,
             false,
         );
@@ -688,6 +700,7 @@ mod tests {
             SandboxPolicy::ReadOnly,
             false,
             false,
+            false,
         );
 
         let tools = get_openai_tools(
@@ -744,6 +757,7 @@ mod tests {
             SandboxPolicy::ReadOnly,
             false,
             false,
+            false,
         );
 
         let tools = get_openai_tools(
@@ -793,6 +807,7 @@ mod tests {
             &model_family,
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
+            false,
             false,
             false,
         );
@@ -847,6 +862,7 @@ mod tests {
             &model_family,
             AskForApproval::Never,
             SandboxPolicy::ReadOnly,
+            false,
             false,
             false,
         );
