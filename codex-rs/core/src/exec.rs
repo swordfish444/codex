@@ -184,7 +184,7 @@ pub struct StreamOutput<T> {
     pub truncated_after_lines: Option<u32>,
 }
 #[derive(Debug)]
-pub struct RawExecToolCallOutput {
+struct RawExecToolCallOutput {
     pub exit_status: ExitStatus,
     pub stdout: StreamOutput<Vec<u8>>,
     pub stderr: StreamOutput<Vec<u8>>,
@@ -255,7 +255,7 @@ async fn exec(
 
 /// Consumes the output of a child process, truncating it so it is suitable for
 /// use as the output of a `shell` tool call. Also enforces specified timeout.
-pub(crate) async fn consume_truncated_output(
+async fn consume_truncated_output(
     mut child: Child,
     timeout: Duration,
     stdout_stream: Option<StdoutStream>,
