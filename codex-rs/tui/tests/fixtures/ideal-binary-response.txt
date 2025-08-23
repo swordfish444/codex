@@ -9,8 +9,7 @@ codex
 I’m going to scan the workspace and Cargo manifests to see build profiles and
 dependencies that impact binary size. Then I’ll summarize the main causes.
 
- 
->_
+_
   ✓ ls -la
   └ total 6696
     drwxr-xr-x@ 39 easong  staff     1248 Aug  9 08:49 .
@@ -31,7 +30,6 @@ dependencies that impact binary size. Then I’ll summarize the main causes.
         "arg0",
 … +38 lines
     codegen-units = 1
-
 
     [patch.crates-io]
     # ratatui = { path = "../../ratatui" }
@@ -56,7 +54,6 @@ echo "--- $d/Cargo.toml"; sed -n '1,200p' $d/Cargo.toml; echo; done
     name = "codex-execpolicy"
     version = { workspace = true }
     edition = "2024"
-
 
 … +23 lines
     serde_json = "1.0.142"
