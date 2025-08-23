@@ -2886,8 +2886,7 @@ mod tests {
     fn model_truncation_respects_byte_budget() {
         // Construct a large output (about 100kB) so byte budget dominates
         let big_line = "x".repeat(100);
-        let full = std::iter::repeat(big_line.clone())
-            .take(1000)
+        let full = std::iter::repeat_n(big_line.clone(), 1000)
             .collect::<Vec<_>>()
             .join("\n");
 
