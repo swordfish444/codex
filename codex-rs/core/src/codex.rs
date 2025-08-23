@@ -2552,25 +2552,20 @@ async fn handle_sandbox_error(
 
 fn format_exec_output_str(exec_output: &ExecToolCallOutput) -> String {
     let ExecToolCallOutput {
-        exit_code,
-        stdout,
-        stderr,
-        ..
+        aggregated_output, ..
     } = exec_output;
-
-    let is_success = *exit_code == 0;
-    let output = if is_success { stdout } else { stderr };
 
     // Truncate for model: 10 KiB or 256 lines, whichever comes first.
     const MODEL_FORMAT_MAX_BYTES: usize = 10 * 1024;
     const MODEL_FORMAT_MAX_LINES: usize = 256;
 
-    let mut result = String::with_capacity(output.text.len().min(MODEL_FORMAT_MAX_BYTES));
+    let mut result =
+        String::with_capacity(aggregated_output.text.len().min(MODEL_FORMAT_MAX_BYTES));
     let mut used_bytes: usize = 0;
     let mut used_lines: u32 = 0;
     let mut truncated = false;
 
-    for line in output.text.split_inclusive('\n') {
+    for line in aggregated_output.text.split_inclusive('\n') {
         if used_lines >= MODEL_FORMAT_MAX_LINES as u32 {
             truncated = true;
             break;
