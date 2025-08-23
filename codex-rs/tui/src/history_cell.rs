@@ -752,9 +752,7 @@ pub(crate) fn new_status_output(
 
 /// Simple one-line log entry (dim) to surface traces and diagnostics in the transcript.
 pub(crate) fn new_log_line(message: String) -> TranscriptOnlyHistoryCell {
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    lines.push(Line::from(""));
-    lines.push(Line::from(message).dim());
+    let lines: Vec<Line<'static>> = vec![Line::from(""), Line::from(message).dim()];
     TranscriptOnlyHistoryCell { lines }
 }
 

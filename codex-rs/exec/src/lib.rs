@@ -146,6 +146,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         model_provider,
         codex_linux_sandbox_exe,
         base_instructions: None,
+        include_subagent_tool: None,
         include_plan_tool: None,
         include_apply_patch_tool: None,
         disable_response_storage: oss.then_some(true),
@@ -216,13 +217,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
                         Ok(event) => {
                             debug!("Received event: {event:?}");
 
-                            let is_shutdown_complete = matches!(
-                                event.msg,
-                                EventMsg::ShutdownComplete
-                                    | EventMsg::SubagentBegin(_)
-                                    | EventMsg::SubagentForwarded(_)
-                                    | EventMsg::SubagentEnd(_)
-                            );
+                            let is_shutdown_complete = matches!(event.msg, EventMsg::ShutdownComplete);
                             if let Err(e) = tx.send(event) {
                                 error!("Error sending event: {e:?}");
                                 break;

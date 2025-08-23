@@ -515,6 +515,7 @@ pub(crate) fn get_openai_tools(
     if config.subagent_tool {
         tracing::trace!("Adding subagent tool");
         tools.push(crate::subagents::SUBAGENT_TOOL.clone());
+        tools.push(crate::subagents::SUBAGENT_LIST_TOOL.clone());
     }
 
     if let Some(mcp_tools) = mcp_tools {

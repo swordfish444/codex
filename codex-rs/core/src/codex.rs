@@ -522,15 +522,14 @@ impl Session {
         let mut subagents_registry =
             crate::subagents::registry::SubagentRegistry::new(project_agents_dir, user_agents_dir);
         subagents_registry.load();
-        // Log discovered subagents for visibility in clients (e.g., TUI).
-        let _ = tx_event
-            .send(Event {
-                id: INITIAL_SUBMIT_ID.to_string(),
-                msg: EventMsg::BackgroundEvent(BackgroundEventEvent {
-                    message: format!("subagents discovered: {:?}", subagents_registry.all_names()),
-                }),
-            })
-            .await;
+        // Log discovered subagents for visibility in clients (e.g., TUI) after
+        // SessionConfigured so the first event contract remains intact.
+        post_session_configured_error_events.push(Event {
+            id: INITIAL_SUBMIT_ID.to_string(),
+            msg: EventMsg::BackgroundEvent(BackgroundEventEvent {
+                message: format!("subagents discovered: {:?}", subagents_registry.all_names()),
+            }),
+        });
 
         let turn_context = TurnContext {
             client,
@@ -1604,6 +1603,7 @@ async fn run_turn(
         &turn_context.tools_config,
         Some(sess.mcp_connection_manager.list_all_tools()),
     );
+    tracing::trace!("Tools: {tools:?}");
 
     // Log tool names for visibility in the TUI/debug logs.
     #[allow(clippy::match_same_arms)]
@@ -2143,7 +2143,7 @@ async fn handle_function_call(
             .await
         }
         "update_plan" => handle_update_plan(sess, arguments, sub_id, call_id).await,
-        "subagent.run" => {
+        "subagent_run" => {
             #[derive(serde::Deserialize)]
             struct Args {
                 name: String,
@@ -2191,6 +2191,33 @@ async fn handle_function_call(
                         content: format!("subagent failed: {e}"),
                         success: Some(false),
                     },
+                },
+            }
+        }
+        "subagent_list" => {
+            #[derive(serde::Serialize)]
+            struct SubagentBrief<'a> {
+                name: &'a str,
+                description: &'a str,
+            }
+            let mut list = Vec::new();
+            for name in sess.subagents_registry.all_names() {
+                if let Some(def) = sess.subagents_registry.get(&name) {
+                    list.push(SubagentBrief {
+                        name: &def.name,
+                        description: &def.description,
+                    });
+                }
+            }
+            let payload = match serde_json::to_string(&list) {
+                Ok(s) => s,
+                Err(e) => format!("failed to serialize subagent list: {e}"),
+            };
+            ResponseInputItem::FunctionCallOutput {
+                call_id,
+                output: FunctionCallOutputPayload {
+                    content: payload,
+                    success: Some(true),
                 },
             }
         }
