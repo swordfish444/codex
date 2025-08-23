@@ -28,13 +28,6 @@ use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
 use serde_bytes::ByteBuf;
 
-// Maximum we send for each stream, which is either:
-// - 10KiB OR
-// - 256 lines
-// No caps: collect full stdout/stderr and aggregated output
-const MAX_STREAM_OUTPUT: usize = usize::MAX;
-const MAX_STREAM_OUTPUT_LINES: usize = usize::MAX;
-
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 
 // Hardcode these since it does not seem worth including the libc crate just
@@ -286,16 +279,12 @@ pub(crate) async fn consume_truncated_output(
 
     let stdout_handle = tokio::spawn(read_capped(
         BufReader::new(stdout_reader),
-        MAX_STREAM_OUTPUT,
-        MAX_STREAM_OUTPUT_LINES,
         stdout_stream.clone(),
         false,
         Some(agg_tx.clone()),
     ));
     let stderr_handle = tokio::spawn(read_capped(
         BufReader::new(stderr_reader),
-        MAX_STREAM_OUTPUT,
-        MAX_STREAM_OUTPUT_LINES,
         stdout_stream.clone(),
         true,
         Some(agg_tx.clone()),
@@ -344,8 +333,6 @@ pub(crate) async fn consume_truncated_output(
 
 async fn read_capped<R: AsyncRead + Unpin + Send + 'static>(
     mut reader: R,
-    _max_output: usize,
-    _max_lines: usize,
     stream: Option<StdoutStream>,
     is_stderr: bool,
     aggregate_tx: Option<Sender<Vec<u8>>>,
