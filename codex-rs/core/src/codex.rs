@@ -143,6 +143,13 @@ pub struct CodexSpawnOk {
 
 pub(crate) const INITIAL_SUBMIT_ID: &str = "";
 
+// Model-formatting limits: clients get full streams; only formatted summary is capped.
+pub(crate) const MODEL_FORMAT_MAX_BYTES: usize = 10 * 1024; // 10 KiB
+pub(crate) const MODEL_FORMAT_MAX_LINES: usize = 256; // lines
+pub(crate) const MODEL_FORMAT_HEAD_LINES: usize = MODEL_FORMAT_MAX_LINES / 2; // 128
+pub(crate) const MODEL_FORMAT_TAIL_LINES: usize = MODEL_FORMAT_MAX_LINES - MODEL_FORMAT_HEAD_LINES; // 128
+pub(crate) const MODEL_FORMAT_HEAD_BYTES: usize = MODEL_FORMAT_MAX_BYTES / 2; // split roughly in half
+
 impl Codex {
     /// Spawn a new [`Codex`] and initialize the session.
     pub async fn spawn(
@@ -2555,51 +2562,100 @@ fn format_exec_output_str(exec_output: &ExecToolCallOutput) -> String {
         aggregated_output, ..
     } = exec_output;
 
-    // Truncate for model: 10 KiB or 256 lines, whichever comes first.
-    const MODEL_FORMAT_MAX_BYTES: usize = 10 * 1024;
-    const MODEL_FORMAT_MAX_LINES: usize = 256;
+    // Head+tail truncation for the model: show the beginning and end with an elision.
+    // Clients still receive full streams; only this formatted summary is capped.
 
-    let mut result =
-        String::with_capacity(aggregated_output.text.len().min(MODEL_FORMAT_MAX_BYTES));
-    let mut used_bytes: usize = 0;
-    let mut used_lines: u32 = 0;
-    let mut truncated = false;
-
-    for line in aggregated_output.text.split_inclusive('\n') {
-        if used_lines >= MODEL_FORMAT_MAX_LINES as u32 {
-            truncated = true;
-            break;
-        }
-
-        let line_bytes = line.len();
-        if used_bytes + line_bytes <= MODEL_FORMAT_MAX_BYTES {
-            result.push_str(line);
-            used_bytes += line_bytes;
-            used_lines += 1;
-            continue;
-        }
-
-        for ch in line.chars() {
-            let clen = ch.len_utf8();
-            if used_bytes + clen > MODEL_FORMAT_MAX_BYTES {
-                break;
-            }
-            result.push(ch);
-            used_bytes += clen;
-        }
-        // Count the partially-added line.
-        used_lines += 1;
-        truncated = true;
-        break;
+    let s = aggregated_output.text.as_str();
+    let total_lines = s.lines().count();
+    if s.len() <= MODEL_FORMAT_MAX_BYTES && total_lines <= MODEL_FORMAT_MAX_LINES {
+        return s.to_string();
     }
 
-    if truncated {
-        result.push_str(&format!(
-            "\n\n[Output truncated after {used_lines} lines: too many lines or bytes.]",
-        ));
+    let lines: Vec<&str> = s.lines().collect();
+    let head_take = MODEL_FORMAT_HEAD_LINES.min(lines.len());
+    let tail_take = MODEL_FORMAT_TAIL_LINES.min(lines.len().saturating_sub(head_take));
+    let omitted = lines.len().saturating_sub(head_take + tail_take);
+
+    // Join head and tail blocks (lines() strips newlines; reinsert them)
+    let head_block = lines
+        .iter()
+        .take(head_take)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let tail_block = if tail_take > 0 {
+        lines[lines.len() - tail_take..].join("\n")
+    } else {
+        String::new()
+    };
+    let marker = format!("\n[... omitted {omitted} of {total_lines} lines ...]\n\n");
+
+    // Byte budgets for head/tail around the marker
+    let mut head_budget = MODEL_FORMAT_HEAD_BYTES.min(MODEL_FORMAT_MAX_BYTES);
+    let tail_budget = MODEL_FORMAT_MAX_BYTES.saturating_sub(head_budget + marker.len());
+    if tail_budget == 0 && marker.len() >= MODEL_FORMAT_MAX_BYTES {
+        // Degenerate case: marker alone exceeds budget; return a clipped marker
+        return take_bytes_at_char_boundary(&marker, MODEL_FORMAT_MAX_BYTES).to_string();
     }
+    if tail_budget == 0 {
+        // Make room for the marker by shrinking head
+        head_budget = MODEL_FORMAT_MAX_BYTES.saturating_sub(marker.len());
+    }
+
+    // Enforce line-count cap by trimming head/tail lines
+    let head_lines_text = head_block;
+    let tail_lines_text = tail_block;
+    // Build final string respecting byte budgets
+    let head_part = take_bytes_at_char_boundary(&head_lines_text, head_budget);
+    let mut result = String::with_capacity(MODEL_FORMAT_MAX_BYTES.min(s.len()));
+    result.push_str(head_part);
+    result.push_str(&marker);
+
+    let remaining = MODEL_FORMAT_MAX_BYTES.saturating_sub(result.len());
+    let tail_budget_final = remaining;
+    let tail_part = take_last_bytes_at_char_boundary(&tail_lines_text, tail_budget_final);
+    result.push_str(tail_part);
 
     result
+}
+
+// Truncate a &str to a byte budget at a char boundary (prefix)
+#[inline]
+fn take_bytes_at_char_boundary(s: &str, maxb: usize) -> &str {
+    if s.len() <= maxb {
+        return s;
+    }
+    let mut last_ok = 0;
+    for (i, ch) in s.char_indices() {
+        let nb = i + ch.len_utf8();
+        if nb > maxb {
+            break;
+        }
+        last_ok = nb;
+    }
+    &s[..last_ok]
+}
+
+// Take a suffix of a &str within a byte budget at a char boundary
+#[inline]
+fn take_last_bytes_at_char_boundary(s: &str, maxb: usize) -> &str {
+    if s.len() <= maxb {
+        return s;
+    }
+    let mut start = s.len();
+    let mut used = 0usize;
+    for (i, ch) in s.char_indices().rev() {
+        let nb = ch.len_utf8();
+        if used + nb > maxb {
+            break;
+        }
+        start = i;
+        used += nb;
+        if start == 0 {
+            break;
+        }
+    }
+    &s[start..]
 }
 
 /// Exec output is a pre-serialized JSON payload
