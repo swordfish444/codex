@@ -31,8 +31,9 @@ use serde_bytes::ByteBuf;
 // Maximum we send for each stream, which is either:
 // - 10KiB OR
 // - 256 lines
-const MAX_STREAM_OUTPUT: usize = 10 * 1024;
-const MAX_STREAM_OUTPUT_LINES: usize = 256;
+// No caps: collect full stdout/stderr and aggregated output
+const MAX_STREAM_OUTPUT: usize = usize::MAX;
+const MAX_STREAM_OUTPUT_LINES: usize = usize::MAX;
 
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 
@@ -216,22 +217,8 @@ impl StreamOutput<Vec<u8>> {
 }
 
 #[inline]
-fn copy_capped(
-    dst: &mut Vec<u8>,
-    src: &[u8],
-    remaining_bytes: &mut usize,
-    remaining_lines: &mut usize,
-) {
-    for &b in src {
-        if *remaining_bytes == 0 || *remaining_lines == 0 {
-            break;
-        }
-        dst.push(b);
-        *remaining_bytes = remaining_bytes.saturating_sub(1);
-        if b == b'\n' {
-            *remaining_lines = remaining_lines.saturating_sub(1);
-        }
-    }
+fn append_all(dst: &mut Vec<u8>, src: &[u8]) {
+    dst.extend_from_slice(src);
 }
 
 #[derive(Debug)]
@@ -338,28 +325,13 @@ pub(crate) async fn consume_truncated_output(
 
     drop(agg_tx);
 
-    let mut combined_buf = Vec::with_capacity(MAX_STREAM_OUTPUT.min(8 * 1024));
-    let mut remaining_bytes = MAX_STREAM_OUTPUT;
-    let mut remaining_lines = MAX_STREAM_OUTPUT_LINES;
+    let mut combined_buf = Vec::with_capacity(8 * 1024);
     while let Ok(chunk) = agg_rx.recv().await {
-        if remaining_bytes == 0 || remaining_lines == 0 {
-            continue;
-        }
-        copy_capped(
-            &mut combined_buf,
-            &chunk,
-            &mut remaining_bytes,
-            &mut remaining_lines,
-        );
+        append_all(&mut combined_buf, &chunk);
     }
-    let truncated = remaining_lines == 0 || remaining_bytes == 0;
     let aggregated_output = StreamOutput {
         text: combined_buf,
-        truncated_after_lines: if truncated {
-            Some((MAX_STREAM_OUTPUT_LINES - remaining_lines) as u32)
-        } else {
-            None
-        },
+        truncated_after_lines: None,
     };
 
     Ok(RawExecToolCallOutput {
@@ -372,17 +344,16 @@ pub(crate) async fn consume_truncated_output(
 
 async fn read_capped<R: AsyncRead + Unpin + Send + 'static>(
     mut reader: R,
-    max_output: usize,
-    max_lines: usize,
+    _max_output: usize,
+    _max_lines: usize,
     stream: Option<StdoutStream>,
     is_stderr: bool,
     aggregate_tx: Option<Sender<Vec<u8>>>,
 ) -> io::Result<StreamOutput<Vec<u8>>> {
-    let mut buf = Vec::with_capacity(max_output.min(8 * 1024));
+    let mut buf = Vec::with_capacity(8 * 1024);
     let mut tmp = [0u8; 8192];
 
-    let mut remaining_bytes = max_output;
-    let mut remaining_lines = max_lines;
+    // No caps: append all bytes
 
     loop {
         let n = reader.read(&mut tmp).await?;
@@ -413,26 +384,13 @@ async fn read_capped<R: AsyncRead + Unpin + Send + 'static>(
             let _ = tx.send(tmp[..n].to_vec()).await;
         }
 
-        if remaining_bytes > 0 && remaining_lines > 0 {
-            copy_capped(
-                &mut buf,
-                &tmp[..n],
-                &mut remaining_bytes,
-                &mut remaining_lines,
-            );
-        }
-        // Continue reading to EOF to avoid back-pressure, but discard once caps are hit.
+        append_all(&mut buf, &tmp[..n]);
+        // Continue reading to EOF to avoid back-pressure
     }
-
-    let truncated = remaining_lines == 0 || remaining_bytes == 0;
 
     Ok(StreamOutput {
         text: buf,
-        truncated_after_lines: if truncated {
-            Some((max_lines - remaining_lines) as u32)
-        } else {
-            None
-        },
+        truncated_after_lines: None,
     })
 }
 

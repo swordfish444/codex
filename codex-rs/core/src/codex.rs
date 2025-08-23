@@ -726,11 +726,9 @@ impl Session {
             duration,
             exit_code,
         } = output;
-        // Because stdout and stderr could each be up to 100 KiB, we send
-        // truncated versions.
-        const MAX_STREAM_OUTPUT: usize = 5 * 1024; // 5KiB
-        let stdout = stdout.text.chars().take(MAX_STREAM_OUTPUT).collect();
-        let stderr = stderr.text.chars().take(MAX_STREAM_OUTPUT).collect();
+        // Send full stdout/stderr to clients; do not truncate.
+        let stdout = stdout.text.clone();
+        let stderr = stderr.text.clone();
         let formatted_output = format_exec_output_str(output);
         let aggregated_output: String = aggregated_output.text.clone();
 
@@ -2596,7 +2594,6 @@ fn format_exec_output(exec_output: &ExecToolCallOutput) -> String {
     // round to 1 decimal place
     let duration_seconds = ((duration.as_secs_f32()) * 10.0).round() / 10.0;
 
-    let formatted_output = format_exec_output_str(exec_output);
     let formatted_output = format_exec_output_str(exec_output);
 
     let payload = ExecOutput {
