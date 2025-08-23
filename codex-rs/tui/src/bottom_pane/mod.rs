@@ -117,7 +117,6 @@ impl BottomPane {
         // While recording, route all keys to the composer so it can stop on release or next key.
         if self.composer.is_recording() {
             let (_ir, needs_redraw) = self.composer.handle_key_event(key_event);
-            self.composer.sync_popups();
             if needs_redraw {
                 self.request_redraw();
             }
@@ -140,7 +139,6 @@ impl BottomPane {
             InputResult::None
         } else {
             let (input_result, needs_redraw) = self.composer.handle_key_event(key_event);
-            self.composer.sync_popups();
             if needs_redraw {
                 self.request_redraw();
             }
