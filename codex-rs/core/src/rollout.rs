@@ -22,6 +22,7 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::git_info::GitInfo;
 use crate::git_info::collect_git_info;
+use crate::models::ContentItem;
 use crate::models::ResponseItem;
 
 const SESSIONS_SUBDIR: &str = "sessions";
@@ -318,7 +319,12 @@ async fn rollout_writer(
                         | ResponseItem::FunctionCall { .. }
                         | ResponseItem::FunctionCallOutput { .. }
                         | ResponseItem::Reasoning { .. } => {
-                            writer.write_line(&item).await?;
+                            // Inject rollout-only _codex_meta for easier resume/debug.
+                            let mut v = serde_json::to_value(&item)?;
+                            if let Some(obj) = v.as_object_mut() {
+                                obj.insert("_codex_meta".to_string(), build_codex_meta(&item));
+                            }
+                            writer.write_line(&v).await?;
                         }
                         ResponseItem::Other => {}
                     }
@@ -345,6 +351,70 @@ async fn rollout_writer(
     }
 
     Ok(())
+}
+/// Construct rollout-only metadata for a ResponseItem to aid resume/debugging.
+/// This is not sent to providers; it is only stored in rollout JSONL.
+fn build_codex_meta(item: &ResponseItem) -> serde_json::Value {
+    match item {
+        ResponseItem::Message { id, role, content } => {
+            let kinds: Vec<&'static str> = content
+                .iter()
+                .map(|c| match c {
+                    ContentItem::InputText { .. } => "input_text",
+                    ContentItem::InputImage { .. } => "input_image",
+                    ContentItem::OutputText { .. } => "output_text",
+                })
+                .collect();
+            serde_json::json!({
+                "variant": "message",
+                "role": role,
+                "message_id": id,
+                "content_kinds": kinds,
+            })
+        }
+        ResponseItem::Reasoning { id, .. } => {
+            serde_json::json!({
+                "variant": "reasoning",
+                "id": id,
+            })
+        }
+        ResponseItem::LocalShellCall {
+            id,
+            call_id,
+            status,
+            action,
+        } => {
+            // Capture identifiers that are important to correlate with outputs.
+            // Avoid duplicating the full action payload; keep meta concise.
+            let action_type = match action {
+                crate::models::LocalShellAction::Exec(_) => "exec",
+            };
+            serde_json::json!({
+                "variant": "local_shell_call",
+                "id": id,
+                "call_id": call_id,
+                "action_type": action_type,
+                "status": status,
+            })
+        }
+        ResponseItem::FunctionCall {
+            id, name, call_id, ..
+        } => serde_json::json!({
+            "variant": "function_call",
+            "id": id,
+            "call_id": call_id,
+            "name": name,
+        }),
+        ResponseItem::FunctionCallOutput { call_id, output } => serde_json::json!({
+            "variant": "function_call_output",
+            "call_id": call_id,
+            // success is advisory in our internal payload; include if set.
+            "success": output.success,
+        }),
+        ResponseItem::Other => serde_json::json!({
+            "variant": "other",
+        }),
+    }
 }
 
 struct JsonlWriter {
