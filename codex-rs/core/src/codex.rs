@@ -2576,7 +2576,7 @@ fn format_exec_output_str(exec_output: &ExecToolCallOutput) -> String {
             break;
         }
 
-        let line_bytes = line.as_bytes().len();
+        let line_bytes = line.len();
         if used_bytes + line_bytes <= MODEL_FORMAT_MAX_BYTES {
             result.push_str(line);
             used_bytes += line_bytes;
