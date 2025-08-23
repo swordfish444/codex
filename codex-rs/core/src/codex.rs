@@ -147,7 +147,7 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 64;
 // Model-formatting limits: clients get full streams; only formatted summary is capped.
 pub(crate) const MODEL_FORMAT_MAX_BYTES: usize = 10 * 1024; // 10 KiB
 pub(crate) const MODEL_FORMAT_MAX_LINES: usize = 256; // lines
-pub(crate) const MODEL_FORMAT_HEAD_LINES: usize = MODEL_FORMAT_MAX_LINES / 2; // 128
+pub(crate) const MODEL_FORMAT_HEAD_LINES: usize = MODEL_FORMAT_MAX_LINES / 2;
 pub(crate) const MODEL_FORMAT_TAIL_LINES: usize = MODEL_FORMAT_MAX_LINES - MODEL_FORMAT_HEAD_LINES; // 128
 pub(crate) const MODEL_FORMAT_HEAD_BYTES: usize = MODEL_FORMAT_MAX_BYTES / 2; // split roughly in half
 
