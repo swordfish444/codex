@@ -75,27 +75,32 @@ gh run download --dir "$ARTIFACTS_DIR" --repo openai/codex "$WORKFLOW_ID"
 # x64 Linux
 zstd -d "$ARTIFACTS_DIR/x86_64-unknown-linux-musl/codex-x86_64-unknown-linux-musl.zst" \
     -o "$BIN_DIR/codex-x86_64-unknown-linux-musl"
-zstd -d "$ARTIFACTS_DIR/x86_64-unknown-linux-musl/apply-patch-x86_64-unknown-linux-musl.zst" \
-    -o "$BIN_DIR/apply-patch-x86_64-unknown-linux-musl"
+if [ -f "$ARTIFACTS_DIR/x86_64-unknown-linux-musl/apply-patch-x86_64-unknown-linux-musl.zst" ]; then
+  zstd -d "$ARTIFACTS_DIR/x86_64-unknown-linux-musl/apply-patch-x86_64-unknown-linux-musl.zst" -o "$BIN_DIR/apply-patch-x86_64-unknown-linux-musl"
+fi
 # ARM64 Linux
 zstd -d "$ARTIFACTS_DIR/aarch64-unknown-linux-musl/codex-aarch64-unknown-linux-musl.zst" \
     -o "$BIN_DIR/codex-aarch64-unknown-linux-musl"
-zstd -d "$ARTIFACTS_DIR/aarch64-unknown-linux-musl/apply-patch-aarch64-unknown-linux-musl.zst" \
-    -o "$BIN_DIR/apply-patch-aarch64-unknown-linux-musl"
+if [ -f "$ARTIFACTS_DIR/aarch64-unknown-linux-musl/apply-patch-aarch64-unknown-linux-musl.zst" ]; then
+  zstd -d "$ARTIFACTS_DIR/aarch64-unknown-linux-musl/apply-patch-aarch64-unknown-linux-musl.zst" -o "$BIN_DIR/apply-patch-aarch64-unknown-linux-musl"
+fi
 # x64 macOS
 zstd -d "$ARTIFACTS_DIR/x86_64-apple-darwin/codex-x86_64-apple-darwin.zst" \
     -o "$BIN_DIR/codex-x86_64-apple-darwin"
-zstd -d "$ARTIFACTS_DIR/x86_64-apple-darwin/apply-patch-x86_64-apple-darwin.zst" \
-    -o "$BIN_DIR/apply-patch-x86_64-apple-darwin"
+if [ -f "$ARTIFACTS_DIR/x86_64-apple-darwin/apply-patch-x86_64-apple-darwin.zst" ]; then
+  zstd -d "$ARTIFACTS_DIR/x86_64-apple-darwin/apply-patch-x86_64-apple-darwin.zst" -o "$BIN_DIR/apply-patch-x86_64-apple-darwin"
+fi
 # ARM64 macOS
 zstd -d "$ARTIFACTS_DIR/aarch64-apple-darwin/codex-aarch64-apple-darwin.zst" \
     -o "$BIN_DIR/codex-aarch64-apple-darwin"
-zstd -d "$ARTIFACTS_DIR/aarch64-apple-darwin/apply-patch-aarch64-apple-darwin.zst" \
-    -o "$BIN_DIR/apply-patch-aarch64-apple-darwin"
+if [ -f "$ARTIFACTS_DIR/aarch64-apple-darwin/apply-patch-aarch64-apple-darwin.zst" ]; then
+  zstd -d "$ARTIFACTS_DIR/aarch64-apple-darwin/apply-patch-aarch64-apple-darwin.zst" -o "$BIN_DIR/apply-patch-aarch64-apple-darwin"
+fi
 # x64 Windows
 zstd -d "$ARTIFACTS_DIR/x86_64-pc-windows-msvc/codex-x86_64-pc-windows-msvc.exe.zst" \
     -o "$BIN_DIR/codex-x86_64-pc-windows-msvc.exe"
-zstd -d "$ARTIFACTS_DIR/x86_64-pc-windows-msvc/apply-patch-x86_64-pc-windows-msvc.exe.zst" \
-    -o "$BIN_DIR/apply-patch-x86_64-pc-windows-msvc.exe"
+if [ -f "$ARTIFACTS_DIR/x86_64-pc-windows-msvc/apply-patch-x86_64-pc-windows-msvc.exe.zst" ]; then
+  zstd -d "$ARTIFACTS_DIR/x86_64-pc-windows-msvc/apply-patch-x86_64-pc-windows-msvc.exe.zst" -o "$BIN_DIR/apply-patch-x86_64-pc-windows-msvc.exe"
+fi
 
 echo "Installed native dependencies into $BIN_DIR"
