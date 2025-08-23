@@ -2807,6 +2807,7 @@ mod tests {
     use mcp_types::TextContent;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+    use std::time::Duration as StdDuration;
 
     fn text_block(s: &str) -> ContentBlock {
         ContentBlock::TextContent(TextContent {
@@ -2839,6 +2840,83 @@ mod tests {
         };
 
         assert_eq!(expected, got);
+    }
+
+    #[test]
+    fn model_truncation_head_tail_by_lines() {
+        // Build 400 short lines so line-count limit, not byte budget, triggers truncation
+        let lines: Vec<String> = (1..=400).map(|i| format!("line{i}")).collect();
+        let full = lines.join("\n");
+
+        let exec = ExecToolCallOutput {
+            exit_code: 0,
+            stdout: StreamOutput::new(String::new()),
+            stderr: StreamOutput::new(String::new()),
+            aggregated_output: StreamOutput::new(full.clone()),
+            duration: StdDuration::from_secs(1),
+        };
+
+        let out = format_exec_output_str(&exec);
+
+        // Expect elision marker with correct counts
+        let omitted = 400 - MODEL_FORMAT_MAX_LINES; // 144
+        let marker = format!("\n[... omitted {omitted} of 400 lines ...]\n\n");
+        assert!(out.contains(&marker), "missing marker: {out}");
+
+        // Validate head and tail
+        let parts: Vec<&str> = out.split(&marker).collect();
+        assert_eq!(parts.len(), 2, "expected one marker split");
+        let head = parts[0];
+        let tail = parts[1];
+
+        let expected_head: String = (1..=MODEL_FORMAT_HEAD_LINES)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(head.starts_with(&expected_head), "head mismatch");
+
+        let expected_tail: String = ((400 - MODEL_FORMAT_TAIL_LINES + 1)..=400)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(tail.ends_with(&expected_tail), "tail mismatch");
+    }
+
+    #[test]
+    fn model_truncation_respects_byte_budget() {
+        // Construct a large output (about 100kB) so byte budget dominates
+        let big_line = "x".repeat(100);
+        let full = std::iter::repeat(big_line.clone())
+            .take(1000)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let exec = ExecToolCallOutput {
+            exit_code: 0,
+            stdout: StreamOutput::new(String::new()),
+            stderr: StreamOutput::new(String::new()),
+            aggregated_output: StreamOutput::new(full.clone()),
+            duration: StdDuration::from_secs(1),
+        };
+
+        let out = format_exec_output_str(&exec);
+        assert!(out.len() <= MODEL_FORMAT_MAX_BYTES, "exceeds byte budget");
+        assert!(out.contains("omitted"), "should contain elision marker");
+
+        // Ensure head and tail are drawn from the original
+        assert!(full.starts_with(out.chars().take(8).collect::<String>().as_str()));
+        assert!(
+            full.ends_with(
+                out.chars()
+                    .rev()
+                    .take(8)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect::<String>()
+                    .as_str()
+            )
+        );
     }
 
     #[test]
