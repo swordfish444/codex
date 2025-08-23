@@ -144,7 +144,7 @@ pub struct CodexSpawnOk {
 pub(crate) const INITIAL_SUBMIT_ID: &str = "";
 pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 64;
 
-// Model-formatting limits: clients get full streams; only formatted summary is capped.
+// Model-formatting limits: clients get full streams; oonly content sent to the model is truncated.
 pub(crate) const MODEL_FORMAT_MAX_BYTES: usize = 10 * 1024; // 10 KiB
 pub(crate) const MODEL_FORMAT_MAX_LINES: usize = 256; // lines
 pub(crate) const MODEL_FORMAT_HEAD_LINES: usize = MODEL_FORMAT_MAX_LINES / 2; // 128
