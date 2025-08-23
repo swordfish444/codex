@@ -34,6 +34,11 @@ const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 // for these.
 const SIGKILL_CODE: i32 = 9;
 const TIMEOUT_CODE: i32 = 64;
+const EXIT_CODE_SIGNAL_BASE: i32 = 128; // conventional shell: 128 + signal
+
+// I/O buffer sizing
+const READ_CHUNK_SIZE: usize = 8192; // bytes per read
+const AGGREGATE_BUFFER_INITIAL_CAPACITY: usize = 8 * 1024; // 8 KiB
 
 #[derive(Debug, Clone)]
 pub struct ExecParams {
@@ -299,13 +304,13 @@ async fn consume_truncated_output(
                     // timeout
                     child.start_kill()?;
                     // Debatable whether `child.wait().await` should be called here.
-                    synthetic_exit_status(128 + TIMEOUT_CODE)
+                    synthetic_exit_status(EXIT_CODE_SIGNAL_BASE + TIMEOUT_CODE)
                 }
             }
         }
         _ = tokio::signal::ctrl_c() => {
             child.start_kill()?;
-            synthetic_exit_status(128 + SIGKILL_CODE)
+            synthetic_exit_status(EXIT_CODE_SIGNAL_BASE + SIGKILL_CODE)
         }
     };
 
@@ -314,7 +319,7 @@ async fn consume_truncated_output(
 
     drop(agg_tx);
 
-    let mut combined_buf = Vec::with_capacity(8 * 1024);
+    let mut combined_buf = Vec::with_capacity(AGGREGATE_BUFFER_INITIAL_CAPACITY);
     while let Ok(chunk) = agg_rx.recv().await {
         append_all(&mut combined_buf, &chunk);
     }
@@ -337,8 +342,8 @@ async fn read_capped<R: AsyncRead + Unpin + Send + 'static>(
     is_stderr: bool,
     aggregate_tx: Option<Sender<Vec<u8>>>,
 ) -> io::Result<StreamOutput<Vec<u8>>> {
-    let mut buf = Vec::with_capacity(8 * 1024);
-    let mut tmp = [0u8; 8192];
+    let mut buf = Vec::with_capacity(AGGREGATE_BUFFER_INITIAL_CAPACITY);
+    let mut tmp = [0u8; READ_CHUNK_SIZE];
 
     // No caps: append all bytes
 

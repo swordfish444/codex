@@ -142,6 +142,7 @@ pub struct CodexSpawnOk {
 }
 
 pub(crate) const INITIAL_SUBMIT_ID: &str = "";
+pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 64;
 
 // Model-formatting limits: clients get full streams; only formatted summary is capped.
 pub(crate) const MODEL_FORMAT_MAX_BYTES: usize = 10 * 1024; // 10 KiB
@@ -157,7 +158,7 @@ impl Codex {
         auth_manager: Arc<AuthManager>,
         initial_history: Option<Vec<ResponseItem>>,
     ) -> CodexResult<CodexSpawnOk> {
-        let (tx_sub, rx_sub) = async_channel::bounded(64);
+        let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
 
         let user_instructions = get_user_instructions(&config).await;
