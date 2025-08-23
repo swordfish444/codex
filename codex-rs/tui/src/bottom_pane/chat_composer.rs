@@ -285,7 +285,7 @@ impl ChatComposer {
             self.space_hold_trigger = None;
             // fall through to normal handling of this other key
         }
-        
+
         let result = match &mut self.active_popup {
             ActivePopup::Command(_) => self.handle_key_event_with_slash_popup(key_event),
             ActivePopup::File(_) => self.handle_key_event_with_file_popup(key_event),
@@ -891,7 +891,6 @@ impl ChatComposer {
     }
 
     pub fn update_transcription_in_place(&mut self, id: &str, text: &str) -> bool {
-        
         self.textarea.update_named_element_by_id(id, text)
     }
 
