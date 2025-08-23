@@ -2561,14 +2561,50 @@ fn format_exec_output_str(exec_output: &ExecToolCallOutput) -> String {
     let is_success = *exit_code == 0;
     let output = if is_success { stdout } else { stderr };
 
-    let mut formatted_output = output.text.clone();
-    if let Some(truncated_after_lines) = output.truncated_after_lines {
-        formatted_output.push_str(&format!(
-            "\n\n[Output truncated after {truncated_after_lines} lines: too many lines or bytes.]",
+    // Truncate for model: 10 KiB or 256 lines, whichever comes first.
+    const MODEL_FORMAT_MAX_BYTES: usize = 10 * 1024;
+    const MODEL_FORMAT_MAX_LINES: usize = 256;
+
+    let mut result = String::with_capacity(output.text.len().min(MODEL_FORMAT_MAX_BYTES));
+    let mut used_bytes: usize = 0;
+    let mut used_lines: u32 = 0;
+    let mut truncated = false;
+
+    for line in output.text.split_inclusive('\n') {
+        if used_lines >= MODEL_FORMAT_MAX_LINES as u32 {
+            truncated = true;
+            break;
+        }
+
+        let line_bytes = line.as_bytes().len();
+        if used_bytes + line_bytes <= MODEL_FORMAT_MAX_BYTES {
+            result.push_str(line);
+            used_bytes += line_bytes;
+            used_lines += 1;
+            continue;
+        }
+
+        for ch in line.chars() {
+            let clen = ch.len_utf8();
+            if used_bytes + clen > MODEL_FORMAT_MAX_BYTES {
+                break;
+            }
+            result.push(ch);
+            used_bytes += clen;
+        }
+        // Count the partially-added line.
+        used_lines += 1;
+        truncated = true;
+        break;
+    }
+
+    if truncated {
+        result.push_str(&format!(
+            "\n\n[Output truncated after {used_lines} lines: too many lines or bytes.]",
         ));
     }
 
-    formatted_output
+    result
 }
 
 /// Exec output is a pre-serialized JSON payload
