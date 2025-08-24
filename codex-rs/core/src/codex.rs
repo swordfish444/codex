@@ -2810,22 +2810,15 @@ async fn drain_to_completed(
                 response_id: _,
                 token_usage,
             }) => {
-                let token_usage = match token_usage {
-                    Some(usage) => usage,
-                    None => {
-                        return Err(CodexErr::Stream(
-                            "token_usage was None in ResponseEvent::Completed".into(),
-                            None,
-                        ));
-                    }
-                };
-                sess.tx_event
-                    .send(Event {
-                        id: sub_id.to_string(),
-                        msg: EventMsg::TokenCount(token_usage),
-                    })
-                    .await
-                    .ok();
+                if let Some(token_usage) = token_usage {
+                    sess.tx_event
+                        .send(Event {
+                            id: sub_id.to_string(),
+                            msg: EventMsg::TokenCount(token_usage),
+                        })
+                        .await
+                        .ok();
+                }
                 return Ok(());
             }
             Ok(_) => continue,
