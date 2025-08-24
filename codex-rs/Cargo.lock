@@ -652,6 +652,7 @@ dependencies = [
  "codex-core",
  "codex-linux-sandbox",
  "dotenvy",
+ "tempfile",
  "tokio",
 ]
 
