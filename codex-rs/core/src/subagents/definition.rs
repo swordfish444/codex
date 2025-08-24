@@ -19,7 +19,8 @@ pub struct SubagentDefinition {
     /// Base instructions for this subagent.
     pub instructions: String,
 
-    //TODO: add allowed tools. we inherit the parent agent's tools for now.
+    // TODO: add allowed tools. we inherit the parent agent's tools for now.
+    // TODO: add cwd and approval policies.
     /// Structured output schema. The subagent must return a single JSON value
     /// that validates against this schema. The schema will be embedded into the
     /// subagent's instructions so the model can adhere to it.
