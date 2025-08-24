@@ -3,7 +3,6 @@ use crate::error::Result as CodexResult;
 
 use super::definition::SubagentDefinition;
 use super::definition::SubagentSource;
-use super::registry::SubagentRegistry;
 use crate::openai_tools::JsonSchema;
 use serde_json::Value as JsonValue;
 
@@ -54,15 +53,18 @@ fn compose_base_instructions_for_subagent(
 pub(crate) async fn run(
     sess: &crate::codex::Session,
     turn_context: &crate::codex::TurnContext,
-    registry: &SubagentRegistry,
     args: RunSubagentArgs,
     _parent_sub_id: &str,
 ) -> CodexResult<String> {
-    let def: &SubagentDefinition = registry.get(&args.name).ok_or_else(|| {
-        crate::error::CodexErr::Stream(format!("unknown subagent: {}", args.name), None)
-    })?;
+    let def: &SubagentDefinition =
+        turn_context
+            .subagents_registry
+            .get(&args.name)
+            .ok_or_else(|| {
+                crate::error::CodexErr::Stream(format!("unknown subagent: {}", args.name), None)
+            })?;
 
-    let mut nested_cfg = (*sess.base_config()).clone();
+    let mut nested_cfg = (*turn_context.base_config).clone();
     let base_instructions =
         compose_base_instructions_for_subagent(def, turn_context.base_instructions.as_deref());
     nested_cfg.base_instructions = Some(base_instructions);
@@ -79,7 +81,7 @@ pub(crate) async fn run(
     nested_cfg.cwd = turn_context.cwd.clone();
     nested_cfg.include_subagent_tool = false;
 
-    let nested = Codex::spawn(nested_cfg, sess.auth_manager(), None).await?;
+    let nested = Codex::spawn(nested_cfg, turn_context.auth_manager.clone(), None).await?;
     let nested_codex = nested.codex;
 
     let subagent_id = uuid::Uuid::new_v4().to_string();

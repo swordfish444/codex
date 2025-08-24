@@ -268,15 +268,6 @@ pub(crate) struct Session {
     /// Manager for external MCP servers/tools.
     mcp_connection_manager: McpConnectionManager,
 
-    /// Loaded subagent definitions from project and user scope.
-    subagents_registry: crate::subagents::registry::SubagentRegistry,
-
-    /// Auth manager used to spawn nested sessions (e.g., subagents).
-    auth_manager: Arc<AuthManager>,
-
-    /// Base configuration used to derive nested session configs.
-    base_config: Arc<Config>,
-
     /// External notifier command (will be passed as args to exec()). When
     /// `None` this feature is disabled.
     notify: Option<Vec<String>>,
@@ -305,6 +296,9 @@ pub(crate) struct TurnContext {
     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,
     pub(crate) disable_response_storage: bool,
     pub(crate) tools_config: ToolsConfig,
+    pub(crate) subagents_registry: crate::subagents::registry::SubagentRegistry,
+    pub(crate) auth_manager: Arc<AuthManager>,
+    pub(crate) base_config: Arc<Config>,
 }
 
 impl TurnContext {
@@ -512,6 +506,22 @@ impl Session {
             model_reasoning_summary,
             session_id,
         );
+        // Build subagent registry paths and load once per session
+        let project_agents_dir = {
+            let mut p = cwd.clone();
+            p.push(".codex");
+            p.push("agents");
+            if p.exists() { Some(p) } else { None }
+        };
+        let user_agents_dir = {
+            let mut p = config.codex_home.clone();
+            p.push("agents");
+            if p.exists() { Some(p) } else { None }
+        };
+        let mut subagents_registry =
+            crate::subagents::registry::SubagentRegistry::new(project_agents_dir, user_agents_dir);
+        subagents_registry.load();
+
         let turn_context = TurnContext {
             client,
             tools_config: ToolsConfig::new(
@@ -531,30 +541,15 @@ impl Session {
             shell_environment_policy: config.shell_environment_policy.clone(),
             cwd: cwd.clone(),
             disable_response_storage,
+            subagents_registry,
+            auth_manager: auth_manager.clone(),
+            base_config: config.clone(),
         };
-        // Build subagent registry paths and load once per session
-        let project_agents_dir = {
-            let mut p = cwd.clone();
-            p.push(".codex");
-            p.push("agents");
-            if p.exists() { Some(p) } else { None }
-        };
-        let user_agents_dir = {
-            let mut p = config.codex_home.clone();
-            p.push("agents");
-            if p.exists() { Some(p) } else { None }
-        };
-        let mut subagents_registry =
-            crate::subagents::registry::SubagentRegistry::new(project_agents_dir, user_agents_dir);
-        subagents_registry.load();
 
         let sess = Arc::new(Session {
             session_id,
             tx_event: tx_event.clone(),
             mcp_connection_manager,
-            subagents_registry,
-            auth_manager: auth_manager.clone(),
-            base_config: config.clone(),
             notify,
             state: Mutex::new(state),
             rollout: Mutex::new(rollout_recorder),
@@ -620,16 +615,6 @@ impl Session {
         if let Err(e) = self.tx_event.send(event).await {
             error!("failed to send tool call event: {e}");
         }
-    }
-
-    /// Access auth manager for nested sessions.
-    pub(crate) fn auth_manager(&self) -> Arc<AuthManager> {
-        self.auth_manager.clone()
-    }
-
-    /// Access base config for nested sessions.
-    pub(crate) fn base_config(&self) -> Arc<Config> {
-        self.base_config.clone()
     }
 
     pub async fn request_command_approval(
@@ -1141,6 +1126,9 @@ async fn submission_loop(
                     shell_environment_policy: prev.shell_environment_policy.clone(),
                     cwd: new_cwd.clone(),
                     disable_response_storage: prev.disable_response_storage,
+                    subagents_registry: prev.subagents_registry.clone(),
+                    auth_manager: prev.auth_manager.clone(),
+                    base_config: prev.base_config.clone(),
                 };
 
                 // Install the new persistent context for subsequent tasks/turns.
@@ -1218,6 +1206,9 @@ async fn submission_loop(
                         shell_environment_policy: turn_context.shell_environment_policy.clone(),
                         cwd,
                         disable_response_storage: turn_context.disable_response_storage,
+                        subagents_registry: turn_context.subagents_registry.clone(),
+                        auth_manager: turn_context.auth_manager.clone(),
+                        base_config: turn_context.base_config.clone(),
                     };
                     // TODO: record the new environment context in the conversation history
                     // no current task, spawn a new one with the per‑turn context
@@ -2151,7 +2142,6 @@ async fn handle_function_call(
             let result = crate::subagents::runner::run(
                 sess,
                 turn_context,
-                &sess.subagents_registry,
                 crate::subagents::runner::RunSubagentArgs {
                     name: agent_name.clone(),
                     input: args.input,
@@ -2165,7 +2155,7 @@ async fn handle_function_call(
                 Ok(message) => {
                     // If this subagent declares an output schema, validate against it and
                     // return the JSON body unmodified. Otherwise fallback to envelope for text.
-                    if let Some(def) = sess.subagents_registry.get(&agent_name)
+                    if let Some(def) = turn_context.subagents_registry.get(&agent_name)
                         && let Some(schema) = def.output_schema()
                     {
                         match serde_json::from_str::<serde_json::Value>(&message) {
@@ -2243,8 +2233,8 @@ async fn handle_function_call(
                 description: &'a str,
             }
             let mut list = Vec::new();
-            for name in sess.subagents_registry.all_names() {
-                if let Some(def) = sess.subagents_registry.get(&name) {
+            for name in turn_context.subagents_registry.all_names() {
+                if let Some(def) = turn_context.subagents_registry.get(&name) {
                     list.push(SubagentBrief {
                         name: &def.name,
                         description: &def.description,
