@@ -1,4 +1,5 @@
 use super::definition::SubagentDefinition;
+use super::definition::SubagentSource;
 use include_dir::Dir;
 use include_dir::include_dir;
 
@@ -20,7 +21,10 @@ pub(crate) fn embedded_defs() -> Vec<SubagentDefinition> {
         {
             match file.contents_utf8() {
                 Some(contents) => match SubagentDefinition::from_json_str(contents) {
-                    Ok(def) => defs.push(def),
+                    Ok(mut def) => {
+                        def.source = SubagentSource::EmbeddedDefault;
+                        defs.push(def)
+                    }
                     Err(e) => {
                         tracing::warn!(
                             "failed to parse embedded default subagent '{}': {}",

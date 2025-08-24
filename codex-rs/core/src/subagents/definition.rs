@@ -4,17 +4,22 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SubagentSource {
+    #[default]
+    EmbeddedDefault,
+    User,
+    Project,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubagentDefinition {
     pub name: String,
     pub description: String,
     /// Base instructions for this subagent.
     pub instructions: String,
-    /// When not set, inherits the parent agent's tool set. When set to an
-    /// empty list, no tools are available to the subagent.
-    #[serde(default)]
-    pub tools: Option<Vec<String>>, // None => inherit; Some(vec) => allow-list
 
+    //TODO: add allowed tools. we inherit the parent agent's tools for now.
     /// Optional structured output schema. When set, the subagent must return a
     /// single JSON value that validates against this schema. The schema will be
     /// embedded into the subagent's instructions so the model can adhere to it.
@@ -30,6 +35,12 @@ pub struct SubagentDefinition {
     /// inherits the parent session's configured reasoning effort.
     #[serde(default)]
     pub reasoning_effort: Option<ReasoningEffort>,
+
+    /// Where this definition was loaded from; used for precedence rules and
+    /// behavior differences (e.g., instruction composition).
+    /// Not serialized; defaults to EmbeddedDefault.
+    #[serde(skip)]
+    pub(crate) source: SubagentSource,
 }
 
 impl SubagentDefinition {
@@ -51,5 +62,4 @@ impl SubagentDefinition {
     pub(crate) fn output_schema(&self) -> Option<&JsonSchema> {
         self.output_schema.as_ref()
     }
-
 }

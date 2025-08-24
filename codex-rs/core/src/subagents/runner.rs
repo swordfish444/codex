@@ -2,6 +2,7 @@ use crate::codex::Codex;
 use crate::error::Result as CodexResult;
 
 use super::definition::SubagentDefinition;
+use super::definition::SubagentSource;
 use super::registry::SubagentRegistry;
 use crate::openai_tools::JsonSchema;
 use serde_json::Value as JsonValue;
@@ -13,6 +14,40 @@ pub struct RunSubagentArgs {
     pub input: String,
     #[serde(default)]
     pub context: Option<String>,
+}
+
+/// Build the effective base instructions for a subagent run.
+///
+/// For user- and project-scoped subagents, we append their instructions to the
+/// parent session's base instructions. For embedded defaults, we use only the
+/// subagent's instructions. If an output schema is present, we augment the
+/// subagent instructions with strict JSON output requirements.
+fn compose_base_instructions_for_subagent(
+    def: &SubagentDefinition,
+    parent_base_instructions: Option<&str>,
+) -> String {
+    // Start with the subagent's own instructions, optionally augmented with
+    // structured output requirements.
+    let child_instructions = if let Some(schema) = def.output_schema() {
+        let schema_json = serde_json::to_string_pretty(schema).unwrap_or_else(|_| "{}".to_string());
+        format!(
+            "{instructions}\n\nOutput format requirements:\n- Reply with a single JSON value that strictly matches the following JSON Schema.\n- Do not include any commentary, markdown, or extra text.\n- Do not include trailing explanations.\n\nSchema:\n{schema_json}\n",
+            instructions = def.instructions,
+            schema_json = schema_json
+        )
+    } else {
+        def.instructions.clone()
+    };
+
+    match def.source {
+        SubagentSource::User | SubagentSource::Project => match parent_base_instructions {
+            Some(parent) if !parent.trim().is_empty() => {
+                format!("{parent}\n\n{child}", child = child_instructions)
+            }
+            _ => child_instructions,
+        },
+        SubagentSource::EmbeddedDefault => child_instructions,
+    }
 }
 
 /// Run a subagent in a nested Codex session and return the final message.
@@ -28,17 +63,8 @@ pub(crate) async fn run(
     })?;
 
     let mut nested_cfg = (*sess.base_config()).clone();
-    // Compose base instructions with structured output schema instructions, if present.
-    let base_instructions = if let Some(schema) = def.output_schema() {
-        let schema_json = serde_json::to_string_pretty(schema).unwrap_or_else(|_| "{}".to_string());
-        format!(
-            "{instructions}\n\nOutput format requirements:\n- Reply with a single JSON value that strictly matches the following JSON Schema.\n- Do not include any commentary, markdown, or extra text.\n- Do not include trailing explanations.\n\nSchema:\n{schema_json}\n",
-            instructions = def.instructions,
-            schema_json = schema_json
-        )
-    } else {
-        def.instructions.clone()
-    };
+    let base_instructions =
+        compose_base_instructions_for_subagent(def, turn_context.base_instructions.as_deref());
     nested_cfg.base_instructions = Some(base_instructions);
     nested_cfg.user_instructions = None;
     // Apply subagent-specific overrides for model and reasoning effort.

@@ -1,5 +1,6 @@
 use super::default_agents;
 use super::definition::SubagentDefinition;
+use super::definition::SubagentSource;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -35,11 +36,11 @@ impl SubagentRegistry {
 
         // Load user definitions first
         if let Some(dir) = &self.user_dir {
-            Self::load_from_dir_into(dir, &mut map);
+            Self::load_from_dir_into(dir, &mut map, SubagentSource::User);
         }
         // Then load project definitions which override on conflicts
         if let Some(dir) = &self.project_dir {
-            Self::load_from_dir_into(dir, &mut map);
+            Self::load_from_dir_into(dir, &mut map, SubagentSource::Project);
         }
 
         // No ad-hoc fallback here; embedded defaults already include "hello".
@@ -55,7 +56,11 @@ impl SubagentRegistry {
         self.map.keys().cloned().collect()
     }
 
-    fn load_from_dir_into(dir: &Path, out: &mut HashMap<String, SubagentDefinition>) {
+    fn load_from_dir_into(
+        dir: &Path,
+        out: &mut HashMap<String, SubagentDefinition>,
+        source: SubagentSource,
+    ) {
         let Ok(iter) = fs::read_dir(dir) else {
             return;
         };
@@ -69,7 +74,8 @@ impl SubagentRegistry {
                     .unwrap_or(false)
             {
                 match SubagentDefinition::from_file(&path) {
-                    Ok(def) => {
+                    Ok(mut def) => {
+                        def.source = source;
                         out.insert(def.name.clone(), def);
                     }
                     Err(e) => {
