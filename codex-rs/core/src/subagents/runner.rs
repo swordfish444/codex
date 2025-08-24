@@ -19,24 +19,20 @@ pub struct RunSubagentArgs {
 ///
 /// For user- and project-scoped subagents, we append their instructions to the
 /// parent session's base instructions. For embedded defaults, we use only the
-/// subagent's instructions. If an output schema is present, we augment the
-/// subagent instructions with strict JSON output requirements.
+/// subagent's instructions. We always augment the subagent instructions with
+/// strict JSON output requirements based on its schema.
 fn compose_base_instructions_for_subagent(
     def: &SubagentDefinition,
     parent_base_instructions: Option<&str>,
 ) -> String {
     // Start with the subagent's own instructions, optionally augmented with
     // structured output requirements.
-    let child_instructions = if let Some(schema) = def.output_schema() {
-        let schema_json = serde_json::to_string_pretty(schema).unwrap_or_else(|_| "{}".to_string());
-        format!(
-            "{instructions}\n\nOutput format requirements:\n- Reply with a single JSON value that strictly matches the following JSON Schema.\n- Do not include any commentary, markdown, or extra text.\n- Do not include trailing explanations.\n\nSchema:\n{schema_json}\n",
-            instructions = def.instructions,
-            schema_json = schema_json
-        )
-    } else {
-        def.instructions.clone()
-    };
+    let schema_json =
+        serde_json::to_string_pretty(def.output_schema()).unwrap_or_else(|_| "{}".to_string());
+    let child_instructions = format!(
+        "{}\n\nOutput format requirements:\n- Reply with a single JSON value that strictly matches the following JSON Schema.\n- Do not include any commentary, markdown, or extra text.\n- Do not include trailing explanations.\n\nSchema:\n{}\n",
+        def.instructions, schema_json
+    );
 
     match def.source {
         SubagentSource::User | SubagentSource::Project => match parent_base_instructions {

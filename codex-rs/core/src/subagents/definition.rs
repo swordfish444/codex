@@ -20,11 +20,10 @@ pub struct SubagentDefinition {
     pub instructions: String,
 
     //TODO: add allowed tools. we inherit the parent agent's tools for now.
-    /// Optional structured output schema. When set, the subagent must return a
-    /// single JSON value that validates against this schema. The schema will be
-    /// embedded into the subagent's instructions so the model can adhere to it.
-    #[serde(default)]
-    output_schema: Option<JsonSchema>,
+    /// Structured output schema. The subagent must return a single JSON value
+    /// that validates against this schema. The schema will be embedded into the
+    /// subagent's instructions so the model can adhere to it.
+    output_schema: JsonSchema,
 
     /// Optional model override for this subagent. When not provided, inherits
     /// the parent session's configured model.
@@ -59,7 +58,7 @@ impl SubagentDefinition {
         })
     }
 
-    pub(crate) fn output_schema(&self) -> Option<&JsonSchema> {
-        self.output_schema.as_ref()
+    pub(crate) fn output_schema(&self) -> &JsonSchema {
+        &self.output_schema
     }
 }

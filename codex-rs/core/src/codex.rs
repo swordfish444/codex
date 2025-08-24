@@ -2153,11 +2153,10 @@ async fn handle_function_call(
 
             match result {
                 Ok(message) => {
-                    // If this subagent declares an output schema, validate against it and
-                    // return the JSON body unmodified. Otherwise fallback to envelope for text.
-                    if let Some(def) = turn_context.subagents_registry.get(&agent_name)
-                        && let Some(schema) = def.output_schema()
-                    {
+                    // Validate against the subagent's output schema and return
+                    // the JSON body unmodified.
+                    if let Some(def) = turn_context.subagents_registry.get(&agent_name) {
+                        let schema = def.output_schema();
                         match serde_json::from_str::<serde_json::Value>(&message) {
                             Ok(val) => {
                                 if let Err(err) =
@@ -2195,24 +2194,14 @@ async fn handle_function_call(
                             },
                         }
                     } else {
-                        // No schema: best-effort envelope
-                        let json_payload = match serde_json::from_str::<serde_json::Value>(&message)
-                        {
-                            Ok(val) => serde_json::json!({
-                                "subagent": agent_name,
-                                "output": val,
-                            }),
-                            Err(_) => serde_json::json!({
-                                "subagent": agent_name,
-                                "output": { "type": "text", "message": message },
-                            }),
-                        };
-                        let content = serde_json::to_string(&json_payload).unwrap_or(message);
                         ResponseInputItem::FunctionCallOutput {
                             call_id,
                             output: FunctionCallOutputPayload {
-                                content,
-                                success: Some(true),
+                                content: format!(
+                                    "subagent not found when validating output: {}",
+                                    agent_name
+                                ),
+                                success: Some(false),
                             },
                         }
                     }
