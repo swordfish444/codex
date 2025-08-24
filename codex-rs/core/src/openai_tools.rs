@@ -70,6 +70,8 @@ pub struct ToolsConfig {
     pub subagent_tool: bool,
 }
 
+// TODO: have an enum for available tools
+#[allow(clippy::too_many_arguments)]
 impl ToolsConfig {
     pub fn new(
         model_family: &ModelFamily,
