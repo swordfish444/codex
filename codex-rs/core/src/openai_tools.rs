@@ -67,6 +67,7 @@ pub struct ToolsConfig {
     pub plan_tool: bool,
     pub apply_patch_tool_type: Option<ApplyPatchToolType>,
     pub web_search_request: bool,
+    pub subagent_tool: bool,
 }
 
 impl ToolsConfig {
@@ -78,6 +79,7 @@ impl ToolsConfig {
         include_apply_patch_tool: bool,
         include_web_search_request: bool,
         use_streamable_shell_tool: bool,
+        include_subagent_tool: bool,
     ) -> Self {
         let mut shell_type = if use_streamable_shell_tool {
             ConfigShellToolType::StreamableShell
@@ -109,6 +111,7 @@ impl ToolsConfig {
             plan_tool: include_plan_tool,
             apply_patch_tool_type,
             web_search_request: include_web_search_request,
+            subagent_tool: include_subagent_tool,
         }
     }
 }
@@ -515,6 +518,12 @@ pub(crate) fn get_openai_tools(
         tools.push(PLAN_TOOL.clone());
     }
 
+    if config.subagent_tool {
+        tracing::trace!("Adding subagent tool");
+        tools.push(crate::subagents::SUBAGENT_TOOL.clone());
+        tools.push(crate::subagents::SUBAGENT_LIST_TOOL.clone());
+    }
+
     if let Some(apply_patch_tool_type) = &config.apply_patch_tool_type {
         match apply_patch_tool_type {
             ApplyPatchToolType::Freeform => {
@@ -541,6 +550,7 @@ pub(crate) fn get_openai_tools(
         }
     }
 
+    tracing::trace!("Tools: {:?}", tools);
     tools
 }
 
@@ -588,6 +598,7 @@ mod tests {
             false,
             true,
             /*use_experimental_streamable_shell_tool*/ false,
+            /*include_subagent_tool*/ false,
         );
         let tools = get_openai_tools(&config, Some(HashMap::new()));
 
@@ -605,6 +616,7 @@ mod tests {
             false,
             true,
             /*use_experimental_streamable_shell_tool*/ false,
+            /*include_subagent_tool*/ false,
         );
         let tools = get_openai_tools(&config, Some(HashMap::new()));
 
@@ -622,6 +634,7 @@ mod tests {
             false,
             true,
             /*use_experimental_streamable_shell_tool*/ false,
+            /*include_subagent_tool*/ false,
         );
         let tools = get_openai_tools(
             &config,
@@ -721,6 +734,7 @@ mod tests {
             false,
             true,
             /*use_experimental_streamable_shell_tool*/ false,
+            /*include_subagent_tool*/ false,
         );
 
         let tools = get_openai_tools(
@@ -779,6 +793,7 @@ mod tests {
             false,
             true,
             /*use_experimental_streamable_shell_tool*/ false,
+            /*include_subagent_tool*/ false,
         );
 
         let tools = get_openai_tools(
@@ -832,6 +847,7 @@ mod tests {
             false,
             true,
             /*use_experimental_streamable_shell_tool*/ false,
+            /*include_subagent_tool*/ false,
         );
 
         let tools = get_openai_tools(
@@ -888,6 +904,7 @@ mod tests {
             false,
             true,
             /*use_experimental_streamable_shell_tool*/ false,
+            /*include_subagent_tool*/ false,
         );
 
         let tools = get_openai_tools(

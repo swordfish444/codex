@@ -1,0 +1,8 @@
+{
+  "name": "hello",
+  "description": "Built-in test subagent that replies with a greeting",
+  "instructions": "Reply with exactly this text and nothing else: Hello from subagent",
+  "tools": [],
+  "reasoning_effort": "minimal"
+}
+
