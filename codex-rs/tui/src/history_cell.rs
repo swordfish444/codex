@@ -446,6 +446,7 @@ pub(crate) fn new_active_mcp_tool_call(invocation: McpInvocation) -> PlainHistor
         title_line,
         format_mcp_invocation(invocation),
     ];
+<<<<<<< HEAD
     PlainHistoryCell { lines }
 }
 
@@ -497,7 +498,56 @@ impl HistoryCell for RunningMcpCell {
 pub(crate) fn new_web_search_call(query: String) -> PlainHistoryCell {
     let lines: Vec<Line<'static>> =
         vec![Line::from(""), Line::from(vec!["🌐 ".into(), query.into()])];
+||||||| 097782c7
+
+=======
+>>>>>>> refs/remotes/origin/nornagon/parallel-tool-calls
     PlainHistoryCell { lines }
+}
+
+#[derive(Debug)]
+pub(crate) struct RunningMcpCell {
+    invocation: McpInvocation,
+    start_time: Instant,
+    is_running: Arc<AtomicBool>,
+}
+
+impl RunningMcpCell {
+    pub(crate) fn new(invocation: McpInvocation, is_running: Arc<AtomicBool>) -> Self {
+        Self {
+            invocation,
+            start_time: Instant::now(),
+            is_running,
+        }
+    }
+}
+
+impl HistoryCell for RunningMcpCell {
+    fn display_lines(&self) -> Vec<Line<'static>> {
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(""));
+
+        // Spinner or final status marker
+        let running = self.is_running.load(Ordering::Relaxed);
+        let status = if running {
+            const FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+            let idx = ((self.start_time.elapsed().as_millis() / 100) as usize) % FRAMES.len();
+            Span::raw(format!("{}", FRAMES[idx]))
+        } else {
+            "✓".green()
+        };
+
+        let title = Line::from(vec![
+            "tool".magenta(),
+            " ".into(),
+            status,
+            " ".into(),
+            "running...".dim(),
+        ]);
+        lines.push(title);
+        lines.push(format_mcp_invocation(self.invocation.clone()));
+        lines
+    }
 }
 
 /// If the first content is an image, return a new cell with the image.
