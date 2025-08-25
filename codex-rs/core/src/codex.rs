@@ -2810,15 +2810,15 @@ async fn drain_to_completed(
                 response_id: _,
                 token_usage,
             }) => {
-                if let Some(token_usage) = token_usage {
-                    sess.tx_event
-                        .send(Event {
-                            id: sub_id.to_string(),
-                            msg: EventMsg::TokenCount(token_usage),
-                        })
-                        .await
-                        .ok();
-                }
+                let token_usage = token_usage.unwrap_or_default();
+                sess.tx_event
+                    .send(Event {
+                        id: sub_id.to_string(),
+                        msg: EventMsg::TokenCount(token_usage),
+                    })
+                    .await
+                    .ok();
+
                 return Ok(());
             }
             Ok(_) => continue,
