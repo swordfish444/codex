@@ -110,16 +110,26 @@ pub(crate) struct ExecCell {
     start_time: Option<Instant>,
     duration: Option<Duration>,
     include_header: bool,
+    // When present, this ExecCell represents an active, possibly multi-call
+    // exec group. Each segment maps a contiguous slice of `parsed` to a
+    // specific call_id with its own running/completed state.
+    pub(crate) segments: Option<Vec<ExecSegment>>,
 }
 impl HistoryCell for ExecCell {
     fn display_lines(&self) -> Vec<Line<'static>> {
-        exec_command_lines(
-            &self.command,
-            &self.parsed,
-            self.output.as_ref(),
-            self.start_time,
-            self.include_header,
-        )
+        // If this cell is tracking active segments (parallel calls), render
+        // per-segment markers so completed calls show ✓ while others spin.
+        if let Some(segments) = &self.segments {
+            render_active_exec_with_segments(&self.parsed, segments, self.include_header)
+        } else {
+            exec_command_lines(
+                &self.command,
+                &self.parsed,
+                self.output.as_ref(),
+                self.start_time,
+                self.include_header,
+            )
+        }
     }
 
     fn transcript_lines(&self) -> Vec<Line<'static>> {
@@ -273,6 +283,7 @@ pub(crate) fn new_user_prompt(message: String) -> PlainHistoryCell {
     PlainHistoryCell { lines }
 }
 
+#[allow(dead_code)]
 pub(crate) fn new_active_exec_command(
     command: Vec<String>,
     parsed: Vec<ParsedCommand>,
@@ -285,6 +296,7 @@ pub(crate) fn new_active_exec_command(
         start_time: Some(Instant::now()),
         duration: None,
         include_header,
+        segments: None,
     }
 }
 
@@ -302,7 +314,140 @@ pub(crate) fn new_completed_exec_command(
         start_time: None,
         duration: Some(duration),
         include_header,
+        segments: None,
     }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ExecSegment {
+    pub(crate) call_id: String,
+    pub(crate) start: usize,
+    pub(crate) len: usize,
+    pub(crate) started_at: Instant,
+    pub(crate) completed_success: Option<bool>,
+}
+
+impl ExecCell {
+    pub(crate) fn with_initial_segment(
+        command: Vec<String>,
+        parsed: Vec<ParsedCommand>,
+        include_header: bool,
+        call_id: String,
+    ) -> ExecCell {
+        let start = 0usize;
+        let len = parsed.len();
+        ExecCell {
+            command,
+            parsed,
+            output: None,
+            start_time: Some(Instant::now()),
+            duration: None,
+            include_header,
+            segments: Some(vec![ExecSegment {
+                call_id,
+                start,
+                len,
+                started_at: Instant::now(),
+                completed_success: None,
+            }]),
+        }
+    }
+
+    pub(crate) fn push_segment(&mut self, call_id: String, start: usize, len: usize) {
+        if let Some(segs) = &mut self.segments {
+            segs.push(ExecSegment {
+                call_id,
+                start,
+                len,
+                started_at: Instant::now(),
+                completed_success: None,
+            });
+        }
+    }
+
+    pub(crate) fn mark_segment_complete(&mut self, call_id: &str, success: bool) {
+        if let Some(segs) = &mut self.segments
+            && let Some(seg) = segs.iter_mut().find(|s| s.call_id == call_id)
+        {
+            seg.completed_success = Some(success);
+        }
+    }
+}
+
+fn parsed_command_label(parsed: &ParsedCommand) -> String {
+    match parsed {
+        ParsedCommand::Read { name, .. } => format!("📖 {name}"),
+        ParsedCommand::ListFiles { cmd, path } => match path {
+            Some(p) => format!("📂 {p}"),
+            None => format!("📂 {cmd}"),
+        },
+        ParsedCommand::Search { query, path, cmd } => match (query, path) {
+            (Some(q), Some(p)) => format!("🔎 {q} in {p}"),
+            (Some(q), None) => format!("🔎 {q}"),
+            (None, Some(p)) => format!("🔎 {p}"),
+            (None, None) => format!("🔎 {cmd}"),
+        },
+        ParsedCommand::Format { .. } => "✨ Formatting".to_string(),
+        ParsedCommand::Test { cmd } => format!("🧪 {cmd}"),
+        ParsedCommand::Lint { cmd, .. } => format!("🧹 {cmd}"),
+        ParsedCommand::Unknown { cmd } => format!("⌨️ {cmd}"),
+        ParsedCommand::Noop { cmd } => format!("🔄 {cmd}"),
+    }
+}
+
+fn render_parsed_commands_with_marker(
+    parsed_commands: &[ParsedCommand],
+    include_header: bool,
+    mut marker_for_idx: impl FnMut(usize) -> Span<'static>,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line> = Vec::new();
+    if include_header {
+        lines.push(Line::from(""));
+        lines.push(Line::from(">_".magenta()));
+    }
+    for (idx, parsed) in parsed_commands.iter().enumerate() {
+        let text = parsed_command_label(parsed);
+        for (j, line_text) in text.lines().enumerate() {
+            if j == 0 {
+                lines.push(Line::from(vec![
+                    "  ".into(),
+                    marker_for_idx(idx),
+                    " ".into(),
+                    line_text.to_string().light_blue(),
+                ]));
+            } else {
+                lines.push(Line::from(vec![
+                    "    ".into(),
+                    line_text.to_string().light_blue(),
+                ]));
+            }
+        }
+    }
+    lines
+}
+
+fn render_active_exec_with_segments(
+    parsed_commands: &[ParsedCommand],
+    segments: &[ExecSegment],
+    include_header: bool,
+) -> Vec<Line<'static>> {
+    let seg_for = |idx: usize| -> Option<&ExecSegment> {
+        segments
+            .iter()
+            .find(|s| idx >= s.start && idx < s.start + s.len)
+    };
+    render_parsed_commands_with_marker(parsed_commands, include_header, |idx| match seg_for(idx) {
+        Some(seg) => match seg.completed_success {
+            Some(true) => "✓".green(),
+            Some(false) => "✗".red(),
+            None => {
+                const FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+                let i = ((seg.started_at.elapsed().as_millis() / 100) as usize) % FRAMES.len();
+                Span::raw(format!("{}", FRAMES[i]))
+            }
+        },
+        None => "?".into(),
+    })
 }
 
 fn exec_command_lines(
@@ -324,67 +469,22 @@ fn new_parsed_command(
     start_time: Option<Instant>,
     include_header: bool,
 ) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line> = Vec::new();
-    // Leading spacer and header line above command list
-    if include_header {
-        lines.push(Line::from(""));
-        lines.push(Line::from(">_".magenta()));
-    }
-
-    // Determine the leading status marker: spinner while running, ✓ on success, ✗ on failure.
     let status_marker: Span<'static> = match output {
         None => {
-            // Animated braille spinner – choose frame based on elapsed time.
             const FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
             let idx = start_time
                 .map(|st| ((st.elapsed().as_millis() / 100) as usize) % FRAMES.len())
                 .unwrap_or(0);
-            let ch = FRAMES[idx];
-            Span::raw(format!("{ch}"))
+            Span::raw(format!("{}", FRAMES[idx]))
         }
         Some(o) if o.exit_code == 0 => Span::styled("✓", Style::default().fg(Color::Green)),
         Some(_) => Span::styled("✗", Style::default().fg(Color::Red)),
     };
 
-    for parsed in parsed_commands.iter() {
-        let text = match parsed {
-            ParsedCommand::Read { name, .. } => format!("📖 {name}"),
-            ParsedCommand::ListFiles { cmd, path } => match path {
-                Some(p) => format!("📂 {p}"),
-                None => format!("📂 {cmd}"),
-            },
-            ParsedCommand::Search { query, path, cmd } => match (query, path) {
-                (Some(q), Some(p)) => format!("🔎 {q} in {p}"),
-                (Some(q), None) => format!("🔎 {q}"),
-                (None, Some(p)) => format!("🔎 {p}"),
-                (None, None) => format!("🔎 {cmd}"),
-            },
-            ParsedCommand::Format { .. } => "✨ Formatting".to_string(),
-            ParsedCommand::Test { cmd } => format!("🧪 {cmd}"),
-            ParsedCommand::Lint { cmd, .. } => format!("🧹 {cmd}"),
-            ParsedCommand::Unknown { cmd } => format!("⌨️ {cmd}"),
-            ParsedCommand::Noop { cmd } => format!("🔄 {cmd}"),
-        };
-        // Prefix: two spaces, marker, space. Continuations align under the text block.
-        for (j, line_text) in text.lines().enumerate() {
-            if j == 0 {
-                lines.push(Line::from(vec![
-                    "  ".into(),
-                    status_marker.clone(),
-                    " ".into(),
-                    line_text.to_string().light_blue(),
-                ]));
-            } else {
-                lines.push(Line::from(vec![
-                    "    ".into(),
-                    line_text.to_string().light_blue(),
-                ]));
-            }
-        }
-    }
-
+    let mut lines = render_parsed_commands_with_marker(parsed_commands, include_header, |_| {
+        status_marker.clone()
+    });
     lines.extend(output_lines(output, true, false));
-
     lines
 }
 
@@ -437,6 +537,7 @@ fn new_exec_command_generic(
     lines
 }
 
+#[allow(dead_code)]
 pub(crate) fn new_active_mcp_tool_call(invocation: McpInvocation) -> PlainHistoryCell {
     // Backwards-compatible helper retained for call sites; create a non-animated cell.
     // Prefer `new_running_mcp_tool_call` for spinner support.

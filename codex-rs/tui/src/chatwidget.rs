@@ -417,6 +417,12 @@ impl ChatWidget {
             Some(rc) => (rc.command, rc.parsed_cmd),
             None => (vec![ev.call_id.clone()], Vec::new()),
         };
+        // Flip the corresponding spinner to a final mark immediately in the active cell.
+        if let Some(active) = self.active_exec_cell.as_mut() {
+            let success = ev.exit_code == 0;
+            active.mark_segment_complete(&ev.call_id, success);
+            self.mark_needs_redraw();
+        }
         self.pending_exec_completions.push((
             command,
             parsed,
@@ -502,14 +508,18 @@ impl ChatWidget {
         // Accumulate parsed commands into a single active Exec cell so they stack
         match self.active_exec_cell.as_mut() {
             Some(exec) => {
+                let start_idx = exec.parsed.len();
+                let added = ev.parsed_cmd.len();
                 exec.parsed.extend(ev.parsed_cmd);
+                exec.push_segment(ev.call_id.clone(), start_idx, added);
             }
             _ => {
                 let include_header = !self.last_history_was_exec;
-                self.active_exec_cell = Some(history_cell::new_active_exec_command(
+                self.active_exec_cell = Some(history_cell::ExecCell::with_initial_segment(
                     ev.command,
                     ev.parsed_cmd,
                     include_header,
+                    ev.call_id.clone(),
                 ));
             }
         }
