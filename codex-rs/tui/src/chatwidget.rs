@@ -643,6 +643,7 @@ impl ChatWidget {
             last_token_usage: TokenUsage::default(),
             stream: StreamController::new(config),
             running_commands: HashMap::new(),
+            running_mcp: HashMap::new(),
             pending_exec_completions: Vec::new(),
             task_complete_pending: false,
             interrupts: InterruptManager::new(),
