@@ -2843,6 +2843,7 @@ mod tests {
     use crate::config::ConfigOverrides;
     use crate::config::ConfigToml;
     use crate::config_types::McpServerConfig;
+    use codex_login::AuthManager;
     use serde_json::json;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -2940,12 +2941,14 @@ while True:
             resume_path: None,
         };
 
+        let auth_manager =
+            AuthManager::shared(config.codex_home.clone(), config.preferred_auth_method);
         let (session, mut turn_context) = Session::new(
             configure_session,
             Arc::new(config),
-            None,
+            auth_manager,
             tx_event,
-            exec_timeout_ms,
+            None,
         )
         .await
         .unwrap();
@@ -3020,7 +3023,7 @@ fn convert_call_tool_result_to_function_call_output_payload(
 }
 
 #[cfg(test)]
-mod tests {
+mod tests_content {
     use super::*;
     use mcp_types::ContentBlock;
     use mcp_types::TextContent;
