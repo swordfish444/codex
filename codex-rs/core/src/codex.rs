@@ -2940,10 +2940,15 @@ while True:
             resume_path: None,
         };
 
-        let (session, mut turn_context) =
-            Session::new(configure_session, Arc::new(config), None, tx_event, exec_timeout_ms)
-                .await
-                .unwrap();
+        let (session, mut turn_context) = Session::new(
+            configure_session,
+            Arc::new(config),
+            None,
+            tx_event,
+            exec_timeout_ms,
+        )
+        .await
+        .unwrap();
         turn_context.exec_timeout_ms = exec_timeout_ms;
         (session, turn_context, tmp)
     }
