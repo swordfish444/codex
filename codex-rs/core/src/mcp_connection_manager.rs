@@ -15,6 +15,7 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use codex_mcp_client::McpClient;
+use indexmap::IndexMap;
 use mcp_types::ClientCapabilities;
 use mcp_types::Implementation;
 use mcp_types::Tool;
@@ -43,9 +44,9 @@ const LIST_TOOLS_TIMEOUT: Duration = Duration::from_secs(10);
 /// spawned successfully.
 pub type ClientStartErrors = HashMap<String, anyhow::Error>;
 
-fn qualify_tools(tools: Vec<ToolInfo>) -> HashMap<String, ToolInfo> {
+fn qualify_tools(tools: Vec<ToolInfo>) -> IndexMap<String, ToolInfo> {
     let mut used_names = HashSet::new();
-    let mut qualified_tools = HashMap::new();
+    let mut qualified_tools = IndexMap::new();
     for tool in tools {
         let mut qualified_name = format!(
             "{}{}{}",
@@ -88,10 +89,10 @@ pub(crate) struct McpConnectionManager {
     ///
     /// The server name originates from the keys of the `mcp_servers` map in
     /// the user configuration.
-    clients: HashMap<String, std::sync::Arc<McpClient>>,
+    clients: IndexMap<String, std::sync::Arc<McpClient>>,
 
     /// Fully qualified tool name -> tool instance.
-    tools: HashMap<String, ToolInfo>,
+    tools: IndexMap<String, ToolInfo>,
 }
 
 impl McpConnectionManager {
@@ -104,7 +105,7 @@ impl McpConnectionManager {
     /// Servers that fail to start are reported in `ClientStartErrors`: the
     /// user should be informed about these errors.
     pub async fn new(
-        mcp_servers: HashMap<String, McpServerConfig>,
+        mcp_servers: IndexMap<String, McpServerConfig>,
     ) -> Result<(Self, ClientStartErrors)> {
         // Early exit if no servers are configured.
         if mcp_servers.is_empty() {
@@ -168,8 +169,8 @@ impl McpConnectionManager {
             });
         }
 
-        let mut clients: HashMap<String, std::sync::Arc<McpClient>> =
-            HashMap::with_capacity(join_set.len());
+        let mut clients: IndexMap<String, std::sync::Arc<McpClient>> =
+            IndexMap::with_capacity(join_set.len());
 
         while let Some(res) = join_set.join_next().await {
             let (server_name, client_res) = res?; // JoinError propagation
@@ -193,7 +194,7 @@ impl McpConnectionManager {
 
     /// Returns a single map that contains **all** tools. Each key is the
     /// fully-qualified name for the tool.
-    pub fn list_all_tools(&self) -> HashMap<String, Tool> {
+    pub fn list_all_tools(&self) -> IndexMap<String, Tool> {
         self.tools
             .iter()
             .map(|(name, tool)| (name.clone(), tool.tool.clone()))
@@ -230,7 +231,7 @@ impl McpConnectionManager {
 /// Query every server for its available tools and return a single map that
 /// contains **all** tools. Each key is the fully-qualified name for the tool.
 async fn list_all_tools(
-    clients: &HashMap<String, std::sync::Arc<McpClient>>,
+    clients: &IndexMap<String, std::sync::Arc<McpClient>>,
 ) -> Result<Vec<ToolInfo>> {
     let mut join_set = JoinSet::new();
 
@@ -248,27 +249,34 @@ async fn list_all_tools(
         });
     }
 
-    let mut aggregated: Vec<ToolInfo> = Vec::with_capacity(join_set.len());
-
+    let mut response_map = HashMap::with_capacity(join_set.len());
     while let Some(join_res) = join_set.join_next().await {
         let (server_name, list_result) = join_res?;
         let list_result = list_result?;
 
+        // sort tools by name to ensure stable ordering
+        let mut tools = Vec::with_capacity(list_result.tools.len());
         for tool in list_result.tools {
             let tool_info = ToolInfo {
                 server_name: server_name.clone(),
                 tool_name: tool.name.clone(),
                 tool,
             };
-            aggregated.push(tool_info);
+            tools.push(tool_info);
         }
+        tools.sort_by_key(|tool| tool.tool_name.clone());
+        response_map.insert(server_name, tools);
     }
 
-    info!(
-        "aggregated {} tools from {} servers",
-        aggregated.len(),
-        clients.len()
-    );
+    // Our mcp tool list must be stable across requests to ensure prompt-caching,
+    // so we preserve the cfg ordering
+    let mut aggregated = Vec::with_capacity(response_map.len());
+    for server_name in clients.keys() {
+        if let Some(tools) = response_map.remove(server_name) {
+            info!("loaded {} with {} tools", &server_name, tools.len());
+            aggregated.extend(tools);
+        }
+    }
 
     Ok(aggregated)
 }

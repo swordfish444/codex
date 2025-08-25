@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
+use indexmap::IndexMap;
 use mcp_types::CallToolResult;
 use mcp_types::Tool as McpTool;
 use serde::Deserialize;
@@ -798,7 +799,7 @@ pub struct GetHistoryEntryResponseEvent {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct McpListToolsResponseEvent {
     /// Fully qualified tool name -> tool definition.
-    pub tools: std::collections::HashMap<String, McpTool>,
+    pub tools: IndexMap<String, McpTool>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]

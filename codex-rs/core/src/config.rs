@@ -20,6 +20,7 @@ use codex_protocol::config_types::ReasoningEffort;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::SandboxMode;
 use dirs::home_dir;
+use indexmap::IndexMap;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -114,7 +115,7 @@ pub struct Config {
     pub cwd: PathBuf,
 
     /// Definition for MCP servers that Codex can reach out to for tool calls.
-    pub mcp_servers: HashMap<String, McpServerConfig>,
+    pub mcp_servers: IndexMap<String, McpServerConfig>,
 
     /// Combined provider map (defaults merged with user-defined overrides).
     pub model_providers: HashMap<String, ModelProviderInfo>,
@@ -421,7 +422,7 @@ pub struct ConfigToml {
 
     /// Definition for MCP servers that Codex can reach out to for tool calls.
     #[serde(default)]
-    pub mcp_servers: HashMap<String, McpServerConfig>,
+    pub mcp_servers: IndexMap<String, McpServerConfig>,
 
     /// User-defined provider entries that extend/override the built-in list.
     #[serde(default)]
@@ -1130,7 +1131,7 @@ disable_response_storage = true
                 user_instructions: None,
                 notify: None,
                 cwd: fixture.cwd(),
-                mcp_servers: HashMap::new(),
+                mcp_servers: IndexMap::new(),
                 model_providers: fixture.model_provider_map.clone(),
                 project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
                 codex_home: fixture.codex_home(),
@@ -1186,7 +1187,7 @@ disable_response_storage = true
             user_instructions: None,
             notify: None,
             cwd: fixture.cwd(),
-            mcp_servers: HashMap::new(),
+            mcp_servers: IndexMap::new(),
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
             codex_home: fixture.codex_home(),
@@ -1257,7 +1258,7 @@ disable_response_storage = true
             user_instructions: None,
             notify: None,
             cwd: fixture.cwd(),
-            mcp_servers: HashMap::new(),
+            mcp_servers: IndexMap::new(),
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
             codex_home: fixture.codex_home(),

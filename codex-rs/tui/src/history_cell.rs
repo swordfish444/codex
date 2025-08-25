@@ -782,7 +782,7 @@ pub(crate) fn empty_mcp_output() -> PlainHistoryCell {
 /// Render MCP tools grouped by connection using the fully-qualified tool names.
 pub(crate) fn new_mcp_tools_output(
     config: &Config,
-    tools: std::collections::HashMap<String, mcp_types::Tool>,
+    tools: indexmap::IndexMap<String, mcp_types::Tool>,
 ) -> PlainHistoryCell {
     let mut lines: Vec<Line<'static>> = vec![
         Line::from("/mcp".magenta()),

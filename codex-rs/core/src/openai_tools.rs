@@ -1,9 +1,9 @@
+use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use serde_json::json;
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 
 use crate::model_family::ModelFamily;
 use crate::plan_tool::PLAN_TOOL;
@@ -498,7 +498,7 @@ fn sanitize_json_schema(value: &mut JsonValue) {
 /// [`McpConnectionManager`] for more details.
 pub(crate) fn get_openai_tools(
     config: &ToolsConfig,
-    mcp_tools: Option<HashMap<String, mcp_types::Tool>>,
+    mcp_tools: Option<IndexMap<String, mcp_types::Tool>>,
 ) -> Vec<OpenAiTool> {
     let mut tools: Vec<OpenAiTool> = Vec::new();
 
@@ -542,12 +542,7 @@ pub(crate) fn get_openai_tools(
     }
 
     if let Some(mcp_tools) = mcp_tools {
-        // Ensure deterministic ordering to maximize prompt cache hits.
-        // HashMap iteration order is non-deterministic, so sort by fully-qualified tool name.
-        let mut entries: Vec<(String, mcp_types::Tool)> = mcp_tools.into_iter().collect();
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
-
-        for (name, tool) in entries.into_iter() {
+        for (name, tool) in mcp_tools.into_iter() {
             match mcp_tool_to_openai_tool(name.clone(), tool.clone()) {
                 Ok(converted_tool) => tools.push(OpenAiTool::Function(converted_tool)),
                 Err(e) => {
@@ -605,7 +600,7 @@ mod tests {
             include_web_search_request: true,
             use_streamable_shell_tool: false,
         });
-        let tools = get_openai_tools(&config, Some(HashMap::new()));
+        let tools = get_openai_tools(&config, Some(IndexMap::new()));
 
         assert_eq_tool_names(&tools, &["local_shell", "update_plan", "web_search"]);
     }
@@ -622,7 +617,7 @@ mod tests {
             include_web_search_request: true,
             use_streamable_shell_tool: false,
         });
-        let tools = get_openai_tools(&config, Some(HashMap::new()));
+        let tools = get_openai_tools(&config, Some(IndexMap::new()));
 
         assert_eq_tool_names(&tools, &["shell", "update_plan", "web_search"]);
     }
@@ -641,7 +636,7 @@ mod tests {
         });
         let tools = get_openai_tools(
             &config,
-            Some(HashMap::from([(
+            Some(IndexMap::from([(
                 "test_server/do_something_cool".to_string(),
                 mcp_types::Tool {
                     name: "do_something_cool".to_string(),
@@ -727,7 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_openai_tools_mcp_tools_sorted_by_name() {
+    fn test_get_openai_tools_mcp_tools_sorted_by_insertion_order() {
         let model_family = find_family_for_model("o3").expect("o3 should be a valid model family");
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
@@ -740,7 +735,7 @@ mod tests {
         });
 
         // Intentionally construct a map with keys that would sort alphabetically.
-        let tools_map: HashMap<String, mcp_types::Tool> = HashMap::from([
+        let tools_map: IndexMap<String, mcp_types::Tool> = IndexMap::from([
             (
                 "test_server/do".to_string(),
                 mcp_types::Tool {
@@ -794,8 +789,8 @@ mod tests {
             &tools,
             &[
                 "shell",
-                "test_server/cool",
                 "test_server/do",
+                "test_server/cool",
                 "test_server/something",
             ],
         );
@@ -816,7 +811,7 @@ mod tests {
 
         let tools = get_openai_tools(
             &config,
-            Some(HashMap::from([(
+            Some(IndexMap::from([(
                 "dash/search".to_string(),
                 mcp_types::Tool {
                     name: "search".to_string(),
@@ -874,7 +869,7 @@ mod tests {
 
         let tools = get_openai_tools(
             &config,
-            Some(HashMap::from([(
+            Some(IndexMap::from([(
                 "dash/paginate".to_string(),
                 mcp_types::Tool {
                     name: "paginate".to_string(),
@@ -927,7 +922,7 @@ mod tests {
 
         let tools = get_openai_tools(
             &config,
-            Some(HashMap::from([(
+            Some(IndexMap::from([(
                 "dash/tags".to_string(),
                 mcp_types::Tool {
                     name: "tags".to_string(),
@@ -983,7 +978,7 @@ mod tests {
 
         let tools = get_openai_tools(
             &config,
-            Some(HashMap::from([(
+            Some(IndexMap::from([(
                 "dash/value".to_string(),
                 mcp_types::Tool {
                     name: "value".to_string(),
