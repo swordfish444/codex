@@ -39,6 +39,7 @@ use ratatui::layout::Layout;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
+use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
 
@@ -100,7 +101,7 @@ pub(crate) struct ChatWidget {
     stream: StreamController,
     running_commands: HashMap<String, RunningCommand>,
     running_mcp: HashMap<String, Arc<AtomicBool>>,
-    pending_exec_completions: Vec<(Vec<String>, Vec<ParsedCommand>, CommandOutput)>,
+    pending_exec_completions: Vec<(Vec<String>, Vec<ParsedCommand>, CommandOutput, Duration)>,
     task_complete_pending: bool,
     // Queue of interruptive UI events deferred during an active write cycle
     interrupts: InterruptManager,
@@ -425,19 +426,20 @@ impl ChatWidget {
                 stderr: ev.stderr.clone(),
                 formatted_output: ev.formatted_output.clone(),
             },
+            ev.duration,
         ));
 
         if self.running_commands.is_empty() {
             self.active_exec_cell = None;
             let pending = std::mem::take(&mut self.pending_exec_completions);
-            for (command, parsed, output) in pending {
+            for (command, parsed, output, duration) in pending {
                 let include_header = !self.last_history_was_exec;
                 let cell = history_cell::new_completed_exec_command(
                     command,
                     parsed,
                     output,
                     include_header,
-                    ev.duration,
+                    duration,
                 );
                 self.add_to_history(cell);
                 self.last_history_was_exec = true;
