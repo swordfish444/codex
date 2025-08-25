@@ -1693,7 +1693,7 @@ mod tests {
             "one image mapping remains"
         );
     }
-    
+
     #[test]
     fn pasting_filepath_attaches_image() {
         use image::ImageBuffer;
@@ -1706,7 +1706,7 @@ mod tests {
             ImageBuffer::from_fn(3, 2, |_x, _y| Rgba([1, 2, 3, 255]));
         img.save(&tmp_path).expect("failed to write temp png");
 
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer =
             ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());

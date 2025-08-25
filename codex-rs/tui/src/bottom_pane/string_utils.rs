@@ -2,11 +2,10 @@ use std::path::PathBuf;
 
 pub fn normalize_pasted_path(pasted: &str) -> Option<PathBuf> {
     // file:// URL → filesystem path
-    if let Ok(url) = url::Url::parse(pasted) {
-        if url.scheme() == "file" {
+    if let Ok(url) = url::Url::parse(pasted)
+        && url.scheme() == "file" {
             return url.to_file_path().ok();
         }
-    }
 
     // shell-escaped single path → unescaped
     let parts: Vec<String> = shlex::Shlex::new(pasted).collect();
