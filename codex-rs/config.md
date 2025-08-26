@@ -366,27 +366,17 @@ env = { "API_KEY" = "value" }
 You can scope MCP servers to a specific profile and optionally inherit the global set. Profile entries override globals on key conflicts.
 
 ```toml
-profile = "dev"  # same as --profile dev
-
 # Global servers (available to all profiles unless opted out)
-[mcp_servers.shared]
-command = "node"
-args = ["/opt/mcp/server.js"]
+[mcp_servers.some_server]
+command = "some_server"
 
-[profiles.dev]
-model = "gpt-5"
-inherit_global_mcp_servers = true  # default if omitted
+# Profile-specific MCP server
+[profiles.ops.analysis]
+command = "ops_mcp"
 
-[profiles.dev.mcp_servers.codegen]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-codegen"]
-
+# You can disable inheriting the global MCP servers in a specific profile
 [profiles.minimal]
-model = "gpt-4o-mini"
 inherit_global_mcp_servers = false  # only profile servers (none defined => none)
-
-# Explicitly empty table means no MCP servers for this profile
-[profiles.minimal.mcp_servers]
 ```
 
 ## disable_response_storage
