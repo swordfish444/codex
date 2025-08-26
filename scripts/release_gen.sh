@@ -188,7 +188,7 @@ collect_prs_within_range() {
              author: (.author.login // "-"),
              body: (.body // "")
            }
-       ] | sort_by(.merged_at) | .[]'
+      ] | sort_by(.merged_at) | reverse | .[]'
 }
 
 format_related_issues() {
@@ -296,7 +296,7 @@ if (( QUIET )); then
   # Quiet mode: run Codex silently and show progress dots
   (
     set +x 2>/dev/null || true
-    codex exec --yolo "$PROMPT" >/dev/null 2>&1
+    codex exec --sandbox workspace-write "$PROMPT" >/dev/null 2>&1
   ) &
   CODEX_PID=$!
   while :; do
@@ -309,7 +309,7 @@ if (( QUIET )); then
   echo "" >&2
 else
   # Normal mode: stream Codex output to stderr as before
-  codex exec --yolo "$PROMPT" 1>&2
+  codex exec --sandbox workspace-write "$PROMPT" 1>&2
 fi
 
 if [[ -f "$GEN_FILE" ]]; then
