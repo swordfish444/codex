@@ -31,6 +31,7 @@ use codex_core::protocol::TokenUsage;
 use codex_core::protocol::TurnAbortReason;
 use codex_core::protocol::TurnDiffEvent;
 use codex_core::protocol::WebSearchBeginEvent;
+use codex_protocol::custom_prompts::CustomPrompt;
 use codex_protocol::parse_command::ParsedCommand;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -115,6 +116,8 @@ pub(crate) struct ChatWidget {
     last_history_was_exec: bool,
     // User messages queued while a turn is in progress
     queued_user_messages: VecDeque<UserMessage>,
+    // Cached custom prompts discovered via protocol event
+    custom_prompts: Vec<CustomPrompt>,
 }
 
 struct UserMessage {
@@ -154,6 +157,8 @@ impl ChatWidget {
             event,
             self.show_welcome_banner,
         ));
+        // Ask codex-core to enumerate custom prompts for this session.
+        self.submit_op(Op::ListCustomPrompts);
         if let Some(user_message) = self.initial_user_message.take() {
             self.submit_user_message(user_message);
         }
@@ -601,6 +606,7 @@ impl ChatWidget {
             last_history_was_exec: false,
             queued_user_messages: VecDeque::new(),
             show_welcome_banner: true,
+            custom_prompts: Vec::new(),
         }
     }
 
@@ -646,6 +652,7 @@ impl ChatWidget {
             last_history_was_exec: false,
             queued_user_messages: VecDeque::new(),
             show_welcome_banner: false,
+            custom_prompts: Vec::new(),
         }
     }
 
@@ -1158,7 +1165,11 @@ impl ChatWidget {
         self.add_to_history(history_cell::new_mcp_tools_output(&self.config, ev.tools));
     }
 
-    fn on_list_custom_prompts(&mut self, ev: ListCustomPromptsResponseEvent) {}
+    fn on_list_custom_prompts(&mut self, ev: ListCustomPromptsResponseEvent) {
+        // Cache prompts locally; UI surfaces them from this store.
+        self.custom_prompts = ev.custom_prompts;
+        debug!("received {} custom prompts", self.custom_prompts.len());
+    }
 
     /// Programmatically submit a user text message as if typed in the
     /// composer. The text will be added to conversation history and sent to
