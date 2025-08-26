@@ -1201,8 +1201,8 @@ impl WidgetRef for ChatComposer {
                     hint.push(Span::from(" edit prev"));
                 }
 
-                if !needs_tokens_line {
-                    if let Some(token_usage_info) = &self.token_usage_info {
+                if !needs_tokens_line
+                    && let Some(token_usage_info) = &self.token_usage_info {
                         let token_usage = &token_usage_info.total_token_usage;
                         hint.push(Span::from("   "));
                         hint.push(
@@ -1226,14 +1226,13 @@ impl WidgetRef for ChatComposer {
                             );
                         }
                     }
-                }
 
                 Line::from(hint)
                     .style(Style::default().dim())
                     .render_ref(bottom_line_rect, buf);
 
-                if needs_tokens_line {
-                    if let Some(token_usage_info) = &self.token_usage_info {
+                if needs_tokens_line
+                    && let Some(token_usage_info) = &self.token_usage_info {
                         let token_usage = &token_usage_info.total_token_usage;
                         let mut text = String::from(" ");
                         text.push_str(&format!("{} tokens used", token_usage.blended_total()));
@@ -1262,7 +1261,6 @@ impl WidgetRef for ChatComposer {
                                 buf,
                             );
                     }
-                }
             }
         }
         let border_style = if self.has_focus {
