@@ -314,9 +314,10 @@ impl TranscriptApp {
 
     fn scroll_area(&self, area: Rect) -> Rect {
         let mut area = area;
-        // Reserve 1 line for the header and 4 lines for the bottom status section. This matches the chat composer.
+        // Reserve 1 line for the header and 3 lines for the bottom status section.
+        // This aligns the overlay pager margins with the inline case.
         area.y = area.y.saturating_add(1);
-        area.height = area.height.saturating_sub(5);
+        area.height = area.height.saturating_sub(4);
         area
     }
 }
