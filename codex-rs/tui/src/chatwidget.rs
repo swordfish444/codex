@@ -493,7 +493,7 @@ impl ChatWidget {
             grant_root: ev.grant_root,
         };
         self.bottom_pane.push_approval_request(request);
-        self.mark_needs_redraw();
+        self.request_redraw();
     }
 
     pub(crate) fn handle_exec_begin_now(&mut self, ev: ExecCommandBeginEvent) {
@@ -525,7 +525,7 @@ impl ChatWidget {
         }
 
         // Request a redraw so the working header and command list are visible immediately.
-        self.mark_needs_redraw();
+        self.request_redraw();
     }
 
     pub(crate) fn handle_mcp_begin_now(&mut self, ev: McpToolCallBeginEvent) {
