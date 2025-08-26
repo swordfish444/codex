@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 
 use codex_core::config::Config;
@@ -736,6 +737,14 @@ impl ChatWidget {
             }
             SlashCommand::Approvals => {
                 self.open_approvals_popup();
+            }
+            SlashCommand::Addprompt => {
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+                let prompts_dir = format!("{home}/.codex/");
+
+                if let Err(e) = Command::new("open").arg(&prompts_dir).spawn() {
+                    tracing::error!("failed to launch 'open prompts': {e}");
+                }
             }
             SlashCommand::Quit => {
                 self.app_event_tx.send(AppEvent::ExitRequest);
