@@ -9,11 +9,7 @@ use super::selection_popup_common::render_rows;
 use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
 use codex_common::fuzzy_match::fuzzy_match;
-#[derive(Clone, Debug)]
-pub(crate) struct PromptEntry {
-    pub name: String,
-    pub content: String,
-}
+use codex_protocol::custom_prompts::CustomPrompt;
 
 /// A selectable item in the popup: either a built-in command or a user prompt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,30 +22,35 @@ pub(crate) enum CommandItem {
 pub(crate) struct CommandPopup {
     command_filter: String,
     builtins: Vec<(&'static str, SlashCommand)>,
-    prompts: Vec<PromptEntry>,
+    prompts: Vec<CustomPrompt>,
     state: ScrollState,
 }
 
 impl CommandPopup {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(mut prompts: Vec<CustomPrompt>) -> Self {
         let builtins = built_in_slash_commands();
-        let mut exclude = std::collections::HashSet::new();
-        for (name, _) in builtins.iter() {
-            exclude.insert((*name).to_string());
-        }
-        let prompts = codex_core::custom_prompts::discover_prompts_excluding(&exclude)
-            .into_iter()
-            .map(|p| PromptEntry {
-                name: p.name,
-                content: p.content,
-            })
-            .collect();
+        // Exclude prompts that collide with builtin command names and sort by name.
+        let exclude: std::collections::HashSet<String> =
+            builtins.iter().map(|(n, _)| (*n).to_string()).collect();
+        prompts.retain(|p| !exclude.contains(&p.name));
+        prompts.sort_by(|a, b| a.name.cmp(&b.name));
         Self {
             command_filter: String::new(),
             builtins,
             prompts,
             state: ScrollState::new(),
         }
+    }
+
+    pub(crate) fn set_prompts(&mut self, mut prompts: Vec<CustomPrompt>) {
+        let exclude: std::collections::HashSet<String> = self
+            .builtins
+            .iter()
+            .map(|(n, _)| (*n).to_string())
+            .collect();
+        prompts.retain(|p| !exclude.contains(&p.name));
+        prompts.sort_by(|a, b| a.name.cmp(&b.name));
+        self.prompts = prompts;
     }
 
     pub(crate) fn prompt_name(&self, idx: usize) -> Option<&str> {
@@ -198,11 +199,10 @@ impl WidgetRef for CommandPopup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn filter_includes_init_when_typing_prefix() {
-        let mut popup = CommandPopup::new();
+        let mut popup = CommandPopup::new(Vec::new());
         // Simulate the composer line starting with '/in' so the popup filters
         // matching commands by prefix.
         popup.on_composer_text_change("/in".to_string());
@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn selecting_init_by_exact_match() {
-        let mut popup = CommandPopup::new();
+        let mut popup = CommandPopup::new(Vec::new());
         popup.on_composer_text_change("/init".to_string());
 
         // When an exact match exists, the selected command should be that
@@ -237,17 +237,17 @@ mod tests {
 
     #[test]
     fn prompt_discovery_lists_custom_prompts() {
-        let tmp = tempdir().expect("create TempDir");
-        let home = tmp.path();
-        let prompts_dir = home.join(".codex").join("prompts");
-        std::fs::create_dir_all(&prompts_dir).expect("mkdir -p ~/.codex/prompts");
-        std::fs::write(prompts_dir.join("foo"), b"hello from foo").unwrap();
-        std::fs::write(prompts_dir.join("bar"), b"hello from bar").unwrap();
-
-        // Point HOME to the temp dir so discovery uses our fixtures.
-        unsafe { std::env::set_var("HOME", home) };
-
-        let popup = CommandPopup::new();
+        let prompts = vec![
+            CustomPrompt {
+                name: "foo".to_string(),
+                content: "hello from foo".to_string(),
+            },
+            CustomPrompt {
+                name: "bar".to_string(),
+                content: "hello from bar".to_string(),
+            },
+        ];
+        let popup = CommandPopup::new(prompts);
         let items = popup.filtered_items();
         let mut prompt_names: Vec<String> = items
             .into_iter()
@@ -262,16 +262,11 @@ mod tests {
 
     #[test]
     fn prompt_name_collision_with_builtin_is_ignored() {
-        let tmp = tempdir().expect("create TempDir");
-        let home = tmp.path();
-        let prompts_dir = home.join(".codex").join("prompts");
-        std::fs::create_dir_all(&prompts_dir).expect("mkdir -p ~/.codex/prompts");
-        // Create a prompt with the same name as a builtin command (e.g. "init").
-        std::fs::write(prompts_dir.join("init"), b"should be ignored").unwrap();
-
-        unsafe { std::env::set_var("HOME", home) };
-
-        let popup = CommandPopup::new();
+        // Create a prompt named like a builtin (e.g. "init").
+        let popup = CommandPopup::new(vec![CustomPrompt {
+            name: "init".to_string(),
+            content: "should be ignored".to_string(),
+        }]);
         let items = popup.filtered_items();
         let has_collision_prompt = items.into_iter().any(|it| match it {
             CommandItem::Prompt(i) => popup.prompt_name(i) == Some("init"),

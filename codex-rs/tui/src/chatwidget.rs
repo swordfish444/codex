@@ -1169,6 +1169,9 @@ impl ChatWidget {
         // Cache prompts locally; UI surfaces them from this store.
         self.custom_prompts = ev.custom_prompts;
         debug!("received {} custom prompts", self.custom_prompts.len());
+        // Forward to bottom pane so the slash popup can show them now.
+        self.bottom_pane
+            .set_custom_prompts(self.custom_prompts.clone());
     }
 
     /// Programmatically submit a user text message as if typed in the

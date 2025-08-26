@@ -25,6 +25,7 @@ use super::command_popup::CommandItem;
 use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
 use crate::slash_command::SlashCommand;
+use codex_protocol::custom_prompts::CustomPrompt;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -100,6 +101,7 @@ pub(crate) struct ChatComposer {
     // Buffer to accumulate characters during a detected non-bracketed paste burst.
     paste_burst_buffer: String,
     in_paste_burst_mode: bool,
+    custom_prompts: Vec<CustomPrompt>,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -139,6 +141,7 @@ impl ChatComposer {
             paste_burst_until: None,
             paste_burst_buffer: String::new(),
             in_paste_burst_mode: false,
+            custom_prompts: Vec::new(),
         }
     }
 
@@ -1104,11 +1107,19 @@ impl ChatComposer {
             }
             _ => {
                 if input_starts_with_slash {
-                    let mut command_popup = CommandPopup::new();
+                    let mut command_popup = CommandPopup::new(self.custom_prompts.clone());
                     command_popup.on_composer_text_change(first_line.to_string());
                     self.active_popup = ActivePopup::Command(command_popup);
                 }
             }
+        }
+    }
+
+    pub(crate) fn set_custom_prompts(&mut self, mut prompts: Vec<CustomPrompt>) {
+        prompts.sort_by(|a, b| a.name.cmp(&b.name));
+        self.custom_prompts = prompts.clone();
+        if let ActivePopup::Command(popup) = &mut self.active_popup {
+            popup.set_prompts(prompts);
         }
     }
 
@@ -1982,20 +1993,18 @@ mod tests {
 
     #[test]
     fn selecting_custom_prompt_submits_file_contents() {
-        let tmp = tempdir().expect("create TempDir");
-        let home = tmp.path();
-        let prompts_dir = home.join(".codex").join("prompts");
-        std::fs::create_dir_all(&prompts_dir).expect("mkdir -p ~/.codex/prompts");
-        let prompt_path = prompts_dir.join("my-prompt");
         let prompt_text = "Hello from saved prompt";
-        std::fs::write(&prompt_path, prompt_text).unwrap();
-
-        unsafe { std::env::set_var("HOME", home) };
 
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer =
             ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+
+        // Inject prompts as if received via event.
+        composer.set_custom_prompts(vec![CustomPrompt {
+            name: "my-prompt".to_string(),
+            content: prompt_text.to_string(),
+        }]);
 
         // Type the prompt name to focus it in the slash popup and press Enter.
         for ch in ['/', 'm', 'y', '-', 'p', 'r', 'o', 'm', 'p', 't'] {
