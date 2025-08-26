@@ -56,11 +56,11 @@ pub fn discover_prompts_in_excluding(dir: &Path, exclude: &HashSet<String>) -> V
 mod tests {
     use super::*;
     use std::fs;
-    use tempfile::TempDir;
+    use tempfile::tempdir;
 
     #[test]
     fn empty_when_dir_missing() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = tempdir().expect("create TempDir");
         let missing = tmp.path().join("nope");
         let found = discover_prompts_in(&missing);
         assert!(found.is_empty());
@@ -68,7 +68,7 @@ mod tests {
 
     #[test]
     fn discovers_and_sorts_files() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = tempdir().expect("create TempDir");
         let dir = tmp.path();
         fs::write(dir.join("b.md"), b"b").unwrap();
         fs::write(dir.join("a.md"), b"a").unwrap();
@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn excludes_builtins() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = tempdir().expect("create TempDir");
         let dir = tmp.path();
         fs::write(dir.join("init.md"), b"ignored").unwrap();
         fs::write(dir.join("foo.md"), b"ok").unwrap();
