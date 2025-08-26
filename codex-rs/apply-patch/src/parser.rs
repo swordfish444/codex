@@ -732,3 +732,350 @@ fn test_update_file_chunk() {
         ))
     );
 }
+
+#[test]
+fn test_update_file_with_multiple_chunks() {
+    // Two chunks in a single Update File hunk, separated by a blank line.
+    // First chunk has an explicit context, second chunk adds a line only.
+    let patch = r#"*** Begin Patch
+*** Update File: src/foo.txt
+@@ context_one
+ ctx
+-old1
++new1
+ tail
+
+@@ context_two
++added_only
+*** End Patch"#;
+
+    let result = parse_patch_text(patch, ParseMode::Strict).unwrap();
+    assert_eq!(
+        result.hunks,
+        vec![UpdateFile {
+            path: PathBuf::from("src/foo.txt"),
+            move_path: None,
+            chunks: vec![
+                UpdateFileChunk {
+                    change_context: Some("context_one".to_string()),
+                    old_lines: vec![
+                        "ctx".to_string(),
+                        "old1".to_string(),
+                        "tail".to_string(),
+                        "".to_string()
+                    ],
+                    new_lines: vec![
+                        "ctx".to_string(),
+                        "new1".to_string(),
+                        "tail".to_string(),
+                        "".to_string()
+                    ],
+                    is_end_of_file: false,
+                },
+                UpdateFileChunk {
+                    change_context: Some("context_two".to_string()),
+                    old_lines: vec![],
+                    new_lines: vec!["added_only".to_string()],
+                    is_end_of_file: false,
+                },
+            ],
+        }]
+    );
+}
+
+#[test]
+fn test_update_file_second_chunk_missing_context_errors() {
+    // First chunk omits @@ (allowed). Then a non-diff line triggers a second chunk
+    // parse without @@, which must error.
+    let patch = r#"*** Begin Patch
+*** Update File: foo.txt
+ context_line
++added
+X
+*** End Patch"#;
+
+    match parse_patch_text(patch, ParseMode::Strict) {
+        Err(InvalidHunkError {
+            message,
+            line_number,
+        }) => {
+            assert!(message.starts_with("Expected update hunk to start with a @@ context marker"));
+            // Error should point to the start of the second chunk, which is line 5.
+            assert_eq!(line_number, 5);
+        }
+        other => panic!("expected InvalidHunkError, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_patch_across_multiple_files_with_eof_and_multichunks() {
+    let patch = r#"*** Begin Patch
+*** Update File: a.txt
+@@
++lineA
+*** End of File
+*** Update File: b.txt
+@@ ctx
+ shared
+-old
++new
+ tail
+
+@@
++only_add
+*** Add File: c.txt
++contents
+*** Delete File: d.txt
+*** End Patch"#;
+
+    let result = parse_patch_text(patch, ParseMode::Strict).unwrap();
+    assert_eq!(
+        result.hunks,
+        vec![
+            UpdateFile {
+                path: PathBuf::from("a.txt"),
+                move_path: None,
+                chunks: vec![UpdateFileChunk {
+                    change_context: None,
+                    old_lines: vec![],
+                    new_lines: vec!["lineA".to_string()],
+                    is_end_of_file: true,
+                }],
+            },
+            UpdateFile {
+                path: PathBuf::from("b.txt"),
+                move_path: None,
+                chunks: vec![
+                    UpdateFileChunk {
+                        change_context: Some("ctx".to_string()),
+                        old_lines: vec![
+                            "shared".to_string(),
+                            "old".to_string(),
+                            "tail".to_string(),
+                            "".to_string(),
+                        ],
+                        new_lines: vec![
+                            "shared".to_string(),
+                            "new".to_string(),
+                            "tail".to_string(),
+                            "".to_string(),
+                        ],
+                        is_end_of_file: false,
+                    },
+                    UpdateFileChunk {
+                        change_context: None,
+                        old_lines: vec![],
+                        new_lines: vec!["only_add".to_string()],
+                        is_end_of_file: false,
+                    },
+                ],
+            },
+            AddFile {
+                path: PathBuf::from("c.txt"),
+                contents: "contents\n".to_string(),
+            },
+            DeleteFile {
+                path: PathBuf::from("d.txt")
+            },
+        ]
+    );
+}
+
+#[test]
+fn test_add_file_with_no_content() {
+    let patch = "*** Begin Patch\n\
+                 *** Add File: empty.txt\n\
+                 *** End Patch";
+    let result = parse_patch_text(patch, ParseMode::Strict).unwrap();
+    assert_eq!(
+        result.hunks,
+        vec![AddFile {
+            path: PathBuf::from("empty.txt"),
+            contents: String::new(),
+        }]
+    );
+}
+
+#[test]
+fn test_update_with_move_but_no_chunks_errors() {
+    let patch = "*** Begin Patch\n\
+                 *** Update File: file.txt\n\
+                 *** Move to: new_file.txt\n\
+                 *** End Patch";
+    assert_eq!(
+        parse_patch_text(patch, ParseMode::Strict),
+        Err(InvalidHunkError {
+            message: "Update file hunk for path 'file.txt' is empty".to_string(),
+            line_number: 2,
+        })
+    );
+}
+
+#[test]
+fn test_update_first_chunk_without_context_then_second_with_context() {
+    let patch = r#"*** Begin Patch
+*** Update File: src/sample.txt
+ context_line
++added
+@@ ctx2
++added2
+*** End Patch"#;
+
+    let result = parse_patch_text(patch, ParseMode::Strict).unwrap();
+    assert_eq!(
+        result.hunks,
+        vec![UpdateFile {
+            path: PathBuf::from("src/sample.txt"),
+            move_path: None,
+            chunks: vec![
+                UpdateFileChunk {
+                    change_context: None,
+                    old_lines: vec!["context_line".to_string()],
+                    new_lines: vec!["context_line".to_string(), "added".to_string()],
+                    is_end_of_file: false,
+                },
+                UpdateFileChunk {
+                    change_context: Some("ctx2".to_string()),
+                    old_lines: vec![],
+                    new_lines: vec!["added2".to_string()],
+                    is_end_of_file: false,
+                },
+            ],
+        }]
+    );
+}
+
+#[test]
+fn test_update_chunks_separated_by_whitespace_lines() {
+    // Separator lines containing only whitespace should be ignored between chunks.
+    let patch = r#"*** Begin Patch
+*** Update File: src/ws.txt
+@@ c1
+ ctx
++add
+   
+
+@@ c2
++tail
+*** End Patch"#;
+
+    let result = parse_patch_text(patch, ParseMode::Strict).unwrap();
+    assert_eq!(
+        result.hunks,
+        vec![UpdateFile {
+            path: PathBuf::from("src/ws.txt"),
+            move_path: None,
+            chunks: vec![
+                UpdateFileChunk {
+                    change_context: Some("c1".to_string()),
+                    old_lines: vec!["ctx".to_string(), "  ".to_string(), "".to_string()],
+                    new_lines: vec![
+                        "ctx".to_string(),
+                        "add".to_string(),
+                        "  ".to_string(),
+                        "".to_string(),
+                    ],
+                    is_end_of_file: false,
+                },
+                UpdateFileChunk {
+                    change_context: Some("c2".to_string()),
+                    old_lines: vec![],
+                    new_lines: vec!["tail".to_string()],
+                    is_end_of_file: false,
+                },
+            ],
+        }]
+    );
+}
+
+#[test]
+fn test_update_second_chunk_header_missing_space_after_atat_errors() {
+    let patch = r#"*** Begin Patch
+*** Update File: f.txt
+@@ ok
++one
+
+@@ctx
++two
+*** End Patch"#;
+
+    match parse_patch_text(patch, ParseMode::Strict) {
+        Err(InvalidHunkError {
+            message,
+            line_number,
+        }) => {
+            assert!(message.starts_with("Expected update hunk to start with a @@ context marker"));
+            assert_eq!(line_number, 6);
+        }
+        other => panic!("expected InvalidHunkError, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_update_leading_space_before_atat_treated_as_context_line() {
+    let patch = r#"*** Begin Patch
+*** Update File: file.txt
+ @@ header
++add
+*** End Patch"#;
+
+    let result = parse_patch_text(patch, ParseMode::Strict).unwrap();
+    assert_eq!(
+        result.hunks,
+        vec![UpdateFile {
+            path: PathBuf::from("file.txt"),
+            move_path: None,
+            chunks: vec![UpdateFileChunk {
+                change_context: None,
+                old_lines: vec!["@@ header".to_string()],
+                new_lines: vec!["@@ header".to_string(), "add".to_string()],
+                is_end_of_file: false,
+            }],
+        }]
+    );
+}
+
+#[test]
+fn test_update_first_chunk_without_context_and_eof_marker() {
+    let patch = r#"*** Begin Patch
+*** Update File: z.txt
++added
+*** End of File
+*** End Patch"#;
+
+    let result = parse_patch_text(patch, ParseMode::Strict).unwrap();
+    assert_eq!(
+        result.hunks,
+        vec![UpdateFile {
+            path: PathBuf::from("z.txt"),
+            move_path: None,
+            chunks: vec![UpdateFileChunk {
+                change_context: None,
+                old_lines: vec![],
+                new_lines: vec!["added".to_string()],
+                is_end_of_file: true,
+            }],
+        }]
+    );
+}
+
+#[test]
+fn test_update_second_move_to_after_chunk_is_invalid_hunk_header() {
+    let patch = r#"*** Begin Patch
+*** Update File: file.txt
+@@
++line
+*** Move to: another.txt
+*** End Patch"#;
+
+    match parse_patch_text(patch, ParseMode::Strict) {
+        Err(InvalidHunkError {
+            message,
+            line_number,
+        }) => {
+            assert!(message.starts_with("'*** Move to: another.txt' is not a valid hunk header."));
+            assert_eq!(line_number, 5);
+        }
+        other => panic!("expected InvalidHunkError, got {other:?}"),
+    }
+}
