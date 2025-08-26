@@ -426,7 +426,7 @@ impl ChatWidget {
         if let Some(active) = self.active_exec_cell.as_mut() {
             let success = ev.exit_code == 0;
             active.mark_segment_complete(&ev.call_id, success);
-            self.mark_needs_redraw();
+            self.request_redraw();
         }
         self.pending_exec_completions.push((
             command,
