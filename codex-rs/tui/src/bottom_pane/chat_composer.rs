@@ -145,7 +145,11 @@ impl ChatComposer {
         self.textarea.desired_height(width - 1)
             + match &self.active_popup {
                 ActivePopup::None => {
-                    if self.token_usage_info.is_some() && width < 90 { 2 } else { 1 }
+                    if self.token_usage_info.is_some() && width < 90 {
+                        2
+                    } else {
+                        1
+                    }
                 }
                 ActivePopup::Command(c) => c.calculate_required_height(),
                 ActivePopup::File(c) => c.calculate_required_height(),
@@ -156,7 +160,13 @@ impl ChatComposer {
         let popup_height = match &self.active_popup {
             ActivePopup::Command(popup) => popup.calculate_required_height(),
             ActivePopup::File(popup) => popup.calculate_required_height(),
-            ActivePopup::None => if self.token_usage_info.is_some() && area.width < 90 { 2 } else { 1 },
+            ActivePopup::None => {
+                if self.token_usage_info.is_some() && area.width < 90 {
+                    2
+                } else {
+                    1
+                }
+            }
         };
         let [textarea_rect, _] =
             Layout::vertical([Constraint::Min(1), Constraint::Max(popup_height)]).areas(area);
@@ -1201,66 +1211,62 @@ impl WidgetRef for ChatComposer {
                     hint.push(Span::from(" edit prev"));
                 }
 
-                if !needs_tokens_line
-                    && let Some(token_usage_info) = &self.token_usage_info {
-                        let token_usage = &token_usage_info.total_token_usage;
+                if !needs_tokens_line && let Some(token_usage_info) = &self.token_usage_info {
+                    let token_usage = &token_usage_info.total_token_usage;
+                    hint.push(Span::from("   "));
+                    hint.push(
+                        Span::from(format!("{} tokens used", token_usage.blended_total()))
+                            .style(Style::default().add_modifier(Modifier::DIM)),
+                    );
+                    let last_token_usage = &token_usage_info.last_token_usage;
+                    if let Some(context_window) = token_usage_info.model_context_window {
+                        let percent_remaining: u8 = if context_window > 0 {
+                            last_token_usage.percent_of_context_window_remaining(
+                                context_window,
+                                token_usage_info.initial_prompt_tokens,
+                            )
+                        } else {
+                            100
+                        };
                         hint.push(Span::from("   "));
                         hint.push(
-                            Span::from(format!("{} tokens used", token_usage.blended_total()))
+                            Span::from(format!("{percent_remaining}% context left"))
                                 .style(Style::default().add_modifier(Modifier::DIM)),
                         );
-                        let last_token_usage = &token_usage_info.last_token_usage;
-                        if let Some(context_window) = token_usage_info.model_context_window {
-                            let percent_remaining: u8 = if context_window > 0 {
-                                last_token_usage.percent_of_context_window_remaining(
-                                    context_window,
-                                    token_usage_info.initial_prompt_tokens,
-                                )
-                            } else {
-                                100
-                            };
-                            hint.push(Span::from("   "));
-                            hint.push(
-                                Span::from(format!("{percent_remaining}% context left"))
-                                    .style(Style::default().add_modifier(Modifier::DIM)),
-                            );
-                        }
                     }
+                }
 
                 Line::from(hint)
                     .style(Style::default().dim())
                     .render_ref(bottom_line_rect, buf);
 
-                if needs_tokens_line
-                    && let Some(token_usage_info) = &self.token_usage_info {
-                        let token_usage = &token_usage_info.total_token_usage;
-                        let mut text = String::from(" ");
-                        text.push_str(&format!("{} tokens used", token_usage.blended_total()));
-                        if let Some(context_window) = token_usage_info.model_context_window {
-                            let last_token_usage = &token_usage_info.last_token_usage;
-                            let percent_remaining: u8 = if context_window > 0 {
-                                last_token_usage.percent_of_context_window_remaining(
-                                    context_window,
-                                    token_usage_info.initial_prompt_tokens,
-                                )
-                            } else {
-                                100
-                            };
-                            text.push_str("   ");
-                            text.push_str(&format!("{percent_remaining}% context left"));
-                        }
-                        Line::from(text)
-                            .style(Style::default().dim())
-                            .render_ref(
-                                Rect::new(
-                                    bottom_line_rect.x,
-                                    bottom_line_rect.y + 1,
-                                    bottom_line_rect.width,
-                                    1,
-                                ),
-                                buf,
-                            );
+                if needs_tokens_line && let Some(token_usage_info) = &self.token_usage_info {
+                    let token_usage = &token_usage_info.total_token_usage;
+                    let mut text = String::from(" ");
+                    text.push_str(&format!("{} tokens used", token_usage.blended_total()));
+                    if let Some(context_window) = token_usage_info.model_context_window {
+                        let last_token_usage = &token_usage_info.last_token_usage;
+                        let percent_remaining: u8 = if context_window > 0 {
+                            last_token_usage.percent_of_context_window_remaining(
+                                context_window,
+                                token_usage_info.initial_prompt_tokens,
+                            )
+                        } else {
+                            100
+                        };
+                        text.push_str("   ");
+                        text.push_str(&format!("{percent_remaining}% context left"));
                     }
+                    Line::from(text).style(Style::default().dim()).render_ref(
+                        Rect::new(
+                            bottom_line_rect.x,
+                            bottom_line_rect.y + 1,
+                            bottom_line_rect.width,
+                            1,
+                        ),
+                        buf,
+                    );
+                }
             }
         }
         let border_style = if self.has_focus {
