@@ -1281,12 +1281,15 @@ async fn submission_loop(
                 let sub_id = sub.id.clone();
 
                 // Discover prompts under the default prompts dir (includes content).
-                let custom_prompts: Vec<CustomPrompt> = tokio::task::spawn_blocking(|| {
-                    let dir = crate::custom_prompts::default_prompts_dir();
-                    crate::custom_prompts::discover_prompts_in(&dir)
-                })
-                .await
-                .unwrap_or_default();
+                let custom_prompts: Vec<CustomPrompt> =
+                    tokio::task::spawn_blocking(
+                        || match crate::custom_prompts::default_prompts_dir() {
+                            Some(dir) => crate::custom_prompts::discover_prompts_in(&dir),
+                            None => Vec::new(),
+                        },
+                    )
+                    .await
+                    .unwrap_or_default();
 
                 let event = Event {
                     id: sub_id,

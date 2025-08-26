@@ -3,10 +3,12 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 
-/// Return the default prompts directory: ~/.codex/prompts based on $HOME.
-pub fn default_prompts_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(format!("{home}/.codex/prompts"))
+/// Return the default prompts directory: `$CODEX_HOME/prompts`.
+/// If `CODEX_HOME` cannot be resolved, returns `None`.
+pub fn default_prompts_dir() -> Option<PathBuf> {
+    crate::config::find_codex_home()
+        .ok()
+        .map(|home| home.join("prompts"))
 }
 
 /// Discover prompt files in the given directory, returning entries sorted by name.
