@@ -277,7 +277,25 @@ async fn resume_includes_initial_messages_and_sends_prior_items() {
             "content": [{ "type": "input_text", "text": "hello" }]
         }
     ]);
-    assert_eq!(request_body["input"], expected_input);
+    let input_array = request_body
+        .get("input")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .expect("input array in request body");
+    let filtered: Vec<serde_json::Value> = input_array
+        .into_iter()
+        .filter(|item| {
+            let text = item
+                .get("content")
+                .and_then(|c| c.as_array())
+                .and_then(|a| a.first())
+                .and_then(|o| o.get("text"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
+            !text.contains("<environment_context>")
+        })
+        .collect();
+    assert_eq!(serde_json::json!(filtered), expected_input);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -950,34 +968,6 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
     assert_eq!(requests.len(), 3, "expected 3 requests (one per turn)");
 
     // Replace full-array compare with tail-only raw JSON compare using a single hard-coded value.
-    let r3_tail_expected = json!([
-        {
-            "type": "message",
-            "role": "user",
-            "content": [{"type":"input_text","text":"U1"}]
-        },
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type":"output_text","text":"Hey there!\n"}]
-        },
-        {
-            "type": "message",
-            "role": "user",
-            "content": [{"type":"input_text","text":"U2"}]
-        },
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type":"output_text","text":"Hey there!\n"}]
-        },
-        {
-            "type": "message",
-            "role": "user",
-            "content": [{"type":"input_text","text":"U3"}]
-        }
-    ]);
-
     let r3_input_array = requests[2]
         .body_json::<serde_json::Value>()
         .unwrap()
@@ -985,12 +975,60 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
         .and_then(|v| v.as_array())
         .cloned()
         .expect("r3 missing input array");
-    // skipping earlier context and developer messages
-    let tail_len = r3_tail_expected.as_array().unwrap().len();
-    let actual_tail = &r3_input_array[r3_input_array.len() - tail_len..];
+    // We only assert on the last 5 items of the input history for request 3.
+    // With per-turn environment context injected, the last 5 should be:
+    // [env_ctx, U2, assistant("Hey there!\n"), env_ctx, U3]
+    let actual_tail = &r3_input_array[r3_input_array.len() - 5..];
+
+    // env_ctx 1
+    assert_eq!(actual_tail[0]["type"], serde_json::json!("message"));
+    assert_eq!(actual_tail[0]["role"], serde_json::json!("user"));
+    let env_text_1 = &actual_tail[0]["content"][0]["text"];
+    assert!(
+        env_text_1
+            .as_str()
+            .expect("env text should be string")
+            .contains("<environment_context>")
+    );
+
+    // U2
     assert_eq!(
-        serde_json::Value::Array(actual_tail.to_vec()),
-        r3_tail_expected,
-        "request 3 tail mismatch",
+        actual_tail[1],
+        serde_json::json!({
+            "type": "message",
+            "role": "user",
+            "content": [ { "type": "input_text", "text": "U2" } ]
+        })
+    );
+
+    // assistant response
+    assert_eq!(
+        actual_tail[2],
+        serde_json::json!({
+            "type": "message",
+            "role": "assistant",
+            "content": [ { "type": "output_text", "text": "Hey there!\n" } ]
+        })
+    );
+
+    // env_ctx 2
+    assert_eq!(actual_tail[3]["type"], serde_json::json!("message"));
+    assert_eq!(actual_tail[3]["role"], serde_json::json!("user"));
+    let env_text_2 = &actual_tail[3]["content"][0]["text"];
+    assert!(
+        env_text_2
+            .as_str()
+            .expect("env text should be string")
+            .contains("<environment_context>")
+    );
+
+    // U3
+    assert_eq!(
+        actual_tail[4],
+        serde_json::json!({
+            "type": "message",
+            "role": "user",
+            "content": [ { "type": "input_text", "text": "U3" } ]
+        })
     );
 }
