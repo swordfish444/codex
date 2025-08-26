@@ -25,6 +25,15 @@ pub fn discover_prompts_in_excluding(dir: &Path, exclude: &HashSet<String>) -> V
             if !path.is_file() {
                 continue;
             }
+            // Only include Markdown files with a .md extension.
+            let is_md = path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("md"))
+                .unwrap_or(false);
+            if !is_md {
+                continue;
+            }
             let Some(name) = path
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -67,8 +76,8 @@ mod tests {
     fn discovers_and_sorts_files() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
-        fs::write(dir.join("b"), b"b").unwrap();
-        fs::write(dir.join("a"), b"a").unwrap();
+        fs::write(dir.join("b.md"), b"b").unwrap();
+        fs::write(dir.join("a.md"), b"a").unwrap();
         fs::create_dir(dir.join("subdir")).unwrap();
         let found = discover_prompts_in(dir);
         let names: Vec<String> = found.into_iter().map(|e| e.name).collect();
@@ -79,8 +88,8 @@ mod tests {
     fn excludes_builtins() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
-        fs::write(dir.join("init"), b"ignored").unwrap();
-        fs::write(dir.join("foo"), b"ok").unwrap();
+        fs::write(dir.join("init.md"), b"ignored").unwrap();
+        fs::write(dir.join("foo.md"), b"ok").unwrap();
         let mut exclude = HashSet::new();
         exclude.insert("init".to_string());
         let found = discover_prompts_in_excluding(dir, &exclude);
