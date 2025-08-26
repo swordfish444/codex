@@ -44,7 +44,7 @@ pub fn discover_prompts_in_excluding(dir: &Path, exclude: &HashSet<String>) -> V
 }
 
 /// Discover prompt files in the default prompts directory, excluding any with names in `exclude`.
-pub fn discover_prompts_excluding(exclude: &HashSet<String>) -> Vec<CustomPrompt> {
+pub(crate) fn discover_prompts_excluding(exclude: &HashSet<String>) -> Vec<CustomPrompt> {
     let dir = default_prompts_dir();
     discover_prompts_in_excluding(&dir, exclude)
 }

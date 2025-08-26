@@ -1115,8 +1115,7 @@ impl ChatComposer {
         }
     }
 
-    pub(crate) fn set_custom_prompts(&mut self, mut prompts: Vec<CustomPrompt>) {
-        prompts.sort_by(|a, b| a.name.cmp(&b.name));
+    pub(crate) fn set_custom_prompts(&mut self, prompts: Vec<CustomPrompt>) {
         self.custom_prompts = prompts.clone();
         if let ActivePopup::Command(popup) = &mut self.active_popup {
             popup.set_prompts(prompts);

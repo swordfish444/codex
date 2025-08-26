@@ -185,7 +185,6 @@ fn make_chatwidget_manual() -> (
         show_welcome_banner: true,
         last_history_was_exec: false,
         queued_user_messages: std::collections::VecDeque::new(),
-        custom_prompts: Vec::new(),
     };
     (widget, rx, op_rx)
 }
