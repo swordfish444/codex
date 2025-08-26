@@ -1988,4 +1988,34 @@ mod tests {
         let imgs = composer.take_recent_submission_images();
         assert_eq!(imgs, vec![tmp_path.clone()]);
     }
+
+    #[test]
+    fn selecting_custom_prompt_submits_file_contents() {
+        let tmp = tempdir().expect("create TempDir");
+        let home = tmp.path();
+        let prompts_dir = home.join(".codex").join("prompts");
+        std::fs::create_dir_all(&prompts_dir).expect("mkdir -p ~/.codex/prompts");
+        let prompt_path = prompts_dir.join("my-prompt");
+        let prompt_text = "Hello from saved prompt";
+        std::fs::write(&prompt_path, prompt_text).unwrap();
+
+        unsafe { std::env::set_var("HOME", home) };
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer =
+            ChatComposer::new(true, sender, false, "Ask Codex to do anything".to_string());
+
+        // Type the prompt name to focus it in the slash popup and press Enter.
+        for ch in ['/', 'm', 'y', '-', 'p', 'r', 'o', 'm', 'p', 't'] {
+            let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        match result {
+            InputResult::Submitted(s) => assert_eq!(s, prompt_text),
+            _ => panic!("expected Submitted with prompt contents"),
+        }
+    }
 }

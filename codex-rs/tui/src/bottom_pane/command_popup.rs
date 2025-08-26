@@ -229,6 +229,7 @@ impl WidgetRef for CommandPopup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn filter_includes_init_when_typing_prefix() {
@@ -263,5 +264,53 @@ mod tests {
             Some(CommandItem::Prompt(_)) => panic!("unexpected prompt selected for '/init'"),
             None => panic!("expected a selected command for exact match"),
         }
+    }
+
+    #[test]
+    fn prompt_discovery_lists_custom_prompts() {
+        let tmp = tempdir().expect("create TempDir");
+        let home = tmp.path();
+        let prompts_dir = home.join(".codex").join("prompts");
+        std::fs::create_dir_all(&prompts_dir).expect("mkdir -p ~/.codex/prompts");
+        std::fs::write(prompts_dir.join("foo"), b"hello from foo").unwrap();
+        std::fs::write(prompts_dir.join("bar"), b"hello from bar").unwrap();
+
+        // Point HOME to the temp dir so discovery uses our fixtures.
+        unsafe { std::env::set_var("HOME", home) };
+
+        let popup = CommandPopup::new();
+        let items = popup.filtered_items();
+        let mut prompt_names: Vec<String> = items
+            .into_iter()
+            .filter_map(|it| match it {
+                CommandItem::Prompt(i) => popup.prompt_name(i).map(|s| s.to_string()),
+                _ => None,
+            })
+            .collect();
+        prompt_names.sort();
+        assert_eq!(prompt_names, vec!["bar".to_string(), "foo".to_string()]);
+    }
+
+    #[test]
+    fn prompt_name_collision_with_builtin_is_ignored() {
+        let tmp = tempdir().expect("create TempDir");
+        let home = tmp.path();
+        let prompts_dir = home.join(".codex").join("prompts");
+        std::fs::create_dir_all(&prompts_dir).expect("mkdir -p ~/.codex/prompts");
+        // Create a prompt with the same name as a builtin command (e.g. "init").
+        std::fs::write(prompts_dir.join("init"), b"should be ignored").unwrap();
+
+        unsafe { std::env::set_var("HOME", home) };
+
+        let popup = CommandPopup::new();
+        let items = popup.filtered_items();
+        let has_collision_prompt = items.into_iter().any(|it| match it {
+            CommandItem::Prompt(i) => popup.prompt_name(i) == Some("init"),
+            _ => false,
+        });
+        assert!(
+            !has_collision_prompt,
+            "prompt with builtin name should be ignored"
+        );
     }
 }
