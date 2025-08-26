@@ -18,11 +18,14 @@ use codex_core::protocol::ExecApprovalRequestEvent;
 use codex_core::protocol::ExecCommandBeginEvent;
 use codex_core::protocol::ExecCommandEndEvent;
 use codex_core::protocol::FileChange;
+use codex_core::protocol::InputItem;
+use codex_core::protocol::ListCustomPromptsResponseEvent;
 use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::PatchApplyEndEvent;
 use codex_core::protocol::StreamErrorEvent;
 use codex_core::protocol::TaskCompleteEvent;
 use codex_login::CodexAuth;
+use codex_protocol::custom_prompts::CustomPrompt;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
@@ -212,6 +215,48 @@ fn lines_to_single_string(lines: &[ratatui::text::Line<'static>]) -> String {
         s.push('\n');
     }
     s
+}
+
+#[test]
+fn selecting_custom_prompt_sends_user_message() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual();
+
+    // Provide a custom prompt via protocol event, as core would do.
+    let prompt_text = "Hello from saved prompt".to_string();
+    chat.handle_codex_event(Event {
+        id: "sub-prompts".into(),
+        msg: EventMsg::ListCustomPromptsResponse(ListCustomPromptsResponseEvent {
+            custom_prompts: vec![CustomPrompt {
+                name: "my-prompt".to_string(),
+                content: prompt_text.clone(),
+            }],
+        }),
+    });
+
+    // Type the prompt name to focus it in the slash popup and press Enter.
+    for ch in ['/', 'm', 'y', '-', 'p', 'r', 'o', 'm', 'p', 't'] {
+        chat.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    // Expect a UserInput op to be sent containing the prompt's content.
+    let mut found = false;
+    while let Ok(op) = op_rx.try_recv() {
+        if let Op::UserInput { items } = op {
+            let texts: Vec<String> = items
+                .into_iter()
+                .filter_map(|it| match it {
+                    InputItem::Text { text } => Some(text),
+                    _ => None,
+                })
+                .collect();
+            if texts.iter().any(|t| t == &prompt_text) {
+                found = true;
+                break;
+            }
+        }
+    }
+    assert!(found, "expected UserInput op containing prompt content");
 }
 
 fn open_fixture(name: &str) -> std::fs::File {
