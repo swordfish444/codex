@@ -405,8 +405,10 @@ impl ChatComposer {
                     // Clear textarea so no residual text remains.
                     self.textarea.set_text("");
                     // Capture any needed data from popup before clearing it.
-                    let prompt_path = match sel {
-                        CommandItem::Prompt(idx) => popup.prompt_path(idx).cloned(),
+                    let prompt_content = match sel {
+                        CommandItem::Prompt(idx) => {
+                            popup.prompt_content(idx).map(|s| s.to_string())
+                        }
                         _ => None,
                     };
                     // Hide popup since an action has been dispatched.
@@ -417,19 +419,8 @@ impl ChatComposer {
                             return (InputResult::Command(cmd), true);
                         }
                         CommandItem::Prompt(_) => {
-                            if let Some(path) = prompt_path {
-                                match std::fs::read_to_string(&path) {
-                                    Ok(contents) => {
-                                        return (InputResult::Submitted(contents), true);
-                                    }
-                                    Err(e) => {
-                                        tracing::error!(
-                                            "failed to read prompt from {}: {e}",
-                                            path.display()
-                                        );
-                                        return (InputResult::None, true);
-                                    }
-                                }
+                            if let Some(contents) = prompt_content {
+                                return (InputResult::Submitted(contents), true);
                             }
                             return (InputResult::None, true);
                         }

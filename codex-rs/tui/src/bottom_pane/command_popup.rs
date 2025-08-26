@@ -9,21 +9,17 @@ use super::selection_popup_common::render_rows;
 use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
 use codex_common::fuzzy_match::fuzzy_match;
-use std::fs;
-use std::path::PathBuf;
-
-/// A discovered prompt in ~/.codex/prompts.
 #[derive(Clone, Debug)]
 pub(crate) struct PromptEntry {
     pub name: String,
-    pub path: PathBuf,
+    pub content: String,
 }
 
 /// A selectable item in the popup: either a built-in command or a user prompt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CommandItem {
     Builtin(SlashCommand),
-    /// Index into `prompts` vector of `CommandPopup`.
+    // Index into `prompts`
     Prompt(usize),
 }
 
@@ -37,7 +33,17 @@ pub(crate) struct CommandPopup {
 impl CommandPopup {
     pub(crate) fn new() -> Self {
         let builtins = built_in_slash_commands();
-        let prompts = Self::discover_prompts(&builtins);
+        let mut exclude = std::collections::HashSet::new();
+        for (name, _) in builtins.iter() {
+            exclude.insert((*name).to_string());
+        }
+        let prompts = codex_core::custom_prompts::discover_prompts_excluding(&exclude)
+            .into_iter()
+            .map(|p| PromptEntry {
+                name: p.name,
+                content: p.content,
+            })
+            .collect();
         Self {
             command_filter: String::new(),
             builtins,
@@ -46,49 +52,12 @@ impl CommandPopup {
         }
     }
 
-    /// If `idx` refers to a prompt item, return its absolute file path.
-    pub(crate) fn prompt_path(&self, idx: usize) -> Option<&PathBuf> {
-        self.prompts.get(idx).map(|p| &p.path)
-    }
-
     pub(crate) fn prompt_name(&self, idx: usize) -> Option<&str> {
         self.prompts.get(idx).map(|p| p.name.as_str())
     }
 
-    /// Scan ~/.codex/prompts for files and return them as prompt entries.
-    fn discover_prompts(builtins: &Vec<(&'static str, SlashCommand)>) -> Vec<PromptEntry> {
-        // Build a set of builtin names to avoid collisions.
-        let mut builtin_names = std::collections::HashSet::new();
-        for (name, _) in builtins.iter() {
-            builtin_names.insert(*name);
-        }
-
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let prompts_dir = PathBuf::from(format!("{home}/.codex/prompts"));
-        let mut out = Vec::new();
-        if let Ok(entries) = fs::read_dir(&prompts_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if !path.is_file() {
-                    continue;
-                }
-                let file_name = path.file_stem().and_then(|s| s.to_str());
-                let Some(name) = file_name else {
-                    continue;
-                };
-                // Avoid duplicates with built-ins; prefer built-ins.
-                if builtin_names.contains(name) {
-                    continue;
-                }
-                out.push(PromptEntry {
-                    name: name.to_string(),
-                    path,
-                });
-            }
-            // Sort prompts by name for stable ordering.
-            out.sort_by(|a, b| a.name.cmp(&b.name));
-        }
-        out
+    pub(crate) fn prompt_content(&self, idx: usize) -> Option<&str> {
+        self.prompts.get(idx).map(|p| p.content.as_str())
     }
 
     /// Update the filter string based on the current composer text. The text
