@@ -21,6 +21,7 @@ use ratatui::widgets::StatefulWidgetRef;
 use ratatui::widgets::WidgetRef;
 
 use super::chat_composer_history::ChatComposerHistory;
+use super::command_popup::CommandItem;
 use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
 use crate::slash_command::SlashCommand;
@@ -365,16 +366,27 @@ impl ChatComposer {
             KeyEvent {
                 code: KeyCode::Tab, ..
             } => {
-                if let Some(cmd) = popup.selected_command() {
+                if let Some(sel) = popup.selected_item() {
                     let first_line = self.textarea.text().lines().next().unwrap_or("");
 
-                    let starts_with_cmd = first_line
-                        .trim_start()
-                        .starts_with(&format!("/{}", cmd.command()));
-
-                    if !starts_with_cmd {
-                        self.textarea.set_text(&format!("/{} ", cmd.command()));
-                        self.textarea.set_cursor(self.textarea.text().len());
+                    match sel {
+                        CommandItem::Builtin(cmd) => {
+                            let starts_with_cmd = first_line
+                                .trim_start()
+                                .starts_with(&format!("/{}", cmd.command()));
+                            if !starts_with_cmd {
+                                self.textarea.set_text(&format!("/{} ", cmd.command()));
+                            }
+                        }
+                        CommandItem::Prompt(idx) => {
+                            if let Some(name) = popup.prompt_name(idx) {
+                                let starts_with_cmd =
+                                    first_line.trim_start().starts_with(&format!("/{name}"));
+                                if !starts_with_cmd {
+                                    self.textarea.set_text(&format!("/{name} "));
+                                }
+                            }
+                        }
                     }
                     // After completing the command, move cursor to the end.
                     if !self.textarea.text().is_empty() {
@@ -389,16 +401,39 @@ impl ChatComposer {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                if let Some(cmd) = popup.selected_command() {
+                if let Some(sel) = popup.selected_item() {
                     // Clear textarea so no residual text remains.
                     self.textarea.set_text("");
-
-                    let result = (InputResult::Command(*cmd), true);
-
-                    // Hide popup since the command has been dispatched.
+                    // Capture any needed data from popup before clearing it.
+                    let prompt_path = match sel {
+                        CommandItem::Prompt(idx) => popup.prompt_path(idx).cloned(),
+                        _ => None,
+                    };
+                    // Hide popup since an action has been dispatched.
                     self.active_popup = ActivePopup::None;
 
-                    return result;
+                    match sel {
+                        CommandItem::Builtin(cmd) => {
+                            return (InputResult::Command(cmd), true);
+                        }
+                        CommandItem::Prompt(_) => {
+                            if let Some(path) = prompt_path {
+                                match std::fs::read_to_string(&path) {
+                                    Ok(contents) => {
+                                        return (InputResult::Submitted(contents), true);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "failed to read prompt from {}: {e}",
+                                            path.display()
+                                        );
+                                        return (InputResult::None, true);
+                                    }
+                                }
+                            }
+                            return (InputResult::None, true);
+                        }
+                    }
                 }
                 // Fallback to default newline handling if no command selected.
                 self.handle_key_event_without_popup(key_event)
