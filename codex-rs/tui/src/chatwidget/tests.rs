@@ -22,6 +22,7 @@ use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::PatchApplyEndEvent;
 use codex_core::protocol::StreamErrorEvent;
 use codex_core::protocol::TaskCompleteEvent;
+use codex_core::protocol::TaskStartedEvent;
 use codex_login::CodexAuth;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -368,6 +369,48 @@ fn exec_history_cell_shows_working_then_failed() {
         blob.contains("false"),
         "expected command text present: {blob:?}"
     );
+}
+
+// Snapshot test: interrupting a running exec finalizes the active cell with a red ✗
+// marker (replacing the spinner) and flushes it into history.
+#[test]
+fn interrupt_exec_marks_failed_snapshot() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
+
+    // Begin a long-running command so we have an active exec cell with a spinner.
+    chat.handle_codex_event(Event {
+        id: "call-int".into(),
+        msg: EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
+            call_id: "call-int".into(),
+            command: vec!["bash".into(), "-lc".into(), "sleep 1".into()],
+            cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            parsed_cmd: vec![
+                codex_core::parse_command::ParsedCommand::Unknown {
+                    cmd: "sleep 1".into(),
+                }
+                .into(),
+            ],
+        }),
+    });
+
+    // Simulate the task being aborted (as if ESC was pressed), which should
+    // cause the active exec cell to be finalized as failed and flushed.
+    chat.handle_codex_event(Event {
+        id: "call-int".into(),
+        msg: EventMsg::TurnAborted(codex_core::protocol::TurnAbortedEvent {
+            reason: TurnAbortReason::Interrupted,
+        }),
+    });
+
+    let cells = drain_insert_history(&mut rx);
+    assert!(
+        !cells.is_empty(),
+        "expected finalized exec cell to be inserted into history"
+    );
+
+    // The first inserted cell should be the finalized exec; snapshot its text.
+    let exec_blob = lines_to_single_string(&cells[0]);
+    assert_snapshot!("interrupt_exec_marks_failed", exec_blob);
 }
 
 #[test]
@@ -721,6 +764,45 @@ fn approval_modal_patch_snapshot() {
     assert_snapshot!("approval_modal_patch", terminal.backend());
 }
 
+#[test]
+fn interrupt_restores_queued_messages_into_composer() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual();
+
+    // Simulate a running task to enable queuing of user inputs.
+    chat.bottom_pane.set_task_running(true);
+
+    // Queue two user messages while the task is running.
+    chat.queued_user_messages
+        .push_back(UserMessage::from("first queued".to_string()));
+    chat.queued_user_messages
+        .push_back(UserMessage::from("second queued".to_string()));
+    chat.refresh_queued_user_messages();
+
+    // Deliver a TurnAborted event with Interrupted reason (as if Esc was pressed).
+    chat.handle_codex_event(Event {
+        id: "turn-1".into(),
+        msg: EventMsg::TurnAborted(codex_core::protocol::TurnAbortedEvent {
+            reason: codex_core::protocol::TurnAbortReason::Interrupted,
+        }),
+    });
+
+    // Composer should now contain the queued messages joined by newlines, in order.
+    assert_eq!(
+        chat.bottom_pane.composer_text(),
+        "first queued\nsecond queued"
+    );
+
+    // Queue should be cleared and no new user input should have been auto-submitted.
+    assert!(chat.queued_user_messages.is_empty());
+    assert!(
+        op_rx.try_recv().is_err(),
+        "unexpected outbound op after interrupt"
+    );
+
+    // Drain rx to avoid unused warnings.
+    let _ = drain_insert_history(&mut rx);
+}
+
 // Snapshot test: ChatWidget at very small heights (idle)
 // Ensures overall layout behaves when terminal height is extremely constrained.
 #[test]
@@ -748,7 +830,9 @@ fn ui_snapshots_small_heights_task_running() {
     // Activate status line
     chat.handle_codex_event(Event {
         id: "task-1".into(),
-        msg: EventMsg::TaskStarted,
+        msg: EventMsg::TaskStarted(TaskStartedEvent {
+            model_context_window: None,
+        }),
     });
     chat.handle_codex_event(Event {
         id: "task-1".into(),
@@ -777,7 +861,9 @@ fn status_widget_and_approval_modal_snapshot() {
     // Begin a running task so the status indicator would be active.
     chat.handle_codex_event(Event {
         id: "task-1".into(),
-        msg: EventMsg::TaskStarted,
+        msg: EventMsg::TaskStarted(TaskStartedEvent {
+            model_context_window: None,
+        }),
     });
     // Provide a deterministic header for the status line.
     chat.handle_codex_event(Event {
@@ -817,7 +903,9 @@ fn status_widget_active_snapshot() {
     // Activate the status indicator by simulating a task start.
     chat.handle_codex_event(Event {
         id: "task-1".into(),
-        msg: EventMsg::TaskStarted,
+        msg: EventMsg::TaskStarted(TaskStartedEvent {
+            model_context_window: None,
+        }),
     });
     // Provide a deterministic header via a bold reasoning chunk.
     chat.handle_codex_event(Event {
@@ -1165,7 +1253,7 @@ fn stream_error_is_rendered_to_history() {
     let cells = drain_insert_history(&mut rx);
     assert!(!cells.is_empty(), "expected a history cell for StreamError");
     let blob = lines_to_single_string(cells.last().unwrap());
-    assert!(blob.contains("⚠ "));
+    assert!(blob.contains("⚠\u{200A} "));
     assert!(blob.contains("stream error:"));
     assert!(blob.contains("idle timeout waiting for SSE"));
 }
@@ -1265,7 +1353,9 @@ fn multiple_agent_messages_in_single_turn_emit_multiple_headers() {
     // Begin turn
     chat.handle_codex_event(Event {
         id: "s1".into(),
-        msg: EventMsg::TaskStarted,
+        msg: EventMsg::TaskStarted(TaskStartedEvent {
+            model_context_window: None,
+        }),
     });
 
     // First finalized assistant message
