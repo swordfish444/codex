@@ -1,8 +1,7 @@
 name: 🧑‍💻 VS Code Extension
 description: Report an issue with the VS Code extension
 labels:
-  - extension
-  - needs triage
+  - codex-ide
 body:
   - type: markdown
     attributes:
