@@ -5,6 +5,9 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
+use crate::config_edit_tool::create_get_config_tool;
+use crate::config_edit_tool::create_set_config_tool;
+use crate::config_edit_tool::create_show_config_docs_tool;
 use crate::model_family::ModelFamily;
 use crate::plan_tool::PLAN_TOOL;
 use crate::protocol::AskForApproval;
@@ -570,6 +573,10 @@ pub(crate) fn get_openai_tools(
     if config.web_search_request {
         tools.push(OpenAiTool::WebSearch {});
     }
+    // Always include internal config tools.
+    tools.push(create_get_config_tool());
+    tools.push(create_set_config_tool());
+    tools.push(create_show_config_docs_tool());
 
     // Include the view_image tool so the agent can attach images to context.
     if config.include_view_image_tool {
@@ -645,7 +652,15 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["local_shell", "update_plan", "web_search", "view_image"],
+            &[
+                "local_shell",
+                "update_plan",
+                "web_search",
+                "get_config",
+                "set_config",
+                "show_config_docs",
+                "view_image",
+            ],
         );
     }
 
@@ -666,7 +681,15 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["shell", "update_plan", "web_search", "view_image"],
+            &[
+                "shell",
+                "update_plan",
+                "web_search",
+                "get_config",
+                "set_config",
+                "show_config_docs",
+                "view_image",
+            ],
         );
     }
 
@@ -726,13 +749,16 @@ mod tests {
             &[
                 "shell",
                 "web_search",
+                "get_config",
+                "set_config",
+                "show_config_docs",
                 "view_image",
                 "test_server/do_something_cool",
             ],
         );
 
         assert_eq!(
-            tools[3],
+            tools[5],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "test_server/do_something_cool".to_string(),
                 parameters: JsonSchema::Object {
@@ -839,11 +865,14 @@ mod tests {
         ]);
 
         let tools = get_openai_tools(&config, Some(tools_map));
-        // Expect shell first, followed by MCP tools sorted by fully-qualified name.
+        // Expect shell first, followed by built-in config tools, then MCP tools sorted by fully-qualified name.
         assert_eq_tool_names(
             &tools,
             &[
                 "shell",
+                "get_config",
+                "set_config",
+                "show_config_docs",
                 "view_image",
                 "test_server/cool",
                 "test_server/do",
@@ -891,11 +920,18 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["shell", "web_search", "view_image", "dash/search"],
+            &[
+                "shell",
+                "web_search",
+                "get_config",
+                "set_config",
+                "show_config_docs",
+                "dash/search",
+            ],
         );
 
         assert_eq!(
-            tools[3],
+            tools[5],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "dash/search".to_string(),
                 parameters: JsonSchema::Object {
@@ -951,10 +987,18 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["shell", "web_search", "view_image", "dash/paginate"],
+            &[
+                "shell",
+                "web_search",
+                "get_config",
+                "set_config",
+                "view_image",
+                "show_config_docs",
+                "dash/paginate",
+            ],
         );
         assert_eq!(
-            tools[3],
+            tools[5],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "dash/paginate".to_string(),
                 parameters: JsonSchema::Object {
@@ -1006,9 +1050,20 @@ mod tests {
             )])),
         );
 
-        assert_eq_tool_names(&tools, &["shell", "web_search", "view_image", "dash/tags"]);
+        assert_eq_tool_names(
+            &tools,
+            &[
+                "shell",
+                "web_search",
+                "get_config",
+                "set_config",
+                "show_config_docs",
+                "dash/tags",
+            ],
+        );
+
         assert_eq!(
-            tools[3],
+            tools[5],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "dash/tags".to_string(),
                 parameters: JsonSchema::Object {
@@ -1063,9 +1118,19 @@ mod tests {
             )])),
         );
 
-        assert_eq_tool_names(&tools, &["shell", "web_search", "view_image", "dash/value"]);
+        assert_eq_tool_names(
+            &tools,
+            &[
+                "shell",
+                "web_search",
+                "get_config",
+                "set_config",
+                "show_config_docs",
+                "dash/value",
+            ],
+        );
         assert_eq!(
-            tools[3],
+            tools[5],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "dash/value".to_string(),
                 parameters: JsonSchema::Object {
