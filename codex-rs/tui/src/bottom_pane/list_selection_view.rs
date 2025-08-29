@@ -138,8 +138,7 @@ impl BottomPaneView for ListSelectionView {
 
     fn desired_height(&self, _width: u16) -> u16 {
         let rows = (self.items.len()).clamp(1, MAX_POPUP_ROWS);
-        // +1 for the title row, +1 for optional subtitle, +1 for optional footer
-        let mut height = rows as u16 + 1;
+        let mut height = rows as u16 + 2;
         if self.subtitle.is_some() {
             // +1 for subtitle, +1 for a blank spacer line beneath it
             height = height.saturating_add(2);
@@ -155,9 +154,18 @@ impl BottomPaneView for ListSelectionView {
             return;
         }
 
-        let title_area = Rect {
+        let spacer_top = Rect {
             x: area.x,
             y: area.y,
+            width: area.width,
+            height: 1,
+        };
+
+        let _ = spacer_top; // keep explicit for clarity; no rendering here
+
+        let title_area = Rect {
+            x: area.x,
+            y: area.y.saturating_add(1),
             width: area.width,
             height: 1,
         };
@@ -172,7 +180,7 @@ impl BottomPaneView for ListSelectionView {
         let title_para = Paragraph::new(Line::from(title_spans));
         title_para.render(title_area, buf);
 
-        let mut next_y = area.y.saturating_add(1);
+        let mut next_y = area.y.saturating_add(2);
         if let Some(sub) = &self.subtitle {
             let subtitle_area = Rect {
                 x: area.x,
