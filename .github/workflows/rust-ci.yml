@@ -109,6 +109,9 @@ jobs:
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-musl
             profile: release
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            profile: release
 
     steps:
       - uses: actions/checkout@v5
@@ -125,7 +128,10 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             ${{ github.workspace }}/codex-rs/target/
-          key: cargo-${{ matrix.runner }}-${{ matrix.target }}-${{ matrix.profile }}-${{ hashFiles('**/Cargo.lock') }}
+          # Use the same key format as rust-release.yml for release builds
+          # so release jobs can reuse this cache. Fall back to the dev key
+          # format for non-release builds.
+          key: ${{ matrix.profile == 'release' && format('cargo-release-{0}-{1}-release-{2}', matrix.runner, matrix.target, hashFiles('**/Cargo.lock')) || format('cargo-{0}-{1}-{2}-{3}', matrix.runner, matrix.target, matrix.profile, hashFiles('**/Cargo.lock')) }}
 
       - if: ${{ matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'}}
         name: Install musl build tools
