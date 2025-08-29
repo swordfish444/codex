@@ -3,6 +3,7 @@
 use codex_core::ConversationManager;
 use codex_core::ModelProviderInfo;
 use codex_core::built_in_model_providers;
+use codex_core::config_types::McpServerConfig;
 use codex_core::model_family::find_family_for_model;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::EventMsg;
@@ -532,6 +533,153 @@ async fn per_turn_overrides_keep_cached_prefix_and_key_constant() {
 
     let body1 = requests[0].body_json::<serde_json::Value>().unwrap();
     let body2 = requests[1].body_json::<serde_json::Value>().unwrap();
+
+    // prompt_cache_key should remain constant across per-turn overrides
+    assert_eq!(
+        body1["prompt_cache_key"], body2["prompt_cache_key"],
+        "prompt_cache_key should not change across per-turn overrides"
+    );
+
+    // The entire prefix from the first request should be identical and reused
+    // as the prefix of the second request.
+    let expected_user_message_2 = serde_json::json!({
+        "type": "message",
+        "id": serde_json::Value::Null,
+        "role": "user",
+        "content": [ { "type": "input_text", "text": "hello 2" } ]
+    });
+    let expected_body2 = serde_json::json!(
+        [
+            body1["input"].as_array().unwrap().as_slice(),
+            [expected_user_message_2].as_slice(),
+        ]
+        .concat()
+    );
+    assert_eq!(body2["input"], expected_body2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcp_server_ordering_is_preserved_across_requests() {
+    use pretty_assertions::assert_eq;
+
+    let server = MockServer::start().await;
+
+    let sse = sse_completed("resp");
+    let template = ResponseTemplate::new(200)
+        .insert_header("content-type", "text/event-stream")
+        .set_body_raw(sse, "text/event-stream");
+
+    // Expect two POSTs to /v1/responses
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(template)
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let model_provider = ModelProviderInfo {
+        base_url: Some(format!("{}/v1", server.uri())),
+        ..built_in_model_providers()["openai"].clone()
+    };
+
+    let cwd = TempDir::new().unwrap();
+    let codex_home = TempDir::new().unwrap();
+    let mut config = load_default_config_for_test(&codex_home);
+    config.cwd = cwd.path().to_path_buf();
+    config.model_provider = model_provider;
+    config.user_instructions = Some("be consistent and helpful".to_string());
+    let mut mcp_servers = indexmap::IndexMap::new();
+    mcp_servers.insert(
+        "test_mcp_server_1".to_string(),
+        McpServerConfig {
+            command: "bash -lc 'while read -r line; do echo \"{\"id\": 1, \"tools\": [{\"name\": \"test_tool_1\", \"description\": \"Test tool 1\" }]} \"; done'".to_string(),
+            args: vec![],
+            env: None,
+        },
+    );
+    // mcp_servers.insert(
+    //     "test_mcp_server_2".to_string(),
+    //     McpServerConfig {
+    //         command: "echo".to_string(),
+    //         args: vec![
+    //             "{\"id\": 2, \"tools\": [{\"name\": \"test_tool_2\", \"description\": \"Test tool 2\"}]}".to_string(),
+    //         ],
+    //         env: None,
+    //     },
+    // );
+    config.mcp_servers = mcp_servers;
+
+    let conversation_manager =
+        ConversationManager::with_auth(CodexAuth::from_api_key("Test API Key"));
+    let codex = conversation_manager
+        .new_conversation(config)
+        .await
+        .expect("create new conversation")
+        .conversation;
+
+    // First turn
+    codex
+        .submit(Op::UserInput {
+            items: vec![InputItem::Text {
+                text: "hello 1".into(),
+            }],
+        })
+        .await
+        .unwrap();
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+    // Second turn using per-turn overrides via UserTurn
+    let new_cwd = TempDir::new().unwrap();
+    let writable = TempDir::new().unwrap();
+    codex
+        .submit(Op::UserTurn {
+            items: vec![InputItem::Text {
+                text: "hello 2".into(),
+            }],
+            cwd: new_cwd.path().to_path_buf(),
+            approval_policy: AskForApproval::Never,
+            sandbox_policy: SandboxPolicy::WorkspaceWrite {
+                writable_roots: vec![writable.path().to_path_buf()],
+                network_access: true,
+                exclude_tmpdir_env_var: true,
+                exclude_slash_tmp: true,
+            },
+            model: "o3".to_string(),
+            effort: ReasoningEffort::High,
+            summary: ReasoningSummary::Detailed,
+        })
+        .await
+        .unwrap();
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+    // Verify we issued exactly two requests, and the cached prefix stayed identical.
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2, "expected two POST requests");
+
+    let body1 = requests[0].body_json::<serde_json::Value>().unwrap();
+    let body2 = requests[1].body_json::<serde_json::Value>().unwrap();
+
+    // Validate MCP tools presence in the request body. The tool name should be
+    // fully qualified as "<server>__<tool>".
+    let expected_mcp_tool_name = "test_mcp_server_1__test_tool_1";
+    let tools1 = body1["tools"].as_array().unwrap();
+    assert!(
+        tools1.iter().any(|t| {
+            t.get("type").and_then(|v| v.as_str()) == Some("function")
+                && t.get("name").and_then(|v| v.as_str()) == Some(expected_mcp_tool_name)
+        }),
+        "missing expected MCP tool in first request: {}",
+        expected_mcp_tool_name
+    );
+    let tools2 = body2["tools"].as_array().unwrap();
+    assert!(
+        tools2.iter().any(|t| {
+            t.get("type").and_then(|v| v.as_str()) == Some("function")
+                && t.get("name").and_then(|v| v.as_str()) == Some(expected_mcp_tool_name)
+        }),
+        "missing expected MCP tool in second request: {}",
+        expected_mcp_tool_name
+    );
 
     // prompt_cache_key should remain constant across per-turn overrides
     assert_eq!(
