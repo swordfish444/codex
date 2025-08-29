@@ -372,7 +372,7 @@ You can scope MCP servers to a specific profile and optionally inherit the globa
 command = "some_server"
 
 # Profile-specific MCP server
-[profiles.ops.analysis]
+[profiles.ops.mcp_servers.analysis]
 command = "ops_mcp"
 
 # You can disable inheriting the global MCP servers in a specific profile
