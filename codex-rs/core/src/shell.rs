@@ -128,11 +128,22 @@ pub async fn default_user_shell() -> Shell {
         .output()
         .await
         .ok();
+
+    let shell_from_env = || {
+        let shell_path = std::env::var("SHELL").ok();
+        let home_env = std::env::var("HOME").unwrap_or_else(|_| home.clone());
+        shell_path
+            .filter(|path| path.ends_with("/zsh"))
+            .map(|shell_path| {
+                Shell::Zsh(ZshShell {
+                    shell_path,
+                    zshrc_path: format!("{home_env}/.zshrc"),
+                })
+            })
+    };
+
     match output {
-        Some(o) => {
-            if !o.status.success() {
-                return Shell::Unknown;
-            }
+        Some(o) if o.status.success() => {
             let stdout = String::from_utf8_lossy(&o.stdout);
             for line in stdout.lines() {
                 if let Some(shell_path) = line.strip_prefix("UserShell: ")
@@ -144,10 +155,9 @@ pub async fn default_user_shell() -> Shell {
                     });
                 }
             }
-
-            Shell::Unknown
+            shell_from_env().unwrap_or(Shell::Unknown)
         }
-        _ => Shell::Unknown,
+        _ => shell_from_env().unwrap_or(Shell::Unknown),
     }
 }
 

@@ -592,8 +592,80 @@ async fn mcp_server_ordering_is_preserved_across_requests() {
     mcp_servers.insert(
         "test_mcp_server_1".to_string(),
         McpServerConfig {
-            command: "bash -lc 'while read -r line; do echo \"{\"id\": 1, \"tools\": [{\"name\": \"test_tool_1\", \"description\": \"Test tool 1\" }]} \"; done'".to_string(),
-            args: vec![],
+            command: "bash".to_string(),
+            args: vec![
+                "-lc".to_string(),
+                r#"TMP=$(mktemp)
+cat <<'PY' > "$TMP"
+import json
+import sys
+
+
+PROTOCOL_VERSION = "2025-06-18"
+
+
+def send(message):
+    sys.stdout.write(json.dumps(message) + "\n")
+    sys.stdout.flush()
+
+
+for line in sys.stdin:
+    try:
+        message = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    method = message.get("method")
+    if method == "initialize":
+        params = message.get("params") or {}
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": message.get("id"),
+                "result": {
+                    "capabilities": {"tools": {"listChanged": True}},
+                    "protocolVersion": params.get("protocol_version", PROTOCOL_VERSION),
+                    "serverInfo": {
+                        "name": "test_mcp_server_1",
+                        "title": "Test MCP Server 1",
+                        "version": "0.0.1",
+                    },
+                },
+            }
+        )
+    elif method == "tools/list":
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": message.get("id"),
+                "result": {
+                    "tools": [
+                        {
+                            "name": "test_tool_1",
+                            "description": "Test tool 1",
+                            "inputSchema": {"type": "object"},
+                        }
+                    ],
+                },
+            }
+        )
+    elif method == "notifications/initialized":
+        continue
+    else:
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": message.get("id"),
+                "error": {
+                    "code": -32601,
+                    "message": f"Method {method} not implemented",
+                },
+            }
+        )
+PY
+python3 "$TMP"
+"#
+                .to_string(),
+            ],
             env: None,
         },
     );

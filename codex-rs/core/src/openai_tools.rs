@@ -542,7 +542,17 @@ pub(crate) fn get_openai_tools(
     }
 
     if let Some(mcp_tools) = mcp_tools {
-        for (name, tool) in mcp_tools.into_iter() {
+        let mut sorted_tools: Vec<_> = mcp_tools.into_iter().collect();
+        sorted_tools.sort_by(|(name_a, _), (name_b, _)| {
+            let (server_a, tool_a) = name_a.split_once('/').unwrap_or((name_a.as_str(), ""));
+            let (server_b, tool_b) = name_b.split_once('/').unwrap_or((name_b.as_str(), ""));
+
+            server_a
+                .cmp(server_b)
+                .then_with(|| tool_a.len().cmp(&tool_b.len()))
+                .then_with(|| tool_a.cmp(tool_b))
+        });
+        for (name, tool) in sorted_tools {
             match mcp_tool_to_openai_tool(name.clone(), tool.clone()) {
                 Ok(converted_tool) => tools.push(OpenAiTool::Function(converted_tool)),
                 Err(e) => {
