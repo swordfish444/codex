@@ -1236,30 +1236,35 @@ impl WidgetRef for ChatComposer {
             ActivePopup::None => {
                 let bottom_line_rect = popup_rect;
                 let key_hint_style = Style::default().fg(Color::Cyan);
-                let mut hint = if self.ctrl_c_quit_hint {
-                    vec![
-                        Span::from(" "),
-                        "Ctrl+C again".set_style(key_hint_style),
-                        Span::from(" to quit"),
-                    ]
-                } else {
-                    let newline_hint_key = if self.use_shift_enter_hint {
-                        "Shift+⏎"
+
+                // Start with a visible focus state label.
+                let mut hint: Vec<Span> = vec![
+                    Span::from(" "),
+                    if self.has_focus { "Focused".green().into() } else { "Unfocused".magenta().into() },
+                    Span::from("   "),
+                ];
+
+                // Append the usual key hints.
+                hint.extend(
+                    if self.ctrl_c_quit_hint {
+                        vec![
+                            "Ctrl+C again".set_style(key_hint_style).into(),
+                            Span::from(" to quit"),
+                        ]
                     } else {
-                        "Ctrl+J"
-                    };
-                    vec![
-                        Span::from(" "),
-                        "⏎".set_style(key_hint_style),
-                        Span::from(" send   "),
-                        newline_hint_key.set_style(key_hint_style),
-                        Span::from(" newline   "),
-                        "Ctrl+T".set_style(key_hint_style),
-                        Span::from(" transcript   "),
-                        "Ctrl+C".set_style(key_hint_style),
-                        Span::from(" quit"),
-                    ]
-                };
+                        let newline_hint_key = if self.use_shift_enter_hint { "Shift+⏎" } else { "Ctrl+J" };
+                        vec![
+                            "⏎".set_style(key_hint_style).into(),
+                            Span::from(" send   "),
+                            newline_hint_key.set_style(key_hint_style).into(),
+                            Span::from(" newline   "),
+                            "Ctrl+T".set_style(key_hint_style).into(),
+                            Span::from(" transcript   "),
+                            "Ctrl+C".set_style(key_hint_style).into(),
+                            Span::from(" quit"),
+                        ]
+                    }
+                );
 
                 if !self.ctrl_c_quit_hint && self.esc_backtrack_hint {
                     hint.push(Span::from("   "));

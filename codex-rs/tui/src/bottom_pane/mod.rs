@@ -99,6 +99,16 @@ impl BottomPane {
         }
     }
 
+    /// Update whether the bottom pane's composer has input focus.
+    pub(crate) fn set_has_input_focus(&mut self, has_focus: bool) {
+        self.has_input_focus = has_focus;
+        // Use existing API to propagate focus to the composer without changing the
+        // current Ctrl-C hint visibility.
+        self.composer
+            .set_ctrl_c_quit_hint(self.ctrl_c_quit_hint, self.has_input_focus);
+        self.request_redraw();
+    }
+
     pub fn desired_height(&self, width: u16) -> u16 {
         let top_margin = if self.active_view.is_some() { 0 } else { 1 };
 

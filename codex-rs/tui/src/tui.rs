@@ -18,7 +18,9 @@ use crossterm::SynchronizedUpdate;
 use crossterm::cursor;
 use crossterm::cursor::MoveTo;
 use crossterm::event::DisableBracketedPaste;
+use crossterm::event::DisableFocusChange;
 use crossterm::event::EnableBracketedPaste;
+use crossterm::event::EnableFocusChange;
 use crossterm::event::Event;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -49,6 +51,8 @@ pub type Terminal = CustomTerminal<CrosstermBackend<Stdout>>;
 
 pub fn set_modes() -> Result<()> {
     execute!(stdout(), EnableBracketedPaste)?;
+    // Enable focus change reporting where supported; ignore errors on unsupported terminals.
+    let _ = execute!(stdout(), EnableFocusChange);
 
     enable_raw_mode()?;
     // Enable keyboard enhancement flags so modifiers for keys like Enter are disambiguated.
@@ -116,6 +120,8 @@ pub fn restore() -> Result<()> {
     // Pop may fail on platforms that didn't support the push; ignore errors.
     let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     execute!(stdout(), DisableBracketedPaste)?;
+    // Disable focus change reporting if it was enabled; ignore errors.
+    let _ = execute!(stdout(), DisableFocusChange);
     disable_raw_mode()?;
     let _ = execute!(stdout(), crossterm::cursor::Show);
     Ok(())
@@ -154,6 +160,8 @@ pub enum TuiEvent {
     Key(KeyEvent),
     Paste(String),
     Draw,
+    /// Terminal focus changed: true when focused, false when unfocused.
+    FocusChanged(bool),
     AttachImage {
         path: PathBuf,
         width: u32,
@@ -323,12 +331,12 @@ impl Tui {
                                     }
                                     Err(_) => {
                                         // Fall back to normal key handling if no image is available.
-                                        yield TuiEvent::Key(key_event);
-                                    }
-                                }
-                            }
+                        yield TuiEvent::Key(key_event);
+                    }
+                }
+            }
 
-                            crossterm::event::Event::Key(key_event) => {
+            crossterm::event::Event::Key(key_event) => {
                                 #[cfg(unix)]
                                 if matches!(
                                     key_event,
@@ -362,6 +370,12 @@ impl Tui {
                             }
                             Event::Resize(_, _) => {
                                 yield TuiEvent::Draw;
+                            }
+                            Event::FocusGained => {
+                                yield TuiEvent::FocusChanged(true);
+                            }
+                            Event::FocusLost => {
+                                yield TuiEvent::FocusChanged(false);
                             }
                             Event::Paste(pasted) => {
                                 yield TuiEvent::Paste(pasted);

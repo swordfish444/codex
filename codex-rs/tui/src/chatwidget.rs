@@ -693,6 +693,12 @@ impl ChatWidget {
                 .map_or(0, |c| c.desired_height(width))
     }
 
+    /// Update input focus state for the bottom pane/composer.
+    pub(crate) fn set_input_focus(&mut self, has_focus: bool) {
+        self.bottom_pane.set_has_input_focus(has_focus);
+        self.request_redraw();
+    }
+
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event {
             KeyEvent {

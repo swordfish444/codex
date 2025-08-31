@@ -124,6 +124,9 @@ impl App {
                 TuiEvent::Key(key_event) => {
                     self.handle_key_event(tui, key_event).await;
                 }
+                TuiEvent::FocusChanged(focused) => {
+                    self.chat_widget.set_input_focus(focused);
+                }
                 TuiEvent::Paste(pasted) => {
                     // Many terminals convert newlines to \r when pasting (e.g., iTerm2),
                     // but tui-textarea expects \n. Normalize CR to LF.
