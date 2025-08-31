@@ -1236,21 +1236,9 @@ impl WidgetRef for ChatComposer {
             ActivePopup::None => {
                 let bottom_line_rect = popup_rect;
                 let key_hint_style = Style::default().fg(Color::Cyan);
-
-                // Start with a visible focus state label.
-                let mut hint: Vec<Span> = vec![
-                    Span::from(" "),
-                    if self.has_focus {
-                        "Focused".green()
-                    } else {
-                        "Unfocused".magenta()
-                    },
-                    Span::from("   "),
-                ];
-
-                // Append the usual key hints.
-                hint.extend(if self.ctrl_c_quit_hint {
+                let mut hint = if self.ctrl_c_quit_hint {
                     vec![
+                        Span::from(" "),
                         "Ctrl+C again".set_style(key_hint_style),
                         Span::from(" to quit"),
                     ]
@@ -1261,6 +1249,7 @@ impl WidgetRef for ChatComposer {
                         "Ctrl+J"
                     };
                     vec![
+                        Span::from(" "),
                         "⏎".set_style(key_hint_style),
                         Span::from(" send   "),
                         newline_hint_key.set_style(key_hint_style),
@@ -1270,7 +1259,7 @@ impl WidgetRef for ChatComposer {
                         "Ctrl+C".set_style(key_hint_style),
                         Span::from(" quit"),
                     ]
-                });
+                };
 
                 if !self.ctrl_c_quit_hint && self.esc_backtrack_hint {
                     hint.push(Span::from("   "));
