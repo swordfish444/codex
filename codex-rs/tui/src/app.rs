@@ -99,20 +99,6 @@ impl App {
             app_focused: Arc::new(AtomicBool::new(true)),
         };
 
-        // Periodic notification task: every 5 seconds, if unfocused, send a reminder.
-        {
-            let focused = app.app_focused.clone();
-            tokio::spawn(async move {
-                use tokio::time::{sleep, Duration};
-                loop {
-                    sleep(Duration::from_secs(5)).await;
-                    if !focused.load(Ordering::Relaxed) {
-                        crate::notifications::send_os_notification("Codex is running in the background");
-                    }
-                }
-            });
-        }
-
         let tui_events = tui.event_stream();
         tokio::pin!(tui_events);
 

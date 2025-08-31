@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::notifications;
 use codex_core::config::Config;
 use codex_core::protocol::AgentMessageDeltaEvent;
 use codex_core::protocol::AgentMessageEvent;
@@ -504,6 +505,10 @@ impl ChatWidget {
 
     pub(crate) fn handle_exec_approval_now(&mut self, id: String, ev: ExecApprovalRequestEvent) {
         self.flush_answer_stream_with_separator();
+        // Send an OS notification summarizing the command requiring approval.
+        let preview = ev.command.join(" ");
+        let msg = format!("Approve \"{preview}\"?");
+        notifications::send_os_notification(&msg);
 
         let request = ApprovalRequest::Exec {
             id,
