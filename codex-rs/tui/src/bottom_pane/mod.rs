@@ -391,12 +391,11 @@ impl BottomPane {
                 let msg = format!("Approve \"{preview}\"?");
                 notifications::send_os_notification(&msg);
             }
-            ApprovalRequest::ApplyPatch { reason, grant_root, .. } => {
+            ApprovalRequest::ApplyPatch {
+                reason, grant_root, ..
+            } => {
                 let msg = if let Some(root) = grant_root {
-                    format!(
-                        "Approve patch changes? Grant write to {}",
-                        root.display()
-                    )
+                    format!("Approve patch changes? Grant write to {}", root.display())
                 } else if let Some(r) = reason {
                     format!("Approve patch changes? {r}")
                 } else {
