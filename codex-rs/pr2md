@@ -102,6 +102,48 @@ def pr_review_comments(repo: str, pr_number: int) -> List[Dict[str, Any]]:
     return all_comments
 
 
+def parse_repo_from_url(url: str) -> Optional[str]:
+    u = url.strip()
+    if not u:
+        return None
+
+    # Common forms:
+    # - SSH scp-like: <user>@github.com:owner/repo.git
+    # - SSH URL: ssh://<user>@github.com/owner/repo.git
+    # - HTTPS: https://github.com/owner/repo(.git)
+    # - Bare: github.com/owner/repo(.git)
+    if "github.com:" in u:
+        # scp-like syntax
+        path = u.split("github.com:", 1)[1]
+    elif "github.com/" in u:
+        path = u.split("github.com/", 1)[1]
+    elif u.startswith("github.com/"):
+        path = u.split("github.com/", 1)[1]
+    else:
+        return None
+
+    # Remove trailing .git if present
+    if path.endswith(".git"):
+        path = path[:-4]
+
+    # Keep only owner/repo
+    parts = path.strip("/").split("/")
+    if len(parts) >= 2:
+        return f"{parts[0]}/{parts[1]}"
+    return None
+
+
+def detect_repo_from_git() -> Optional[str]:
+    # Ensure we're inside a git repo
+    code, out, _ = _run(["git", "rev-parse", "--is-inside-work-tree"])
+    if code != 0 or out.strip() != "true":
+        return None
+    code, origin_url, _ = _run(["git", "config", "--get", "remote.origin.url"])
+    if code != 0:
+        return None
+    return parse_repo_from_url(origin_url)
+
+
 def blockquote(text: str) -> str:
     lines = text.splitlines() or [""]
     return "\n".join("> " + ln for ln in lines)
@@ -199,17 +241,85 @@ def main():
             "Requires GitHub CLI (gh) to be installed and authenticated."
         ),
     )
-    parser.add_argument("pr_number", type=int, help="Pull request number")
-    parser.add_argument("repo", help="Repository in 'owner/repo' form")
+    parser.add_argument(
+        "pr_number",
+        nargs="?",
+        help="Pull request number (optional; auto-detect from current branch if omitted)",
+    )
+    parser.add_argument(
+        "repo",
+        nargs="?",
+        help="Repository in 'owner/repo' form; inferred from git origin if omitted",
+    )
     parser.add_argument("--reviewer", help="Only include comments from this reviewer (login)")
 
     args = parser.parse_args()
 
     require_gh()
 
-    pr = pr_view(args.repo, args.pr_number)
-    diff_text = pr_diff(args.repo, args.pr_number)
-    comments = pr_review_comments(args.repo, args.pr_number)
+    # Disambiguate single positional arg: if only one is provided and it looks like owner/repo,
+    # treat it as repo, not PR number.
+    if args.pr_number and not args.repo and "/" in args.pr_number and not args.pr_number.isdigit():
+        args.repo, args.pr_number = args.pr_number, None
+
+    repo = args.repo or detect_repo_from_git()
+    if not repo:
+        print(
+            "Error: Could not determine repository from git origin. Pass repo as 'owner/repo'.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    # Determine PR number: use provided, else try to find open/draft PR for current branch
+    pr_number: Optional[int]
+    if args.pr_number:
+        try:
+            pr_number = int(args.pr_number)
+        except ValueError:
+            print("Error: PR number must be an integer.", file=sys.stderr)
+            sys.exit(2)
+    else:
+        # Detect from current branch
+        code, branch_out, _ = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+        branch = branch_out.strip() if code == 0 else ""
+        if not branch or branch == "HEAD":
+            print("Error: Not on a branch. Provide a PR number explicitly.", file=sys.stderr)
+            sys.exit(2)
+
+        # Query open PRs and find one with matching head branch and owner
+        owner = repo.split("/", 1)[0]
+        code, out, err = _run([
+            "gh", "pr", "list", "-R", repo, "--state", "open",
+            "--json", "number,headRefName,isDraft,headRepositoryOwner",
+        ])
+        if code != 0:
+            print(f"Error: failed to list PRs: {err.strip()}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            pr_list = json.loads(out)
+        except json.JSONDecodeError:
+            print("Error: failed to parse PR list JSON.", file=sys.stderr)
+            sys.exit(1)
+
+        candidates = [
+            pr for pr in pr_list
+            if pr.get("headRefName") == branch and ((pr.get("headRepositoryOwner") or {}).get("login") == owner)
+        ]
+        if not candidates:
+            # Relax owner constraint if none found
+            candidates = [pr for pr in pr_list if pr.get("headRefName") == branch]
+        if not candidates:
+            print(
+                f"Error: No open PR found for branch '{branch}'. Provide a PR number.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        # If multiple, pick the first
+        pr_number = int(candidates[0]["number"])
+
+    pr = pr_view(repo, pr_number)
+    diff_text = pr_diff(repo, pr_number)
+    comments = pr_review_comments(repo, pr_number)
 
     parts = [
         format_header(pr),
