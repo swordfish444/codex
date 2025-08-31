@@ -505,10 +505,6 @@ impl ChatWidget {
 
     pub(crate) fn handle_exec_approval_now(&mut self, id: String, ev: ExecApprovalRequestEvent) {
         self.flush_answer_stream_with_separator();
-        // Send an OS notification summarizing the command requiring approval.
-        let preview = ev.command.join(" ");
-        let msg = format!("Approve \"{preview}\"?");
-        notifications::send_os_notification(&msg);
 
         let request = ApprovalRequest::Exec {
             id,
