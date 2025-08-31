@@ -51,6 +51,9 @@ pub(crate) struct App {
 
     // Esc-backtracking state grouped
     pub(crate) backtrack: crate::app_backtrack::BacktrackState,
+
+    // Whether the terminal has focus (tracked via TuiEvent::FocusChanged)
+    pub(crate) app_focused: Arc<AtomicBool>,
 }
 
 impl App {
@@ -93,7 +96,22 @@ impl App {
             deferred_history_lines: Vec::new(),
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             backtrack: BacktrackState::default(),
+            app_focused: Arc::new(AtomicBool::new(true)),
         };
+
+        // Periodic notification task: every 5 seconds, if unfocused, send a reminder.
+        {
+            let focused = app.app_focused.clone();
+            tokio::spawn(async move {
+                use tokio::time::{sleep, Duration};
+                loop {
+                    sleep(Duration::from_secs(5)).await;
+                    if !focused.load(Ordering::Relaxed) {
+                        crate::notifications::send_os_notification("Codex is running in the background");
+                    }
+                }
+            });
+        }
 
         let tui_events = tui.event_stream();
         tokio::pin!(tui_events);
@@ -126,6 +144,7 @@ impl App {
                 }
                 TuiEvent::FocusChanged(focused) => {
                     self.chat_widget.set_input_focus(focused);
+                    self.app_focused.store(focused, Ordering::Relaxed);
                 }
                 TuiEvent::Paste(pasted) => {
                     // Many terminals convert newlines to \r when pasting (e.g., iTerm2),

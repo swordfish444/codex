@@ -48,6 +48,7 @@ mod markdown_stream;
 pub mod onboarding;
 mod pager_overlay;
 mod render;
+mod notifications;
 mod session_log;
 mod shimmer;
 mod slash_command;
