@@ -264,6 +264,9 @@ struct State {
     pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
     pending_input: Vec<ResponseInputItem>,
     history: ConversationHistory,
+    /// True while awaiting a streaming response from the model API for the
+    /// current task/turn.
+    waiting_on_api_response: bool,
 }
 
 /// Context for an initialized model agent
@@ -596,12 +599,32 @@ impl Session {
         }
     }
 
+    
+
     /// Sends the given event to the client and swallows the send event, if
     /// any, logging it as an error.
     pub(crate) async fn send_event(&self, event: Event) {
         if let Err(e) = self.tx_event.send(event).await {
             error!("failed to send tool call event: {e}");
         }
+    }
+
+    /// Mark that we are awaiting (or no longer awaiting) a model API response.
+    fn set_waiting_on_api_response(&self, waiting: bool) {
+        let mut state = self.state.lock_unchecked();
+        state.waiting_on_api_response = waiting;
+    }
+
+    /// Returns true if we are currently waiting on a model API response.
+    fn is_waiting_on_api_response(&self) -> bool {
+        self.state.lock_unchecked().waiting_on_api_response
+    }
+
+    /// Helper that sets `waiting_on_api_response = true` and automatically
+    /// clears it when dropped.
+    fn begin_waiting_on_api_response(&self) -> WaitingApiGuard<'_> {
+        self.set_waiting_on_api_response(true);
+        WaitingApiGuard { sess: self }
     }
 
     pub async fn request_command_approval(
@@ -888,8 +911,18 @@ impl Session {
 
     /// Returns the input if there was no task running to inject into
     pub fn inject_input(&self, input: Vec<InputItem>) -> Result<(), Vec<InputItem>> {
+        let waiting = self.is_waiting_on_api_response();
         let mut state = self.state.lock_unchecked();
         if state.current_task.is_some() {
+            // If we're in the middle of streaming a model response, abort the
+            // current task so we can immediately start a fresh request that
+            // includes everything recorded so far plus this new user input.
+            if waiting {
+                // Do not mutate pending_input here; instruct caller to spawn a new task.
+                return Err(input);
+            }
+
+            // Otherwise, queue the input for inclusion on the next turn.
             state.pending_input.push(input.into());
             Ok(())
         } else {
@@ -906,6 +939,12 @@ impl Session {
             std::mem::swap(&mut ret, &mut state.pending_input);
             ret
         }
+    }
+
+    /// Returns true if there is pending input that should be included on the
+    /// next turn. Unlike `get_pending_input()`, this does not consume it.
+    pub fn has_pending_input(&self) -> bool {
+        !self.state.lock_unchecked().pending_input.is_empty()
     }
 
     pub async fn call_tool(
@@ -963,6 +1002,17 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.interrupt_task();
+    }
+}
+
+/// RAII guard that flips `waiting_on_api_response` back to false when dropped.
+struct WaitingApiGuard<'a> {
+    sess: &'a Session,
+}
+
+impl Drop for WaitingApiGuard<'_> {
+    fn drop(&mut self) {
+        self.sess.set_waiting_on_api_response(false);
     }
 }
 
@@ -1036,14 +1086,16 @@ impl AgentTask {
         // TOCTOU?
         if !self.handle.is_finished() {
             self.handle.abort();
-            let event = Event {
-                id: self.sub_id,
-                msg: EventMsg::TurnAborted(TurnAbortedEvent { reason }),
-            };
-            let tx_event = self.sess.tx_event.clone();
-            tokio::spawn(async move {
-                tx_event.send(event).await.ok();
-            });
+            if matches!(reason, TurnAbortReason::Interrupted) {
+                let event = Event {
+                    id: self.sub_id,
+                    msg: EventMsg::TurnAborted(TurnAbortedEvent { reason }),
+                };
+                let tx_event = self.sess.tx_event.clone();
+                tokio::spawn(async move {
+                    tx_event.send(event).await.ok();
+                });
+            }
         }
     }
 }
@@ -1572,10 +1624,20 @@ async fn run_task(
                 }
 
                 if responses.is_empty() {
-                    debug!("Turn completed");
+                    // Turn completed with an assistant message.
                     last_agent_message = get_last_assistant_message_from_turn(
                         &items_to_record_in_conversation_history,
                     );
+
+                    // If there is pending input that arrived during this
+                    // turn, keep the task alive and start another turn so the
+                    // pending input is sent immediately.
+                    if sess.has_pending_input() {
+                        debug!("Turn completed; pending input present — continuing");
+                        continue;
+                    }
+
+                    debug!("Turn completed");
                     sess.maybe_notify(UserNotification::AgentTurnComplete {
                         turn_id: sub_id.clone(),
                         input_messages: turn_input_messages,
@@ -1739,6 +1801,8 @@ async fn try_run_turn(
         })
     };
 
+    // We are now awaiting a response from the model API.
+    let _waiting_guard = sess.begin_waiting_on_api_response();
     let mut stream = turn_context.client.clone().stream(&prompt).await?;
 
     let mut output = Vec::new();

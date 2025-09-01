@@ -74,9 +74,33 @@ pub enum HistoryPersistence {
     None,
 }
 
+/// Behavior for handling a user message submitted while a turn is in progress.
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageDuringTurnBehavior {
+    /// Queue the message to be sent after the current turn completes.
+    #[default]
+    Queue,
+    /// Interrupt the current model stream. If mid tool-call, do not interrupt;
+    /// send the user message so it will be included with the tool outputs on
+    /// the next turn.
+    Interrupt,
+}
+
 /// Collection of settings that are specific to the TUI.
-#[derive(Deserialize, Debug, Clone, PartialEq, Default)]
-pub struct Tui {}
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct Tui {
+    #[serde(default)]
+    pub message_during_turn_behavior: MessageDuringTurnBehavior,
+}
+
+impl Default for Tui {
+    fn default() -> Self {
+        Self {
+            message_during_turn_behavior: MessageDuringTurnBehavior::Queue,
+        }
+    }
+}
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct SandboxWorkspaceWrite {
