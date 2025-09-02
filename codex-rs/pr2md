@@ -7,6 +7,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 
 def _run(cmd: List[str]) -> Tuple[int, str, str]:
@@ -54,6 +55,9 @@ def pr_view(repo: str, pr_number: int) -> Dict[str, Any]:
         "deletions",
         "changedFiles",
         "commits",
+        "baseRefName",
+        "headRefName",
+        "headRepositoryOwner",
     ]
     code, out, err = _run(["gh", "pr", "view", str(pr_number), "-R", repo, "--json", ",".join(fields)])
     if code != 0:
@@ -67,9 +71,31 @@ def pr_view(repo: str, pr_number: int) -> Dict[str, Any]:
     return data
 
 
-def pr_diff(repo: str, pr_number: int) -> str:
-    # --patch to include unified diff patch format; color never for clean markdown
-    code, out, err = _run(["gh", "pr", "diff", str(pr_number), "-R", repo, "--patch", "--color=never"])
+def pr_combined_diff(repo: str, pr: Dict[str, Any]) -> str:
+    # Prefer a single combined diff between base and head.
+    base = pr.get("baseRefName")
+    head_branch = pr.get("headRefName")
+    head_owner = (pr.get("headRepositoryOwner") or {}).get("login")
+    if not base or not head_branch:
+        # Fallback to gh pr diff if fields unavailable
+        code, out, err = _run(["gh", "pr", "diff", str(pr.get("number")), "-R", repo, "--color=never"])
+        if code != 0:
+            print(f"Error: failed to fetch PR diff: {err.strip()}", file=sys.stderr)
+            sys.exit(1)
+        return out.rstrip()
+
+    base_owner = repo.split("/", 1)[0]
+    if head_owner and head_owner != base_owner:
+        head = f"{head_owner}:{head_branch}"
+    else:
+        head = head_branch
+
+    path = f"/repos/{repo}/compare/{quote(base, safe='')}...{quote(head, safe='')}"
+    code, out, err = _run(["gh", "api", "-H", "Accept: application/vnd.github.v3.diff", path])
+    if code == 0 and out.strip():
+        return out.rstrip()
+    # Fallback
+    code, out, err = _run(["gh", "pr", "diff", str(pr.get("number")), "-R", repo, "--color=never"])
     if code != 0:
         print(f"Error: failed to fetch PR diff: {err.strip()}", file=sys.stderr)
         sys.exit(1)
@@ -318,7 +344,7 @@ def main():
         pr_number = int(candidates[0]["number"])
 
     pr = pr_view(repo, pr_number)
-    diff_text = pr_diff(repo, pr_number)
+    diff_text = pr_combined_diff(repo, pr)
     comments = pr_review_comments(repo, pr_number)
 
     parts = [
