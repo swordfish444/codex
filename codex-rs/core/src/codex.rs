@@ -883,10 +883,6 @@ impl Session {
     /// Build the full turn input by concatenating the current conversation
     /// history with additional items for this turn.
     pub fn turn_input_with_history(&self, extra: Vec<ResponseItem>) -> Vec<ResponseItem> {
-        tracing::info!(
-            "history: {:?}",
-            self.state.lock_unchecked().history.contents()
-        );
         [self.state.lock_unchecked().history.contents(), extra].concat()
     }
 
@@ -1413,7 +1409,6 @@ async fn run_task(
     sub_id: String,
     input: Vec<InputItem>,
 ) {
-    tracing::info!("running task with input: {:?}", input);
     if input.is_empty() {
         return;
     }
@@ -1554,7 +1549,6 @@ async fn run_task(
                             },
                             None,
                         ) => {
-                            tracing::info!("reasoning item: {:?}", item);
                             items_to_record_in_conversation_history.push(ResponseItem::Reasoning {
                                 id: id.clone(),
                                 summary: summary.clone(),
