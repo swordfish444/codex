@@ -87,5 +87,8 @@ zstd -d "$ARTIFACTS_DIR/aarch64-apple-darwin/codex-aarch64-apple-darwin.zst" \
 # x64 Windows
 zstd -d "$ARTIFACTS_DIR/x86_64-pc-windows-msvc/codex-x86_64-pc-windows-msvc.exe.zst" \
     -o "$BIN_DIR/codex-x86_64-pc-windows-msvc.exe"
+# ARM64 Windows
+zstd -d "$ARTIFACTS_DIR/aarch64-pc-windows-msvc/codex-aarch64-pc-windows-msvc.exe.zst" \
+    -o "$BIN_DIR/codex-aarch64-pc-windows-msvc.exe"
 
 echo "Installed native dependencies into $BIN_DIR"
