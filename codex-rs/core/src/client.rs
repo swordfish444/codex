@@ -110,6 +110,7 @@ impl ModelClient {
                     &self.config.model_family,
                     &self.client,
                     &self.provider,
+                    &self.config,
                 )
                 .await?;
 

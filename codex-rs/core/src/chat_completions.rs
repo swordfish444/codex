@@ -19,6 +19,7 @@ use crate::ModelProviderInfo;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
+use crate::config::Config;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::model_family::ModelFamily;
@@ -34,6 +35,7 @@ pub(crate) async fn stream_chat_completions(
     model_family: &ModelFamily,
     client: &reqwest::Client,
     provider: &ModelProviderInfo,
+    config: &Config,
 ) -> Result<ResponseStream> {
     // Build messages array
     let mut messages = Vec::<serde_json::Value>::new();
@@ -130,17 +132,22 @@ pub(crate) async fn stream_chat_completions(
                 }));
             }
             ResponseItem::Reasoning {
-                id,
+                id: _,
                 summary,
                 content,
-                encrypted_content,
+                encrypted_content: _,
             } => {
-                tracing::info!("reasoning item: {:?}", item);
-                messages.push(json!({
-                    "role": "assistant",
-                    "content": null,
-                    "reasoning": content,
-                }));
+                if !config.skip_reasoning_in_chat_completions {
+                    // There is no clear way of sending reasoning items over chat completions.
+                    // We are sending it as an assistant message.
+                    tracing::info!("reasoning item: {:?}", item);
+                    let reasoning =
+                        format!("Reasoning Summary: {summary:?}, Reasoning Content: {content:?}");
+                    messages.push(json!({
+                        "role": "assistant",
+                        "content": reasoning,
+                    }));
+                }
             }
             ResponseItem::WebSearchCall { .. } | ResponseItem::Other => {
                 tracing::info!("omitting item from chat completions: {:?}", item);

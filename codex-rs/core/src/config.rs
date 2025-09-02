@@ -185,6 +185,10 @@ pub struct Config {
     /// All characters are inserted as they are received, and no buffering
     /// or placeholder replacement will occur for fast keypress bursts.
     pub disable_paste_burst: bool,
+
+    /// When `true`, reasoning items in Chat Completions input will be skipped.
+    /// Defaults to `false`.
+    pub skip_reasoning_in_chat_completions: bool,
 }
 
 impl Config {
@@ -497,6 +501,10 @@ pub struct ConfigToml {
     /// All characters are inserted as they are received, and no buffering
     /// or placeholder replacement will occur for fast keypress bursts.
     pub disable_paste_burst: Option<bool>,
+
+    /// When set to `true`, reasoning items will be skipped from Chat Completions input.
+    /// Defaults to `false`.
+    pub skip_reasoning_in_chat_completions: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -807,6 +815,9 @@ impl Config {
                 .unwrap_or(false),
             include_view_image_tool,
             disable_paste_burst: cfg.disable_paste_burst.unwrap_or(false),
+            skip_reasoning_in_chat_completions: cfg
+                .skip_reasoning_in_chat_completions
+                .unwrap_or(false),
         };
         Ok(config)
     }
