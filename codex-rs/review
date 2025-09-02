@@ -61,6 +61,13 @@ def get_diff_text(base_ref: str, head_ref: str) -> str:
     return out
 
 
+def get_changed_files_count(base_ref: str, head_ref: str) -> int:
+    code, out, _ = _run(["git", "diff", "--name-only", "--no-color", f"{base_ref}...{head_ref}"])
+    if code != 0:
+        return 0
+    return sum(1 for ln in out.splitlines() if ln.strip())
+
+
 def study_files_in_dir(base: str) -> List[str]:
     if not os.path.isdir(base):
         return []
@@ -106,7 +113,7 @@ def run_codex_exec(prompt: str, last_message_file: Optional[str] = None) -> Tupl
         "codex",
         "--",
         "-c",
-        "model_reasoning_effort=high",
+        "model_reasoning_effort=low",
         "exec",
     ]
     if last_message_file:
@@ -247,6 +254,7 @@ def main():
     branch = get_current_branch()
     base_ref = args.base or resolve_base_ref()
     diff_text = get_diff_text(base_ref, "HEAD")
+    files_changed = get_changed_files_count(base_ref, "HEAD")
     if not diff_text.strip():
         print("Warning: empty diff vs base; all guides may be irrelevant or pass.", file=sys.stderr)
 
@@ -265,6 +273,7 @@ def main():
     errors_all: List[Tuple[str, str]] = []    # (guide, error)
 
     print(f"Running {total} review(s) against {branch} vs {base_ref}…")
+    print(f"Files changed: {files_changed}")
     print(f"Study dir: {study_dir}")
     print(f"Output dir: {out_dir}")
     if args.limit is not None and args.limit < total_available:
