@@ -35,19 +35,19 @@ use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::textarea::TextArea;
 use crate::bottom_pane::textarea::TextAreaState;
-use crate::tui::FrameRequester;
 use crate::clipboard_paste::normalize_pasted_path;
 use crate::clipboard_paste::pasted_image_format;
+use crate::tui::FrameRequester;
 use codex_file_search::FileMatch;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::path::Path;
-use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 use uuid::Uuid;
@@ -334,7 +334,6 @@ impl ChatComposer {
     pub(crate) fn recommended_paste_flush_delay() -> Duration {
         PasteBurst::recommended_flush_delay()
     }
-    }
 
     /// Integrate results from an asynchronous file search.
     pub(crate) fn on_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
@@ -403,7 +402,6 @@ impl ChatComposer {
         result
     }
 
-    
     /// Stop recording if active, update the placeholder, and spawn background transcription.
     /// Returns true if the UI should redraw.
     fn stop_recording_and_start_transcription(&mut self) -> bool {
@@ -488,7 +486,8 @@ impl ChatComposer {
         {
             let _ = self.on_space_hold_timeout();
         }
-    
+    }
+
     /// Return true if either the slash-command popup or the file-search popup is active.
     pub(crate) fn popup_active(&self) -> bool {
         !matches!(self.active_popup, ActivePopup::None)
@@ -1057,7 +1056,6 @@ impl ChatComposer {
         }
     }
 
-    
     /// Called when the 500ms space hold timeout elapses. If still pending and matching id,
     /// remove the inserted space and begin voice capture.
     pub(crate) fn on_space_hold_timeout(&mut self) -> bool {
@@ -2068,7 +2066,7 @@ mod tests {
             sender,
             false,
             "Ask Codex to do anything".to_string(),
-            false,
+            crate::tui::FrameRequester::test_dummy(),
         );
 
         // Type "/mo" humanlike so paste-burst doesn’t interfere.
@@ -2096,7 +2094,7 @@ mod tests {
             sender,
             false,
             "Ask Codex to do anything".to_string(),
-            false,
+            crate::tui::FrameRequester::test_dummy(),
         );
         type_chars_humanlike(&mut composer, &['/', 'm', 'o']);
 
@@ -2459,7 +2457,7 @@ mod tests {
             sender,
             false,
             "Ask Codex to do anything".to_string(),
-            false,
+            crate::tui::FrameRequester::test_dummy(),
         );
         let path = PathBuf::from("/tmp/image2.png");
         composer.attach_image(path.clone(), 10, 5, "PNG");
@@ -2484,7 +2482,7 @@ mod tests {
             sender,
             false,
             "Ask Codex to do anything".to_string(),
-            false,
+            crate::tui::FrameRequester::test_dummy(),
         );
         let path = PathBuf::from("/tmp/image3.png");
         composer.attach_image(path.clone(), 20, 10, "PNG");
@@ -2525,7 +2523,7 @@ mod tests {
             sender,
             false,
             "Ask Codex to do anything".to_string(),
-            false,
+            crate::tui::FrameRequester::test_dummy(),
         );
 
         // Insert an image placeholder at the start
@@ -2551,7 +2549,7 @@ mod tests {
             sender,
             false,
             "Ask Codex to do anything".to_string(),
-            false,
+            crate::tui::FrameRequester::test_dummy(),
         );
 
         let path1 = PathBuf::from("/tmp/image_dup1.png");
@@ -2598,7 +2596,7 @@ mod tests {
             sender,
             false,
             "Ask Codex to do anything".to_string(),
-            false,
+            crate::tui::FrameRequester::test_dummy(),
         );
 
         let needs_redraw = composer.handle_paste(tmp_path.to_string_lossy().to_string());
@@ -2620,7 +2618,7 @@ mod tests {
             sender,
             false,
             "Ask Codex to do anything".to_string(),
-            false,
+            crate::tui::FrameRequester::test_dummy(),
         );
 
         // Inject prompts as if received via event.
@@ -2654,7 +2652,7 @@ mod tests {
             sender,
             false,
             "Ask Codex to do anything".to_string(),
-            false,
+            crate::tui::FrameRequester::test_dummy(),
         );
 
         let count = 32;
@@ -2698,7 +2696,7 @@ mod tests {
             sender,
             false,
             "Ask Codex to do anything".to_string(),
-            false,
+            crate::tui::FrameRequester::test_dummy(),
         );
 
         let count = LARGE_PASTE_CHAR_THRESHOLD + 1; // > threshold to trigger placeholder
@@ -2730,7 +2728,7 @@ mod tests {
             sender,
             false,
             "Ask Codex to do anything".to_string(),
-            false,
+            crate::tui::FrameRequester::test_dummy(),
         );
 
         let count = LARGE_PASTE_CHAR_THRESHOLD; // 1000 in current config
