@@ -205,7 +205,7 @@ where
             .get_cursor_position()
             .or_else(|error| {
                 if is_get_cursor_position_timeout_error(&error) {
-                    eprintln!("cursor position read timed out during startup: {error}");
+                    tracing::warn!("cursor position read timed out during startup: {error}");
                     Ok(Position { x: 0, y: 0 })
                 } else {
                     Err(error)
@@ -424,7 +424,7 @@ where
             })
             .or_else(|error| {
                 if is_get_cursor_position_timeout_error(&error) {
-                    eprintln!("cursor position read timed out: {error}");
+                    tracing::warn!("cursor position read timed out: {error}");
                     Ok(self.last_known_cursor_pos)
                 } else {
                     Err(error)
