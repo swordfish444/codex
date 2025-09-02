@@ -63,7 +63,7 @@ def build_prompt(contents: str, reviewer: str, out_path: str) -> str:
     # document as its last message (no meta commentary), to avoid clutter.
     return (
         f"{contents}\n---\n"
-        f"Summarize the takeaways from this PR review by {reviewer} into a concise, practical guide with two checklists: DOs and DON'Ts. "
+        f"Summarize the takeaways from this PR review by {reviewer} into a concise, generalizable, and practical guide with two checklists: DOs and DON'Ts. "
         f"Add short, accurate code examples in fenced code blocks to illustrate each key point. "
         f"Output ONLY the final document as your final message — no preamble, no status notes, no explanations about saving files. "
         f"The CLI will save your final message to {out_path}."
