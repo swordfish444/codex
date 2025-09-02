@@ -201,14 +201,16 @@ where
     /// Creates a new [`Terminal`] with the given [`Backend`] and [`TerminalOptions`].
     pub fn with_options(mut backend: B) -> io::Result<Self> {
         let screen_size = backend.size()?;
-        let cursor_pos = match backend.get_cursor_position() {
-            Ok(position) => position,
-            Err(error) if is_get_cursor_position_timeout_error(&error) => {
-                eprintln!("cursor position read timed out during startup: {error}");
-                Position { x: 0, y: 0 }
-            }
-            Err(error) => return Err(error),
-        };
+        let cursor_pos = backend
+            .get_cursor_position()
+            .or_else(|error| {
+                if is_get_cursor_position_timeout_error(&error) {
+                    eprintln!("cursor position read timed out during startup: {error}");
+                    Ok(Position { x: 0, y: 0 })
+                } else {
+                    Err(error)
+                }
+            })?;
         Ok(Self {
             backend,
             buffers: [
@@ -414,17 +416,20 @@ where
     /// This is the position of the cursor after the last draw call.
     #[allow(dead_code)]
     pub fn get_cursor_position(&mut self) -> io::Result<Position> {
-        match self.backend.get_cursor_position() {
-            Ok(position) => {
+        self.backend
+            .get_cursor_position()
+            .map(|position| {
                 self.last_known_cursor_pos = position;
-                Ok(position)
-            }
-            Err(error) if is_get_cursor_position_timeout_error(&error) => {
-                eprintln!("cursor position read timed out: {error}");
-                Ok(self.last_known_cursor_pos)
-            }
-            Err(error) => Err(error),
-        }
+                position
+            })
+            .or_else(|error| {
+                if is_get_cursor_position_timeout_error(&error) {
+                    eprintln!("cursor position read timed out: {error}");
+                    Ok(self.last_known_cursor_pos)
+                } else {
+                    Err(error)
+                }
+            })
     }
 
     /// Sets the cursor position.
