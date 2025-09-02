@@ -1,5 +1,6 @@
 mod parser;
 mod seek_sequence;
+mod standalone_executable;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -18,6 +19,8 @@ use thiserror::Error;
 use tree_sitter::LanguageError;
 use tree_sitter::Parser;
 use tree_sitter_bash::LANGUAGE as BASH;
+
+pub use standalone_executable::main;
 
 /// Detailed instructions for gpt-4.1 on how to use the `apply_patch` tool.
 pub const APPLY_PATCH_TOOL_INSTRUCTIONS: &str = include_str!("../apply_patch_tool_instructions.md");
@@ -113,7 +116,9 @@ pub enum ApplyPatchFileChange {
     Add {
         content: String,
     },
-    Delete,
+    Delete {
+        content: String,
+    },
     Update {
         unified_diff: String,
         move_path: Option<PathBuf>,
@@ -207,7 +212,18 @@ pub fn maybe_parse_apply_patch_verified(argv: &[String], cwd: &Path) -> MaybeApp
                         changes.insert(path, ApplyPatchFileChange::Add { content: contents });
                     }
                     Hunk::DeleteFile { .. } => {
-                        changes.insert(path, ApplyPatchFileChange::Delete);
+                        let content = match std::fs::read_to_string(&path) {
+                            Ok(content) => content,
+                            Err(e) => {
+                                return MaybeApplyPatchVerified::CorrectnessError(
+                                    ApplyPatchError::IoError(IoError {
+                                        context: format!("Failed to read {}", path.display()),
+                                        source: e,
+                                    }),
+                                );
+                            }
+                        };
+                        changes.insert(path, ApplyPatchFileChange::Delete { content });
                     }
                     Hunk::UpdateFile {
                         move_path, chunks, ..

@@ -1,6 +1,6 @@
+use codex_core::protocol::ConversationHistoryResponseEvent;
 use codex_core::protocol::Event;
 use codex_file_search::FileMatch;
-use ratatui::text::Line;
 
 use crate::history_cell::HistoryCell;
 
@@ -39,7 +39,6 @@ pub(crate) enum AppEvent {
     /// Result of computing a `/diff` command.
     DiffResult(String),
 
-    InsertHistoryLines(Vec<Line<'static>>),
     InsertHistoryCell(Box<dyn HistoryCell>),
 
     StartCommitAnimation,
@@ -70,6 +69,9 @@ pub(crate) enum AppEvent {
 
     /// Update the current sandbox policy in the running app and widget.
     UpdateSandboxPolicy(SandboxPolicy),
+
+    /// Forwarded conversation history snapshot from the current conversation.
+    ConversationHistory(ConversationHistoryResponseEvent),
 
     /// Live update for the in-progress voice recording placeholder. Carries
     /// the placeholder `id` and the text to display (e.g., an ASCII meter).

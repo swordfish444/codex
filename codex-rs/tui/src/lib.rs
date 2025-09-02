@@ -12,6 +12,7 @@ use codex_core::config::find_codex_home;
 use codex_core::config::load_config_as_toml_with_cli_overrides;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::SandboxPolicy;
+use codex_login::AuthManager;
 use codex_login::AuthMode;
 use codex_login::CodexAuth;
 use codex_ollama::DEFAULT_OSS_MODEL;
@@ -24,13 +25,15 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
 mod app;
+mod app_backtrack;
 mod app_event;
 mod app_event_sender;
+mod backtrack_helpers;
 mod bottom_pane;
 mod chatwidget;
 mod citation_regex;
 mod cli;
-mod common;
+mod clipboard_paste;
 pub mod custom_terminal;
 mod diff_render;
 mod exec_command;
@@ -42,6 +45,7 @@ pub mod live_wrap;
 mod markdown;
 mod markdown_stream;
 pub mod onboarding;
+mod pager_overlay;
 mod render;
 mod session_log;
 mod shimmer;
@@ -49,7 +53,6 @@ mod slash_command;
 mod status_indicator_widget;
 mod streaming;
 mod text_formatting;
-mod transcript_app;
 mod tui;
 mod user_approval_widget;
 mod voice;
@@ -61,8 +64,6 @@ mod chatwidget_stream_tests;
 
 #[cfg(not(debug_assertions))]
 mod updates;
-#[cfg(not(debug_assertions))]
-use color_eyre::owo_colors::OwoColorize;
 
 pub use cli::Cli;
 
@@ -125,12 +126,14 @@ pub async fn run_main(
         base_instructions: None,
         include_plan_tool: Some(true),
         include_apply_patch_tool: None,
+        include_view_image_tool: None,
         disable_response_storage: cli.oss.then_some(true),
         show_raw_agent_reasoning: cli.oss.then_some(true),
+        tools_web_search_request: cli.web_search.then_some(true),
     };
-
-    // Parse `-c` overrides from the CLI.
-    let cli_kv_overrides = match cli.config_overrides.parse_overrides() {
+    let raw_overrides = cli.config_overrides.raw_overrides.clone();
+    let overrides_cli = codex_common::CliConfigOverrides { raw_overrides };
+    let cli_kv_overrides = match overrides_cli.parse_overrides() {
         Ok(v) => v,
         #[allow(clippy::print_stderr)]
         Err(e) => {
@@ -300,6 +303,7 @@ async fn run_ratatui_app(
 
     let Cli { prompt, images, .. } = cli;
 
+    let auth_manager = AuthManager::shared(config.codex_home.clone(), config.preferred_auth_method);
     let login_status = get_login_status(&config);
     let should_show_onboarding =
         should_show_onboarding(login_status, &config, should_show_trust_screen);
@@ -312,6 +316,7 @@ async fn run_ratatui_app(
                 show_trust_screen: should_show_trust_screen,
                 login_status,
                 preferred_auth_method: config.preferred_auth_method,
+                auth_manager: auth_manager.clone(),
             },
             &mut tui,
         )
@@ -322,7 +327,7 @@ async fn run_ratatui_app(
         }
     }
 
-    let app_result = App::run(&mut tui, config, prompt, images).await;
+    let app_result = App::run(&mut tui, auth_manager, config, prompt, images).await;
 
     restore();
     // Mark the end of the recorded session.

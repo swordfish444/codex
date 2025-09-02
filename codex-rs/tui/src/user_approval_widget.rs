@@ -29,6 +29,7 @@ use ratatui::widgets::Wrap;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::exec_command::strip_bash_lc_and_escape;
+use crate::history_cell;
 
 /// Request coming from the agent that needs user approval.
 pub(crate) enum ApprovalRequest {
@@ -69,10 +70,10 @@ static COMMAND_SELECT_OPTIONS: LazyLock<Vec<SelectOption>> = LazyLock::new(|| {
             decision: ReviewDecision::ApprovedForSession,
         },
         SelectOption {
-            label: Line::from(vec!["N".underlined(), "o".into()]),
-            description: "Do not run the command",
+            label: Line::from(vec!["N".underlined(), "o, provide feedback".into()]),
+            description: "Do not run the command; provide feedback",
             key: KeyCode::Char('n'),
-            decision: ReviewDecision::Denied,
+            decision: ReviewDecision::Abort,
         },
     ]
 });
@@ -86,10 +87,10 @@ static PATCH_SELECT_OPTIONS: LazyLock<Vec<SelectOption>> = LazyLock::new(|| {
             decision: ReviewDecision::Approved,
         },
         SelectOption {
-            label: Line::from(vec!["N".underlined(), "o".into()]),
-            description: "Do not apply the changes",
+            label: Line::from(vec!["N".underlined(), "o, provide feedback".into()]),
+            description: "Do not apply the changes; provide feedback",
             key: KeyCode::Char('n'),
-            decision: ReviewDecision::Denied,
+            decision: ReviewDecision::Abort,
         },
     ]
 });
@@ -258,12 +259,11 @@ impl UserApprovalWidget {
     }
 
     fn send_decision_with_feedback(&mut self, decision: ReviewDecision, feedback: String) {
-        let mut lines: Vec<Line<'static>> = Vec::new();
         match &self.approval_request {
             ApprovalRequest::Exec { command, .. } => {
                 let cmd = strip_bash_lc_and_escape(command);
-                let mut cmd_span: Span = cmd.clone().into();
-                cmd_span.style = cmd_span.style.add_modifier(Modifier::DIM);
+                // TODO: move this rendering into history_cell.
+                let mut lines: Vec<Line<'static>> = vec![];
 
                 // Result line based on decision.
                 match decision {
@@ -316,19 +316,22 @@ impl UserApprovalWidget {
                         ));
                     }
                 }
+
+                if !feedback.trim().is_empty() {
+                    lines.push(Line::from("feedback:"));
+                    for l in feedback.lines() {
+                        lines.push(Line::from(l.to_string()));
+                    }
+                }
+
+                self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                    history_cell::new_user_approval_decision(lines),
+                )));
             }
             ApprovalRequest::ApplyPatch { .. } => {
-                lines.push(Line::from(format!("patch approval decision: {decision:?}")));
+                // No history line for patch approval decisions.
             }
         }
-        if !feedback.trim().is_empty() {
-            lines.push(Line::from("feedback:"));
-            for l in feedback.lines() {
-                lines.push(Line::from(l.to_string()));
-            }
-        }
-        lines.push(Line::from(""));
-        self.app_event_tx.send(AppEvent::InsertHistoryLines(lines));
 
         let op = match &self.approval_request {
             ApprovalRequest::Exec { id, .. } => Op::ExecApproval {
@@ -352,7 +355,11 @@ impl UserApprovalWidget {
     }
 
     pub(crate) fn desired_height(&self, width: u16) -> u16 {
-        self.get_confirmation_prompt_height(width) + self.select_options.len() as u16
+        // Reserve space for:
+        // - 1 title line ("Allow command?" or "Apply changes?")
+        // - 1 buttons line (options rendered horizontally on a single row)
+        // - 1 description line (context for the currently selected option)
+        self.get_confirmation_prompt_height(width) + 3
     }
 }
 

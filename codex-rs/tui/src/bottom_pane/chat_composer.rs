@@ -22,15 +22,22 @@ use ratatui::widgets::StatefulWidgetRef;
 use ratatui::widgets::WidgetRef;
 
 use super::chat_composer_history::ChatComposerHistory;
+use super::command_popup::CommandItem;
 use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
+use super::paste_burst::CharDecision;
+use super::paste_burst::PasteBurst;
+use crate::bottom_pane::paste_burst::FlushResult;
 use crate::slash_command::SlashCommand;
+use codex_protocol::custom_prompts::CustomPrompt;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::textarea::TextArea;
 use crate::bottom_pane::textarea::TextAreaState;
 use crate::tui::FrameRequester;
+use crate::clipboard_paste::normalize_pasted_path;
+use crate::clipboard_paste::pasted_image_format;
 use codex_file_search::FileMatch;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -39,6 +46,9 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::path::Path;
+use std::path::PathBuf;
+use std::time::Duration;
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -47,10 +57,17 @@ use uuid::Uuid;
 const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
 
 /// Result returned when the user interacts with the text area.
+#[derive(Debug, PartialEq)]
 pub enum InputResult {
     Submitted(String),
     Command(SlashCommand),
     None,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct AttachedImage {
+    placeholder: String,
+    path: PathBuf,
 }
 
 struct TokenUsageInfo {
@@ -75,6 +92,7 @@ pub(crate) struct ChatComposer {
     app_event_tx: AppEventSender,
     history: ChatComposerHistory,
     ctrl_c_quit_hint: bool,
+    esc_backtrack_hint: bool,
     use_shift_enter_hint: bool,
     dismissed_file_popup_token: Option<String>,
     current_file_query: Option<String>,
@@ -84,6 +102,7 @@ pub(crate) struct ChatComposer {
     frame_requester: FrameRequester,
     voice: Option<crate::voice::VoiceCapture>,
     recording_placeholder_id: Option<String>,
+    attached_images: Vec<AttachedImage>,
     placeholder_text: String,
     // Spacebar hold-to-talk state
     space_hold_started_at: Option<Instant>,
@@ -91,6 +110,11 @@ pub(crate) struct ChatComposer {
     space_hold_trigger: Option<Arc<AtomicBool>>,
     // Spinner control flags keyed by placeholder id; set to true to stop.
     spinner_stop_flags: HashMap<String, Arc<AtomicBool>>,
+    // Non-bracketed paste burst tracker.
+    paste_burst: PasteBurst,
+    // When true, disables paste-burst logic and inserts characters immediately.
+    disable_paste_burst: bool,
+    custom_prompts: Vec<CustomPrompt>,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -110,13 +134,14 @@ impl ChatComposer {
     ) -> Self {
         let use_shift_enter_hint = enhanced_keys_supported;
 
-        Self {
+        let mut this = Self {
             textarea: TextArea::new(),
             textarea_state: RefCell::new(TextAreaState::default()),
             active_popup: ActivePopup::None,
             app_event_tx,
             history: ChatComposerHistory::new(),
             ctrl_c_quit_hint: false,
+            esc_backtrack_hint: false,
             use_shift_enter_hint,
             dismissed_file_popup_token: None,
             current_file_query: None,
@@ -126,12 +151,17 @@ impl ChatComposer {
             frame_requester,
             voice: None,
             recording_placeholder_id: None,
+            attached_images: Vec::new(),
             placeholder_text,
             space_hold_started_at: None,
             space_hold_element_id: None,
             space_hold_trigger: None,
             spinner_stop_flags: HashMap::new(),
-        }
+            paste_burst: PasteBurst::default(),
+            disable_paste_burst: false,
+            custom_prompts: Vec::new(),
+        };
+        this
     }
 
     pub fn desired_height(&self, width: u16) -> u16 {
@@ -154,7 +184,7 @@ impl ChatComposer {
             ActivePopup::None => 1,
         };
         let [textarea_rect, _] =
-            Layout::vertical([Constraint::Min(0), Constraint::Max(popup_height)]).areas(area);
+            Layout::vertical([Constraint::Min(1), Constraint::Max(popup_height)]).areas(area);
         let mut textarea_rect = textarea_rect;
         textarea_rect.width = textarea_rect.width.saturating_sub(1);
         textarea_rect.x += 1;
@@ -215,7 +245,6 @@ impl ChatComposer {
 
     pub fn handle_paste(&mut self, pasted: String) -> bool {
         if self.voice.is_some() {
-            // Ignore paste while recording
             return false;
         }
         let char_count = pasted.chars().count();
@@ -223,10 +252,88 @@ impl ChatComposer {
             let placeholder = format!("[Pasted Content {char_count} chars]");
             self.textarea.insert_element(&placeholder);
             self.pending_pastes.push((placeholder, pasted));
+        } else if char_count > 1 && self.handle_paste_image_path(pasted.clone()) {
+            self.textarea.insert_str(" ");
         } else {
             self.insert_str(&pasted);
         }
+        self.paste_burst.clear_after_explicit_paste();
+        self.sync_command_popup();
+        if matches!(self.active_popup, ActivePopup::Command(_)) {
+            self.dismissed_file_popup_token = None;
+        } else {
+            self.sync_file_search_popup();
+        }
         true
+    }
+
+    pub fn handle_paste_image_path(&mut self, pasted: String) -> bool {
+        let Some(path_buf) = normalize_pasted_path(&pasted) else {
+            return false;
+        };
+
+        match image::image_dimensions(&path_buf) {
+            Ok((w, h)) => {
+                tracing::info!("OK: {pasted}");
+                let format_label = pasted_image_format(&path_buf).label();
+                self.attach_image(path_buf, w, h, format_label);
+                true
+            }
+            Err(err) => {
+                tracing::info!("ERR: {err}");
+                false
+            }
+        }
+    }
+
+    pub(crate) fn set_disable_paste_burst(&mut self, disabled: bool) {
+        let was_disabled = self.disable_paste_burst;
+        self.disable_paste_burst = disabled;
+        if disabled && !was_disabled {
+            self.paste_burst.clear_window_after_non_char();
+        }
+    }
+
+    /// Replace the entire composer content with `text` and reset cursor.
+    pub(crate) fn set_text_content(&mut self, text: String) {
+        self.textarea.set_text(&text);
+        self.textarea.set_cursor(0);
+        self.sync_command_popup();
+        self.sync_file_search_popup();
+    }
+
+    /// Get the current composer text.
+    #[cfg(test)]
+    pub(crate) fn current_text(&self) -> String {
+        self.textarea.text().to_string()
+    }
+
+    /// Attempt to start a burst by retro-capturing recent chars before the cursor.
+    pub fn attach_image(&mut self, path: PathBuf, width: u32, height: u32, format_label: &str) {
+        let placeholder = format!("[image {width}x{height} {format_label}]");
+        // Insert as an element to match large paste placeholder behavior:
+        // styled distinctly and treated atomically for cursor/mutations.
+        self.textarea.insert_element(&placeholder);
+        self.attached_images
+            .push(AttachedImage { placeholder, path });
+    }
+
+    pub fn take_recent_submission_images(&mut self) -> Vec<PathBuf> {
+        let images = std::mem::take(&mut self.attached_images);
+        images.into_iter().map(|img| img.path).collect()
+    }
+
+    pub(crate) fn flush_paste_burst_if_due(&mut self) -> bool {
+        self.handle_paste_burst_flush(Instant::now())
+    }
+
+    pub(crate) fn is_in_paste_burst(&self) -> bool {
+        self.paste_burst.is_active()
+    }
+
+    pub(crate) fn recommended_paste_flush_delay() -> Duration {
+        PasteBurst::recommended_flush_delay()
+    }
     }
 
     /// Integrate results from an asynchronous file search.
@@ -296,6 +403,7 @@ impl ChatComposer {
         result
     }
 
+    
     /// Stop recording if active, update the placeholder, and spawn background transcription.
     /// Returns true if the UI should redraw.
     fn stop_recording_and_start_transcription(&mut self) -> bool {
@@ -380,6 +488,10 @@ impl ChatComposer {
         {
             let _ = self.on_space_hold_timeout();
         }
+    
+    /// Return true if either the slash-command popup or the file-search popup is active.
+    pub(crate) fn popup_active(&self) -> bool {
+        !matches!(self.active_popup, ActivePopup::None)
     }
 
     /// Handle key event when the slash-command popup is visible.
@@ -403,18 +515,38 @@ impl ChatComposer {
                 (InputResult::None, true)
             }
             KeyEvent {
+                code: KeyCode::Esc, ..
+            } => {
+                // Dismiss the slash popup; keep the current input untouched.
+                self.active_popup = ActivePopup::None;
+                (InputResult::None, true)
+            }
+            KeyEvent {
                 code: KeyCode::Tab, ..
             } => {
-                if let Some(cmd) = popup.selected_command() {
-                    let first_line = self.textarea.text().lines().next().unwrap_or("");
-
-                    let starts_with_cmd = first_line
-                        .trim_start()
-                        .starts_with(&format!("/{}", cmd.command()));
-
-                    if !starts_with_cmd {
-                        self.textarea.set_text(&format!("/{} ", cmd.command()));
-                        self.textarea.set_cursor(self.textarea.text().len());
+                // Ensure popup filtering/selection reflects the latest composer text
+                // before applying completion.
+                let first_line = self.textarea.text().lines().next().unwrap_or("");
+                popup.on_composer_text_change(first_line.to_string());
+                if let Some(sel) = popup.selected_item() {
+                    match sel {
+                        CommandItem::Builtin(cmd) => {
+                            let starts_with_cmd = first_line
+                                .trim_start()
+                                .starts_with(&format!("/{}", cmd.command()));
+                            if !starts_with_cmd {
+                                self.textarea.set_text(&format!("/{} ", cmd.command()));
+                            }
+                        }
+                        CommandItem::UserPrompt(idx) => {
+                            if let Some(name) = popup.prompt_name(idx) {
+                                let starts_with_cmd =
+                                    first_line.trim_start().starts_with(&format!("/{name}"));
+                                if !starts_with_cmd {
+                                    self.textarea.set_text(&format!("/{name} "));
+                                }
+                            }
+                        }
                     }
                     // After completing the command, move cursor to the end.
                     if !self.textarea.text().is_empty() {
@@ -429,22 +561,61 @@ impl ChatComposer {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                if let Some(cmd) = popup.selected_command() {
+                if let Some(sel) = popup.selected_item() {
                     // Clear textarea so no residual text remains.
                     self.textarea.set_text("");
-
-                    let result = (InputResult::Command(*cmd), true);
-
-                    // Hide popup since the command has been dispatched.
+                    // Capture any needed data from popup before clearing it.
+                    let prompt_content = match sel {
+                        CommandItem::UserPrompt(idx) => {
+                            popup.prompt_content(idx).map(|s| s.to_string())
+                        }
+                        _ => None,
+                    };
+                    // Hide popup since an action has been dispatched.
                     self.active_popup = ActivePopup::None;
 
-                    return result;
+                    match sel {
+                        CommandItem::Builtin(cmd) => {
+                            return (InputResult::Command(cmd), true);
+                        }
+                        CommandItem::UserPrompt(_) => {
+                            if let Some(contents) = prompt_content {
+                                return (InputResult::Submitted(contents), true);
+                            }
+                            return (InputResult::None, true);
+                        }
+                    }
                 }
                 // Fallback to default newline handling if no command selected.
                 self.handle_key_event_without_popup(key_event)
             }
             input => self.handle_input_basic(input),
         }
+    }
+    #[inline]
+    fn clamp_to_char_boundary(text: &str, pos: usize) -> usize {
+        let mut p = pos.min(text.len());
+        if p < text.len() && !text.is_char_boundary(p) {
+            p = text
+                .char_indices()
+                .map(|(i, _)| i)
+                .take_while(|&i| i <= p)
+                .last()
+                .unwrap_or(0);
+        }
+        p
+    }
+
+    #[inline]
+    fn handle_non_ascii_char(&mut self, input: KeyEvent) -> (InputResult, bool) {
+        if let Some(pasted) = self.paste_burst.flush_before_modified_input() {
+            self.handle_paste(pasted);
+        }
+        self.textarea.input(input);
+        let text_after = self.textarea.text();
+        self.pending_pastes
+            .retain(|(placeholder, _)| text_after.contains(placeholder));
+        (InputResult::None, true)
     }
 
     /// Handle key events when file search popup is visible.
@@ -485,17 +656,74 @@ impl ChatComposer {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                if let Some(sel) = popup.selected_match() {
-                    let sel_path = sel.to_string();
-                    // Drop popup borrow before using self mutably again.
-                    self.insert_selected_path(&sel_path);
+                let Some(sel) = popup.selected_match() else {
                     self.active_popup = ActivePopup::None;
                     return (InputResult::None, true);
+                };
+
+                let sel_path = sel.to_string();
+                // If selected path looks like an image (png/jpeg), attach as image instead of inserting text.
+                let is_image = Self::is_image_path(&sel_path);
+                if is_image {
+                    // Determine dimensions; if that fails fall back to normal path insertion.
+                    let path_buf = PathBuf::from(&sel_path);
+                    if let Ok((w, h)) = image::image_dimensions(&path_buf) {
+                        // Remove the current @token (mirror logic from insert_selected_path without inserting text)
+                        // using the flat text and byte-offset cursor API.
+                        let cursor_offset = self.textarea.cursor();
+                        let text = self.textarea.text();
+                        // Clamp to a valid char boundary to avoid panics when slicing.
+                        let safe_cursor = Self::clamp_to_char_boundary(text, cursor_offset);
+                        let before_cursor = &text[..safe_cursor];
+                        let after_cursor = &text[safe_cursor..];
+
+                        // Determine token boundaries in the full text.
+                        let start_idx = before_cursor
+                            .char_indices()
+                            .rfind(|(_, c)| c.is_whitespace())
+                            .map(|(idx, c)| idx + c.len_utf8())
+                            .unwrap_or(0);
+                        let end_rel_idx = after_cursor
+                            .char_indices()
+                            .find(|(_, c)| c.is_whitespace())
+                            .map(|(idx, _)| idx)
+                            .unwrap_or(after_cursor.len());
+                        let end_idx = safe_cursor + end_rel_idx;
+
+                        self.textarea.replace_range(start_idx..end_idx, "");
+                        self.textarea.set_cursor(start_idx);
+
+                        let format_label = match Path::new(&sel_path)
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .map(|s| s.to_ascii_lowercase())
+                        {
+                            Some(ext) if ext == "png" => "PNG",
+                            Some(ext) if ext == "jpg" || ext == "jpeg" => "JPEG",
+                            _ => "IMG",
+                        };
+                        self.attach_image(path_buf.clone(), w, h, format_label);
+                        // Add a trailing space to keep typing fluid.
+                        self.textarea.insert_str(" ");
+                    } else {
+                        // Fallback to plain path insertion if metadata read fails.
+                        self.insert_selected_path(&sel_path);
+                    }
+                } else {
+                    // Non-image: inserting file path.
+                    self.insert_selected_path(&sel_path);
                 }
-                (InputResult::None, false)
+                // No selection: treat Enter as closing the popup/session.
+                self.active_popup = ActivePopup::None;
+                (InputResult::None, true)
             }
             input => self.handle_input_basic(input),
         }
+    }
+
+    fn is_image_path(path: &str) -> bool {
+        let lower = path.to_ascii_lowercase();
+        lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg")
     }
 
     /// Extract the `@token` that the cursor is currently positioned on, if any.
@@ -608,9 +836,11 @@ impl ChatComposer {
     fn insert_selected_path(&mut self, path: &str) {
         let cursor_offset = self.textarea.cursor();
         let text = self.textarea.text();
+        // Clamp to a valid char boundary to avoid panics when slicing.
+        let safe_cursor = Self::clamp_to_char_boundary(text, cursor_offset);
 
-        let before_cursor = &text[..cursor_offset];
-        let after_cursor = &text[cursor_offset..];
+        let before_cursor = &text[..safe_cursor];
+        let after_cursor = &text[safe_cursor..];
 
         // Determine token boundaries.
         let start_idx = before_cursor
@@ -624,7 +854,7 @@ impl ChatComposer {
             .find(|(_, c)| c.is_whitespace())
             .map(|(idx, _)| idx)
             .unwrap_or(after_cursor.len());
-        let end_idx = cursor_offset + end_rel_idx;
+        let end_idx = safe_cursor + end_rel_idx;
 
         // Replace the slice `[start_idx, end_idx)` with the chosen path and a trailing space.
         let mut new_text =
@@ -642,6 +872,15 @@ impl ChatComposer {
     /// Handle key event when no popup is visible.
     fn handle_key_event_without_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
         match key_event {
+            KeyEvent {
+                code: KeyCode::Char('d'),
+                modifiers: crossterm::event::KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                ..
+            } if self.is_empty() => {
+                self.app_event_tx.send(AppEvent::ExitRequest);
+                (InputResult::None, true)
+            }
             // -------------------------------------------------------------
             // History navigation (Up / Down) – only when the composer is not
             // empty or when the cursor is at the correct position, to avoid
@@ -674,6 +913,50 @@ impl ChatComposer {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
+                // If we're in a paste-like burst capture, treat Enter as part of the burst
+                // and accumulate it rather than submitting or inserting immediately.
+                // Do not treat Enter as paste inside a slash-command context.
+                let in_slash_context = matches!(self.active_popup, ActivePopup::Command(_))
+                    || self
+                        .textarea
+                        .text()
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .starts_with('/');
+                if self.paste_burst.is_active() && !in_slash_context {
+                    let now = Instant::now();
+                    if self.paste_burst.append_newline_if_active(now) {
+                        return (InputResult::None, true);
+                    }
+                }
+                // If we have pending placeholder pastes, submit immediately to expand them.
+                if !self.pending_pastes.is_empty() {
+                    let mut text = self.textarea.text().to_string();
+                    self.textarea.set_text("");
+                    for (placeholder, actual) in &self.pending_pastes {
+                        if text.contains(placeholder) {
+                            text = text.replace(placeholder, actual);
+                        }
+                    }
+                    self.pending_pastes.clear();
+                    if text.is_empty() {
+                        return (InputResult::None, true);
+                    }
+                    self.history.record_local_submission(&text);
+                    return (InputResult::Submitted(text), true);
+                }
+
+                // During a paste-like burst, treat Enter as a newline instead of submit.
+                let now = Instant::now();
+                if self
+                    .paste_burst
+                    .newline_should_insert_instead_of_submit(now)
+                {
+                    self.textarea.insert_str("\n");
+                    self.paste_burst.extend_window(now);
+                    return (InputResult::None, true);
+                }
                 let mut text = self.textarea.text().to_string();
                 self.textarea.set_text("");
 
@@ -685,12 +968,17 @@ impl ChatComposer {
                 }
                 self.pending_pastes.clear();
 
-                if text.is_empty() {
-                    (InputResult::None, true)
-                } else {
-                    self.history.record_local_submission(&text);
-                    (InputResult::Submitted(text), true)
+                // If there is neither text nor attachments, suppress submission entirely.
+                let has_attachments = !self.attached_images.is_empty();
+                text = text.trim().to_string();
+                if text.is_empty() && !has_attachments {
+                    return (InputResult::None, true);
                 }
+                if !text.is_empty() {
+                    self.history.record_local_submission(&text);
+                }
+                // Do not clear attached_images here; ChatWidget drains them via take_recent_submission_images().
+                (InputResult::Submitted(text), true)
             }
             // Spacebar hold-to-talk: begin pending hold on initial press
             KeyEvent {
@@ -769,6 +1057,7 @@ impl ChatComposer {
         }
     }
 
+    
     /// Called when the 500ms space hold timeout elapses. If still pending and matching id,
     /// remove the inserted space and begin voice capture.
     pub(crate) fn on_space_hold_timeout(&mut self) -> bool {
@@ -895,21 +1184,307 @@ impl ChatComposer {
     }
 
     pub fn remove_transcription_placeholder(&mut self, id: &str) {
-        // Replace with empty string to delete the placeholder if present.
         let _ = self.textarea.replace_element_by_id(id, "");
+    }
+
+    fn handle_paste_burst_flush(&mut self, now: Instant) -> bool {
+        match self.paste_burst.flush_if_due(now) {
+            FlushResult::Paste(pasted) => {
+                self.handle_paste(pasted);
+                true
+            }
+            FlushResult::Typed(ch) => {
+                self.textarea.insert_str(ch.to_string().as_str());
+                self.sync_command_popup();
+                if matches!(self.active_popup, ActivePopup::Command(_)) {
+                    self.dismissed_file_popup_token = None;
+                } else {
+                    self.sync_file_search_popup();
+                }
+                true
+            }
+            FlushResult::None => false,
+        }
     }
 
     /// Handle generic Input events that modify the textarea content.
     fn handle_input_basic(&mut self, input: KeyEvent) -> (InputResult, bool) {
+        // If we have a buffered non-bracketed paste burst and enough time has
+        // elapsed since the last char, flush it before handling a new input.
+        let now = Instant::now();
+        self.handle_paste_burst_flush(now);
+
+        // If we're capturing a burst and receive Enter, accumulate it instead of inserting.
+        if matches!(input.code, KeyCode::Enter)
+            && self.paste_burst.is_active()
+            && self.paste_burst.append_newline_if_active(now)
+        {
+            return (InputResult::None, true);
+        }
+
+        // Intercept plain Char inputs to optionally accumulate into a burst buffer.
+        if let KeyEvent {
+            code: KeyCode::Char(ch),
+            modifiers,
+            ..
+        } = input
+        {
+            let has_ctrl_or_alt =
+                modifiers.contains(KeyModifiers::CONTROL) || modifiers.contains(KeyModifiers::ALT);
+            if !has_ctrl_or_alt {
+                // Non-ASCII characters (e.g., from IMEs) can arrive in quick bursts and be
+                // misclassified by paste heuristics. Flush any active burst buffer and insert
+                // non-ASCII characters directly.
+                if !ch.is_ascii() {
+                    return self.handle_non_ascii_char(input);
+                }
+
+                match self.paste_burst.on_plain_char(ch, now) {
+                    CharDecision::BufferAppend => {
+                        self.paste_burst.append_char_to_buffer(ch, now);
+                        return (InputResult::None, true);
+                    }
+                    CharDecision::BeginBuffer { retro_chars } => {
+                        let cur = self.textarea.cursor();
+                        let txt = self.textarea.text();
+                        let safe_cur = Self::clamp_to_char_boundary(txt, cur);
+                        let before = &txt[..safe_cur];
+                        if let Some(grab) =
+                            self.paste_burst
+                                .decide_begin_buffer(now, before, retro_chars as usize)
+                        {
+                            if !grab.grabbed.is_empty() {
+                                self.textarea.replace_range(grab.start_byte..safe_cur, "");
+                            }
+                            self.paste_burst.begin_with_retro_grabbed(grab.grabbed, now);
+                            self.paste_burst.append_char_to_buffer(ch, now);
+                            return (InputResult::None, true);
+                        }
+                        // If decide_begin_buffer opted not to start buffering,
+                        // fall through to normal insertion below.
+                    }
+                    CharDecision::BeginBufferFromPending => {
+                        // First char was held; now append the current one.
+                        self.paste_burst.append_char_to_buffer(ch, now);
+                        return (InputResult::None, true);
+                    }
+                    CharDecision::RetainFirstChar => {
+                        // Keep the first fast char pending momentarily.
+                        return (InputResult::None, true);
+                    }
+                }
+            }
+            if let Some(pasted) = self.paste_burst.flush_before_modified_input() {
+                self.handle_paste(pasted);
+            }
+        }
+
+        // For non-char inputs (or after flushing), handle normally.
+        // Special handling for backspace on placeholders
+        if let KeyEvent {
+            code: KeyCode::Backspace,
+            ..
+        } = input
+            && self.try_remove_any_placeholder_at_cursor()
+        {
+            return (InputResult::None, true);
+        }
+
         // Normal input handling
         self.textarea.input(input);
         let text_after = self.textarea.text();
+
+        // Update paste-burst heuristic for plain Char (no Ctrl/Alt) events.
+        let crossterm::event::KeyEvent {
+            code, modifiers, ..
+        } = input;
+        match code {
+            KeyCode::Char(_) => {
+                let has_ctrl_or_alt = modifiers.contains(KeyModifiers::CONTROL)
+                    || modifiers.contains(KeyModifiers::ALT);
+                if has_ctrl_or_alt {
+                    self.paste_burst.clear_window_after_non_char();
+                }
+            }
+            KeyCode::Enter => {
+                // Keep burst window alive (supports blank lines in paste).
+            }
+            _ => {
+                // Other keys: clear burst window (buffer should have been flushed above if needed).
+                self.paste_burst.clear_window_after_non_char();
+            }
+        }
 
         // Check if any placeholders were removed and remove their corresponding pending pastes
         self.pending_pastes
             .retain(|(placeholder, _)| text_after.contains(placeholder));
 
+        // Keep attached images in proportion to how many matching placeholders exist in the text.
+        // This handles duplicate placeholders that share the same visible label.
+        if !self.attached_images.is_empty() {
+            let mut needed: HashMap<String, usize> = HashMap::new();
+            for img in &self.attached_images {
+                needed
+                    .entry(img.placeholder.clone())
+                    .or_insert_with(|| text_after.matches(&img.placeholder).count());
+            }
+
+            let mut used: HashMap<String, usize> = HashMap::new();
+            let mut kept: Vec<AttachedImage> = Vec::with_capacity(self.attached_images.len());
+            for img in self.attached_images.drain(..) {
+                let total_needed = *needed.get(&img.placeholder).unwrap_or(&0);
+                let used_count = used.entry(img.placeholder.clone()).or_insert(0);
+                if *used_count < total_needed {
+                    kept.push(img);
+                    *used_count += 1;
+                }
+            }
+            self.attached_images = kept;
+        }
+
         (InputResult::None, true)
+    }
+
+    /// Attempts to remove an image or paste placeholder if the cursor is at the end of one.
+    /// Returns true if a placeholder was removed.
+    fn try_remove_any_placeholder_at_cursor(&mut self) -> bool {
+        // Clamp the cursor to a valid char boundary to avoid panics when slicing.
+        let text = self.textarea.text();
+        let p = Self::clamp_to_char_boundary(text, self.textarea.cursor());
+
+        // Try image placeholders first
+        let mut out: Option<(usize, String)> = None;
+        // Detect if the cursor is at the end of any image placeholder.
+        // If duplicates exist, remove the specific occurrence's mapping.
+        for (i, img) in self.attached_images.iter().enumerate() {
+            let ph = &img.placeholder;
+            if p < ph.len() {
+                continue;
+            }
+            let start = p - ph.len();
+            if text.get(start..p) != Some(ph.as_str()) {
+                continue;
+            }
+
+            // Count the number of occurrences of `ph` before `start`.
+            let mut occ_before = 0usize;
+            let mut search_pos = 0usize;
+            while search_pos < start {
+                let segment = match text.get(search_pos..start) {
+                    Some(s) => s,
+                    None => break,
+                };
+                if let Some(found) = segment.find(ph) {
+                    occ_before += 1;
+                    search_pos += found + ph.len();
+                } else {
+                    break;
+                }
+            }
+
+            // Remove the occ_before-th attached image that shares this placeholder label.
+            out = if let Some((remove_idx, _)) = self
+                .attached_images
+                .iter()
+                .enumerate()
+                .filter(|(_, img2)| img2.placeholder == *ph)
+                .nth(occ_before)
+            {
+                Some((remove_idx, ph.clone()))
+            } else {
+                Some((i, ph.clone()))
+            };
+            break;
+        }
+        if let Some((idx, placeholder)) = out {
+            self.textarea.replace_range(p - placeholder.len()..p, "");
+            self.attached_images.remove(idx);
+            return true;
+        }
+
+        // Also handle when the cursor is at the START of an image placeholder.
+        // let result = 'out: {
+        let out: Option<(usize, String)> = 'out: {
+            for (i, img) in self.attached_images.iter().enumerate() {
+                let ph = &img.placeholder;
+                if p + ph.len() > text.len() {
+                    continue;
+                }
+                if text.get(p..p + ph.len()) != Some(ph.as_str()) {
+                    continue;
+                }
+
+                // Count occurrences of `ph` before `p`.
+                let mut occ_before = 0usize;
+                let mut search_pos = 0usize;
+                while search_pos < p {
+                    let segment = match text.get(search_pos..p) {
+                        Some(s) => s,
+                        None => break 'out None,
+                    };
+                    if let Some(found) = segment.find(ph) {
+                        occ_before += 1;
+                        search_pos += found + ph.len();
+                    } else {
+                        break 'out None;
+                    }
+                }
+
+                if let Some((remove_idx, _)) = self
+                    .attached_images
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, img2)| img2.placeholder == *ph)
+                    .nth(occ_before)
+                {
+                    break 'out Some((remove_idx, ph.clone()));
+                } else {
+                    break 'out Some((i, ph.clone()));
+                }
+            }
+            None
+        };
+
+        if let Some((idx, placeholder)) = out {
+            self.textarea.replace_range(p..p + placeholder.len(), "");
+            self.attached_images.remove(idx);
+            return true;
+        }
+
+        // Then try pasted-content placeholders
+        if let Some(placeholder) = self.pending_pastes.iter().find_map(|(ph, _)| {
+            if p < ph.len() {
+                return None;
+            }
+            let start = p - ph.len();
+            if text.get(start..p) == Some(ph.as_str()) {
+                Some(ph.clone())
+            } else {
+                None
+            }
+        }) {
+            self.textarea.replace_range(p - placeholder.len()..p, "");
+            self.pending_pastes.retain(|(ph, _)| ph != &placeholder);
+            return true;
+        }
+
+        // Also handle when the cursor is at the START of a pasted-content placeholder.
+        if let Some(placeholder) = self.pending_pastes.iter().find_map(|(ph, _)| {
+            if p + ph.len() > text.len() {
+                return None;
+            }
+            if text.get(p..p + ph.len()) == Some(ph.as_str()) {
+                Some(ph.clone())
+            } else {
+                None
+            }
+        }) {
+            self.textarea.replace_range(p..p + placeholder.len(), "");
+            self.pending_pastes.retain(|(ph, _)| ph != &placeholder);
+            return true;
+        }
+
+        false
     }
 
     /// Synchronize `self.command_popup` with the current text in the
@@ -928,11 +1503,18 @@ impl ChatComposer {
             }
             _ => {
                 if input_starts_with_slash {
-                    let mut command_popup = CommandPopup::new();
+                    let mut command_popup = CommandPopup::new(self.custom_prompts.clone());
                     command_popup.on_composer_text_change(first_line.to_string());
                     self.active_popup = ActivePopup::Command(command_popup);
                 }
             }
+        }
+    }
+
+    pub(crate) fn set_custom_prompts(&mut self, prompts: Vec<CustomPrompt>) {
+        self.custom_prompts = prompts.clone();
+        if let ActivePopup::Command(popup) = &mut self.active_popup {
+            popup.set_prompts(prompts);
         }
     }
 
@@ -1000,9 +1582,13 @@ impl ChatComposer {
     pub(crate) fn is_recording(&self) -> bool {
         self.voice.is_some()
     }
+
+    pub(crate) fn set_esc_backtrack_hint(&mut self, show: bool) {
+        self.esc_backtrack_hint = show;
+    }
 }
 
-impl WidgetRef for &ChatComposer {
+impl WidgetRef for ChatComposer {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let popup_height = match &self.active_popup {
             ActivePopup::Command(popup) => popup.calculate_required_height(),
@@ -1010,7 +1596,7 @@ impl WidgetRef for &ChatComposer {
             ActivePopup::None => 1,
         };
         let [textarea_rect, popup_rect] =
-            Layout::vertical([Constraint::Min(0), Constraint::Max(popup_height)]).areas(area);
+            Layout::vertical([Constraint::Min(1), Constraint::Max(popup_height)]).areas(area);
         match &self.active_popup {
             ActivePopup::Command(popup) => {
                 popup.render_ref(popup_rect, buf);
@@ -1039,10 +1625,18 @@ impl WidgetRef for &ChatComposer {
                         Span::from(" send   "),
                         newline_hint_key.set_style(key_hint_style),
                         Span::from(" newline   "),
+                        "Ctrl+T".set_style(key_hint_style),
+                        Span::from(" transcript   "),
                         "Ctrl+C".set_style(key_hint_style),
                         Span::from(" quit"),
                     ]
                 };
+
+                if !self.ctrl_c_quit_hint && self.esc_backtrack_hint {
+                    hint.push(Span::from("   "));
+                    hint.push("Esc".set_style(key_hint_style));
+                    hint.push(Span::from(" edit prev"));
+                }
 
                 // Append token/context usage info to the footer hints when available.
                 if let Some(token_usage_info) = &self.token_usage_info {
@@ -1120,10 +1714,17 @@ impl Drop for ChatComposer {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use image::ImageBuffer;
+    use image::Rgba;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
     use crate::app_event::AppEvent;
     use crate::bottom_pane::AppEventSender;
     use crate::bottom_pane::ChatComposer;
     use crate::bottom_pane::InputResult;
+    use crate::bottom_pane::chat_composer::AttachedImage;
     use crate::bottom_pane::chat_composer::LARGE_PASTE_CHAR_THRESHOLD;
     use crate::bottom_pane::textarea::TextArea;
     use tokio::sync::mpsc::unbounded_channel;
@@ -1307,6 +1908,33 @@ mod tests {
     }
 
     #[test]
+    fn empty_enter_returns_none() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            crate::tui::FrameRequester::test_dummy(),
+        );
+
+        // Ensure composer is empty and press Enter.
+        assert!(composer.textarea.text().is_empty());
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        match result {
+            InputResult::None => {}
+            other => panic!("expected None for empty enter, got: {other:?}"),
+        }
+    }
+
+    #[test]
     fn handle_paste_large_uses_placeholder_and_replaces_on_submit() {
         use crossterm::event::KeyCode;
         use crossterm::event::KeyEvent;
@@ -1419,10 +2047,82 @@ mod tests {
             }
 
             terminal
-                .draw(|f| f.render_widget_ref(&composer, f.area()))
+                .draw(|f| f.render_widget_ref(composer, f.area()))
                 .unwrap_or_else(|e| panic!("Failed to draw {name} composer: {e}"));
 
             assert_snapshot!(name, terminal.backend());
+        }
+    }
+
+    #[test]
+    fn slash_popup_model_first_for_mo_ui() {
+        use insta::assert_snapshot;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        // Type "/mo" humanlike so paste-burst doesn’t interfere.
+        type_chars_humanlike(&mut composer, &['/', 'm', 'o']);
+
+        let mut terminal = match Terminal::new(TestBackend::new(60, 4)) {
+            Ok(t) => t,
+            Err(e) => panic!("Failed to create terminal: {e}"),
+        };
+        terminal
+            .draw(|f| f.render_widget_ref(composer, f.area()))
+            .unwrap_or_else(|e| panic!("Failed to draw composer: {e}"));
+
+        // Visual snapshot should show the slash popup with /model as the first entry.
+        assert_snapshot!("slash_popup_mo", terminal.backend());
+    }
+
+    #[test]
+    fn slash_popup_model_first_for_mo_logic() {
+        use super::super::command_popup::CommandItem;
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        type_chars_humanlike(&mut composer, &['/', 'm', 'o']);
+
+        match &composer.active_popup {
+            ActivePopup::Command(popup) => match popup.selected_item() {
+                Some(CommandItem::Builtin(cmd)) => {
+                    assert_eq!(cmd.command(), "model")
+                }
+                Some(CommandItem::UserPrompt(_)) => {
+                    panic!("unexpected prompt selected for '/mo'")
+                }
+                None => panic!("no selected command for '/mo'"),
+            },
+            _ => panic!("slash popup not active after typing '/mo'"),
+        }
+    }
+
+    // Test helper: simulate human typing with a brief delay and flush the paste-burst buffer
+    fn type_chars_humanlike(composer: &mut ChatComposer, chars: &[char]) {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+        for &ch in chars {
+            let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+            std::thread::sleep(ChatComposer::recommended_paste_flush_delay());
+            let _ = composer.flush_paste_burst_if_due();
         }
     }
 
@@ -1443,11 +2143,7 @@ mod tests {
         );
 
         // Type the slash command.
-        for ch in [
-            '/', 'i', 'n', 'i', 't', // "/init"
-        ] {
-            let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
-        }
+        type_chars_humanlike(&mut composer, &['/', 'i', 'n', 'i', 't']);
 
         // Press Enter to dispatch the selected command.
         let (result, _needs_redraw) =
@@ -1483,9 +2179,7 @@ mod tests {
             crate::tui::FrameRequester::test_dummy(),
         );
 
-        for ch in ['/', 'c'] {
-            let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
-        }
+        type_chars_humanlike(&mut composer, &['/', 'c']);
 
         let (_result, _needs_redraw) =
             composer.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
@@ -1510,9 +2204,7 @@ mod tests {
             crate::tui::FrameRequester::test_dummy(),
         );
 
-        for ch in ['/', 'm', 'e', 'n', 't', 'i', 'o', 'n'] {
-            let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
-        }
+        type_chars_humanlike(&mut composer, &['/', 'm', 'e', 'n', 't', 'i', 'o', 'n']);
 
         let (result, _needs_redraw) =
             composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -1731,5 +2423,321 @@ mod tests {
                 (false, 0), // After deleting from end
             ]
         );
+    }
+
+    // --- Image attachment tests ---
+    #[test]
+    fn attach_image_and_submit_includes_image_paths() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            crate::tui::FrameRequester::test_dummy(),
+        );
+        let path = PathBuf::from("/tmp/image1.png");
+        composer.attach_image(path.clone(), 32, 16, "PNG");
+        composer.handle_paste(" hi".into());
+        let (result, _) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        match result {
+            InputResult::Submitted(text) => assert_eq!(text, "[image 32x16 PNG] hi"),
+            _ => panic!("expected Submitted"),
+        }
+        let imgs = composer.take_recent_submission_images();
+        assert_eq!(vec![path], imgs);
+    }
+
+    #[test]
+    fn attach_image_without_text_submits_empty_text_and_images() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        let path = PathBuf::from("/tmp/image2.png");
+        composer.attach_image(path.clone(), 10, 5, "PNG");
+        let (result, _) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        match result {
+            InputResult::Submitted(text) => assert_eq!(text, "[image 10x5 PNG]"),
+            _ => panic!("expected Submitted"),
+        }
+        let imgs = composer.take_recent_submission_images();
+        assert_eq!(imgs.len(), 1);
+        assert_eq!(imgs[0], path);
+        assert!(composer.attached_images.is_empty());
+    }
+
+    #[test]
+    fn image_placeholder_backspace_behaves_like_text_placeholder() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        let path = PathBuf::from("/tmp/image3.png");
+        composer.attach_image(path.clone(), 20, 10, "PNG");
+        let placeholder = composer.attached_images[0].placeholder.clone();
+
+        // Case 1: backspace at end
+        composer.textarea.move_cursor_to_end_of_line(false);
+        composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert!(!composer.textarea.text().contains(&placeholder));
+        assert!(composer.attached_images.is_empty());
+
+        // Re-add and test backspace in middle: should break the placeholder string
+        // and drop the image mapping (same as text placeholder behavior).
+        composer.attach_image(path.clone(), 20, 10, "PNG");
+        let placeholder2 = composer.attached_images[0].placeholder.clone();
+        // Move cursor to roughly middle of placeholder
+        if let Some(start_pos) = composer.textarea.text().find(&placeholder2) {
+            let mid_pos = start_pos + (placeholder2.len() / 2);
+            composer.textarea.set_cursor(mid_pos);
+            composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+            assert!(!composer.textarea.text().contains(&placeholder2));
+            assert!(composer.attached_images.is_empty());
+        } else {
+            panic!("Placeholder not found in textarea");
+        }
+    }
+
+    #[test]
+    fn backspace_with_multibyte_text_before_placeholder_does_not_panic() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        // Insert an image placeholder at the start
+        let path = PathBuf::from("/tmp/image_multibyte.png");
+        composer.attach_image(path, 10, 5, "PNG");
+        // Add multibyte text after the placeholder
+        composer.textarea.insert_str("日本語");
+
+        // Cursor is at end; pressing backspace should delete the last character
+        // without panicking and leave the placeholder intact.
+        composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+
+        assert_eq!(composer.attached_images.len(), 1);
+        assert!(composer.textarea.text().starts_with("[image 10x5 PNG]"));
+    }
+
+    #[test]
+    fn deleting_one_of_duplicate_image_placeholders_removes_matching_entry() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        let path1 = PathBuf::from("/tmp/image_dup1.png");
+        let path2 = PathBuf::from("/tmp/image_dup2.png");
+
+        composer.attach_image(path1.clone(), 10, 5, "PNG");
+        // separate placeholders with a space for clarity
+        composer.handle_paste(" ".into());
+        composer.attach_image(path2.clone(), 10, 5, "PNG");
+
+        let ph = composer.attached_images[0].placeholder.clone();
+        let text = composer.textarea.text().to_string();
+        let start1 = text.find(&ph).expect("first placeholder present");
+        let end1 = start1 + ph.len();
+        composer.textarea.set_cursor(end1);
+
+        // Backspace should delete the first placeholder and its mapping.
+        composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+
+        let new_text = composer.textarea.text().to_string();
+        assert_eq!(1, new_text.matches(&ph).count(), "one placeholder remains");
+        assert_eq!(
+            vec![AttachedImage {
+                path: path2,
+                placeholder: "[image 10x5 PNG]".to_string()
+            }],
+            composer.attached_images,
+            "one image mapping remains"
+        );
+    }
+
+    #[test]
+    fn pasting_filepath_attaches_image() {
+        let tmp = tempdir().expect("create TempDir");
+        let tmp_path: PathBuf = tmp.path().join("codex_tui_test_paste_image.png");
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_fn(3, 2, |_x, _y| Rgba([1, 2, 3, 255]));
+        img.save(&tmp_path).expect("failed to write temp png");
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        let needs_redraw = composer.handle_paste(tmp_path.to_string_lossy().to_string());
+        assert!(needs_redraw);
+        assert!(composer.textarea.text().starts_with("[image 3x2 PNG] "));
+
+        let imgs = composer.take_recent_submission_images();
+        assert_eq!(imgs, vec![tmp_path.clone()]);
+    }
+
+    #[test]
+    fn selecting_custom_prompt_submits_file_contents() {
+        let prompt_text = "Hello from saved prompt";
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        // Inject prompts as if received via event.
+        composer.set_custom_prompts(vec![CustomPrompt {
+            name: "my-prompt".to_string(),
+            path: "/tmp/my-prompt.md".to_string().into(),
+            content: prompt_text.to_string(),
+        }]);
+
+        type_chars_humanlike(
+            &mut composer,
+            &['/', 'm', 'y', '-', 'p', 'r', 'o', 'm', 'p', 't'],
+        );
+
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert_eq!(InputResult::Submitted(prompt_text.to_string()), result);
+    }
+
+    #[test]
+    fn burst_paste_fast_small_buffers_and_flushes_on_stop() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        let count = 32;
+        for _ in 0..count {
+            let _ =
+                composer.handle_key_event(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+            assert!(
+                composer.is_in_paste_burst(),
+                "expected active paste burst during fast typing"
+            );
+            assert!(
+                composer.textarea.text().is_empty(),
+                "text should not appear during burst"
+            );
+        }
+
+        assert!(
+            composer.textarea.text().is_empty(),
+            "text should remain empty until flush"
+        );
+        std::thread::sleep(ChatComposer::recommended_paste_flush_delay());
+        let flushed = composer.flush_paste_burst_if_due();
+        assert!(flushed, "expected buffered text to flush after stop");
+        assert_eq!(composer.textarea.text(), "a".repeat(count));
+        assert!(
+            composer.pending_pastes.is_empty(),
+            "no placeholder for small burst"
+        );
+    }
+
+    #[test]
+    fn burst_paste_fast_large_inserts_placeholder_on_flush() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        let count = LARGE_PASTE_CHAR_THRESHOLD + 1; // > threshold to trigger placeholder
+        for _ in 0..count {
+            let _ =
+                composer.handle_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        }
+
+        // Nothing should appear until we stop and flush
+        assert!(composer.textarea.text().is_empty());
+        std::thread::sleep(ChatComposer::recommended_paste_flush_delay());
+        let flushed = composer.flush_paste_burst_if_due();
+        assert!(flushed, "expected flush after stopping fast input");
+
+        let expected_placeholder = format!("[Pasted Content {count} chars]");
+        assert_eq!(composer.textarea.text(), expected_placeholder);
+        assert_eq!(composer.pending_pastes.len(), 1);
+        assert_eq!(composer.pending_pastes[0].0, expected_placeholder);
+        assert_eq!(composer.pending_pastes[0].1.len(), count);
+        assert!(composer.pending_pastes[0].1.chars().all(|c| c == 'x'));
+    }
+
+    #[test]
+    fn humanlike_typing_1000_chars_appears_live_no_placeholder() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        let count = LARGE_PASTE_CHAR_THRESHOLD; // 1000 in current config
+        let chars: Vec<char> = vec!['z'; count];
+        type_chars_humanlike(&mut composer, &chars);
+
+        assert_eq!(composer.textarea.text(), "z".repeat(count));
+        assert!(composer.pending_pastes.is_empty());
     }
 }

@@ -7,6 +7,7 @@ use crate::config_types::ShellEnvironmentPolicyToml;
 use crate::config_types::Tui;
 use crate::config_types::UriBasedFileOpener;
 use crate::config_types::Verbosity;
+use crate::git_info::resolve_root_git_project_for_trust;
 use crate::model_family::ModelFamily;
 use crate::model_family::find_family_for_model;
 use crate::model_provider_info::ModelProviderInfo;
@@ -168,11 +169,22 @@ pub struct Config {
     /// model family's default preference.
     pub include_apply_patch_tool: bool,
 
+    pub tools_web_search_request: bool,
+
     /// The value for the `originator` header included with Responses API requests.
     pub responses_originator_header: String,
 
     /// If set to `true`, the API key will be signed with the `originator` header.
     pub preferred_auth_method: AuthMode,
+
+    pub use_experimental_streamable_shell_tool: bool,
+
+    /// Include the `view_image` tool that lets the agent attach a local image path to context.
+    pub include_view_image_tool: bool,
+    /// When true, disables burst-paste detection for typed input entirely.
+    /// All characters are inserted as they are received, and no buffering
+    /// or placeholder replacement will occur for fast keypress bursts.
+    pub disable_paste_burst: bool,
 }
 
 impl Config {
@@ -278,12 +290,14 @@ pub fn set_project_trusted(codex_home: &Path, project_path: &Path) -> anyhow::Re
     // Ensure top-level `projects` exists as a non-inline, explicit table. If it
     // exists but was previously represented as a non-table (e.g., inline),
     // replace it with an explicit table.
+    let mut created_projects_table = false;
     {
         let root = doc.as_table_mut();
         let needs_table = !root.contains_key("projects")
             || root.get("projects").and_then(|i| i.as_table()).is_none();
         if needs_table {
             root.insert("projects", toml_edit::table());
+            created_projects_table = true;
         }
     }
     let Some(projects_tbl) = doc["projects"].as_table_mut() else {
@@ -291,6 +305,12 @@ pub fn set_project_trusted(codex_home: &Path, project_path: &Path) -> anyhow::Re
             "projects table missing after initialization"
         ));
     };
+
+    // If we created the `projects` table ourselves, keep it implicit so we
+    // don't render a standalone `[projects]` header.
+    if created_projects_table {
+        projects_tbl.set_implicit(true);
+    }
 
     // Ensure the per-project entry is its own explicit table. If it exists but
     // is not a table (e.g., an inline table), replace it with an explicit table.
@@ -460,6 +480,8 @@ pub struct ConfigToml {
     /// Experimental path to a file whose contents replace the built-in BASE_INSTRUCTIONS.
     pub experimental_instructions_file: Option<PathBuf>,
 
+    pub experimental_use_exec_command_tool: Option<bool>,
+
     /// The value for the `originator` header included with Responses API requests.
     pub responses_originator_header_internal_override: Option<String>,
 
@@ -467,11 +489,29 @@ pub struct ConfigToml {
 
     /// If set to `true`, the API key will be signed with the `originator` header.
     pub preferred_auth_method: Option<AuthMode>,
+
+    /// Nested tools section for feature toggles
+    pub tools: Option<ToolsToml>,
+
+    /// When true, disables burst-paste detection for typed input entirely.
+    /// All characters are inserted as they are received, and no buffering
+    /// or placeholder replacement will occur for fast keypress bursts.
+    pub disable_paste_burst: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ProjectConfig {
     pub trust_level: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct ToolsToml {
+    #[serde(default, alias = "web_search_request")]
+    pub web_search: Option<bool>,
+
+    /// Enable the `view_image` tool that lets the agent attach local images.
+    #[serde(default)]
+    pub view_image: Option<bool>,
 }
 
 impl ConfigToml {
@@ -503,10 +543,27 @@ impl ConfigToml {
     pub fn is_cwd_trusted(&self, resolved_cwd: &Path) -> bool {
         let projects = self.projects.clone().unwrap_or_default();
 
-        projects
-            .get(&resolved_cwd.to_string_lossy().to_string())
-            .map(|p| p.trust_level.clone().unwrap_or("".to_string()) == "trusted")
-            .unwrap_or(false)
+        let is_path_trusted = |path: &Path| {
+            let path_str = path.to_string_lossy().to_string();
+            projects
+                .get(&path_str)
+                .map(|p| p.trust_level.as_deref() == Some("trusted"))
+                .unwrap_or(false)
+        };
+
+        // Fast path: exact cwd match
+        if is_path_trusted(resolved_cwd) {
+            return true;
+        }
+
+        // If cwd lives inside a git worktree, check whether the root git project
+        // (the primary repository working directory) is trusted. This lets
+        // worktrees inherit trust from the main project.
+        if let Some(root_project) = resolve_root_git_project_for_trust(resolved_cwd) {
+            return is_path_trusted(&root_project);
+        }
+
+        false
     }
 
     pub fn get_config_profile(
@@ -544,8 +601,10 @@ pub struct ConfigOverrides {
     pub base_instructions: Option<String>,
     pub include_plan_tool: Option<bool>,
     pub include_apply_patch_tool: Option<bool>,
+    pub include_view_image_tool: Option<bool>,
     pub disable_response_storage: Option<bool>,
     pub show_raw_agent_reasoning: Option<bool>,
+    pub tools_web_search_request: Option<bool>,
 }
 
 impl Config {
@@ -570,8 +629,10 @@ impl Config {
             base_instructions,
             include_plan_tool,
             include_apply_patch_tool,
+            include_view_image_tool,
             disable_response_storage,
             show_raw_agent_reasoning,
+            tools_web_search_request: override_tools_web_search_request,
         } = overrides;
 
         let config_profile = match config_profile_key.as_ref().or(cfg.profile.as_ref()) {
@@ -633,6 +694,14 @@ impl Config {
 
         let history = cfg.history.unwrap_or_default();
 
+        let tools_web_search_request = override_tools_web_search_request
+            .or(cfg.tools.as_ref().and_then(|t| t.web_search))
+            .unwrap_or(false);
+
+        let include_view_image_tool = include_view_image_tool
+            .or(cfg.tools.as_ref().and_then(|t| t.view_image))
+            .unwrap_or(true);
+
         let model = model
             .or(config_profile.model)
             .or(cfg.model)
@@ -646,7 +715,7 @@ impl Config {
                 needs_special_apply_patch_instructions: false,
                 supports_reasoning_summaries,
                 uses_local_shell_tool: false,
-                uses_apply_patch_tool: false,
+                apply_patch_tool_type: None,
             }
         });
 
@@ -672,9 +741,6 @@ impl Config {
         let file_base_instructions =
             Self::get_base_instructions(experimental_instructions_path, &resolved_cwd)?;
         let base_instructions = base_instructions.or(file_base_instructions);
-
-        let include_apply_patch_tool_val =
-            include_apply_patch_tool.unwrap_or(model_family.uses_apply_patch_tool);
 
         let responses_originator_header: String = cfg
             .responses_originator_header_internal_override
@@ -732,9 +798,15 @@ impl Config {
 
             experimental_resume,
             include_plan_tool: include_plan_tool.unwrap_or(false),
-            include_apply_patch_tool: include_apply_patch_tool_val,
+            include_apply_patch_tool: include_apply_patch_tool.unwrap_or(false),
+            tools_web_search_request,
             responses_originator_header,
             preferred_auth_method: cfg.preferred_auth_method.unwrap_or(AuthMode::ChatGPT),
+            use_experimental_streamable_shell_tool: cfg
+                .experimental_use_exec_command_tool
+                .unwrap_or(false),
+            include_view_image_tool,
+            disable_paste_burst: cfg.disable_paste_burst.unwrap_or(false),
         };
         Ok(config)
     }
@@ -1099,8 +1171,12 @@ disable_response_storage = true
                 base_instructions: None,
                 include_plan_tool: false,
                 include_apply_patch_tool: false,
+                tools_web_search_request: false,
                 responses_originator_header: "codex_cli_rs".to_string(),
                 preferred_auth_method: AuthMode::ChatGPT,
+                use_experimental_streamable_shell_tool: false,
+                include_view_image_tool: true,
+                disable_paste_burst: false,
             },
             o3_profile_config
         );
@@ -1153,8 +1229,12 @@ disable_response_storage = true
             base_instructions: None,
             include_plan_tool: false,
             include_apply_patch_tool: false,
+            tools_web_search_request: false,
             responses_originator_header: "codex_cli_rs".to_string(),
             preferred_auth_method: AuthMode::ChatGPT,
+            use_experimental_streamable_shell_tool: false,
+            include_view_image_tool: true,
+            disable_paste_burst: false,
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -1222,8 +1302,12 @@ disable_response_storage = true
             base_instructions: None,
             include_plan_tool: false,
             include_apply_patch_tool: false,
+            tools_web_search_request: false,
             responses_originator_header: "codex_cli_rs".to_string(),
             preferred_auth_method: AuthMode::ChatGPT,
+            use_experimental_streamable_shell_tool: false,
+            include_view_image_tool: true,
+            disable_paste_burst: false,
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);
@@ -1239,37 +1323,22 @@ disable_response_storage = true
         // Call the function under test
         set_project_trusted(codex_home.path(), project_dir.path())?;
 
-        // Read back the generated config.toml
+        // Read back the generated config.toml and assert exact contents
         let config_path = codex_home.path().join(CONFIG_TOML_FILE);
         let contents = std::fs::read_to_string(&config_path)?;
 
-        // Verify it does not use inline tables for the project entry
-        assert!(
-            !contents.contains("{ trust_level"),
-            "config.toml should not use inline tables:\n{}",
-            contents
+        let raw_path = project_dir.path().to_string_lossy();
+        let path_str = if raw_path.contains('\\') {
+            format!("'{raw_path}'")
+        } else {
+            format!("\"{raw_path}\"")
+        };
+        let expected = format!(
+            r#"[projects.{path_str}]
+trust_level = "trusted"
+"#
         );
-
-        // Verify the explicit table for the project exists. toml_edit may choose
-        // either basic (double-quoted) or literal (single-quoted) strings for keys
-        // containing backslashes (e.g., on Windows). Accept both forms.
-        let path_str = project_dir.path().to_string_lossy();
-        let project_key_double = format!("[projects.\"{}\"]", path_str);
-        let project_key_single = format!("[projects.'{}']", path_str);
-        assert!(
-            contents.contains(&project_key_double) || contents.contains(&project_key_single),
-            "missing explicit project table header: expected to find `{}` or `{}` in:\n{}",
-            project_key_double,
-            project_key_single,
-            contents
-        );
-
-        // Verify the trust_level entry
-        assert!(
-            contents.contains("trust_level = \"trusted\""),
-            "missing trust_level entry in:\n{}",
-            contents
-        );
+        assert_eq!(contents, expected);
 
         Ok(())
     }
@@ -1281,11 +1350,17 @@ disable_response_storage = true
 
         // Seed config.toml with an inline project entry under [projects]
         let config_path = codex_home.path().join(CONFIG_TOML_FILE);
-        let path_str = project_dir.path().to_string_lossy();
-        // Use a literal-quoted key so Windows backslashes don't require escaping
+        let raw_path = project_dir.path().to_string_lossy();
+        let path_str = if raw_path.contains('\\') {
+            format!("'{raw_path}'")
+        } else {
+            format!("\"{raw_path}\"")
+        };
+        // Use a quoted key so backslashes don't require escaping on Windows
         let initial = format!(
-            "[projects]\n'{}' = {{ trust_level = \"untrusted\" }}\n",
-            path_str
+            r#"[projects]
+{path_str} = {{ trust_level = "untrusted" }}
+"#
         );
         std::fs::create_dir_all(codex_home.path())?;
         std::fs::write(&config_path, initial)?;
@@ -1295,28 +1370,15 @@ disable_response_storage = true
 
         let contents = std::fs::read_to_string(&config_path)?;
 
-        // Should not contain inline table representation anymore (accept both quote styles)
-        let inline_double = format!("\"{}\" = {{ trust_level = \"trusted\" }}", path_str);
-        let inline_single = format!("'{}' = {{ trust_level = \"trusted\" }}", path_str);
-        assert!(
-            !contents.contains(&inline_double) && !contents.contains(&inline_single),
-            "config.toml should not contain inline project table anymore:\n{}",
-            contents
-        );
+        // Assert exact output after conversion to explicit table
+        let expected = format!(
+            r#"[projects]
 
-        // And explicit child table header for the project
-        let project_key_double = format!("[projects.\"{}\"]", path_str);
-        let project_key_single = format!("[projects.'{}']", path_str);
-        assert!(
-            contents.contains(&project_key_double) || contents.contains(&project_key_single),
-            "missing explicit project table header: expected to find `{}` or `{}` in:\n{}",
-            project_key_double,
-            project_key_single,
-            contents
+[projects.{path_str}]
+trust_level = "trusted"
+"#
         );
-
-        // And the trust level value
-        assert!(contents.contains("trust_level = \"trusted\""));
+        assert_eq!(contents, expected);
 
         Ok(())
     }
