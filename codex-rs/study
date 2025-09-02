@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+import argparse
+import concurrent.futures
+import os
+import re
+import shutil
+import subprocess
+import sys
+from typing import List, Optional, Tuple
+
+
+def _run(cmd: List[str], input_text: Optional[str] = None) -> Tuple[int, str, str]:
+    proc = subprocess.run(
+        cmd,
+        input=input_text,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def require(cmd: str, hint: str):
+    if shutil.which(cmd) is None:
+        print(f"Error: required command '{cmd}' not found. {hint}", file=sys.stderr)
+        sys.exit(1)
+
+
+def detect_repo_root() -> Optional[str]:
+    code, out, _ = _run(["git", "rev-parse", "--show-toplevel"])
+    if code != 0:
+        return None
+    return out.strip()
+
+
+def ensure_dir(path: str):
+    os.makedirs(path, exist_ok=True)
+
+
+def pr_file_paths(out_dir: str) -> List[str]:
+    if not os.path.isdir(out_dir):
+        return []
+    paths = []
+    for name in os.listdir(out_dir):
+        if re.match(r"PR-\d+\.md$", name):
+            paths.append(os.path.join(out_dir, name))
+    # Sort by PR number ascending
+    def prnum(p: str) -> int:
+        m = re.search(r"(\d+)", os.path.basename(p))
+        return int(m.group(1)) if m else 0
+    return sorted(paths, key=prnum)
+
+
+def extract_pr_number(path: str) -> int:
+    m = re.search(r"(\d+)", os.path.basename(path))
+    return int(m.group(1)) if m else 0
+
+
+def build_prompt(contents: str, reviewer: str, out_path: str) -> str:
+    # We rely on `codex exec --output-last-message {out_path}` to write the
+    # final message to disk. Instruct the agent to ONLY produce the final
+    # document as its last message (no meta commentary), to avoid clutter.
+    return (
+        f"{contents}\n---\n"
+        f"Summarize the takeaways from this PR review by {reviewer} into a concise, practical guide with two checklists: DOs and DON'Ts. "
+        f"Add short, accurate code examples in fenced code blocks to illustrate each key point. "
+        f"Output ONLY the final document as your final message — no preamble, no status notes, no explanations about saving files. "
+        f"The CLI will save your final message to {out_path}."
+    )
+
+
+def run_codex_exec(prompt: str, last_message_file: Optional[str] = None) -> Tuple[int, str, str]:
+    # Prefer a globally installed `codex`; fall back to cargo if needed.
+    if shutil.which("codex") is not None:
+        cmd = ["codex", "-c", "model_reasoning_effort=high", "exec"]
+        if last_message_file:
+            cmd.extend(["--output-last-message", last_message_file])
+        return _run(cmd, input_text=prompt)
+    # Fallback: use cargo run (may build; slower but reliable in dev)
+    cmd = [
+        "cargo",
+        "run",
+        "--quiet",
+        "--bin",
+        "codex",
+        "--",
+        "-c",
+        "model_reasoning_effort=high",
+        "exec",
+    ]
+    if last_message_file:
+        cmd.extend(["--output-last-message", last_message_file])
+    return _run(cmd, input_text=prompt)
+
+
+def study_one(pr_md_path: str, reviewer: str, out_dir: str) -> Tuple[str, str]:
+    pr_num = extract_pr_number(pr_md_path)
+    try:
+        with open(pr_md_path, "r", encoding="utf-8") as f:
+            contents = f.read()
+        ensure_dir(out_dir)
+        out_path = os.path.join(out_dir, f"PR-{pr_num}-study.md")
+        prompt = build_prompt(contents, reviewer, out_path)
+        code, out, err = run_codex_exec(prompt, last_message_file=out_path)
+        if code != 0:
+            return pr_md_path, f"error: codex exec failed (exit {code}): {err.strip()}"
+        # If Codex did not write the file for some reason, fall back to captured stdout.
+        # Note: we only fallback when the output file is missing/empty to avoid
+        # overwriting a valid summary produced by Codex.
+        if (not os.path.isfile(out_path)) or os.path.getsize(out_path) == 0:
+            try:
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(out)
+            except Exception as e:
+                return pr_md_path, f"error: failed to write fallback output: {e}"
+        return pr_md_path, "ok"
+    except Exception as e:
+        return pr_md_path, f"error: {e}"
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="study",
+        description=(
+            "Generate PR markdowns via lastprs, then summarize each via `codex exec`.\n"
+            "Writes summaries to prs/<reviewer>/study/PR-<num>-study.md."
+        ),
+    )
+    parser.add_argument("days", type=int, help="Number of days to look back (N)")
+    parser.add_argument("reviewer", help="GitHub login of the reviewer")
+    parser.add_argument(
+        "repo",
+        nargs="?",
+        help="Repository in 'owner/repo' form; inferred from git origin if omitted (passed through to lastprs)",
+    )
+    parser.add_argument(
+        "--jobs",
+        "-j",
+        type=int,
+        default=10,
+        help="Parallel jobs for summaries (default: 10)",
+    )
+    parser.add_argument(
+        "--skip-generate",
+        action="store_true",
+        help="Skip running lastprs and reuse existing prs/<reviewer>/ files",
+    )
+
+    args = parser.parse_args()
+
+    if args.days <= 0:
+        print("Error: days must be a positive integer.", file=sys.stderr)
+        sys.exit(2)
+
+    # Check dependencies
+    require("gh", "Install GitHub CLI: https://cli.github.com")
+    # lastprs is shipped with this repo; prefer local copy, then PATH
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    lastprs_path = os.path.join(script_dir, "lastprs")
+    if not (os.path.isfile(lastprs_path) and os.access(lastprs_path, os.X_OK)):
+        require("lastprs", "Ensure the lastprs helper script is on PATH or present in this folder.")
+        lastprs_path = "lastprs"
+
+    # Determine paths
+    repo_root = detect_repo_root() or os.getcwd()
+    prs_dir = os.path.join(repo_root, "prs", args.reviewer)
+    summaries_dir = os.path.join(prs_dir, "study")
+
+    # 1) Generate PR markdowns if not skipping
+    if not args.skip_generate:
+        cmd = [lastprs_path, str(args.days), args.reviewer]
+        if args.repo:
+            cmd.append(args.repo)
+        print("Generating PR markdowns via lastprs…", file=sys.stderr)
+        code, out, err = _run(cmd)
+        if code != 0:
+            print(f"Error: lastprs failed (exit {code}): {err.strip()}", file=sys.stderr)
+            sys.exit(code)
+        # Echo a short summary
+        sys.stderr.write(out.strip() + "\n")
+
+    # 2) Discover PR files
+    files = pr_file_paths(prs_dir)
+    if not files:
+        print(f"No PR markdowns found in {prs_dir}.", file=sys.stderr)
+        sys.exit(0)
+
+    print(f"Summarizing {len(files)} PR(s) to {summaries_dir}")
+
+    # 3) Summarize via codex exec
+    results: List[Tuple[str, str]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
+        futs = [ex.submit(study_one, p, args.reviewer, summaries_dir) for p in files]
+        for fut in concurrent.futures.as_completed(futs):
+            results.append(fut.result())
+
+    ok = sum(1 for _, s in results if s == "ok")
+    failures = [(p, s) for p, s in results if s != "ok"]
+    for p, s in failures:
+        print(f"{os.path.basename(p)}: {s}", file=sys.stderr)
+    print(f"Done. {ok}/{len(files)} summaries succeeded.")
+
+
+if __name__ == "__main__":
+    main()
