@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+import argparse
+import concurrent.futures
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+from typing import Dict, List, Optional, Tuple
+
+
+def _run(cmd: List[str], input_text: Optional[str] = None) -> Tuple[int, str, str]:
+    proc = subprocess.run(
+        cmd,
+        input=input_text,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def require(cmd: str, hint: str):
+    if shutil.which(cmd) is None:
+        print(f"Error: required command '{cmd}' not found. {hint}", file=sys.stderr)
+        sys.exit(1)
+
+
+def detect_repo_root() -> Optional[str]:
+    code, out, _ = _run(["git", "rev-parse", "--show-toplevel"])
+    if code != 0:
+        return None
+    return out.strip()
+
+
+def get_current_branch() -> str:
+    code, out, _ = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    return out.strip() if code == 0 else "HEAD"
+
+
+def resolve_base_ref() -> str:
+    # Prefer remote tracking branch if available.
+    for ref in ("origin/main", "upstream/main", "main"):
+        code, _, _ = _run(["git", "rev-parse", "--verify", ref])
+        if code == 0:
+            return ref
+    return "main"
+
+
+def get_diff_text(base_ref: str, head_ref: str) -> str:
+    # Use merge-base (three-dot) to focus only on changes introduced on the branch.
+    # Avoid color codes for clean parsing in the model.
+    code, out, err = _run(["git", "diff", "--no-color", f"{base_ref}...{head_ref}"])
+    if code != 0:
+        print(f"Error: failed to compute git diff: {err.strip()}", file=sys.stderr)
+        sys.exit(2)
+    return out
+
+
+def study_files_for_reviewer(repo_root: str, reviewer: str) -> List[str]:
+    base = os.path.join(repo_root, "prs", reviewer, "study")
+    if not os.path.isdir(base):
+        return []
+    files = []
+    for name in os.listdir(base):
+        if re.match(r"PR-\d+-study\.md$", name):
+            files.append(os.path.join(base, name))
+    # Sort by PR number for determinism
+    def prnum(p: str) -> int:
+        m = re.search(r"(\d+)", os.path.basename(p))
+        return int(m.group(1)) if m else 0
+    return sorted(files, key=prnum)
+
+
+def build_prompt(studyguide: str, diff_text: str, branch: str, base_ref: str) -> str:
+    return (
+        "You are a senior code reviewer. Evaluate the current branch diff against a study guide.\n\n"
+        f"Branch: {branch}\nBase: {base_ref}\n\n"
+        "STUDYGUIDE (Markdown):\n" + studyguide + "\n\n"
+        "DIFF (unified):\n```diff\n" + diff_text + "\n```\n\n"
+        "Task: Determine whether this diff adheres to the DOs and DON'Ts from the studyguide.\n"
+        "- The studyguide might be irrelevant to this diff; mark that clearly.\n"
+        "- If relevant and the diff violates items, list each failing point.\n"
+        "- If everything passes, return a single green check.\n\n"
+        "Output: Respond with EXACTLY one JSON object as RAW JSON (no Markdown, no backticks). Nothing else.\n"
+        "Schema: {\n  \"relevant\": boolean,\n  \"passes\": boolean,\n  \"failures\": string[]  // human-readable descriptions of each violation, empty if passes or irrelevant\n}\n"
+        "Rules:\n- Use true/false for booleans.\n- When irrelevant, set relevant=false and passes=true and failures=[].\n- Do not wrap output in code fences.\n"
+    )
+
+
+def run_codex_exec(prompt: str, last_message_file: Optional[str] = None) -> Tuple[int, str, str]:
+    # Prefer globally installed codex; fallback to cargo run.
+    if shutil.which("codex") is not None:
+        cmd = ["codex", "-c", "model_reasoning_effort=high", "exec"]
+        if last_message_file:
+            cmd.extend(["--output-last-message", last_message_file])
+        return _run(cmd, input_text=prompt)
+    cmd = [
+        "cargo",
+        "run",
+        "--quiet",
+        "--bin",
+        "codex",
+        "--",
+        "-c",
+        "model_reasoning_effort=high",
+        "exec",
+    ]
+    if last_message_file:
+        cmd.extend(["--output-last-message", last_message_file])
+    return _run(cmd, input_text=prompt)
+
+
+def parse_json_from_text(text: str) -> Optional[Dict]:
+    # Accept raw JSON or a fenced ```json block; return parsed dict if possible.
+    text = text.strip()
+    # Prefer raw JSON
+    if text.startswith("{") and text.endswith("}"):
+        try:
+            return json.loads(text)
+        except Exception:
+            pass
+    # Fallback: fenced code block
+    m = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", text, re.IGNORECASE)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except Exception:
+            return None
+    return None
+
+
+def review_one(study_path: str, diff_text: str, branch: str, base_ref: str, out_dir: str) -> Tuple[str, bool, List[str], Optional[str]]:
+    # Returns (study_filename, passes, failures, error)
+    try:
+        with open(study_path, "r", encoding="utf-8") as f:
+            studyguide = f.read()
+        prompt = build_prompt(studyguide, diff_text, branch, base_ref)
+
+        os.makedirs(out_dir, exist_ok=True)
+        tmp_outfile = os.path.join(out_dir, os.path.basename(study_path).replace("-study.md", "-review.json"))
+        code, out, err = run_codex_exec(prompt, last_message_file=tmp_outfile)
+        if code != 0:
+            return (os.path.basename(study_path), False, [], f"codex exec failed (exit {code}): {err.strip()}")
+
+        # Prefer file written by codex; fall back to captured stdout
+        content = None
+        try:
+            if os.path.isfile(tmp_outfile) and os.path.getsize(tmp_outfile) > 0:
+                with open(tmp_outfile, "r", encoding="utf-8") as f:
+                    content = f.read()
+        except Exception:
+            pass
+        if content is None:
+            content = out
+
+        data = parse_json_from_text(content)
+        if not data:
+            return (os.path.basename(study_path), False, [], "could not parse JSON from model output")
+
+        # Normalize file on disk to pretty-printed raw JSON for future reuse.
+        try:
+            with open(tmp_outfile, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+                f.write("\n")
+        except Exception:
+            # Non-fatal
+            pass
+
+        relevant = bool(data.get("relevant", True))
+        passes = bool(data.get("passes", False))
+        failures = list(data.get("failures") or [])
+
+        # If irrelevant, treat as pass-by-default (per schema instructions)
+        if not relevant:
+            passes = True
+            failures = []
+
+        return (os.path.basename(study_path), passes, failures, None)
+    except Exception as e:
+        return (os.path.basename(study_path), False, [], str(e))
+
+
+def print_progress(passed: int, completed: int, total: int, lock: threading.Lock):
+    pct = int((passed / total) * 100) if total else 0
+    width = 30
+    filled = int((passed / total) * width) if total else 0
+    bar = "#" * filled + "-" * (width - filled)
+    with lock:
+        print(f"[{bar}] {passed}/{total} passed ({pct}%), {completed}/{total} completed")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="review",
+        description=(
+            "Run codex checks of current branch diff against each studyguide in prs/<reviewer>/study.\n"
+            "Aggregates results, prints a progress bar and a summary of failed points."
+        ),
+    )
+    parser.add_argument("reviewer", help="GitHub login whose studyguides to use (prs/<reviewer>/study)")
+    parser.add_argument("--jobs", "-j", type=int, default=10, help="Parallel jobs (default: 10)")
+    parser.add_argument("--base", default=None, help="Base ref to diff against (default: auto: origin/main or main)")
+    parser.add_argument("--show-errors", action="store_true", help="Print per-guide errors encountered")
+
+    args = parser.parse_args()
+
+    require("gh", "Install GitHub CLI: https://cli.github.com (used by other tools in this repo)")
+
+    repo_root = detect_repo_root() or os.getcwd()
+    reviewer = args.reviewer
+    guides = study_files_for_reviewer(repo_root, reviewer)
+    if not guides:
+        print(f"No studyguides found in prs/{reviewer}/study.", file=sys.stderr)
+        sys.exit(0)
+
+    branch = get_current_branch()
+    base_ref = args.base or resolve_base_ref()
+    diff_text = get_diff_text(base_ref, "HEAD")
+    if not diff_text.strip():
+        print("Warning: empty diff vs base; all guides may be irrelevant or pass.", file=sys.stderr)
+
+    out_dir = os.path.join(repo_root, "prs", reviewer, "review")
+    os.makedirs(out_dir, exist_ok=True)
+
+    total = len(guides)
+    passed = 0
+    completed = 0
+    lock = threading.Lock()
+    failures_all: List[Tuple[str, str]] = []  # (guide, failure)
+    errors_all: List[Tuple[str, str]] = []    # (guide, error)
+
+    print(f"Running {total} review(s) against {branch} vs {base_ref}…")
+    print_progress(passed, completed, total, lock)
+
+    def task(p: str):
+        return review_one(p, diff_text, branch, base_ref, out_dir)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
+        futs = [ex.submit(task, p) for p in guides]
+        for fut in concurrent.futures.as_completed(futs):
+            guide_name, ok, failures, err = fut.result()
+            with lock:
+                completed += 1
+                if ok:
+                    passed += 1
+                else:
+                    if err:
+                        errors_all.append((guide_name, err))
+                    for f in failures:
+                        failures_all.append((guide_name, f))
+            print_progress(passed, completed, total, lock)
+
+    print("")
+    print(f"Summary: {passed}/{total} guides passing ({int((passed/total)*100) if total else 0}%)")
+    if args.show_errors and errors_all:
+        print("\nErrors:")
+        for g, e in errors_all:
+            print(f"- {g}: {e}")
+
+    if failures_all:
+        print("\nFailed points:")
+        for g, f in failures_all:
+            print(f"- [{g}] {f}")
+    else:
+        print("\nNo failed points detected.")
+
+
+if __name__ == "__main__":
+    main()
