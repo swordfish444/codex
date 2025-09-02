@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+import argparse
+import concurrent.futures
+import json
+import os
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+from typing import Iterable, List, Optional, Set, Tuple
+
+
+def _run(cmd: List[str]) -> Tuple[int, str, str]:
+    proc = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def require_gh():
+    if shutil.which("gh") is None:
+        print("Error: GitHub CLI 'gh' not found. Please install and authenticate.", file=sys.stderr)
+        sys.exit(1)
+
+
+def require_pr2md(script_dir: str) -> str:
+    # Prefer pr2md next to this script; fallback to PATH
+    local = os.path.join(script_dir, "pr2md")
+    if os.path.isfile(local) and os.access(local, os.X_OK):
+        return local
+    if shutil.which("pr2md"):
+        return "pr2md"
+    print("Error: 'pr2md' not found next to this script or in PATH.", file=sys.stderr)
+    sys.exit(1)
+
+
+def parse_repo_from_url(url: str) -> Optional[str]:
+    u = url.strip()
+    if not u:
+        return None
+    if "github.com:" in u:
+        path = u.split("github.com:", 1)[1]
+    elif "github.com/" in u:
+        path = u.split("github.com/", 1)[1]
+    elif u.startswith("github.com/"):
+        path = u.split("github.com/", 1)[1]
+    else:
+        return None
+    if path.endswith(".git"):
+        path = path[:-4]
+    parts = path.strip("/").split("/")
+    if len(parts) >= 2:
+        return f"{parts[0]}/{parts[1]}"
+    return None
+
+
+def detect_repo_from_git() -> Optional[str]:
+    code, out, _ = _run(["git", "rev-parse", "--is-inside-work-tree"])
+    if code != 0 or out.strip() != "true":
+        return None
+    code, origin_url, _ = _run(["git", "config", "--get", "remote.origin.url"])
+    if code != 0:
+        return None
+    return parse_repo_from_url(origin_url)
+
+
+def detect_repo_root() -> Optional[str]:
+    code, out, _ = _run(["git", "rev-parse", "--show-toplevel"])
+    if code != 0:
+        return None
+    return out.strip()
+
+
+def iso8601(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def list_review_comment_prs(repo: str, reviewer: str, since_iso: str) -> Set[int]:
+    prs: Set[int] = set()
+    page = 1
+    reviewer_lc = reviewer.lower()
+    while True:
+        path = f"/repos/{repo}/pulls/comments?per_page=100&page={page}&since={since_iso}"
+        code, out, err = _run(["gh", "api", path])
+        if code != 0:
+            print(f"Error: failed to fetch review comments: {err.strip()}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            batch = json.loads(out)
+        except json.JSONDecodeError as e:
+            print(f"Error: could not parse review comments JSON: {e}", file=sys.stderr)
+            sys.exit(1)
+        if not batch:
+            break
+        for c in batch:
+            user = (c.get("user") or {}).get("login", "").lower()
+            if user != reviewer_lc:
+                continue
+            pr_url = c.get("pull_request_url") or ""
+            # Expect .../pulls/<number>
+            try:
+                pr_number = int(pr_url.rstrip("/").split("/")[-1])
+                prs.add(pr_number)
+            except Exception:
+                continue
+        if len(batch) < 100:
+            break
+        page += 1
+        if page > 50:
+            break
+    return prs
+
+
+def list_recent_prs(repo: str, days: int) -> List[int]:
+    # As a fallback: list PRs updated in the window via gh and parse numbers.
+    # Uses GitHub search qualifiers supported by `gh pr list --search`.
+    since_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    code, out, err = _run([
+        "gh",
+        "pr",
+        "list",
+        "-R",
+        repo,
+        "--state",
+        "all",
+        "--search",
+        f"updated:>={since_date}",
+        "--json",
+        "number",
+    ])
+    if code != 0:
+        print(f"Error: failed to list recent PRs: {err.strip()}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return []
+    return [int(x.get("number")) for x in data if isinstance(x.get("number"), int)]
+
+
+def ensure_dir(path: str):
+    os.makedirs(path, exist_ok=True)
+
+
+def run_pr2md(pr2md_path: str, repo: str, pr_number: int, reviewer: str, out_dir: str) -> Tuple[int, str]:
+    out_file = None
+    try:
+        out_file = os.path.join(out_dir, f"PR-{pr_number}.md")
+        cmd = [pr2md_path, str(pr_number), repo, "--reviewer", reviewer]
+        code, out, err = _run(cmd)
+        if code != 0:
+            return pr_number, f"error: {err.strip() or 'pr2md failed'}"
+        with open(out_file, "w", encoding="utf-8") as f:
+            f.write(out)
+        return pr_number, "ok"
+    except Exception as e:
+        return pr_number, f"error: {e}"
+
+
+def dedupe(seq: Iterable[int]) -> List[int]:
+    seen = set()
+    out: List[int] = []
+    for n in seq:
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="lastprs",
+        description=(
+            "Generate Markdown via pr2md for PRs a reviewer commented on in the last N days.\n"
+            "Outputs files under prs/<reviewer>/ in the current repo."
+        ),
+    )
+    parser.add_argument("days", type=int, help="Number of days to look back (N)")
+    parser.add_argument("reviewer", help="GitHub login of the reviewer")
+    parser.add_argument(
+        "repo",
+        nargs="?",
+        help="Repository in 'owner/repo' form; inferred from git origin if omitted",
+    )
+    parser.add_argument(
+        "--jobs",
+        "-j",
+        type=int,
+        default=min(8, (os.cpu_count() or 4)),
+        help="Parallel jobs when invoking pr2md (default: min(8, CPUs))",
+    )
+
+    args = parser.parse_args()
+
+    if args.days <= 0:
+        print("Error: days must be a positive integer.", file=sys.stderr)
+        sys.exit(2)
+
+    require_gh()
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    pr2md_path = require_pr2md(script_dir)
+
+    repo = args.repo or detect_repo_from_git()
+    if not repo:
+        print(
+            "Error: Could not determine repository from git origin. Pass repo as 'owner/repo'.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    # Compute window
+    since = datetime.now(timezone.utc) - timedelta(days=args.days)
+    since_iso = iso8601(since)
+
+    # Identify PRs with review comments by reviewer since the cutoff
+    pr_set = list_review_comment_prs(repo, args.reviewer, since_iso)
+
+    if not pr_set:
+        # Fallback: scan recently updated PRs and check comments per-PR
+        recent = list_recent_prs(repo, args.days)
+        pr_set = set()
+        reviewer_lc = args.reviewer.lower()
+        for pr_num in recent:
+            # Query review comments for this PR and filter by user + since
+            page = 1
+            found = False
+            while True:
+                path = f"/repos/{repo}/pulls/{pr_num}/comments?per_page=100&page={page}"
+                code, out, err = _run(["gh", "api", path])
+                if code != 0:
+                    break
+                try:
+                    batch = json.loads(out)
+                except json.JSONDecodeError:
+                    break
+                if not batch:
+                    break
+                for c in batch:
+                    user = (c.get("user") or {}).get("login", "").lower()
+                    created_at = c.get("created_at") or c.get("updated_at") or ""
+                    if user == reviewer_lc and created_at >= since_iso:
+                        found = True
+                        break
+                if found or len(batch) < 100:
+                    break
+                page += 1
+                if page > 20:
+                    break
+            if found:
+                pr_set.add(pr_num)
+
+    prs = sorted(dedupe(pr_set))
+
+    if not prs:
+        print(
+            f"No PRs in {repo} with review comments from {args.reviewer} in the last {args.days} days.",
+            file=sys.stderr,
+        )
+        return
+
+    # Determine output directory under the repo root
+    repo_root = detect_repo_root() or os.getcwd()
+    out_dir = os.path.join(repo_root, "prs", args.reviewer)
+    ensure_dir(out_dir)
+
+    # Run pr2md in parallel
+    print(f"Found {len(prs)} PR(s). Writing Markdown to {out_dir}")
+    results: List[Tuple[int, str]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
+        futs = [
+            ex.submit(run_pr2md, pr2md_path, repo, pr_num, args.reviewer, out_dir)
+            for pr_num in prs
+        ]
+        for fut in concurrent.futures.as_completed(futs):
+            results.append(fut.result())
+
+    ok = sum(1 for _, s in results if s == "ok")
+    failures = [(n, s) for n, s in results if s != "ok"]
+    for n, s in failures:
+        print(f"PR {n}: {s}", file=sys.stderr)
+    print(f"Done. {ok}/{len(prs)} succeeded.")
+
+
+if __name__ == "__main__":
+    main()
