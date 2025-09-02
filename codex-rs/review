@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def _run(cmd: List[str], input_text: Optional[str] = None) -> Tuple[int, str, str]:
@@ -104,8 +104,8 @@ def build_prompt(studyguide: str, diff_text: str, branch: str, base_ref: str) ->
         "- If relevant and the diff violates items, list each failing point.\n"
         "- If everything passes, return a single green check.\n\n"
         "Output: Respond with EXACTLY one JSON object as RAW JSON (no Markdown, no backticks). Nothing else.\n"
-        "Schema: {\n  \"relevant\": boolean,\n  \"passes\": boolean,\n  \"failures\": string[]  // human-readable descriptions of each violation, empty if passes or irrelevant\n}\n"
-        "Rules:\n- Use true/false for booleans.\n- When irrelevant, set relevant=false and passes=true and failures=[].\n- Do not wrap output in code fences.\n"
+        "Schema: {\n  \"relevant\": boolean,\n  \"passes\": boolean,\n  \"failures\": [\n    { \"issue\": string, \"file\": string, \"line\": number, \"excerpt\": string }\n  ]  // empty if passes or irrelevant\n}\n"
+        "Rules:\n- Use true/false for booleans.\n- Provide best-effort file and 1-based line number from the diff; if unknown, use an empty string for file and -1 for line.\n- excerpt should be a short single-line or trimmed code snippet near the line.\n- When irrelevant, set relevant=false and passes=true and failures=[].\n- Do not wrap output in code fences.\n"
     )
 
 
@@ -151,6 +151,29 @@ def parse_json_from_text(text: str) -> Optional[Dict]:
     return None
 
 
+def _format_failure_item(item: Any) -> str:
+    if isinstance(item, str):
+        # Keep backward-compat strings
+        return item.strip()
+    if isinstance(item, dict):
+        issue = str(item.get("issue", "")).strip()
+        file = str(item.get("file", "")).strip()
+        line = item.get("line")
+        try:
+            line = int(line) if line is not None else -1
+        except Exception:
+            line = -1
+        excerpt = str(item.get("excerpt", "")).strip()
+        header = f"@{file}:{line}" if file else "@"
+        lines: List[str] = [header]
+        if excerpt:
+            lines.append(excerpt)
+        if issue:
+            lines.append(f"> {issue}")
+        return "\n".join(lines).strip()
+    return str(item).strip()
+
+
 def review_one(study_path: str, diff_text: str, branch: str, base_ref: str, out_dir: str) -> Tuple[str, bool, List[str], Optional[str]]:
     # Returns (study_filename, passes, failures, error)
     try:
@@ -190,7 +213,8 @@ def review_one(study_path: str, diff_text: str, branch: str, base_ref: str, out_
 
         relevant = bool(data.get("relevant", True))
         passes = bool(data.get("passes", False))
-        failures = list(data.get("failures") or [])
+        raw_failures = list(data.get("failures") or [])
+        failures = [_format_failure_item(x) for x in raw_failures]
 
         # If irrelevant, treat as pass-by-default (per schema instructions)
         if not relevant:
@@ -213,10 +237,11 @@ def aggregate_deduplicate(failures_all: List[Tuple[str, str]], diff_text: str, o
     prompt = (
         "You are assisting with de-duplicating code review issues.\n\n"
         "DIFF (unified):\n```diff\n" + diff_text + "\n```\n\n"
-        "Issues to consider (may include duplicates):\n" + items + "\n\n"
-        "Please deduplicate these issues. Some may be redundant; output the list of unique issues only.\n"
-        "Do not summarize or rephrase if it changes meaning; pick the versions that are most descriptive.\n"
-        "Output: ONLY a bullet list of the unique issues (no introduction, no conclusion)."
+        "Issues to consider (may include duplicates). Each item may include file:line headers and excerpts; treat those as context only.\n"
+        + items + "\n\n"
+        "Please deduplicate these issues. Ignore file paths/line numbers and excerpts when comparing; group by semantic issue.\n"
+        "Output the list of unique issues ONLY as a bullet list, selecting the most descriptive phrasing for each.\n"
+        "Do not add commentary, headings, or reformatting beyond a bullet list."
     )
     code, out, err = run_codex_exec(prompt, last_message_file=out_path)
     if code != 0:
@@ -390,23 +415,37 @@ def main():
     else:
         print("\nNo failed points detected.")
 
-    # 4) Aggregate via Codex: deduplicate, then rank
+    # 4) Aggregate via Codex: deduplicate (optional), then rank
     if failures_all:
         print("\nAggregating failed points…")
-        dedup_path, dedup_err = aggregate_deduplicate(failures_all, diff_text, out_dir)
-        if dedup_err:
-            print(f"Dedup error: {dedup_err}", file=sys.stderr)
-        else:
+        dedup_text = ''
+        dedup_path = os.path.join(out_dir, "aggregate-dedup.md")
+        if len(failures_all) == 1:
+            # Skip model deduplication for a single issue; still write a trace file.
+            single = failures_all[0]
+            dedup_text = f"- [{single[0]}] {single[1]}\n"
             try:
-                with open(dedup_path, 'r', encoding='utf-8') as f:
-                    dedup_text = f.read()
-                print(f"\nDeduplicated issues written to: {dedup_path}\n")
-                print(dedup_text.strip()[:2000])
+                with open(dedup_path, 'w', encoding='utf-8') as f:
+                    f.write(dedup_text)
             except Exception as e:
-                print(f"Failed to read dedup file: {e}", file=sys.stderr)
-                dedup_text = ''
+                print(f"Failed to write dedup file: {e}", file=sys.stderr)
+        else:
+            path, dedup_err = aggregate_deduplicate(failures_all, diff_text, out_dir)
+            if dedup_err:
+                print(f"Dedup error: {dedup_err}", file=sys.stderr)
+            else:
+                dedup_path = path
+                try:
+                    with open(dedup_path, 'r', encoding='utf-8') as f:
+                        dedup_text = f.read()
+                except Exception as e:
+                    print(f"Failed to read dedup file: {e}", file=sys.stderr)
+                    dedup_text = ''
 
-        if not dedup_err and dedup_text.strip():
+        if dedup_text.strip():
+            print(f"\nDeduplicated issues written to: {dedup_path}\n")
+            print(dedup_text.strip()[:2000])
+
             ranked_path, rank_err = aggregate_rank(dedup_text, diff_text, out_dir)
             if rank_err:
                 print(f"Ranking error: {rank_err}", file=sys.stderr)
