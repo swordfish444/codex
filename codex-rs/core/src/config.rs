@@ -171,7 +171,6 @@ pub struct Config {
 
     pub tools_web_search_request: bool,
 
-
     /// The value for the `originator` header included with Responses API requests.
     pub responses_originator_header: String,
 

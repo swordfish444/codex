@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::config_edit_tool::create_get_config_tool;
 use crate::config_edit_tool::create_set_config_tool;
-use crate::config_edit_tool::create_show_config_docs_tool;
+use crate::config_edit_tool::create_show_codex_docs_tool;
 use crate::model_family::ModelFamily;
 use crate::plan_tool::PLAN_TOOL;
 use crate::protocol::AskForApproval;
@@ -576,7 +576,7 @@ pub(crate) fn get_openai_tools(
     // Always include internal config tools.
     tools.push(create_get_config_tool());
     tools.push(create_set_config_tool());
-    tools.push(create_show_config_docs_tool());
+    tools.push(create_show_codex_docs_tool());
 
     // Include the view_image tool so the agent can attach images to context.
     if config.include_view_image_tool {
@@ -658,7 +658,7 @@ mod tests {
                 "web_search",
                 "get_config",
                 "set_config",
-                "show_config_docs",
+                "show_codex_docs",
                 "view_image",
             ],
         );
@@ -687,7 +687,7 @@ mod tests {
                 "web_search",
                 "get_config",
                 "set_config",
-                "show_config_docs",
+                "show_codex_docs",
                 "view_image",
             ],
         );
@@ -751,7 +751,7 @@ mod tests {
                 "web_search",
                 "get_config",
                 "set_config",
-                "show_config_docs",
+                "show_codex_docs",
                 "view_image",
                 "test_server/do_something_cool",
             ],
@@ -872,7 +872,7 @@ mod tests {
                 "shell",
                 "get_config",
                 "set_config",
-                "show_config_docs",
+                "show_codex_docs",
                 "view_image",
                 "test_server/cool",
                 "test_server/do",
@@ -925,7 +925,7 @@ mod tests {
                 "web_search",
                 "get_config",
                 "set_config",
-                "show_config_docs",
+                "show_codex_docs",
                 "dash/search",
             ],
         );
@@ -993,7 +993,7 @@ mod tests {
                 "get_config",
                 "set_config",
                 "view_image",
-                "show_config_docs",
+                "show_codex_docs",
                 "dash/paginate",
             ],
         );
@@ -1057,7 +1057,7 @@ mod tests {
                 "web_search",
                 "get_config",
                 "set_config",
-                "show_config_docs",
+                "show_codex_docs",
                 "dash/tags",
             ],
         );
@@ -1125,7 +1125,7 @@ mod tests {
                 "web_search",
                 "get_config",
                 "set_config",
-                "show_config_docs",
+                "show_codex_docs",
                 "dash/value",
             ],
         );

@@ -3,21 +3,55 @@ use crate::config::find_codex_home;
 use crate::openai_tools::JsonSchema;
 use crate::openai_tools::OpenAiTool;
 use crate::openai_tools::ResponsesApiTool;
+use crate::protocol::ReviewDecision;
+use codex_apply_patch::ApplyPatchAction;
+use codex_apply_patch::MaybeApplyPatchVerified;
+use codex_apply_patch::maybe_parse_apply_patch_verified;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseInputItem;
+use rust_embed::RustEmbed;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
-use crate::protocol::ReviewDecision;
-use codex_apply_patch::maybe_parse_apply_patch_verified;
-use codex_apply_patch::MaybeApplyPatchVerified;
-use codex_apply_patch::ApplyPatchAction;
+use std::path::Path;
+use std::path::PathBuf;
 
 const CONFIG_TOML_FILE: &str = "config.toml";
 
 // Embed docs at compile time.
-const CONFIG_DOCS_MD: &str = include_str!("../../../docs/config.md");
+// README from the repo root
+const README_MD: &str = include_str!("../../../README.md");
+// Entire docs directory from the repo root (only *.md files are embedded)
+#[derive(RustEmbed)]
+#[folder = "../../docs"]
+#[include = "**/*.md"]
+struct EmbeddedDocs;
+
+fn push_separator(buf: &mut String) {
+    buf.push_str("\n\n---\n\n");
+}
+
+fn build_all_codex_docs() -> String {
+    let mut out = String::new();
+    out.push_str("# Codex Documentation\n\n");
+    out.push_str("<!-- Source: README.md -->\n\n");
+    out.push_str(README_MD);
+
+    // Add markdown files from ../docs recursively (embedded at compile time)
+    let mut paths: Vec<String> = EmbeddedDocs::iter()
+        .map(|p| p.as_ref().to_string())
+        .collect();
+    paths.sort();
+    for path in paths.into_iter() {
+        if let Some(file) = EmbeddedDocs::get(&path) {
+            push_separator(&mut out);
+            out.push_str(&format!("<!-- Source: {} -->\n\n", path));
+            out.push_str(&String::from_utf8_lossy(&file.data));
+        }
+    }
+
+    out
+}
 
 /// get_config() — fetches the current config.toml.
 pub(crate) fn create_get_config_tool() -> OpenAiTool {
@@ -59,11 +93,11 @@ pub(crate) fn create_set_config_tool() -> OpenAiTool {
     })
 }
 
-/// show_config_docs() — returns the configuration documentation.
-pub(crate) fn create_show_config_docs_tool() -> OpenAiTool {
+/// show_codex_docs() — returns Codex documentation.
+pub(crate) fn create_show_codex_docs_tool() -> OpenAiTool {
     OpenAiTool::Function(ResponsesApiTool {
-        name: "show_config_docs".to_string(),
-        description: "Returns the configuration documentation. If you need to know how to configure something in Codex or what configuration options are available, call this tool and use it to inform your answer.".to_string(),
+        name: "show_codex_docs".to_string(),
+        description: "Returns Codex documentation, including the repo README and all user docs under docs/. Use this when you need information about configuration, setup, features, or usage.".to_string(),
         strict: false,
         parameters: JsonSchema::Object {
             properties: BTreeMap::new(),
@@ -122,7 +156,7 @@ pub(crate) async fn handle_set_config(
                     content: format!("failed to parse function arguments: {e}"),
                     success: None,
                 },
-            }
+            };
         }
     };
     // Validate TOML and ensure it can be materialized into a runtime Config.
@@ -195,22 +229,24 @@ pub(crate) async fn handle_set_config(
         if v.last().is_some_and(|l| l.is_empty()) {
             v.pop();
         }
-        v.into_iter().map(|l| l.to_string()).collect::<Vec<String>>()
+        v.into_iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<String>>()
     };
 
     let patch_body = if let Some(curr) = &current {
         let mut body = format!("*** Update File: {}\n@@\n", path.display());
         for line in make_lines(curr) {
-            body.push_str(&format!("-{}\n", line));
+            body.push_str(&format!("-{line}\n"));
         }
         for line in make_lines(&args.new_config) {
-            body.push_str(&format!("+{}\n", line));
+            body.push_str(&format!("+{line}\n"));
         }
         body
     } else {
         let mut body = format!("*** Add File: {}\n", path.display());
         for line in make_lines(&args.new_config) {
-            body.push_str(&format!("+{}\n", line));
+            body.push_str(&format!("+{line}\n"));
         }
         body
     };
@@ -265,16 +301,16 @@ pub(crate) async fn handle_set_config(
             };
         }
     }
-    if let Some(parent) = path.parent() {
-        if let Err(e) = fs::create_dir_all(parent) {
-            return ResponseInputItem::FunctionCallOutput {
-                call_id,
-                output: FunctionCallOutputPayload {
-                    content: format!("failed to create config directory: {e}"),
-                    success: Some(false),
-                },
-            };
-        }
+    if let Some(parent) = path.parent()
+        && let Err(e) = fs::create_dir_all(parent)
+    {
+        return ResponseInputItem::FunctionCallOutput {
+            call_id,
+            output: FunctionCallOutputPayload {
+                content: format!("failed to create config directory: {e}"),
+                success: Some(false),
+            },
+        };
     }
     match fs::write(&path, args.new_config.as_bytes()) {
         Ok(_) => ResponseInputItem::FunctionCallOutput {
@@ -294,16 +330,17 @@ pub(crate) async fn handle_set_config(
     }
 }
 
-pub(crate) async fn handle_show_config_docs(
+pub(crate) async fn handle_show_codex_docs(
     _session: &Session,
     _arguments: String,
     _sub_id: String,
     call_id: String,
 ) -> ResponseInputItem {
+    let content = build_all_codex_docs();
     ResponseInputItem::FunctionCallOutput {
         call_id,
         output: FunctionCallOutputPayload {
-            content: CONFIG_DOCS_MD.to_string(),
+            content,
             success: Some(true),
         },
     }
