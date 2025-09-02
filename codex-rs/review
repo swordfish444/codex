@@ -68,6 +68,17 @@ def get_changed_files_count(base_ref: str, head_ref: str) -> int:
     return sum(1 for ln in out.splitlines() if ln.strip())
 
 
+# Approximate token estimation: ~4 characters per token heuristic.
+MAX_DIFF_TOKENS = 50_000
+
+
+def estimate_tokens_approx(text: str) -> int:
+    # Conservative: 1 token per 4 characters; at least number of whitespace-separated words.
+    by_chars = (len(text) + 3) // 4
+    by_words = len(text.split())
+    return max(by_chars, by_words)
+
+
 def study_files_in_dir(base: str) -> List[str]:
     if not os.path.isdir(base):
         return []
@@ -191,6 +202,65 @@ def review_one(study_path: str, diff_text: str, branch: str, base_ref: str, out_
         return (os.path.basename(study_path), False, [], str(e))
 
 
+def aggregate_deduplicate(failures_all: List[Tuple[str, str]], diff_text: str, out_dir: str) -> Tuple[str, Optional[str]]:
+    """Run Codex to deduplicate failures. Returns (outfile_path, error_or_none)."""
+    if not failures_all:
+        return ("", None)
+
+    out_path = os.path.join(out_dir, "aggregate-dedup.md")
+    # Build input list
+    items = "\n".join(f"- [{guide}] {text}" for guide, text in failures_all)
+    prompt = (
+        "You are assisting with de-duplicating code review issues.\n\n"
+        "DIFF (unified):\n```diff\n" + diff_text + "\n```\n\n"
+        "Issues to consider (may include duplicates):\n" + items + "\n\n"
+        "Please deduplicate these issues. Some may be redundant; output the list of unique issues only.\n"
+        "Do not summarize or rephrase if it changes meaning; pick the versions that are most descriptive.\n"
+        "Output: ONLY a bullet list of the unique issues (no introduction, no conclusion)."
+    )
+    code, out, err = run_codex_exec(prompt, last_message_file=out_path)
+    if code != 0:
+        return (out_path, f"codex exec failed (exit {code}): {err.strip()}")
+    # Fallback: ensure the file contains something
+    try:
+        wrote = os.path.isfile(out_path) and os.path.getsize(out_path) > 0
+        if not wrote:
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(out)
+    except Exception as e:
+        return (out_path, f"failed to write dedup output: {e}")
+    return (out_path, None)
+
+
+def aggregate_rank(dedup_text: str, diff_text: str, out_dir: str) -> Tuple[str, Optional[str]]:
+    out_path = os.path.join(out_dir, "aggregate-ranked.md")
+    prompt = (
+        "You are assisting with triage and prioritization of code review issues.\n\n"
+        "DIFF (unified):\n```diff\n" + diff_text + "\n```\n\n"
+        "Issues (one per line or bullet):\n" + dedup_text + "\n\n"
+        "Task: For each issue, assign a category: P0, P1, P2, NIT, WRONG, IRRELEVANT.\n"
+        "- P0: Must-fix to prevent breakage/security/data loss.\n"
+        "- P1: Strongly recommended for correctness/perf/maintainability.\n"
+        "- P2: Nice-to-have improvements or polish.\n"
+        "- NIT: Stylistic nitpick.\n"
+        "- WRONG: The issue is incorrect given the diff.\n"
+        "- IRRELEVANT: Not applicable to this diff.\n\n"
+        "Output: EXACTLY a Markdown document grouped by sections with these headers (omit empty):\n"
+        "## P0\n- ...\n\n## P1\n- ...\n\n## P2\n- ...\n\n## NIT\n- ...\n\n## WRONG\n- ...\n\n## IRRELEVANT\n- ...\n"
+    )
+    code, out, err = run_codex_exec(prompt, last_message_file=out_path)
+    if code != 0:
+        return (out_path, f"codex exec failed (exit {code}): {err.strip()}")
+    try:
+        wrote = os.path.isfile(out_path) and os.path.getsize(out_path) > 0
+        if not wrote:
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(out)
+    except Exception as e:
+        return (out_path, f"failed to write ranked output: {e}")
+    return (out_path, None)
+
+
 def print_progress(passed: int, completed: int, total: int, lock: threading.Lock):
     pct = int((passed / total) * 100) if total else 0
     width = 30
@@ -255,6 +325,7 @@ def main():
     base_ref = args.base or resolve_base_ref()
     diff_text = get_diff_text(base_ref, "HEAD")
     files_changed = get_changed_files_count(base_ref, "HEAD")
+    est_tokens = estimate_tokens_approx(diff_text)
     if not diff_text.strip():
         print("Warning: empty diff vs base; all guides may be irrelevant or pass.", file=sys.stderr)
 
@@ -274,6 +345,13 @@ def main():
 
     print(f"Running {total} review(s) against {branch} vs {base_ref}…")
     print(f"Files changed: {files_changed}")
+    print(f"Estimated diff tokens: {est_tokens} (limit {MAX_DIFF_TOKENS})")
+    if est_tokens > MAX_DIFF_TOKENS:
+        print(
+            f"Error: diff is too large to review (estimated {est_tokens} tokens > limit {MAX_DIFF_TOKENS}).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     print(f"Study dir: {study_dir}")
     print(f"Output dir: {out_dir}")
     if args.limit is not None and args.limit < total_available:
@@ -311,6 +389,35 @@ def main():
             print(f"- [{g}] {f}")
     else:
         print("\nNo failed points detected.")
+
+    # 4) Aggregate via Codex: deduplicate, then rank
+    if failures_all:
+        print("\nAggregating failed points…")
+        dedup_path, dedup_err = aggregate_deduplicate(failures_all, diff_text, out_dir)
+        if dedup_err:
+            print(f"Dedup error: {dedup_err}", file=sys.stderr)
+        else:
+            try:
+                with open(dedup_path, 'r', encoding='utf-8') as f:
+                    dedup_text = f.read()
+                print(f"\nDeduplicated issues written to: {dedup_path}\n")
+                print(dedup_text.strip()[:2000])
+            except Exception as e:
+                print(f"Failed to read dedup file: {e}", file=sys.stderr)
+                dedup_text = ''
+
+        if not dedup_err and dedup_text.strip():
+            ranked_path, rank_err = aggregate_rank(dedup_text, diff_text, out_dir)
+            if rank_err:
+                print(f"Ranking error: {rank_err}", file=sys.stderr)
+            else:
+                try:
+                    with open(ranked_path, 'r', encoding='utf-8') as f:
+                        ranked_text = f.read()
+                    print(f"\nRanked issues written to: {ranked_path}\n")
+                    print(ranked_text.strip()[:2000])
+                except Exception as e:
+                    print(f"Failed to read ranked file: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":
