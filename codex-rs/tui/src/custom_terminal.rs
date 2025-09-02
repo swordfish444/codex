@@ -22,6 +22,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 use std::io;
+use std::io::ErrorKind;
 
 use ratatui::backend::Backend;
 use ratatui::backend::ClearType;
@@ -200,7 +201,14 @@ where
     /// Creates a new [`Terminal`] with the given [`Backend`] and [`TerminalOptions`].
     pub fn with_options(mut backend: B) -> io::Result<Self> {
         let screen_size = backend.size()?;
-        let cursor_pos = backend.get_cursor_position()?;
+        let cursor_pos = match backend.get_cursor_position() {
+            Ok(position) => position,
+            Err(error) if is_get_cursor_position_timeout_error(&error) => {
+                eprintln!("cursor position read timed out during startup: {error}");
+                Position { x: 0, y: 0 }
+            }
+            Err(error) => return Err(error),
+        };
         Ok(Self {
             backend,
             buffers: [
@@ -406,7 +414,17 @@ where
     /// This is the position of the cursor after the last draw call.
     #[allow(dead_code)]
     pub fn get_cursor_position(&mut self) -> io::Result<Position> {
-        self.backend.get_cursor_position()
+        match self.backend.get_cursor_position() {
+            Ok(position) => {
+                self.last_known_cursor_pos = position;
+                Ok(position)
+            }
+            Err(error) if is_get_cursor_position_timeout_error(&error) => {
+                eprintln!("cursor position read timed out: {error}");
+                Ok(self.last_known_cursor_pos)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Sets the cursor position.
@@ -440,4 +458,11 @@ where
     pub fn size(&self) -> io::Result<Size> {
         self.backend.size()
     }
+}
+
+// Crossterm occasionally times out while another task holds the terminal for event polling.
+// That error originates here: https://github.com/crossterm-rs/crossterm/blob/6af9116b6a8ba365d8d8e7a806cbce318498b84d/src/cursor/sys/unix.rs#L53
+fn is_get_cursor_position_timeout_error(error: &io::Error) -> bool {
+    error.kind() == ErrorKind::Other
+        && error.to_string() == "The cursor position could not be read within a normal duration"
 }
