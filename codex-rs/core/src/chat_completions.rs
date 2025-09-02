@@ -129,10 +129,21 @@ pub(crate) async fn stream_chat_completions(
                     "content": output,
                 }));
             }
-            ResponseItem::Reasoning { .. }
-            | ResponseItem::WebSearchCall { .. }
-            | ResponseItem::Other => {
-                // Omit these items from the conversation history.
+            ResponseItem::Reasoning {
+                id,
+                summary,
+                content,
+                encrypted_content,
+            } => {
+                tracing::info!("reasoning item: {:?}", item);
+                messages.push(json!({
+                    "role": "assistant",
+                    "content": null,
+                    "reasoning": content,
+                }));
+            }
+            ResponseItem::WebSearchCall { .. } | ResponseItem::Other => {
+                tracing::info!("omitting item from chat completions: {:?}", item);
                 continue;
             }
         }
@@ -350,6 +361,8 @@ async fn process_chat_sse<S>(
                 }
 
                 if let Some(reasoning) = maybe_text {
+                    // Accumulate so we can emit a terminal Reasoning item at end-of-turn.
+                    reasoning_text.push_str(&reasoning);
                     let _ = tx_event
                         .send(Ok(ResponseEvent::ReasoningContentDelta(reasoning)))
                         .await;
