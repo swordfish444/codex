@@ -92,14 +92,12 @@ pub fn maybe_parse_apply_patch(argv: &[String]) -> MaybeApplyPatch {
             Ok(source) => MaybeApplyPatch::Body(source),
             Err(e) => MaybeApplyPatch::PatchParseError(e),
         },
-        [bash, flag, script]
-            if bash == "bash"
-                && flag == "-lc"
-                && APPLY_PATCH_COMMANDS
-                    .iter()
-                    .any(|cmd| script.trim_start().starts_with(cmd)) =>
-        {
-            match extract_heredoc_body_from_apply_patch_command(script) {
+        [bash, flag, script] if bash == "bash" && flag == "-lc" => {
+            let trimmed_script = script.trim_start();
+            let Some(apply_patch_command) = strip_to_apply_patch(trimmed_script) else {
+                return MaybeApplyPatch::NotApplyPatch;
+            };
+            match extract_heredoc_body_from_apply_patch_command(apply_patch_command) {
                 Ok(body) => match parse_patch(&body) {
                     Ok(source) => MaybeApplyPatch::Body(source),
                     Err(e) => MaybeApplyPatch::PatchParseError(e),
@@ -108,6 +106,32 @@ pub fn maybe_parse_apply_patch(argv: &[String]) -> MaybeApplyPatch {
             }
         }
         _ => MaybeApplyPatch::NotApplyPatch,
+    }
+}
+
+fn strip_to_apply_patch(script: &str) -> Option<&str> {
+    let trimmed = script.trim_start();
+    for cmd in APPLY_PATCH_COMMANDS {
+        if trimmed.starts_with(cmd) {
+            return Some(trimmed);
+        }
+    }
+
+    for cmd in APPLY_PATCH_COMMANDS {
+        for (idx, _) in trimmed.match_indices(cmd) {
+            if has_command_boundary(trimmed, idx) {
+                return Some(trimmed[idx..].trim_start());
+            }
+        }
+    }
+    None
+}
+
+fn has_command_boundary(full: &str, index: usize) -> bool {
+    let preceding = full[..index].chars().rev().find(|c| !c.is_whitespace());
+    match preceding {
+        None => true,
+        Some(c) => matches!(c, ';' | '&' | '|' | '(' | ')' | '\n'),
     }
 }
 
@@ -761,6 +785,33 @@ mod tests {
             "bash",
             "-lc",
             r#"apply_patch <<'PATCH'
+*** Begin Patch
+*** Add File: foo
++hi
+*** End Patch
+PATCH"#,
+        ]);
+
+        match maybe_parse_apply_patch(&args) {
+            MaybeApplyPatch::Body(ApplyPatchArgs { hunks, patch: _ }) => {
+                assert_eq!(
+                    hunks,
+                    vec![Hunk::AddFile {
+                        path: PathBuf::from("foo"),
+                        contents: "hi\n".to_string()
+                    }]
+                );
+            }
+            result => panic!("expected MaybeApplyPatch::Body got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn test_heredoc_with_cd_prefix() {
+        let args = strs_to_strings(&[
+            "bash",
+            "-lc",
+            r#"cd /tmp && apply_patch <<'PATCH'
 *** Begin Patch
 *** Add File: foo
 +hi
