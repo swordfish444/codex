@@ -298,6 +298,15 @@ def _study_fill_studyguides(data: Dict[str, Any], reviewer: str, jobs: int = 10,
                     obj["studyguide"] = sg
                     with save_lock:
                         save_reviewer_json(reviewer, data)
+                        # After saving into JSON, delete the per‑PR study file unless in debug mode
+                        if not debug:
+                            try:
+                                os.remove(os.path.join(dump_dir, f"PR-{n}-study.md"))
+                            except FileNotFoundError:
+                                pass
+                            except Exception:
+                                # best‑effort cleanup; ignore failures
+                                pass
             completed += 1
             print_study_progress(completed, total, lock)
     # Apply
