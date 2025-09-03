@@ -37,6 +37,60 @@ def detect_repo_root() -> Optional[str]:
     return out.strip()
 
 
+def parse_repo_from_url(url: str) -> Optional[str]:
+    u = url.strip()
+    if not u:
+        return None
+    if "github.com:" in u:
+        path = u.split("github.com:", 1)[1]
+    elif "github.com/" in u:
+        path = u.split("github.com/", 1)[1]
+    elif u.startswith("github.com/"):
+        path = u.split("github.com/", 1)[1]
+    else:
+        return None
+    if path.endswith(".git"):
+        path = path[:-4]
+    parts = path.strip("/").split("/")
+    if len(parts) >= 2:
+        return f"{parts[0]}/{parts[1]}"
+    return None
+
+
+def detect_repo_from_git() -> Optional[str]:
+    code, out, _ = _run(["git", "rev-parse", "--is-inside-work-tree"])
+    if code != 0 or out.strip() != "true":
+        return None
+    code, origin_url, _ = _run(["git", "config", "--get", "remote.origin.url"])
+    if code != 0:
+        return None
+    return parse_repo_from_url(origin_url)
+
+
+def reviewers_json_path(reviewer: str) -> str:
+    root = detect_repo_root() or os.getcwd()
+    path = os.path.join(root, "reviewers")
+    os.makedirs(path, exist_ok=True)
+    return os.path.join(path, f"{reviewer}.json")
+
+
+def load_reviewer_json(reviewer: str) -> Optional[Dict[str, Any]]:
+    p = reviewers_json_path(reviewer)
+    if not os.path.isfile(p):
+        return None
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def save_reviewer_json(reviewer: str, data: Dict[str, Any]):
+    p = reviewers_json_path(reviewer)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+
 def get_current_branch() -> str:
     code, out, _ = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
     return out.strip() if code == 0 else "HEAD"
@@ -130,6 +184,74 @@ def run_codex_exec(prompt: str, last_message_file: Optional[str] = None) -> Tupl
     if last_message_file:
         cmd.extend(["--output-last-message", last_message_file])
     return _run(cmd, input_text=prompt)
+
+
+def build_study_prompt(contents: str, reviewer: str, out_path: str) -> str:
+    return (
+        f"{contents}\n---\n"
+        f"Summarize the takeaways from this PR review by {reviewer} into a concise, practical guide with two checklists: DOs and DON'Ts. "
+        f"Add short, accurate code examples in fenced code blocks to illustrate key points. "
+        f"Output ONLY the final document as your final message — no preamble, no status notes, no explanations about saving files. "
+        f"The CLI will save your final message to {out_path}."
+    )
+
+
+def study_one_from_json(pr_number: int, markdown: str, reviewer: str, dump_dir: str, force: bool = False) -> Tuple[int, Optional[str], Optional[str]]:
+    """Return (pr_number, studyguide_text_or_none, error_or_none)."""
+    try:
+        os.makedirs(dump_dir, exist_ok=True)
+        out_path = os.path.join(dump_dir, f"PR-{pr_number}-study.md")
+        if (not force) and os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
+            with open(out_path, "r", encoding="utf-8") as f:
+                return pr_number, f.read(), None
+        prompt = build_study_prompt(markdown, reviewer, out_path)
+        code, out, err = run_codex_exec(prompt, last_message_file=out_path)
+        if code != 0:
+            return pr_number, None, f"codex exec failed (exit {code}): {err.strip()}"
+        # Fallback to stdout content if file missing/empty
+        try:
+            if (not os.path.isfile(out_path)) or os.path.getsize(out_path) == 0:
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(out)
+        except Exception:
+            pass
+        with open(out_path, "r", encoding="utf-8") as f:
+            return pr_number, f.read(), None
+    except Exception as e:
+        return pr_number, None, str(e)
+
+
+def _study_fill_studyguides(data: Dict[str, Any], reviewer: str, jobs: int = 10, limit: Optional[int] = None, debug: bool = False, force: bool = False):
+    prs = list(data.get("prs") or [])
+    items = []
+    for p in prs:
+        n = p.get("number")
+        md = p.get("markdown", "")
+        if not isinstance(n, int) or not isinstance(md, str) or not md.strip():
+            continue
+        if (not force) and isinstance(p.get("studyguide"), str) and p.get("studyguide").strip():
+            continue
+        items.append((n, md))
+    if limit is not None:
+        items = items[:limit]
+
+    repo_root = detect_repo_root() or os.getcwd()
+    dump_dir = os.path.join(repo_root, "reviewers", "dump", reviewer)
+    if (not debug) and os.path.isdir(dump_dir):
+        shutil.rmtree(dump_dir, ignore_errors=True)
+    os.makedirs(dump_dir, exist_ok=True)
+
+    results: List[Tuple[int, Optional[str], Optional[str]]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
+        futs = [ex.submit(study_one_from_json, n, md, reviewer, dump_dir, force) for (n, md) in items]
+        for fut in concurrent.futures.as_completed(futs):
+            results.append(fut.result())
+    # Apply
+    number_to_study = {n: sg for (n, sg, err) in results if sg}
+    for p in prs:
+        n = p.get("number")
+        if n in number_to_study:
+            p["studyguide"] = number_to_study[n]
 
 
 def parse_json_from_text(text: str) -> Optional[Dict]:
@@ -260,7 +382,70 @@ def review_one(
 
         return (os.path.basename(study_path), passes, failures, structured, None)
     except Exception as e:
-        return (os.path.basename(study_path), False, [], str(e))
+        return (os.path.basename(study_path), False, [], [], str(e))
+
+
+def review_one_from_json(
+    pr_number: int,
+    studyguide_text: str,
+    diff_text: str,
+    branch: str,
+    base_ref: str,
+    out_dir: str,
+    force: bool = False,
+) -> Tuple[str, bool, List[str], List[Dict[str, Any]], Optional[str]]:
+    label = f"PR-{pr_number}-study.md"
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        tmp_outfile = os.path.join(out_dir, f"PR-{pr_number}-review.json")
+
+        content = None
+        if (not force) and os.path.isfile(tmp_outfile) and os.path.getsize(tmp_outfile) > 0:
+            try:
+                with open(tmp_outfile, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except Exception:
+                content = None
+
+        if content is None:
+            prompt = build_prompt(studyguide_text, diff_text, branch, base_ref)
+            code, out, err = run_codex_exec(prompt, last_message_file=tmp_outfile)
+            if code != 0:
+                return (label, False, [], [], f"codex exec failed (exit {code}): {err.strip()}")
+            try:
+                if os.path.isfile(tmp_outfile) and os.path.getsize(tmp_outfile) > 0:
+                    with open(tmp_outfile, "r", encoding="utf-8") as f:
+                        content = f.read()
+                else:
+                    content = out
+            except Exception:
+                content = out
+
+        data = parse_json_from_text(content)
+        if not data:
+            return (label, False, [], [], "could not parse JSON from model output")
+
+        try:
+            with open(tmp_outfile, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+                f.write("\n")
+        except Exception:
+            pass
+
+        relevant = bool(data.get("relevant", True))
+        passes = bool(data.get("passes", False))
+        raw_failures = list(data.get("failures") or [])
+        structured = [_to_structured_failure(label, x) for x in raw_failures]
+        failures = [_format_failure_display(x) for x in structured]
+
+        if not relevant:
+            passes = True
+            failures = []
+            structured = []
+
+        return (label, passes, failures, structured, None)
+    except Exception as e:
+        return (label, False, [], [], str(e))
 
 
 def aggregate_deduplicate(failures_all: List[Dict[str, Any]], diff_text: str, out_dir: str) -> Tuple[str, Optional[List[Dict[str, Any]]], Optional[str]]:
@@ -346,29 +531,52 @@ def print_progress(passed: int, completed: int, total: int, lock: threading.Lock
         print(f"[{bar}] {passed}/{total} passed ({pct}%), {completed}/{total} completed")
 
 
+def study_cli(argv: List[str]):
+    parser = argparse.ArgumentParser(prog="review study", description="Generate studyguides into reviewers/<user>.json and dump files.")
+    parser.add_argument("reviewer", help="GitHub login")
+    parser.add_argument("--days", "-d", type=int, default=30, help="Look back N days for PRs (default: 30)")
+    parser.add_argument("--jobs", "-j", type=int, default=10, help="Parallel jobs (default: 10)")
+    parser.add_argument("--limit", "-n", type=int, default=None, help="Limit number of PRs processed")
+    parser.add_argument("--debug", action="store_true", help="Do not clear reviewers/dump/<reviewer> before running")
+    parser.add_argument("--force", action="store_true", help="Regenerate studyguides even if present")
+    args = parser.parse_args(argv)
+
+    # Ensure reviewers JSON exists via lastprs
+    data = load_reviewer_json(args.reviewer)
+    if data is None:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        local_lastprs = os.path.join(script_dir, "lastprs")
+        lastprs_cmd = local_lastprs if os.path.isfile(local_lastprs) and os.access(local_lastprs, os.X_OK) else "lastprs"
+        code, out, err = _run([lastprs_cmd, str(args.days), args.reviewer])
+        if code != 0:
+            print(f"lastprs failed: {err.strip()}", file=sys.stderr)
+            sys.exit(2)
+        data = load_reviewer_json(args.reviewer)
+        if data is None:
+            print("Failed to load reviewers JSON after lastprs.", file=sys.stderr)
+            sys.exit(2)
+
+    _study_fill_studyguides(data, args.reviewer, jobs=args.jobs, limit=args.limit, debug=args.debug, force=args.force)
+    save_reviewer_json(args.reviewer, data)
+    print(f"Updated reviewers/{args.reviewer}.json with studyguides.")
+
+
 def main():
+    # Subcommand dispatch (lightweight to preserve existing flags)
+    if len(sys.argv) > 1 and sys.argv[1] == "study":
+        study_cli(sys.argv[2:])
+        return
+
     parser = argparse.ArgumentParser(
         prog="review",
         description=(
-            "Run codex checks of current branch diff against each studyguide in prs/<reviewer>/study.\n"
-            "Aggregates results, prints a progress bar and a summary of failed points."
+            "Evaluate the current branch diff against studyguides stored in reviewers/<user>.json.\n"
+            "Aggregates results, shows a progress bar, and writes outputs to reviewers/dump/<user>/."
         ),
     )
-    parser.add_argument("reviewer", help="GitHub login whose studyguides to use (ignored if --study-dir is set)")
+    parser.add_argument("reviewer", help="GitHub login whose studyguides to use (from reviewers/<user>.json)")
     parser.add_argument("--jobs", "-j", type=int, default=10, help="Parallel jobs (default: 10)")
     parser.add_argument("--base", default=None, help="Base ref to diff against (default: auto: origin/main or main)")
-    parser.add_argument(
-        "--study-dir",
-        "-S",
-        default=None,
-        help="Path to a folder containing PR-*-study.md files (overrides default prs/<reviewer>/study)",
-    )
-    parser.add_argument(
-        "--out-dir",
-        "-o",
-        default=None,
-        help="Directory where review JSON files should be written (default: sibling 'review' next to study-dir)",
-    )
     parser.add_argument(
         "--limit",
         "-n",
@@ -382,11 +590,8 @@ def main():
         action="store_true",
         help="Recompute review JSONs even if cached results exist",
     )
-    parser.add_argument(
-        "--clear",
-        action="store_true",
-        help="Clear the output directory (review folder) before running",
-    )
+    parser.add_argument("--debug", action="store_true", help="Do not clear reviewers/dump/<reviewer> before running")
+    # Default behavior: clear reviewers/dump/<reviewer> unless --debug is set in either run or study mode.
 
     args = parser.parse_args()
 
@@ -394,18 +599,60 @@ def main():
 
     repo_root = detect_repo_root() or os.getcwd()
     reviewer = args.reviewer
-    study_dir = os.path.abspath(args.study_dir) if args.study_dir else os.path.join(repo_root, "prs", reviewer, "study")
-    guides = study_files_in_dir(study_dir)
-    if not guides:
-        print(f"No studyguides found in {study_dir}.", file=sys.stderr)
-        sys.exit(0)
 
-    total_available = len(guides)
+    # Preferred source: reviewers/<reviewer>.json
+    data = load_reviewer_json(reviewer)
+    if data is None:
+        repo = detect_repo_from_git() or "owner/repo"
+        print(f"No reviewers/{reviewer}.json found.")
+        try:
+            resp = input(f"Study {reviewer}'s last 100 days of PRs under {repo}? [y/N] ").strip().lower()
+        except EOFError:
+            resp = "n"
+        if resp == "y":
+            code, out, err = _run([os.path.join(repo_root, "lastprs"), "100", reviewer])
+            if code != 0:
+                print(f"lastprs failed: {err.strip()}", file=sys.stderr)
+                sys.exit(2)
+            data = load_reviewer_json(reviewer)
+            if data is None:
+                print("Failed to load reviewers JSON after lastprs.", file=sys.stderr)
+                sys.exit(2)
+            # Prompt to run study now
+            try:
+                resp2 = input("Generate studyguides now? [Y/n] ").strip().lower()
+            except EOFError:
+                resp2 = "y"
+            if resp2 in ("", "y"):
+                _study_fill_studyguides(data, reviewer, jobs=args.jobs, limit=args.limit, debug=False)
+                save_reviewer_json(reviewer, data)
+        else:
+            print("Aborting: reviewer dataset not found.", file=sys.stderr)
+            sys.exit(2)
+
+    # Build list of (pr_number, studyguide)
+    prs = list(data.get("prs") or [])
+    pairs: List[Tuple[int, str]] = []
+    for p in prs:
+        n = p.get("number")
+        sg = p.get("studyguide", "")
+        if isinstance(n, int) and isinstance(sg, str) and sg.strip():
+            pairs.append((n, sg))
+    if not pairs:
+        print(f"No studyguides present in reviewers/{reviewer}.json. Try: ./review study {reviewer}", file=sys.stderr)
+        sys.exit(2)
+    total_available = len(pairs)
     if args.limit is not None:
         if args.limit <= 0:
             print("Error: --limit must be a positive integer.", file=sys.stderr)
             sys.exit(2)
-        guides = guides[: args.limit]
+        pairs = pairs[: args.limit]
+
+    # Output dir: reviewers/dump/<reviewer> (clear unless --debug)
+    out_dir = os.path.join(repo_root, "reviewers", "dump", reviewer)
+    if not getattr(args, "debug", False) and os.path.isdir(out_dir):
+        shutil.rmtree(out_dir, ignore_errors=True)
+    os.makedirs(out_dir, exist_ok=True)
 
     branch = get_current_branch()
     base_ref = args.base or resolve_base_ref()
@@ -415,21 +662,9 @@ def main():
     if not diff_text.strip():
         print("Warning: empty diff vs base; all guides may be irrelevant or pass.", file=sys.stderr)
 
-    if args.out_dir:
-        out_dir = os.path.abspath(args.out_dir)
-    else:
-        # Default: sibling 'review' next to the study folder
-        out_dir = os.path.join(os.path.dirname(study_dir), "review")
-    if args.clear and os.path.isdir(out_dir):
-        # Danger: delete the review folder to start fresh
-        try:
-            shutil.rmtree(out_dir)
-        except Exception as e:
-            print(f"Failed to clear output dir {out_dir}: {e}", file=sys.stderr)
-            sys.exit(2)
-    os.makedirs(out_dir, exist_ok=True)
+    # out_dir already set earlier (reviewers/dump/<reviewer>)
 
-    total = len(guides)
+    total = len(pairs)
     passed = 0
     completed = 0
     lock = threading.Lock()
@@ -445,17 +680,13 @@ def main():
             file=sys.stderr,
         )
         sys.exit(2)
-    print(f"Study dir: {study_dir}")
     print(f"Output dir: {out_dir}")
     if args.limit is not None and args.limit < total_available:
         print(f"Limit: using first {total} of {total_available} guides")
     print_progress(passed, completed, total, lock)
 
-    def task(p: str):
-        return review_one(p, diff_text, branch, base_ref, out_dir, force=args.force)
-
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
-        futs = [ex.submit(task, p) for p in guides]
+        futs = [ex.submit(task, it) for it in pairs]
         for fut in concurrent.futures.as_completed(futs):
             guide_name, ok, failures_display, failures_structured, err = fut.result()
             with lock:
