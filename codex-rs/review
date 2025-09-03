@@ -626,8 +626,9 @@ def print_progress(passed: int, completed: int, total: int, lock: threading.Lock
     width = 30
     filled = int((completed / total) * width) if total else 0
     bar = "#" * filled + "-" * (width - filled)
+    failed = max(0, completed - passed)
     with lock:
-        print(f"[{bar}] {completed}/{total} completed ({pct}%), {passed}/{total} passed")
+        print(f"[{bar}] {completed}/{total} completed ({pct}%), {failed} failed")
 
 
 def print_study_progress(completed: int, total: int, lock: threading.Lock):
@@ -917,7 +918,8 @@ def main():
             print_progress(passed, completed, total, lock)
 
     print("")
-    print(f"Summary: {passed}/{total} guides passing ({int((passed/total)*100) if total else 0}%)")
+    failures_total = max(0, total - passed)
+    print(f"Summary: {failures_total} failed")
     if args.show_errors and errors_all:
         print("\nErrors:")
         for g, e in errors_all:
