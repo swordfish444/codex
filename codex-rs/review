@@ -108,10 +108,17 @@ def load_reviewer_json(reviewer: str) -> Optional[Dict[str, Any]]:
 
 
 def save_reviewer_json(reviewer: str, data: Dict[str, Any]):
+    """Atomically write reviewers/<reviewer>.json to avoid corruption on interrupts."""
     p = reviewers_json_path(reviewer)
-    with open(p, "w", encoding="utf-8") as f:
+    dirpath = os.path.dirname(p)
+    os.makedirs(dirpath, exist_ok=True)
+    tmp_path = os.path.join(dirpath, f".{os.path.basename(p)}.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
         f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, p)
 
 def get_current_branch() -> str:
     code, out, _ = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
@@ -270,10 +277,27 @@ def _study_fill_studyguides(data: Dict[str, Any], reviewer: str, jobs: int = 10,
     print_study_progress(completed, total, lock)
 
     results: List[Tuple[int, Optional[str], Optional[str]]] = []
+    # Build a map for quick updates
+    num_to_obj: Dict[int, Dict[str, Any]] = {}
+    for p in prs:
+        try:
+            n = int(p.get("number"))
+            num_to_obj[n] = p
+        except Exception:
+            continue
+    save_lock = threading.Lock()
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
         futs = [ex.submit(study_one_from_json, n, md, reviewer, dump_dir, force) for (n, md) in items]
         for fut in concurrent.futures.as_completed(futs):
-            results.append(fut.result())
+            n, sg, err = fut.result()
+            results.append((n, sg, err))
+            # Persist incrementally on success
+            if sg:
+                obj = num_to_obj.get(n)
+                if obj is not None:
+                    obj["studyguide"] = sg
+                    with save_lock:
+                        save_reviewer_json(reviewer, data)
             completed += 1
             print_study_progress(completed, total, lock)
     # Apply
