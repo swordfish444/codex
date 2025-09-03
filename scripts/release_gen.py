@@ -314,7 +314,7 @@ def collect_prs_within_range(repo: str, from_iso: str, to_iso: str, gh_timeout_s
     # Sort by actual datetime to avoid lexical issues
     def sort_key(item: dict):
         dt = _parse_iso_to_utc(item.get("merged_at") or "")
-        # Use epoch start as fallback so unparseable items sort last when reverse=True
+        # Use epoch start as fallback so unparsable items sort last when reverse=True
         return dt or datetime(1970, 1, 1, tzinfo=timezone.utc)
 
     out.sort(key=sort_key, reverse=True)
