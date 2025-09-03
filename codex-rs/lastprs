@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import Iterable, List, Optional, Set, Tuple
+from typing import Iterable, List, Optional, Set, Tuple, Dict, Any
 
 
 def _run(cmd: List[str]) -> Tuple[int, str, str]:
@@ -146,19 +146,16 @@ def ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
 
 
-def run_pr2md(pr2md_path: str, repo: str, pr_number: int, reviewer: str, out_dir: str) -> Tuple[int, str]:
-    out_file = None
+def run_pr2md(pr2md_path: str, repo: str, pr_number: int, reviewer: str) -> Tuple[int, str, Optional[str]]:
+    """Return (pr_number, status, markdown_or_none)."""
     try:
-        out_file = os.path.join(out_dir, f"PR-{pr_number}.md")
         cmd = [pr2md_path, str(pr_number), repo, "--reviewer", reviewer]
         code, out, err = _run(cmd)
         if code != 0:
-            return pr_number, f"error: {err.strip() or 'pr2md failed'}"
-        with open(out_file, "w", encoding="utf-8") as f:
-            f.write(out)
-        return pr_number, "ok"
+            return pr_number, f"error: {err.strip() or 'pr2md failed'}", None
+        return pr_number, "ok", out
     except Exception as e:
-        return pr_number, f"error: {e}"
+        return pr_number, f"error: {e}", None
 
 
 def dedupe(seq: Iterable[int]) -> List[int]:
@@ -175,8 +172,8 @@ def main():
     parser = argparse.ArgumentParser(
         prog="lastprs",
         description=(
-            "Generate Markdown via pr2md for PRs a reviewer commented on in the last N days.\n"
-            "Outputs files under prs/<reviewer>/ in the current repo."
+            "Fetch PRs a reviewer commented on in the last N days and render each via pr2md.\n"
+            "Writes a consolidated reviewers/<reviewer>.json with all raw PR markdowns."
         ),
     )
     parser.add_argument("days", type=int, help="Number of days to look back (N)")
@@ -262,27 +259,46 @@ def main():
         )
         return
 
-    # Determine output directory under the repo root
+    # Determine output path under the repo root
     repo_root = detect_repo_root() or os.getcwd()
-    out_dir = os.path.join(repo_root, "prs", args.reviewer)
-    ensure_dir(out_dir)
+    reviewers_dir = os.path.join(repo_root, "reviewers")
+    ensure_dir(reviewers_dir)
+    out_json = os.path.join(reviewers_dir, f"{args.reviewer}.json")
 
-    # Run pr2md in parallel
-    print(f"Found {len(prs)} PR(s). Writing Markdown to {out_dir}")
-    results: List[Tuple[int, str]] = []
+    # Run pr2md in parallel and collect markdown
+    print(f"Found {len(prs)} PR(s). Rendering to reviewers/{args.reviewer}.json")
+    results: List[Tuple[int, str, Optional[str]]] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
         futs = [
-            ex.submit(run_pr2md, pr2md_path, repo, pr_num, args.reviewer, out_dir)
+            ex.submit(run_pr2md, pr2md_path, repo, pr_num, args.reviewer)
             for pr_num in prs
         ]
         for fut in concurrent.futures.as_completed(futs):
             results.append(fut.result())
 
-    ok = sum(1 for _, s in results if s == "ok")
-    failures = [(n, s) for n, s in results if s != "ok"]
+    ok = sum(1 for _, s, _ in results if s == "ok")
+    failures = [(n, s) for n, s, m in results if s != "ok"]
     for n, s in failures:
         print(f"PR {n}: {s}", file=sys.stderr)
-    print(f"Done. {ok}/{len(prs)} succeeded.")
+
+    # Build JSON document
+    now = iso8601(datetime.now(timezone.utc))
+    prs_json: List[Dict[str, Any]] = []
+    for pr_number, status, md in sorted(results, key=lambda t: t[0]):
+        if status == "ok" and md is not None:
+            prs_json.append({"number": pr_number, "markdown": md})
+
+    data: Dict[str, Any] = {
+        "repo": repo,
+        "reviewer": args.reviewer,
+        "generated_at": now,
+        "days": args.days,
+        "prs": prs_json,
+    }
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    print(f"Done. {ok}/{len(prs)} succeeded. Wrote {out_json}")
 
 
 if __name__ == "__main__":

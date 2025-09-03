@@ -37,6 +37,61 @@ def detect_repo_root() -> Optional[str]:
     return out.strip()
 
 
+def parse_repo_from_url(url: str) -> Optional[str]:
+    u = url.strip()
+    if not u:
+        return None
+    if "github.com:" in u:
+        path = u.split("github.com:", 1)[1]
+    elif "github.com/" in u:
+        path = u.split("github.com/", 1)[1]
+    elif u.startswith("github.com/"):
+        path = u.split("github.com/", 1)[1]
+    else:
+        return None
+    if path.endswith(".git"):
+        path = path[:-4]
+    parts = path.strip("/").split("/")
+    if len(parts) >= 2:
+        return f"{parts[0]}/{parts[1]}"
+    return None
+
+
+def detect_repo_from_git() -> Optional[str]:
+    code, out, _ = _run(["git", "rev-parse", "--is-inside-work-tree"])
+    if code != 0 or out.strip() != "true":
+        return None
+    code, origin_url, _ = _run(["git", "config", "--get", "remote.origin.url"])
+    if code != 0:
+        return None
+    return parse_repo_from_url(origin_url)
+
+
+def reviewers_json_path(reviewer: str) -> str:
+    root = detect_repo_root() or os.getcwd()
+    path = os.path.join(root, "reviewers")
+    os.makedirs(path, exist_ok=True)
+    return os.path.join(path, f"{reviewer}.json")
+
+
+def load_reviewer_json(reviewer: str) -> Optional[Dict[str, Any]]:
+    p = reviewers_json_path(reviewer)
+    if not os.path.isfile(p):
+        return None
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def save_reviewer_json(reviewer: str, data: Dict[str, Any]):
+    p = reviewers_json_path(reviewer)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+
+
 def get_current_branch() -> str:
     code, out, _ = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
     return out.strip() if code == 0 else "HEAD"
@@ -80,13 +135,13 @@ def estimate_tokens_approx(text: str) -> int:
 
 
 def study_files_in_dir(base: str) -> List[str]:
+    # Legacy helper (not used in JSON mode); preserved for compatibility.
     if not os.path.isdir(base):
         return []
     files = []
     for name in os.listdir(base):
         if re.match(r"PR-\d+-study\.md$", name):
             files.append(os.path.join(base, name))
-    # Sort by PR number for determinism
     def prnum(p: str) -> int:
         m = re.search(r"(\d+)", os.path.basename(p))
         return int(m.group(1)) if m else 0
@@ -382,11 +437,7 @@ def main():
         action="store_true",
         help="Recompute review JSONs even if cached results exist",
     )
-    parser.add_argument(
-        "--clear",
-        action="store_true",
-        help="Clear the output directory (review folder) before running",
-    )
+    parser.add_argument("--debug", action="store_true", help="Do not clear reviewers/dump/<reviewer> before running")
 
     args = parser.parse_args()
 
@@ -394,11 +445,49 @@ def main():
 
     repo_root = detect_repo_root() or os.getcwd()
     reviewer = args.reviewer
-    study_dir = os.path.abspath(args.study_dir) if args.study_dir else os.path.join(repo_root, "prs", reviewer, "study")
-    guides = study_files_in_dir(study_dir)
-    if not guides:
-        print(f"No studyguides found in {study_dir}.", file=sys.stderr)
-        sys.exit(0)
+    # Preferred source of truth: reviewers/<reviewer>.json
+    data = load_reviewer_json(reviewer)
+    if data is None:
+        repo = detect_repo_from_git() or "owner/repo"
+        print(f"No reviewers/{reviewer}.json found.")
+        try:
+            resp = input(f"Study {reviewer}'s last 100 days of PRs under {repo}? [y/N] ").strip().lower()
+        except EOFError:
+            resp = "n"
+        if resp == "y":
+            # Call lastprs to generate the JSON, then run study to populate studyguides
+            code, out, err = _run([os.path.join(repo_root, "lastprs"), "100", reviewer])
+            if code != 0:
+                print(f"lastprs failed: {err.strip()}", file=sys.stderr)
+                sys.exit(2)
+            data = load_reviewer_json(reviewer)
+            if data is None:
+                print("Failed to load reviewers JSON after lastprs.", file=sys.stderr)
+                sys.exit(2)
+            # Auto-run study for all PRs (no limit) to populate studyguide fields
+            study_dump_dir = os.path.join(repo_root, "reviewers", "dump", reviewer)
+            if not args.debug and os.path.isdir(study_dump_dir):
+                shutil.rmtree(study_dump_dir, ignore_errors=True)
+            _study_fill_studyguides(data, reviewer, jobs=args.jobs, limit=args.limit, debug=args.debug)
+            save_reviewer_json(reviewer, data)
+        else:
+            print("Aborting: reviewer dataset not found.", file=sys.stderr)
+            sys.exit(2)
+
+    # Build list of (pr_number, studyguide) from JSON
+    prs = list(data.get("prs") or [])
+    # Filter those that have a non-empty studyguide
+    pairs = [(int(p.get("number")), p.get("studyguide", "")) for p in prs]
+    pairs = [(n, sg) for (n, sg) in pairs if isinstance(n, int) and isinstance(sg, str) and sg.strip()]
+    if not pairs:
+        print(f"No studyguides present in reviewers/{reviewer}.json. Try: ./review study {reviewer}", file=sys.stderr)
+        sys.exit(2)
+    total_available = len(pairs)
+    if args.limit is not None:
+        if args.limit <= 0:
+            print("Error: --limit must be a positive integer.", file=sys.stderr)
+            sys.exit(2)
+        pairs = pairs[: args.limit]
 
     total_available = len(guides)
     if args.limit is not None:
@@ -415,21 +504,13 @@ def main():
     if not diff_text.strip():
         print("Warning: empty diff vs base; all guides may be irrelevant or pass.", file=sys.stderr)
 
-    if args.out_dir:
-        out_dir = os.path.abspath(args.out_dir)
-    else:
-        # Default: sibling 'review' next to the study folder
-        out_dir = os.path.join(os.path.dirname(study_dir), "review")
-    if args.clear and os.path.isdir(out_dir):
-        # Danger: delete the review folder to start fresh
-        try:
-            shutil.rmtree(out_dir)
-        except Exception as e:
-            print(f"Failed to clear output dir {out_dir}: {e}", file=sys.stderr)
-            sys.exit(2)
+    # Output dir: reviewers/dump/<reviewer>
+    out_dir = os.path.join(repo_root, "reviewers", "dump", reviewer)
+    if not args.debug and os.path.isdir(out_dir):
+        shutil.rmtree(out_dir, ignore_errors=True)
     os.makedirs(out_dir, exist_ok=True)
 
-    total = len(guides)
+    total = len(pairs)
     passed = 0
     completed = 0
     lock = threading.Lock()
@@ -445,17 +526,17 @@ def main():
             file=sys.stderr,
         )
         sys.exit(2)
-    print(f"Study dir: {study_dir}")
     print(f"Output dir: {out_dir}")
     if args.limit is not None and args.limit < total_available:
         print(f"Limit: using first {total} of {total_available} guides")
     print_progress(passed, completed, total, lock)
 
-    def task(p: str):
-        return review_one(p, diff_text, branch, base_ref, out_dir, force=args.force)
+    def task(item: Tuple[int, str]):
+        pr_number, studyguide = item
+        return review_one_from_json(pr_number, studyguide, diff_text, branch, base_ref, out_dir, force=args.force)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
-        futs = [ex.submit(task, p) for p in guides]
+        futs = [ex.submit(task, it) for it in pairs]
         for fut in concurrent.futures.as_completed(futs):
             guide_name, ok, failures_display, failures_structured, err = fut.result()
             with lock:
