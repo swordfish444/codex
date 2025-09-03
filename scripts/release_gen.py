@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
@@ -118,7 +119,7 @@ def show_recent_releases_and_exit(repo: str) -> None:
     print("", file=sys.stderr)
     print("Please pass a source/target release.", file=sys.stderr)
     print("", file=sys.stderr)
-    print("e.g.: ./scripts/release_gen.sh rust-v0.23.0 rust-v0.24.0", file=sys.stderr)
+    print("e.g.: ./scripts/release_gen.py -q rust-v0.23.0 rust-v0.24.0", file=sys.stderr)
     print("", file=sys.stderr)
     header(f"Recent releases for {repo}:")
     print("", file=sys.stderr)
@@ -181,7 +182,37 @@ def get_tag_datetime_iso(repo: str, tag: str) -> str:
     return ((commit.get("commit") or {}).get("committer") or {}).get("date") or ""
 
 
+def _parse_iso_to_utc(ts: str) -> Optional[datetime]:
+    """Parse an ISO-8601 timestamp into an aware UTC datetime.
+
+    Accepts inputs like "2024-08-01T12:34:56Z" or with offsets like
+    "2024-08-01T22:34:56+10:00" and normalizes them to UTC for safe
+    chronological comparisons.
+
+    Returns None if parsing fails or the input is empty.
+    """
+    if not ts:
+        return None
+    s = ts.strip()
+    # Python's fromisoformat doesn't accept trailing 'Z'; map it to +00:00
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    # If naive, assume UTC; otherwise convert to UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt
+
+
 def collect_prs_within_range(repo: str, from_iso: str, to_iso: str) -> List[dict]:
+    # Normalize bounds to UTC datetimes for robust comparison
+    from_dt = _parse_iso_to_utc(from_iso)
+    to_dt = _parse_iso_to_utc(to_iso)
     cp = run(
         [
             "gh",
@@ -200,8 +231,11 @@ def collect_prs_within_range(repo: str, from_iso: str, to_iso: str) -> List[dict
     data = json.loads(cp.stdout)
 
     def keep(pr: dict) -> bool:
-        ma = pr.get("mergedAt")
-        return bool(ma and from_iso <= ma <= to_iso)
+        if not (from_dt and to_dt):
+            return False
+        ma_str = pr.get("mergedAt") or ""
+        ma_dt = _parse_iso_to_utc(ma_str)
+        return bool(ma_dt and from_dt <= ma_dt <= to_dt)
 
     out = []
     for pr in data:
@@ -216,7 +250,13 @@ def collect_prs_within_range(repo: str, from_iso: str, to_iso: str) -> List[dict
                 "body": pr.get("body") or "",
             }
         )
-    out.sort(key=lambda x: x.get("merged_at") or "", reverse=True)
+    # Sort by actual datetime to avoid lexical issues
+    def sort_key(item: dict):
+        dt = _parse_iso_to_utc(item.get("merged_at") or "")
+        # Use epoch start as fallback so unparseable items sort last when reverse=True
+        return dt or datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    out.sort(key=sort_key, reverse=True)
     return out
 
 
@@ -415,4 +455,3 @@ def main(argv: Sequence[str]) -> int:
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
-
