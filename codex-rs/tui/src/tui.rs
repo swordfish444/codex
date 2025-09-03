@@ -7,10 +7,13 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 #[cfg(unix)]
 use std::sync::atomic::AtomicU8;
+#[cfg(unix)]
+use std::sync::atomic::AtomicU16;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 
+use crossterm::Command;
 use crossterm::SynchronizedUpdate;
 use crossterm::cursor;
 use crossterm::cursor::MoveTo;
@@ -63,6 +66,48 @@ pub fn set_modes() -> Result<()> {
         )
     );
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EnableAlternateScroll;
+
+impl Command for EnableAlternateScroll {
+    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+        write!(f, "\x1b[?1007h")
+    }
+
+    #[cfg(windows)]
+    fn execute_winapi(&self) -> std::io::Result<()> {
+        Err(std::io::Error::other(
+            "tried to execute EnableAlternateScroll using WinAPI; use ANSI instead",
+        ))
+    }
+
+    #[cfg(windows)]
+    fn is_ansi_code_supported(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DisableAlternateScroll;
+
+impl Command for DisableAlternateScroll {
+    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+        write!(f, "\x1b[?1007l")
+    }
+
+    #[cfg(windows)]
+    fn execute_winapi(&self) -> std::io::Result<()> {
+        Err(std::io::Error::other(
+            "tried to execute DisableAlternateScroll using WinAPI; use ANSI instead",
+        ))
+    }
+
+    #[cfg(windows)]
+    fn is_ansi_code_supported(&self) -> bool {
+        true
+    }
 }
 
 /// Restore the terminal to its original state.
@@ -125,6 +170,8 @@ pub struct Tui {
     alt_saved_viewport: Option<ratatui::layout::Rect>,
     #[cfg(unix)]
     resume_pending: Arc<AtomicU8>, // Stores a ResumeAction
+    #[cfg(unix)]
+    suspend_cursor_y: Arc<AtomicU16>, // Bottom line of inline viewport
     // True when overlay alt-screen UI is active
     alt_screen_active: Arc<AtomicBool>,
 }
@@ -205,10 +252,10 @@ impl Tui {
                                 if next_deadline.is_none_or(|cur| at < cur) {
                                     next_deadline = Some(at);
                                 }
-                                if at <= Instant::now() {
-                                    next_deadline = None;
-                                    let _ = draw_tx_clone.send(());
-                                }
+                                // Do not send a draw immediately here. By continuing the loop,
+                                // we recompute the sleep target so the draw fires once via the
+                                // sleep branch, coalescing multiple requests into a single draw.
+                                continue;
                             }
                             None => break,
                         }
@@ -231,6 +278,8 @@ impl Tui {
             alt_saved_viewport: None,
             #[cfg(unix)]
             resume_pending: Arc::new(AtomicU8::new(0)),
+            #[cfg(unix)]
+            suspend_cursor_y: Arc::new(AtomicU16::new(0)),
             alt_screen_active: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -249,6 +298,8 @@ impl Tui {
         let resume_pending = self.resume_pending.clone();
         #[cfg(unix)]
         let alt_screen_active = self.alt_screen_active.clone();
+        #[cfg(unix)]
+        let suspend_cursor_y = self.suspend_cursor_y.clone();
         let event_stream = async_stream::stream! {
             loop {
                 select! {
@@ -290,10 +341,17 @@ impl Tui {
                                 )
                                 {
                                     if alt_screen_active.load(Ordering::Relaxed) {
+                                        // Disable alternate scroll when suspending from alt-screen
+                                        let _ = execute!(stdout(), DisableAlternateScroll);
                                         let _ = execute!(stdout(), LeaveAlternateScreen);
                                         resume_pending.store(ResumeAction::RestoreAlt as u8, Ordering::Relaxed);
                                     } else {
                                         resume_pending.store(ResumeAction::RealignInline as u8, Ordering::Relaxed);
+                                    }
+                                    #[cfg(unix)]
+                                    {
+                                        let y = suspend_cursor_y.load(Ordering::Relaxed);
+                                        let _ = execute!(stdout(), MoveTo(0, y));
                                     }
                                     let _ = execute!(stdout(), crossterm::cursor::Show);
                                     let _ = Tui::suspend();
@@ -345,13 +403,16 @@ impl Tui {
     ) -> Result<Option<PreparedResumeAction>> {
         match action {
             ResumeAction::RealignInline => {
-                let cursor_pos = self.terminal.get_cursor_position()?;
+                let cursor_pos = self
+                    .terminal
+                    .get_cursor_position()
+                    .unwrap_or(self.terminal.last_known_cursor_pos);
                 Ok(Some(PreparedResumeAction::RealignViewport(
                     ratatui::layout::Rect::new(0, cursor_pos.y, 0, 0),
                 )))
             }
             ResumeAction::RestoreAlt => {
-                if let Ok((_x, y)) = crossterm::cursor::position()
+                if let Ok(ratatui::layout::Position { y, .. }) = self.terminal.get_cursor_position()
                     && let Some(saved) = self.alt_saved_viewport.as_mut()
                 {
                     saved.y = y;
@@ -370,6 +431,8 @@ impl Tui {
             }
             PreparedResumeAction::RestoreAltScreen => {
                 execute!(self.terminal.backend_mut(), EnterAlternateScreen)?;
+                // Enable "alternate scroll" so terminals may translate wheel to arrows
+                execute!(self.terminal.backend_mut(), EnableAlternateScroll)?;
                 if let Ok(size) = self.terminal.size() {
                     self.terminal.set_viewport_area(ratatui::layout::Rect::new(
                         0,
@@ -388,6 +451,8 @@ impl Tui {
     /// inline viewport for restoration when leaving.
     pub fn enter_alt_screen(&mut self) -> Result<()> {
         let _ = execute!(self.terminal.backend_mut(), EnterAlternateScreen);
+        // Enable "alternate scroll" so terminals may translate wheel to arrows
+        let _ = execute!(self.terminal.backend_mut(), EnableAlternateScroll);
         if let Ok(size) = self.terminal.size() {
             self.alt_saved_viewport = Some(self.terminal.viewport_area);
             self.terminal.set_viewport_area(ratatui::layout::Rect::new(
@@ -404,6 +469,8 @@ impl Tui {
 
     /// Leave alternate screen and restore the previously saved inline viewport, if any.
     pub fn leave_alt_screen(&mut self) -> Result<()> {
+        // Disable alternate scroll when leaving alt-screen
+        let _ = execute!(self.terminal.backend_mut(), DisableAlternateScroll);
         let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
         if let Some(saved) = self.alt_saved_viewport.take() {
             self.terminal.set_viewport_area(saved);
@@ -432,8 +499,9 @@ impl Tui {
             let terminal = &mut self.terminal;
             let screen_size = terminal.size()?;
             let last_known_screen_size = terminal.last_known_screen_size;
-            if screen_size != last_known_screen_size {
-                let cursor_pos = terminal.get_cursor_position()?;
+            if screen_size != last_known_screen_size
+                && let Ok(cursor_pos) = terminal.get_cursor_position()
+            {
                 let last_known_cursor_pos = terminal.last_known_cursor_pos;
                 if cursor_pos.y != last_known_cursor_pos.y {
                     let cursor_delta = cursor_pos.y as i32 - last_known_cursor_pos.y as i32;
@@ -446,6 +514,7 @@ impl Tui {
             }
         }
 
+        // Use synchronized update via backend instead of stdout()
         std::io::stdout().sync_update(|_| {
             #[cfg(unix)]
             {
@@ -481,10 +550,22 @@ impl Tui {
                 );
                 self.pending_history_lines.clear();
             }
+            // Update the y position for suspending so Ctrl-Z can place the cursor correctly.
+            #[cfg(unix)]
+            {
+                let inline_area_bottom = if self.alt_screen_active.load(Ordering::Relaxed) {
+                    self.alt_saved_viewport
+                        .map(|r| r.bottom().saturating_sub(1))
+                        .unwrap_or_else(|| area.bottom().saturating_sub(1))
+                } else {
+                    area.bottom().saturating_sub(1)
+                };
+                self.suspend_cursor_y
+                    .store(inline_area_bottom, Ordering::Relaxed);
+            }
             terminal.draw(|frame| {
                 draw_fn(frame);
-            })?;
-            Ok(())
+            })
         })?
     }
 }
