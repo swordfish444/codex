@@ -107,6 +107,8 @@ def list_review_comment_prs(repo: str, reviewer: str, since_iso: str) -> Set[int
                 prs.add(pr_number)
             except Exception:
                 continue
+        # Progress line for discovery
+        print(f"discover: page={page} batch={len(batch)} unique_prs={len(prs)}", file=sys.stderr, flush=True)
         if len(batch) < 100:
             break
         page += 1
@@ -212,6 +214,8 @@ def main():
     # Compute window
     since = datetime.now(timezone.utc) - timedelta(days=args.days)
     since_iso = iso8601(since)
+    since_date = since.strftime("%Y-%m-%d")
+    print(f"Discovering PRs for reviewer={args.reviewer} since={since_date} in repo={repo}…", file=sys.stderr)
 
     # Identify PRs with review comments by reviewer since the cutoff
     pr_set = list_review_comment_prs(repo, args.reviewer, since_iso)
@@ -221,7 +225,9 @@ def main():
         recent = list_recent_prs(repo, args.days)
         pr_set = set()
         reviewer_lc = args.reviewer.lower()
-        for pr_num in recent:
+        total_recent = len(recent)
+        print(f"Fallback: scanning {total_recent} recent PRs for comments by {args.reviewer}…", file=sys.stderr)
+        for idx, pr_num in enumerate(recent, start=1):
             # Query review comments for this PR and filter by user + since
             page = 1
             found = False
@@ -249,6 +255,8 @@ def main():
                     break
             if found:
                 pr_set.add(pr_num)
+            if idx % 10 == 0 or idx == total_recent:
+                print(f"scan: {idx}/{total_recent} matched={len(pr_set)}", file=sys.stderr, flush=True)
 
     prs = sorted(dedupe(pr_set))
 
@@ -266,15 +274,20 @@ def main():
     out_json = os.path.join(reviewers_dir, f"{args.reviewer}.json")
 
     # Run pr2md in parallel and collect
-    print(f"Found {len(prs)} PR(s). Rendering to reviewers/{args.reviewer}.json")
+    print(f"Found {len(prs)} PR(s). Rendering to reviewers/{args.reviewer}.json", file=sys.stderr)
     results: List[Tuple[int, str, Optional[str]]] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
         futs = [
             ex.submit(run_pr2md, pr2md_path, repo, pr_num, args.reviewer)
             for pr_num in prs
         ]
+        completed = 0
+        total = len(futs)
         for fut in concurrent.futures.as_completed(futs):
             results.append(fut.result())
+            completed += 1
+            if completed % 5 == 0 or completed == total:
+                print(f"render: {completed}/{total}", file=sys.stderr, flush=True)
 
     ok = sum(1 for _, s, _ in results if s == "ok")
     failures = [(n, s) for n, s, _ in results if s != "ok"]

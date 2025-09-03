@@ -24,6 +24,28 @@ def _run(cmd: List[str], input_text: Optional[str] = None) -> Tuple[int, str, st
     return proc.returncode, proc.stdout, proc.stderr
 
 
+def _run_streaming(cmd: List[str]) -> int:
+    """Run a subprocess and stream combined stdout/stderr live to the console.
+    Returns the exit code."""
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+        )
+    except Exception as e:
+        print(f"Failed to spawn: {' '.join(cmd)}: {e}", file=sys.stderr)
+        return 127
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        print(line.rstrip())
+    proc.wait()
+    return proc.returncode
+
+
 def require(cmd: str, hint: str):
     if shutil.which(cmd) is None:
         print(f"Error: required command '{cmd}' not found. {hint}", file=sys.stderr)
@@ -241,17 +263,32 @@ def _study_fill_studyguides(data: Dict[str, Any], reviewer: str, jobs: int = 10,
         shutil.rmtree(dump_dir, ignore_errors=True)
     os.makedirs(dump_dir, exist_ok=True)
 
+    total = len(items)
+    print(f"Generating studyguides for {total} PR(s) → {dump_dir}")
+    lock = threading.Lock()
+    completed = 0
+    print_study_progress(completed, total, lock)
+
     results: List[Tuple[int, Optional[str], Optional[str]]] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
         futs = [ex.submit(study_one_from_json, n, md, reviewer, dump_dir, force) for (n, md) in items]
         for fut in concurrent.futures.as_completed(futs):
             results.append(fut.result())
+            completed += 1
+            print_study_progress(completed, total, lock)
     # Apply
     number_to_study = {n: sg for (n, sg, err) in results if sg}
+    errors = [(n, err) for (n, sg, err) in results if err]
     for p in prs:
         n = p.get("number")
         if n in number_to_study:
             p["studyguide"] = number_to_study[n]
+    ok = len(number_to_study)
+    print(f"Done. {ok}/{total} studyguides generated.")
+    if errors:
+        print("Errors:")
+        for n, e in errors:
+            print(f"- PR-{n}: {e}")
 
 
 def parse_json_from_text(text: str) -> Optional[Dict]:
@@ -531,6 +568,15 @@ def print_progress(passed: int, completed: int, total: int, lock: threading.Lock
         print(f"[{bar}] {passed}/{total} passed ({pct}%), {completed}/{total} completed")
 
 
+def print_study_progress(completed: int, total: int, lock: threading.Lock):
+    pct = int((completed / total) * 100) if total else 0
+    width = 30
+    filled = int((completed / total) * width) if total else 0
+    bar = "#" * filled + "-" * (width - filled)
+    with lock:
+        print(f"[{bar}] {completed}/{total} studyguides ({pct}%)")
+
+
 def study_cli(argv: List[str]):
     parser = argparse.ArgumentParser(prog="review study", description="Generate studyguides into reviewers/<user>.json and dump files.")
     parser.add_argument("reviewer", help="GitHub login")
@@ -542,19 +588,55 @@ def study_cli(argv: List[str]):
     args = parser.parse_args(argv)
 
     # Ensure reviewers JSON exists via lastprs
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    local_lastprs = os.path.join(script_dir, "lastprs")
+    lastprs_cmd = local_lastprs if os.path.isfile(local_lastprs) and os.access(local_lastprs, os.X_OK) else "lastprs"
+
     data = load_reviewer_json(args.reviewer)
     if data is None:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        local_lastprs = os.path.join(script_dir, "lastprs")
-        lastprs_cmd = local_lastprs if os.path.isfile(local_lastprs) and os.access(local_lastprs, os.X_OK) else "lastprs"
+        print(f"Running lastprs for {args.reviewer} (days={args.days})…")
         code, out, err = _run([lastprs_cmd, str(args.days), args.reviewer])
         if code != 0:
             print(f"lastprs failed: {err.strip()}", file=sys.stderr)
             sys.exit(2)
+        if out.strip():
+            print(out.strip())
         data = load_reviewer_json(args.reviewer)
         if data is None:
             print("Failed to load reviewers JSON after lastprs.", file=sys.stderr)
             sys.exit(2)
+
+    # If requested days exceeds what's in the JSON, refresh via lastprs automatically
+    try:
+        existing_days = int((data or {}).get("days", 0))
+    except Exception:
+        existing_days = 0
+    if args.days is not None and args.days > existing_days:
+        print(
+            f"Dataset is {existing_days} day(s); requested --days={args.days}. Refreshing via lastprs…"
+        )
+        code = _run_streaming([lastprs_cmd, str(args.days), args.reviewer])
+        if code != 0:
+            print("lastprs failed (see output above)", file=sys.stderr)
+        else:
+            data2 = load_reviewer_json(args.reviewer)
+            if data2 is not None:
+                data = data2
+
+    # If a limit was requested that exceeds dataset size, refresh via lastprs automatically
+    current_count = len(list(data.get("prs") or []))
+    if args.limit is not None and args.limit > current_count:
+        print(
+            f"Dataset has {current_count} PR(s), but --limit is {args.limit}. Refreshing via lastprs (days={args.days})…"
+        )
+        code = _run_streaming([lastprs_cmd, str(args.days), args.reviewer])
+        if code != 0:
+            print("lastprs failed (see output above)", file=sys.stderr)
+            # Continue with what we have rather than aborting
+        else:
+            data2 = load_reviewer_json(args.reviewer)
+            if data2 is not None:
+                data = data2
 
     _study_fill_studyguides(data, args.reviewer, jobs=args.jobs, limit=args.limit, debug=args.debug, force=args.force)
     save_reviewer_json(args.reviewer, data)
