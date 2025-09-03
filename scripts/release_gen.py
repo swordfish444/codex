@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import os
 import re
 import shlex
 import subprocess
@@ -18,20 +17,22 @@ def header(msg: str) -> None:
 
 
 USAGE_TEXT = """
-Usage: scripts/release_gen.py [--dump-only] [-q|--quiet] [owner/repo] <from_tag> <to_tag> [version]
+Usage: scripts/release_gen.py [--dump-only] [-q|--quiet] [--repo <owner/repo>] [--repo-dir <path>] [--gh-timeout-secs N] [--codex-timeout-secs N] [owner/repo] <from_tag> <to_tag> [version]
 
 Examples:
-  scripts/release_gen.py openai/codex v0.23.0 v0.24.0
-  scripts/release_gen.py v0.23.0 v0.24.0                # auto-detect repo from git remote
-  scripts/release_gen.py v0.23.0 v0.24.0 0.24.0         # auto-detect with explicit version
-  scripts/release_gen.py --dump-only v0.23.0 v0.24.0    # only generate releases/release_dump_<ver>.txt
-  scripts/release_gen.py -q v0.23.0 v0.24.0             # quiet Codex call with progress dots
+  scripts/release_gen.py --repo openai/codex v0.23.0 v0.24.0
+  scripts/release_gen.py --repo-dir ../codex-repo v0.23.0 v0.24.0  # detect repo from this directory's git remote
+  scripts/release_gen.py v0.23.0 v0.24.0                            # auto-detect repo from current dir's git remote
+  scripts/release_gen.py v0.23.0 v0.24.0 0.24.0                     # auto-detect with explicit version
+  scripts/release_gen.py --dump-only v0.23.0 v0.24.0                # only generate releases/release_dump_<ver>.txt
+  scripts/release_gen.py -q v0.23.0 v0.24.0                         # quiet Codex call with progress dots
 
 Notes:
   - Requires: gh (GitHub CLI) for dump generation; codex CLI for note generation.
   - If release_dump_<ver>.txt does not exist, it will be created automatically.
   - Then runs codex to generate <ver>.txt based on the dump (unless --dump-only).
   - If you omit tags, the script lists the last 20 releases for the repo.
+  - Timeouts: set with --gh-timeout-secs (default 60) and --codex-timeout-secs (default 300).
 """.strip()
 
 
@@ -42,12 +43,20 @@ Notes:
 class Args:
     dump_only: bool
     quiet: bool
+    repo: Optional[str]
+    repo_dir: Optional[Path]
+    gh_timeout_secs: int
+    codex_timeout_secs: int
     rest: List[str]
 
 
 def parse_args(argv: Sequence[str]) -> Args:
     dump_only = False
     quiet = False
+    repo: Optional[str] = None
+    repo_dir: Optional[Path] = None
+    gh_timeout_secs = 60
+    codex_timeout_secs = 300
     rest: List[str] = []
     it = iter(argv)
     for a in it:
@@ -55,19 +64,67 @@ def parse_args(argv: Sequence[str]) -> Args:
             dump_only = True
         elif a in ("-q", "--quiet"):
             quiet = True
+        elif a == "--repo":
+            try:
+                repo = next(it)
+            except StopIteration:
+                print("Error: --repo requires a value", file=sys.stderr)
+                sys.exit(2)
+        elif a == "--repo-dir":
+            try:
+                repo_dir = Path(next(it)).resolve()
+            except StopIteration:
+                print("Error: --repo-dir requires a path", file=sys.stderr)
+                sys.exit(2)
+        elif a == "--gh-timeout-secs":
+            try:
+                gh_timeout_secs = int(next(it))
+            except (StopIteration, ValueError):
+                print("Error: --gh-timeout-secs requires an integer", file=sys.stderr)
+                sys.exit(2)
+        elif a == "--codex-timeout-secs":
+            try:
+                codex_timeout_secs = int(next(it))
+            except (StopIteration, ValueError):
+                print("Error: --codex-timeout-secs requires an integer", file=sys.stderr)
+                sys.exit(2)
         elif a in ("-h", "--help"):
             print(USAGE_TEXT)
             sys.exit(0)
         else:
             rest.append(a)
-    return Args(dump_only=dump_only, quiet=quiet, rest=rest)
+    return Args(
+        dump_only=dump_only,
+        quiet=quiet,
+        repo=repo,
+        repo_dir=repo_dir,
+        gh_timeout_secs=gh_timeout_secs,
+        codex_timeout_secs=codex_timeout_secs,
+        rest=rest,
+    )
 
 
 # -------- helpers --------
 
 
-def run(cmd: Sequence[str], check: bool = True, capture: bool = True, text: bool = True, env: Optional[dict] = None) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, check=check, capture_output=capture, text=text, env=env)
+def run(
+    cmd: Sequence[str],
+    check: bool = True,
+    capture: bool = True,
+    text: bool = True,
+    env: Optional[dict] = None,
+    cwd: Optional[Path] = None,
+    timeout: Optional[float] = None,
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        cmd,
+        check=check,
+        capture_output=capture,
+        text=text,
+        env=env,
+        cwd=str(cwd) if cwd is not None else None,
+        timeout=timeout,
+    )
 
 
 def which(name: str) -> Optional[str]:
@@ -80,12 +137,12 @@ def abspath(p: Path) -> Path:
     return p.resolve()
 
 
-def detect_repo_from_git() -> Optional[str]:
+def detect_repo_from_git(repo_dir: Optional[Path] = None) -> Optional[str]:
     # Try origin then upstream
     urls: List[str] = []
     for remote in ("origin", "upstream"):
         try:
-            cp = run(["git", "remote", "get-url", remote])
+            cp = run(["git", "remote", "get-url", remote], cwd=repo_dir)
             if cp.stdout.strip():
                 urls.append(cp.stdout.strip())
                 break
@@ -115,7 +172,7 @@ def detect_repo_from_git() -> Optional[str]:
     return None
 
 
-def show_recent_releases_and_exit(repo: str) -> None:
+def show_recent_releases_and_exit(repo: str, gh_timeout_secs: int) -> None:
     print("", file=sys.stderr)
     print("Please pass a source/target release.", file=sys.stderr)
     print("", file=sys.stderr)
@@ -124,7 +181,10 @@ def show_recent_releases_and_exit(repo: str) -> None:
     header(f"Recent releases for {repo}:")
     print("", file=sys.stderr)
     try:
-        cp = run(["gh", "release", "list", "--repo", repo, "--limit", "20"])
+        cp = run(
+            ["gh", "release", "list", "--repo", repo, "--limit", "20"],
+            timeout=gh_timeout_secs,
+        )
         lines = cp.stdout.splitlines()
         for line in lines:
             if not line.strip():
@@ -140,12 +200,12 @@ def show_recent_releases_and_exit(repo: str) -> None:
 # -------- dump generation (ported) --------
 
 
-def gh_json(args: Sequence[str]) -> dict:
-    cp = run(["gh", *args])
+def gh_json(args: Sequence[str], gh_timeout_secs: int) -> dict:
+    cp = run(["gh", *args], timeout=gh_timeout_secs)
     return json.loads(cp.stdout)
 
 
-def get_tag_datetime_iso(repo: str, tag: str) -> str:
+def get_tag_datetime_iso(repo: str, tag: str, gh_timeout_secs: int) -> str:
     # Try release publish date
     try:
         cp = run([
@@ -159,7 +219,7 @@ def get_tag_datetime_iso(repo: str, tag: str) -> str:
             "publishedAt",
             "--jq",
             ".publishedAt",
-        ])
+        ], timeout=gh_timeout_secs)
         ts = cp.stdout.strip()
         if ts and ts != "null":
             return ts
@@ -167,18 +227,18 @@ def get_tag_datetime_iso(repo: str, tag: str) -> str:
         pass
 
     # Fallback via tag -> commit -> committer.date
-    ref = gh_json(["api", f"repos/{repo}/git/ref/tags/{tag}"])
+    ref = gh_json(["api", f"repos/{repo}/git/ref/tags/{tag}"], gh_timeout_secs)
     obj_type = ref.get("object", {}).get("type")
     obj_url = ref.get("object", {}).get("url")
     commit_sha = None
     if obj_type == "tag" and obj_url:
-        tag_obj = gh_json(["api", obj_url])
+        tag_obj = gh_json(["api", obj_url], gh_timeout_secs)
         commit_sha = (tag_obj.get("object") or {}).get("sha")
     else:
         commit_sha = (ref.get("object") or {}).get("sha")
     if not commit_sha:
         raise RuntimeError(f"Failed to resolve commit for tag {tag}")
-    commit = gh_json(["api", f"repos/{repo}/commits/{commit_sha}"])
+    commit = gh_json(["api", f"repos/{repo}/commits/{commit_sha}"], gh_timeout_secs)
     return ((commit.get("commit") or {}).get("committer") or {}).get("date") or ""
 
 
@@ -209,7 +269,7 @@ def _parse_iso_to_utc(ts: str) -> Optional[datetime]:
     return dt
 
 
-def collect_prs_within_range(repo: str, from_iso: str, to_iso: str) -> List[dict]:
+def collect_prs_within_range(repo: str, from_iso: str, to_iso: str, gh_timeout_secs: int) -> List[dict]:
     # Normalize bounds to UTC datetimes for robust comparison
     from_dt = _parse_iso_to_utc(from_iso)
     to_dt = _parse_iso_to_utc(to_iso)
@@ -226,7 +286,8 @@ def collect_prs_within_range(repo: str, from_iso: str, to_iso: str) -> List[dict
             "1000",
             "--json",
             "number,title,mergedAt,author,body",
-        ]
+        ],
+        timeout=gh_timeout_secs,
     )
     data = json.loads(cp.stdout)
 
@@ -274,14 +335,14 @@ def format_related_issues(body: str) -> str:
     return ", ".join([f"#{n}" for n in ints])
 
 
-def generate_dump(repo: str, from_tag: str, to_tag: str, out_file: Path) -> None:
+def generate_dump(repo: str, from_tag: str, to_tag: str, out_file: Path, gh_timeout_secs: int) -> None:
     if not which("gh"):
         print("Error: gh (GitHub CLI) is required", file=sys.stderr)
         sys.exit(1)
 
     header(f"Resolving tag dates ({from_tag} -> {to_tag})")
-    from_iso = get_tag_datetime_iso(repo, from_tag)
-    to_iso = get_tag_datetime_iso(repo, to_tag)
+    from_iso = get_tag_datetime_iso(repo, from_tag, gh_timeout_secs)
+    to_iso = get_tag_datetime_iso(repo, to_tag, gh_timeout_secs)
     if not (from_iso and to_iso):
         print(
             f"Error: failed to resolve tag dates. from={from_tag} ({from_iso}) to={to_tag} ({to_iso})",
@@ -290,7 +351,7 @@ def generate_dump(repo: str, from_tag: str, to_tag: str, out_file: Path) -> None
         sys.exit(1)
 
     header("Collecting merged PRs via gh pr list")
-    prs = collect_prs_within_range(repo, from_iso, to_iso)
+    prs = collect_prs_within_range(repo, from_iso, to_iso, gh_timeout_secs)
     count = len(prs)
 
     header(f"Writing {out_file} (Total PRs: {count})")
@@ -328,45 +389,25 @@ def generate_dump(repo: str, from_tag: str, to_tag: str, out_file: Path) -> None
 
 def build_prompt(dump_path: Path) -> str:
     dump_content = dump_path.read_text(encoding="utf-8")
-    example = (
-        "## Highlights:\n\n"
-        "### New Features\n"
-        "- Queued messages (#2637)\n"
-        "- Copy Paste / Drag & Drop image files (#2567)\n"
-        "- Add web_search tool (#2371)\n"
-        "- Add transcript mode (Ctrl+T) with scrolling ability (#2525)\n"
-        "- Edit/resume conversation (esc-esc) from previous messages (#2607)\n\n"
-        "### TUI\n"
-        "- Hide CoT by default; show headers in status indicator (#2316)\n"
-        "- Show diff output in pager (+ with hunk headers) (#2568)\n"
-        "- Simplify command approval UI (#2708)\n"
-        "- Unify Esc/Ctrl+C interrupt handling (#2661)\n"
-        "- Fix windows powershell paste (#2544)\n\n"
-        "### Tools and execution\n"
-        "- Add support for long-running shell commands `exec_command`/`write_stdin` (#2574)\n"
-        "- Improve apply_patch reliability (#2646)\n"
-        "- Cap retry counts (#2701)\n"
-        "- Sort MCP tools deterministically (#2611)\n\n"
-        "### Misc\n"
-        "- Add model_verbosity config for GPT-5 (#2108)\n"
-        "- Read all AGENTS.md files up to git root (#2532)\n"
-        "- Fix git root resolution in worktrees (#2585)\n"
-        "- Improve error messages & handling (#2695, #2587, #2640, #2540)\n\n\n"
-        "## Full list of merged PRs:\n\n"
-        " - #2708 [feat] Simplify command approval UI\n"
-        " - #2706 [chore] Tweak..."
-    )
+    example_path = Path(__file__).resolve().parent / "prompts" / "release_notes_example.md"
+    try:
+        example = example_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        example = ""
     instr = (
-        f"{dump_content}\n\n---\n\n"
-        f"Please generate a summarized release note based on the list of PRs above. "
-        f"Then, write your suggested release notes. "
-        f"It should follow this structure (+ the style/tone/brevity in this example):\n\n"
-        f"\"{example}\""
+        f"""{dump_content}
+
+---
+
+Please generate a summarized release note based on the list of PRs above. Then, write your suggested release notes. It should follow this structure (+ the style/tone/brevity in this example):
+
+{example}
+"""
     )
     return instr
 
 
-def run_codex(prompt: str, quiet: bool, gen_file: str) -> int:
+def run_codex(prompt: str, quiet: bool, gen_file: str, timeout_secs: int) -> int:
     if not which("codex"):
         print(
             "Error: codex CLI is required for generation. Use --dump-only to skip.",
@@ -385,39 +426,53 @@ def run_codex(prompt: str, quiet: bool, gen_file: str) -> int:
             )
         except FileNotFoundError:
             return 127
+        start = time.monotonic()
         while True:
             ret = proc.poll()
             if ret is not None:
                 break
+            if timeout_secs and (time.monotonic() - start) > timeout_secs:
+                try:
+                    proc.kill()
+                finally:
+                    return 124
             print(".", end="", file=sys.stderr, flush=True)
             time.sleep(1)
         print("", file=sys.stderr)
         return ret or 0
     else:
         # stream to stderr like the shell script
-        proc = subprocess.run(cmd, stdout=sys.stderr, stderr=sys.stderr, text=True)
-        return proc.returncode
+        try:
+            proc = subprocess.run(
+                cmd, stdout=sys.stderr, stderr=sys.stderr, text=True, timeout=timeout_secs
+            )
+            return proc.returncode
+        except subprocess.TimeoutExpired:
+            return 124
 
 
 def main(argv: Sequence[str]) -> int:
     pargs = parse_args(argv)
 
     rest = pargs.rest
-    # repo optional first arg
-    if rest and "/" in rest[0]:
+    # repo optional first arg unless --repo provided
+    repo: Optional[str]
+    if pargs.repo:
+        repo = pargs.repo
+    elif rest and "/" in rest[0]:
         repo = rest[0]
         rest = rest[1:]
     else:
-        repo = detect_repo_from_git() or ""
+        repo = detect_repo_from_git(pargs.repo_dir) or ""
         if not repo:
             print(
-                "Error: failed to auto-detect repository from git remote. Provide [owner/repo] explicitly.",
+                "Error: failed to auto-detect repository from git remote. Provide --repo <owner/repo> explicitly.",
                 file=sys.stderr,
             )
             return 1
 
     if len(rest) < 2:
-        show_recent_releases_and_exit(repo)
+        show_recent_releases_and_exit(repo, pargs.gh_timeout_secs)
         return 1  # unreachable
 
     from_tag, to_tag = rest[0], rest[1]
@@ -432,7 +487,7 @@ def main(argv: Sequence[str]) -> int:
     # Create dump if missing
     if not dump_file.exists():
         header(f"Dump not found: {dump_file}. Generating...")
-        generate_dump(repo, from_tag, to_tag, dump_file)
+        generate_dump(repo, from_tag, to_tag, dump_file, pargs.gh_timeout_secs)
     else:
         header(f"Using existing dump: {dump_file}")
 
@@ -442,7 +497,7 @@ def main(argv: Sequence[str]) -> int:
     dump_path = abspath(dump_file)
     prompt = build_prompt(dump_path)
     header(f"Calling codex to generate {gen_file}")
-    status = run_codex(prompt, pargs.quiet, gen_file)
+    status = run_codex(prompt, pargs.quiet, gen_file, pargs.codex_timeout_secs)
 
     if gen_file.exists():
         # Output only the generated release notes to stdout
