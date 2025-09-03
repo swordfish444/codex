@@ -160,11 +160,7 @@ impl CodexMessageProcessor {
 
         let opts = LoginServerOptions {
             open_browser: false,
-            ..LoginServerOptions::new(
-                config.codex_home.clone(),
-                CLIENT_ID.to_string(),
-                config.responses_originator_header.clone(),
-            )
+            ..LoginServerOptions::new(config.codex_home.clone(), CLIENT_ID.to_string())
         };
 
         enum LoginChatGptReply {

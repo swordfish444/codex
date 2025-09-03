@@ -1,0 +1,660 @@
+use ratatui::layout::Constraint;
+use ratatui::layout::Direction;
+use ratatui::layout::Layout;
+use ratatui::prelude::*;
+use ratatui::style::Modifier;
+use ratatui::style::Style;
+use ratatui::style::Stylize;
+use ratatui::widgets::Block;
+use ratatui::widgets::BorderType;
+use ratatui::widgets::Borders;
+use ratatui::widgets::Clear;
+use ratatui::widgets::List;
+use ratatui::widgets::ListItem;
+use ratatui::widgets::ListState;
+use ratatui::widgets::Padding;
+use ratatui::widgets::Paragraph;
+use std::sync::OnceLock;
+
+use crate::app::App;
+use chrono::Local;
+use chrono::Utc;
+use codex_cloud_tasks_api::TaskStatus;
+
+pub fn draw(frame: &mut Frame, app: &mut App) {
+    let area = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(1),    // list
+            Constraint::Length(2), // two-line footer (help + status)
+        ])
+        .split(area);
+    if app.new_task.is_some() {
+        draw_new_task_page(frame, chunks[0], app);
+        draw_footer(frame, chunks[1], app);
+    } else {
+        draw_list(frame, chunks[0], app);
+        draw_footer(frame, chunks[1], app);
+    }
+
+    if app.diff_overlay.is_some() {
+        draw_diff_overlay(frame, area, app);
+    }
+    if app.env_modal.is_some() {
+        draw_env_modal(frame, area, app);
+    }
+}
+
+// ===== Overlay helpers (geometry + styling) =====
+static ROUNDED: OnceLock<bool> = OnceLock::new();
+
+fn rounded_enabled() -> bool {
+    *ROUNDED.get_or_init(|| {
+        std::env::var("CODEX_TUI_ROUNDED")
+            .ok()
+            .map(|v| v == "1")
+            .unwrap_or(true)
+    })
+}
+
+fn overlay_outer(area: Rect) -> Rect {
+    let outer_v = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(10),
+            Constraint::Percentage(80),
+            Constraint::Percentage(10),
+        ])
+        .split(area)[1];
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(10),
+            Constraint::Percentage(80),
+            Constraint::Percentage(10),
+        ])
+        .split(outer_v)[1]
+}
+
+fn overlay_block() -> Block<'static> {
+    let base = Block::default().borders(Borders::ALL);
+    let base = if rounded_enabled() {
+        base.border_type(BorderType::Rounded)
+    } else {
+        base
+    };
+    base.padding(Padding::new(2, 2, 1, 1))
+}
+
+fn overlay_content(area: Rect) -> Rect {
+    overlay_block().inner(area)
+}
+
+pub fn draw_new_task_page(frame: &mut Frame, area: Rect, app: &mut App) {
+    use ratatui::widgets::Wrap;
+
+    let title_spans = {
+        let mut spans: Vec<ratatui::text::Span> = vec!["New Task".magenta().bold()];
+        if let Some(id) = app
+            .new_task
+            .as_ref()
+            .and_then(|p| p.env_id.as_ref())
+            .cloned()
+        {
+            spans.push("  • ".into());
+            // Try to map id to label
+            let label = app
+                .environments
+                .iter()
+                .find(|r| r.id == id)
+                .and_then(|r| r.label.clone())
+                .unwrap_or(id);
+            spans.push(label.dim());
+        } else {
+            spans.push("  • ".into());
+            spans.push("Env: none (press ctrl-o to choose)".red());
+        }
+        spans
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Line::from(title_spans));
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(block.clone(), area);
+    let content = block.inner(area);
+
+    // Clamp composer height between 3 and 6 rows for readability.
+    let desired = app
+        .new_task
+        .as_ref()
+        .map(|p| p.composer.desired_height(content.width))
+        .unwrap_or(3)
+        .clamp(3, 6);
+
+    // Anchor the composer to the bottom-left by allocating a flexible spacer
+    // above it and a fixed `desired`-height area for the composer.
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(desired)])
+        .split(content);
+    let composer_area = rows[1];
+
+    if let Some(page) = app.new_task.as_ref() {
+        page.composer.render_ref(composer_area, frame.buffer_mut());
+        // Composer renders its own footer hints; no extra row here.
+    }
+
+    // Place cursor where composer wants it
+    if let Some(page) = app.new_task.as_ref() {
+        if let Some((x, y)) = page.composer.cursor_pos(composer_area) {
+            frame.set_cursor(x, y);
+        }
+    }
+}
+
+fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
+    let items: Vec<ListItem> = app.tasks.iter().map(|t| render_task_item(app, t)).collect();
+
+    // Selection reflects the actual task index (no artificial spacer item).
+    let mut state = ListState::default().with_selected(Some(app.selected));
+    // Dim task list when a modal/overlay is active to emphasize focus.
+    let dim_bg = app.env_modal.is_some() || app.diff_overlay.is_some();
+    // Dynamic title includes current environment filter
+    let suffix_span = if let Some(ref id) = app.env_filter {
+        let label = app
+            .environments
+            .iter()
+            .find(|r| &r.id == id)
+            .and_then(|r| r.label.clone())
+            .unwrap_or_else(|| "Selected".to_string());
+        format!(" • {}", label).dim()
+    } else {
+        " • All".dim()
+    };
+    // Percent scrolled based on selection position in the list (0% at top, 100% at bottom).
+    let percent_span = if app.tasks.len() <= 1 {
+        "  • 0%".dim()
+    } else {
+        let p = ((app.selected as f32) / ((app.tasks.len() - 1) as f32) * 100.0).round() as i32;
+        format!("  • {}%", p.clamp(0, 100)).dim()
+    };
+    let title_line = {
+        let base = Line::from(vec!["Cloud Tasks".into(), suffix_span, percent_span]);
+        if dim_bg {
+            base.style(Style::default().add_modifier(Modifier::DIM))
+        } else {
+            base
+        }
+    };
+    let block = Block::default().borders(Borders::ALL).title(title_line);
+    // Render the outer block first
+    frame.render_widget(block.clone(), area);
+    // Draw list inside with a persistent top spacer row
+    let inner = block.inner(area);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(inner);
+    let mut list = List::new(items)
+        .highlight_symbol("› ")
+        .highlight_style(Style::default().bold());
+    if dim_bg {
+        list = list.style(Style::default().add_modifier(Modifier::DIM));
+    }
+    frame.render_stateful_widget(list, rows[1], &mut state);
+
+    // In-box spinner during initial/refresh loads
+    if app.refresh_inflight {
+        draw_centered_spinner(frame, inner, &mut app.throbber, "Loading tasks…");
+    }
+}
+
+fn draw_footer(frame: &mut Frame, area: Rect, app: &mut App) {
+    let mut help = vec![
+        "↑/↓".dim(),
+        ": Move  ".dim(),
+        "r".dim(),
+        ": Refresh  ".dim(),
+        "Enter".dim(),
+        ": Open  ".dim(),
+    ];
+    // Apply hint; show disabled note when overlay is open without a diff.
+    if let Some(ov) = app.diff_overlay.as_ref() {
+        if !ov.can_apply {
+            help.push("a".dim());
+            help.push(": Apply (disabled)  ".dim());
+        } else {
+            help.push("a".dim());
+            help.push(": Apply  ".dim());
+        }
+    } else {
+        help.push("a".dim());
+        help.push(": Apply  ".dim());
+    }
+    help.push("o : Set Env  ".dim());
+    if app.new_task.is_some() {
+        help.push("(editing new task)  ".dim());
+    } else {
+        help.push("n : New Task  ".dim());
+    }
+    help.extend(vec!["q".dim(), ": Quit  ".dim()]);
+    // Split footer area into two rows: help+spinner (top) and status (bottom)
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(area);
+
+    // Top row: help text + spinner at right
+    let top = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Fill(1), Constraint::Length(18)])
+        .split(rows[0]);
+    let para = Paragraph::new(Line::from(help));
+    // Draw help text; avoid clearing the whole footer area every frame.
+    frame.render_widget(para, top[0]);
+    // Right side: spinner or clear the spinner area if idle to prevent stale glyphs.
+    if app.refresh_inflight || app.details_inflight || app.env_loading {
+        draw_inline_spinner(frame, top[1], &mut app.throbber, "Loading…");
+    } else {
+        frame.render_widget(Clear, top[1]);
+    }
+
+    // Bottom row: status/log text across full width (single-line; sanitize newlines)
+    let mut status_line = app.status.replace('\n', " ");
+    if status_line.len() > 2000 {
+        // hard cap to avoid TUI noise
+        status_line.truncate(2000);
+        status_line.push_str("…");
+    }
+    // Clear the status row to avoid trailing characters when the message shrinks.
+    frame.render_widget(Clear, rows[1]);
+    let status = Paragraph::new(status_line);
+    frame.render_widget(status, rows[1]);
+}
+
+fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
+    // Centered overlay rect (deduped geometry) and padded content via helpers.
+    let inner = overlay_outer(area);
+
+    if app.diff_overlay.is_none() {
+        return;
+    }
+    let is_error = if let Some(overlay) = app.diff_overlay.as_ref() {
+        !overlay.can_apply
+            && overlay
+                .sd
+                .wrapped_lines()
+                .first()
+                .map(|s| s.trim_start().starts_with("Task failed:"))
+                .unwrap_or(false)
+    } else {
+        false
+    };
+    let can_apply = app
+        .diff_overlay
+        .as_ref()
+        .map(|o| o.can_apply)
+        .unwrap_or(false);
+    let title = app
+        .diff_overlay
+        .as_ref()
+        .map(|o| o.title.clone())
+        .unwrap_or_default();
+    // Ensure ScrollableDiff knows geometry using padded content area.
+    let content_area = overlay_content(inner);
+    if let Some(ov) = app.diff_overlay.as_mut() {
+        ov.sd.set_width(content_area.width);
+        ov.sd.set_viewport(content_area.height);
+    }
+
+    // Optional percent scrolled label
+    let pct_opt = app
+        .diff_overlay
+        .as_ref()
+        .and_then(|o| o.sd.percent_scrolled());
+    let mut title_spans: Vec<ratatui::text::Span> = if is_error {
+        vec![
+            "Details ".magenta(),
+            "[FAILED]".red().bold(),
+            " ".into(),
+            title.clone().magenta(),
+        ]
+    } else if can_apply {
+        vec!["Diff: ".magenta(), title.clone().magenta()]
+    } else {
+        vec!["Details: ".magenta(), title.clone().magenta()]
+    };
+    if let Some(p) = pct_opt {
+        title_spans.push("  • ".dim());
+        title_spans.push(format!("{}%", p).dim());
+    }
+    let block = overlay_block().title(Line::from(title_spans));
+    frame.render_widget(Clear, inner);
+    frame.render_widget(block.clone(), inner);
+
+    let styled_lines: Vec<Line<'static>> = if can_apply {
+        let raw = app.diff_overlay.as_ref().map(|o| o.sd.wrapped_lines());
+        raw.unwrap_or(&[])
+            .iter()
+            .map(|l| style_diff_line(l))
+            .collect()
+    } else {
+        // Basic markdown styling for assistant messages
+        let mut in_code = false;
+        let raw = app.diff_overlay.as_ref().map(|o| o.sd.wrapped_lines());
+        raw.unwrap_or(&[])
+            .iter()
+            .map(|raw| {
+                if raw.trim_start().starts_with("```") {
+                    in_code = !in_code;
+                    return Line::from(raw.to_string().cyan());
+                }
+                if in_code {
+                    return Line::from(raw.to_string().cyan());
+                }
+                let s = raw.trim_start();
+                if s.starts_with("### ") || s.starts_with("## ") || s.starts_with("# ") {
+                    return Line::from(raw.to_string().magenta().bold());
+                }
+                if s.starts_with("- ") || s.starts_with("* ") {
+                    let rest = &s[2..];
+                    return Line::from(vec!["• ".into(), rest.to_string().into()]);
+                }
+                Line::from(raw.to_string())
+            })
+            .collect()
+    };
+    let raw_empty = app
+        .diff_overlay
+        .as_ref()
+        .map(|o| o.sd.wrapped_lines().is_empty())
+        .unwrap_or(true);
+    if app.details_inflight && raw_empty {
+        // Show a centered spinner while loading details
+        draw_centered_spinner(frame, content_area, &mut app.throbber, "Loading details…");
+    } else {
+        // We pre-wrapped lines in ScrollableDiff; do not enable Paragraph-level wrapping here.
+        let scroll = app
+            .diff_overlay
+            .as_ref()
+            .map(|o| o.sd.state.scroll)
+            .unwrap_or(0);
+        let content = Paragraph::new(Text::from(styled_lines)).scroll((scroll, 0));
+        frame.render_widget(content, content_area);
+    }
+}
+
+fn style_diff_line(raw: &str) -> Line<'static> {
+    use ratatui::style::Color;
+    use ratatui::style::Modifier;
+    use ratatui::style::Style;
+    use ratatui::text::Span;
+
+    if raw.starts_with("@@") {
+        return Line::from(vec![Span::styled(
+            raw.to_string(),
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        )]);
+    }
+    if raw.starts_with("+++") || raw.starts_with("---") {
+        return Line::from(vec![Span::styled(
+            raw.to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        )]);
+    }
+    if raw.starts_with('+') {
+        return Line::from(vec![Span::styled(
+            raw.to_string(),
+            Style::default().fg(Color::Green),
+        )]);
+    }
+    if raw.starts_with('-') {
+        return Line::from(vec![Span::styled(
+            raw.to_string(),
+            Style::default().fg(Color::Red),
+        )]);
+    }
+    Line::from(vec![Span::raw(raw.to_string())])
+}
+
+fn render_task_item(app: &App, t: &codex_cloud_tasks_api::TaskSummary) -> ListItem<'static> {
+    let status = match t.status {
+        TaskStatus::Ready => "READY".green(),
+        TaskStatus::Pending => "PENDING".magenta(),
+        TaskStatus::Applied => "APPLIED".blue(),
+        TaskStatus::Error => "ERROR".red(),
+    };
+
+    // Title line: [STATUS] Title
+    let title = Line::from(vec![
+        "[".into(),
+        status,
+        "] ".into(),
+        t.title.clone().into(),
+    ]);
+
+    // Meta line: environment label and relative time (dim)
+    let mut meta: Vec<ratatui::text::Span> = Vec::new();
+    if let Some(lbl) = t.environment_label.as_ref().filter(|s| !s.is_empty()) {
+        meta.push(lbl.clone().dim());
+    }
+    let when = format_relative_time(t.updated_at).dim();
+    if !meta.is_empty() {
+        meta.push("  ".into());
+        meta.push("•".dim());
+        meta.push("  ".into());
+    }
+    meta.push(when);
+    let meta_line = Line::from(meta);
+
+    // Subline: summary when present; otherwise show "no diff"
+    let sub = if t.summary.files_changed > 0
+        || t.summary.lines_added > 0
+        || t.summary.lines_removed > 0
+    {
+        let adds = t.summary.lines_added;
+        let dels = t.summary.lines_removed;
+        let files = t.summary.files_changed;
+        Line::from(vec![
+            format!("+{}", adds).green(),
+            "/".into(),
+            format!("−{}", dels).red(),
+            " ".into(),
+            "•".dim(),
+            " ".into(),
+            format!("{}", files).into(),
+            " ".into(),
+            "files".dim(),
+        ])
+    } else {
+        Line::from("no diff".to_string().dim())
+    };
+
+    // Insert a blank spacer line after the summary to separate tasks
+    let spacer = Line::from("");
+    ListItem::new(vec![title, meta_line, sub, spacer])
+}
+
+fn format_relative_time(ts: chrono::DateTime<Utc>) -> String {
+    let now = Utc::now();
+    let mut secs = (now - ts).num_seconds();
+    if secs < 0 {
+        secs = 0;
+    }
+    if secs < 60 {
+        return format!("{}s ago", secs);
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return format!("{}m ago", mins);
+    }
+    let hours = mins / 60;
+    if hours < 24 {
+        return format!("{}h ago", hours);
+    }
+    let local = ts.with_timezone(&Local);
+    local.format("%b %e %H:%M").to_string()
+}
+
+fn draw_inline_spinner(
+    frame: &mut Frame,
+    area: Rect,
+    state: &mut throbber_widgets_tui::ThrobberState,
+    label: &str,
+) {
+    use ratatui::style::Style;
+    use throbber_widgets_tui::BRAILLE_EIGHT;
+    use throbber_widgets_tui::Throbber;
+    use throbber_widgets_tui::WhichUse;
+    let w = Throbber::default()
+        .label(label)
+        .style(Style::default().cyan())
+        .throbber_style(Style::default().magenta().bold())
+        .throbber_set(BRAILLE_EIGHT)
+        .use_type(WhichUse::Spin);
+    frame.render_stateful_widget(w, area, state);
+}
+
+fn draw_centered_spinner(
+    frame: &mut Frame,
+    area: Rect,
+    state: &mut throbber_widgets_tui::ThrobberState,
+    label: &str,
+) {
+    // Center a 1xN throbber within the given rect
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(50),
+            Constraint::Length(1),
+            Constraint::Percentage(49),
+        ])
+        .split(area);
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),
+            Constraint::Length(18),
+            Constraint::Percentage(50),
+        ])
+        .split(rows[1]);
+    draw_inline_spinner(frame, cols[1], state, label);
+}
+
+fn style_diff_fragment(src_line: &str, fragment: &str) -> Line<'static> {
+    if src_line.starts_with("@@") {
+        return Line::from(fragment.to_string().magenta().bold());
+    }
+    if src_line.starts_with("diff --git ") || src_line.starts_with("index ") {
+        return Line::from(fragment.to_string().dim());
+    }
+    if src_line.starts_with("+++") || src_line.starts_with("---") {
+        return Line::from(fragment.to_string().dim());
+    }
+    match src_line.as_bytes().first().copied() {
+        Some(b'+') => Line::from(fragment.to_string().green()),
+        Some(b'-') => Line::from(fragment.to_string().red()),
+        _ => Line::from(fragment.to_string()),
+    }
+}
+
+pub fn draw_env_modal(frame: &mut Frame, area: Rect, app: &mut App) {
+    use ratatui::widgets::Wrap;
+
+    // Use shared overlay geometry and padding.
+    let inner = overlay_outer(area);
+
+    // Title: primary only; move long hints to a subheader inside content.
+    let title = Line::from(vec!["Select Environment".magenta().bold()]);
+    let block = overlay_block().title(title);
+
+    frame.render_widget(Clear, inner);
+    frame.render_widget(block.clone(), inner);
+    let content = overlay_content(inner);
+
+    if app.env_loading {
+        draw_centered_spinner(frame, content, &mut app.throbber, "Loading environments…");
+        return;
+    }
+
+    // Layout: subheader + search + results list
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // subheader
+            Constraint::Length(1), // search
+            Constraint::Min(1),    // list
+        ])
+        .split(content);
+
+    // Subheader with usage hints (dim cyan)
+    let subheader = Paragraph::new(Line::from(
+        "Type to search, Enter select, Esc cancel; r refresh"
+            .cyan()
+            .dim(),
+    ))
+    .wrap(Wrap { trim: true });
+    frame.render_widget(subheader, rows[0]);
+
+    let query = app
+        .env_modal
+        .as_ref()
+        .map(|m| m.query.clone())
+        .unwrap_or_default();
+    let ql = query.to_lowercase();
+    let search = Paragraph::new(format!("Search: {}", query)).wrap(Wrap { trim: true });
+    frame.render_widget(search, rows[1]);
+
+    // Filter environments by query (case-insensitive substring over label/id/hints)
+    let envs: Vec<&crate::app::EnvironmentRow> = app
+        .environments
+        .iter()
+        .filter(|e| {
+            if ql.is_empty() {
+                return true;
+            }
+            let mut hay = String::new();
+            if let Some(l) = &e.label {
+                hay.push_str(&l.to_lowercase());
+                hay.push(' ');
+            }
+            hay.push_str(&e.id.to_lowercase());
+            if let Some(h) = &e.repo_hints {
+                hay.push(' ');
+                hay.push_str(&h.to_lowercase());
+            }
+            hay.contains(&ql)
+        })
+        .collect();
+
+    let mut items: Vec<ListItem> = Vec::new();
+    items.push(ListItem::new(Line::from("All Environments (Global)")));
+    for env in envs.iter() {
+        let primary = env.label.clone().unwrap_or_else(|| "<unnamed>".to_string());
+        let mut spans: Vec<ratatui::text::Span> = vec![primary.into()];
+        if env.is_pinned {
+            spans.push("  ".into());
+            spans.push("PINNED".magenta().bold());
+        }
+        spans.push("  ".into());
+        spans.push(env.id.clone().dim());
+        if let Some(hint) = &env.repo_hints {
+            spans.push("  ".into());
+            spans.push(hint.clone().dim());
+        }
+        items.push(ListItem::new(Line::from(spans)));
+    }
+
+    let sel_desired = app.env_modal.as_ref().map(|m| m.selected).unwrap_or(0);
+    let sel = sel_desired.min(envs.len());
+    let mut list_state = ListState::default().with_selected(Some(sel));
+    let list = List::new(items)
+        .highlight_symbol("› ")
+        .highlight_style(Style::default().bold())
+        .block(Block::default().borders(Borders::NONE));
+    frame.render_stateful_widget(list, rows[2], &mut list_state);
+}

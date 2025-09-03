@@ -46,6 +46,7 @@ mod markdown;
 mod markdown_stream;
 pub mod onboarding;
 mod pager_overlay;
+pub mod public_widgets;
 mod render;
 mod session_log;
 mod shimmer;
@@ -65,6 +66,8 @@ mod chatwidget_stream_tests;
 mod updates;
 
 pub use cli::Cli;
+pub use public_widgets::composer_input::ComposerAction;
+pub use public_widgets::composer_input::ComposerInput;
 
 use crate::onboarding::TrustDirectorySelection;
 use crate::onboarding::onboarding_screen::OnboardingScreenArgs;
@@ -312,11 +315,13 @@ async fn run_ratatui_app(
     if should_show_onboarding {
         let directory_trust_decision = run_onboarding_app(
             OnboardingScreenArgs {
+                codex_home: config.codex_home.clone(),
+                cwd: config.cwd.clone(),
                 show_login_screen: should_show_login_screen(login_status, &config),
                 show_trust_screen: should_show_trust_screen,
                 login_status,
+                preferred_auth_method: config.preferred_auth_method,
                 auth_manager: auth_manager.clone(),
-                config: config.clone(),
             },
             &mut tui,
         )

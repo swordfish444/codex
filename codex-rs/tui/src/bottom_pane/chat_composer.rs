@@ -99,6 +99,8 @@ pub(crate) struct ChatComposer {
     // When true, disables paste-burst logic and inserts characters immediately.
     disable_paste_burst: bool,
     custom_prompts: Vec<CustomPrompt>,
+    // Optional override for footer hint items.
+    footer_hint_override: Option<Vec<(String, String)>>,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -137,6 +139,7 @@ impl ChatComposer {
             paste_burst: PasteBurst::default(),
             disable_paste_burst: false,
             custom_prompts: Vec::new(),
+            footer_hint_override: None,
         };
         // Apply configuration via the setter to keep side-effects centralized.
         this.set_disable_paste_burst(disable_paste_burst);
@@ -240,6 +243,10 @@ impl ChatComposer {
             self.sync_file_search_popup();
         }
         true
+    }
+
+    pub(crate) fn set_footer_hint_override(&mut self, items: Option<Vec<(String, String)>>) {
+        self.footer_hint_override = items;
     }
 
     pub fn handle_paste_image_path(&mut self, pasted: String) -> bool {
@@ -1266,6 +1273,17 @@ impl WidgetRef for ChatComposer {
                         "Ctrl+C again".set_style(key_hint_style),
                         " to quit".into(),
                     ]
+                } else if let Some(items) = &self.footer_hint_override {
+                    let mut out: Vec<Span> = Vec::new();
+                    for (i, (key, label)) in items.iter().enumerate() {
+                        out.push(Span::from(" "));
+                        out.push(key.as_str().set_style(key_hint_style));
+                        out.push(Span::from(format!(" {label}")));
+                        if i + 1 != items.len() {
+                            out.push(Span::from("   "));
+                        }
+                    }
+                    out
                 } else {
                     let newline_hint_key = if self.use_shift_enter_hint {
                         "Shift+⏎"
