@@ -106,6 +106,13 @@ def load_reviewer_json(reviewer: str) -> Optional[Dict[str, Any]]:
     except Exception:
         return None
 
+def load_json_from_path(path: str) -> Optional[Dict[str, Any]]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
 
 def save_reviewer_json(reviewer: str, data: Dict[str, Any]):
     """Atomically write reviewers/<reviewer>.json to avoid corruption on interrupts."""
@@ -119,6 +126,17 @@ def save_reviewer_json(reviewer: str, data: Dict[str, Any]):
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, p)
+
+def save_json_to_path(path: str, data: Dict[str, Any]):
+    dirpath = os.path.dirname(path)
+    os.makedirs(dirpath, exist_ok=True)
+    tmp_path = os.path.join(dirpath, f".{os.path.basename(path)}.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, path)
 
 def get_current_branch() -> str:
     code, out, _ = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
@@ -250,7 +268,15 @@ def study_one_from_json(pr_number: int, markdown: str, reviewer: str, dump_dir: 
         return pr_number, None, str(e)
 
 
-def _study_fill_studyguides(data: Dict[str, Any], reviewer: str, jobs: int = 10, limit: Optional[int] = None, debug: bool = False, force: bool = False):
+def _study_fill_studyguides(
+    data: Dict[str, Any],
+    reviewer: str,
+    jobs: int = 10,
+    limit: Optional[int] = None,
+    debug: bool = False,
+    force: bool = False,
+    save_path: Optional[str] = None,
+):
     prs = list(data.get("prs") or [])
     items = []
     for p in prs:
@@ -297,7 +323,10 @@ def _study_fill_studyguides(data: Dict[str, Any], reviewer: str, jobs: int = 10,
                 if obj is not None:
                     obj["studyguide"] = sg
                     with save_lock:
-                        save_reviewer_json(reviewer, data)
+                        if save_path:
+                            save_json_to_path(save_path, data)
+                        else:
+                            save_reviewer_json(reviewer, data)
                         # After saving into JSON, delete the per‑PR study file unless in debug mode
                         if not debug:
                             try:
@@ -612,7 +641,8 @@ def print_study_progress(completed: int, total: int, lock: threading.Lock):
 
 def study_cli(argv: List[str]):
     parser = argparse.ArgumentParser(prog="review study", description="Generate studyguides into reviewers/<user>.json and dump files.")
-    parser.add_argument("reviewer", help="GitHub login")
+    parser.add_argument("reviewer", nargs="?", help="GitHub login")
+    parser.add_argument("--profile", "-p", help="Path to reviewers JSON; overrides reviewer and save path")
     parser.add_argument("--days", "-d", type=int, default=30, help="Look back N days for PRs (default: 30)")
     parser.add_argument("--jobs", "-j", type=int, default=10, help="Parallel jobs (default: 10)")
     parser.add_argument("--limit", "-n", type=int, default=None, help="Limit number of PRs processed")
@@ -620,60 +650,88 @@ def study_cli(argv: List[str]):
     parser.add_argument("--force", action="store_true", help="Regenerate studyguides even if present")
     args = parser.parse_args(argv)
 
-    # Ensure reviewers JSON exists via lastprs
+    # Ensure reviewers JSON exists via lastprs (skipped when --profile is used)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     local_lastprs = os.path.join(script_dir, "lastprs")
     lastprs_cmd = local_lastprs if os.path.isfile(local_lastprs) and os.access(local_lastprs, os.X_OK) else "lastprs"
 
-    data = load_reviewer_json(args.reviewer)
-    if data is None:
-        print(f"Running lastprs for {args.reviewer} (days={args.days})…")
-        code, out, err = _run([lastprs_cmd, str(args.days), args.reviewer])
-        if code != 0:
-            print(f"lastprs failed: {err.strip()}", file=sys.stderr)
-            sys.exit(2)
-        if out.strip():
-            print(out.strip())
-        data = load_reviewer_json(args.reviewer)
+    profile_path: Optional[str] = args.profile
+    reviewer_arg = args.reviewer
+    data: Optional[Dict[str, Any]] = None
+    reviewer: Optional[str] = None
+
+    if profile_path:
+        data = load_json_from_path(profile_path)
         if data is None:
-            print("Failed to load reviewers JSON after lastprs.", file=sys.stderr)
+            print(f"Error: profile not found or invalid JSON: {profile_path}", file=sys.stderr)
             sys.exit(2)
+        reviewer = str(data.get("reviewer") or os.path.splitext(os.path.basename(profile_path))[0])
+    else:
+        if not reviewer_arg:
+            print("Error: reviewer is required when --profile is not provided.", file=sys.stderr)
+            sys.exit(2)
+        reviewer = reviewer_arg
+        data = load_reviewer_json(reviewer)
+        if data is None:
+            print(f"Running lastprs for {reviewer} (days={args.days})…")
+            code, out, err = _run([lastprs_cmd, str(args.days), reviewer])
+            if code != 0:
+                print(f"lastprs failed: {err.strip()}", file=sys.stderr)
+                sys.exit(2)
+            if out.strip():
+                print(out.strip())
+            data = load_reviewer_json(reviewer)
+            if data is None:
+                print("Failed to load reviewers JSON after lastprs.", file=sys.stderr)
+                sys.exit(2)
 
     # If requested days exceeds what's in the JSON, refresh via lastprs automatically
     try:
         existing_days = int((data or {}).get("days", 0))
     except Exception:
         existing_days = 0
-    if args.days is not None and args.days > existing_days:
+    if (not profile_path) and args.days is not None and args.days > existing_days:
         print(
             f"Dataset is {existing_days} day(s); requested --days={args.days}. Refreshing via lastprs…"
         )
-        code = _run_streaming([lastprs_cmd, str(args.days), args.reviewer])
+        code = _run_streaming([lastprs_cmd, str(args.days), reviewer])
         if code != 0:
             print("lastprs failed (see output above)", file=sys.stderr)
         else:
-            data2 = load_reviewer_json(args.reviewer)
+            data2 = load_reviewer_json(reviewer)
             if data2 is not None:
                 data = data2
 
     # If a limit was requested that exceeds dataset size, refresh via lastprs automatically
     current_count = len(list(data.get("prs") or []))
-    if args.limit is not None and args.limit > current_count:
+    if (not profile_path) and args.limit is not None and args.limit > current_count:
         print(
             f"Dataset has {current_count} PR(s), but --limit is {args.limit}. Refreshing via lastprs (days={args.days})…"
         )
-        code = _run_streaming([lastprs_cmd, str(args.days), args.reviewer])
+        code = _run_streaming([lastprs_cmd, str(args.days), reviewer])
         if code != 0:
             print("lastprs failed (see output above)", file=sys.stderr)
             # Continue with what we have rather than aborting
         else:
-            data2 = load_reviewer_json(args.reviewer)
+            data2 = load_reviewer_json(reviewer)
             if data2 is not None:
                 data = data2
 
-    _study_fill_studyguides(data, args.reviewer, jobs=args.jobs, limit=args.limit, debug=args.debug, force=args.force)
-    save_reviewer_json(args.reviewer, data)
-    print(f"Updated reviewers/{args.reviewer}.json with studyguides.")
+    _study_fill_studyguides(
+        data,
+        reviewer,
+        jobs=args.jobs,
+        limit=args.limit,
+        debug=args.debug,
+        force=args.force,
+        save_path=profile_path,
+    )
+    if profile_path:
+        save_json_to_path(profile_path, data)
+        print(f"Updated {profile_path} with studyguides.")
+    else:
+        save_reviewer_json(reviewer, data)
+        print(f"Updated reviewers/{reviewer}.json with studyguides.")
 
 
 def main():
@@ -689,7 +747,8 @@ def main():
             "Aggregates results, shows a progress bar, and writes outputs to reviewers/dump/<user>/."
         ),
     )
-    parser.add_argument("reviewer", help="GitHub login whose studyguides to use (from reviewers/<user>.json)")
+    parser.add_argument("reviewer", nargs="?", help="GitHub login whose studyguides to use (from reviewers/<user>.json)")
+    parser.add_argument("--profile", "-p", help="Path to reviewers JSON; overrides reviewer and dataset path")
     parser.add_argument("--jobs", "-j", type=int, default=10, help="Parallel jobs (default: 10)")
     parser.add_argument("--base", default=None, help="Base ref to diff against (default: auto: origin/main or main)")
     parser.add_argument(
@@ -713,37 +772,50 @@ def main():
     require("gh", "Install GitHub CLI: https://cli.github.com (used by other tools in this repo)")
 
     repo_root = detect_repo_root() or os.getcwd()
-    reviewer = args.reviewer
+    profile_path: Optional[str] = args.profile
+    data: Optional[Dict[str, Any]] = None
 
-    # Preferred source: reviewers/<reviewer>.json
-    data = load_reviewer_json(reviewer)
-    if data is None:
-        repo = detect_repo_from_git() or "owner/repo"
-        print(f"No reviewers/{reviewer}.json found.")
-        try:
-            resp = input(f"Study {reviewer}'s last 100 days of PRs under {repo}? [y/N] ").strip().lower()
-        except EOFError:
-            resp = "n"
-        if resp == "y":
-            code, out, err = _run([os.path.join(repo_root, "lastprs"), "100", reviewer])
-            if code != 0:
-                print(f"lastprs failed: {err.strip()}", file=sys.stderr)
-                sys.exit(2)
-            data = load_reviewer_json(reviewer)
-            if data is None:
-                print("Failed to load reviewers JSON after lastprs.", file=sys.stderr)
-                sys.exit(2)
-            # Prompt to run study now
-            try:
-                resp2 = input("Generate studyguides now? [Y/n] ").strip().lower()
-            except EOFError:
-                resp2 = "y"
-            if resp2 in ("", "y"):
-                _study_fill_studyguides(data, reviewer, jobs=args.jobs, limit=args.limit, debug=False)
-                save_reviewer_json(reviewer, data)
-        else:
-            print("Aborting: reviewer dataset not found.", file=sys.stderr)
+    # Resolve reviewer and dataset
+    if profile_path:
+        data = load_json_from_path(profile_path)
+        if data is None:
+            print(f"Error: profile not found or invalid JSON: {profile_path}", file=sys.stderr)
             sys.exit(2)
+        reviewer = str(data.get("reviewer") or os.path.splitext(os.path.basename(profile_path))[0])
+    else:
+        reviewer = args.reviewer
+        if not reviewer:
+            print("Error: reviewer is required when --profile is not provided.", file=sys.stderr)
+            sys.exit(2)
+        # Preferred source: reviewers/<reviewer>.json
+        data = load_reviewer_json(reviewer)
+        if data is None:
+            repo = detect_repo_from_git() or "owner/repo"
+            print(f"No reviewers/{reviewer}.json found.")
+            try:
+                resp = input(f"Study {reviewer}'s last 100 days of PRs under {repo}? [y/N] ").strip().lower()
+            except EOFError:
+                resp = "n"
+            if resp == "y":
+                code, out, err = _run([os.path.join(repo_root, "lastprs"), "100", reviewer])
+                if code != 0:
+                    print(f"lastprs failed: {err.strip()}", file=sys.stderr)
+                    sys.exit(2)
+                data = load_reviewer_json(reviewer)
+                if data is None:
+                    print("Failed to load reviewers JSON after lastprs.", file=sys.stderr)
+                    sys.exit(2)
+                # Prompt to run study now
+                try:
+                    resp2 = input("Generate studyguides now? [Y/n] ").strip().lower()
+                except EOFError:
+                    resp2 = "y"
+                if resp2 in ("", "y"):
+                    _study_fill_studyguides(data, reviewer, jobs=args.jobs, limit=args.limit, debug=False)
+                    save_reviewer_json(reviewer, data)
+            else:
+                print("Aborting: reviewer dataset not found.", file=sys.stderr)
+                sys.exit(2)
 
     # Build list of (pr_number, studyguide)
     prs = list(data.get("prs") or [])
@@ -799,6 +871,19 @@ def main():
     if args.limit is not None and args.limit < total_available:
         print(f"Limit: using first {total} of {total_available} guides")
     print_progress(passed, completed, total, lock)
+
+    # Worker for ThreadPool: evaluate a single (pr_number, studyguide_text)
+    def task(it: Tuple[int, str]):
+        pr_number, studyguide_text = it
+        return review_one_from_json(
+            pr_number,
+            studyguide_text,
+            diff_text,
+            branch,
+            base_ref,
+            out_dir,
+            force=args.force,
+        )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
         futs = [ex.submit(task, it) for it in pairs]
