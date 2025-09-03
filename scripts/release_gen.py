@@ -286,7 +286,7 @@ def generate_dump(repo: str, from_tag: str, to_tag: str, out_file: Path) -> None
     header(f"Done -> {out_file}")
 
 
-def build_prompt(dump_path: Path, gen_file: Path) -> str:
+def build_prompt(dump_path: Path) -> str:
     dump_content = dump_path.read_text(encoding="utf-8")
     example = (
         "## Highlights:\n\n"
@@ -319,14 +319,14 @@ def build_prompt(dump_path: Path, gen_file: Path) -> str:
     instr = (
         f"{dump_content}\n\n---\n\n"
         f"Please generate a summarized release note based on the list of PRs above. "
-        f"Then, write a file called {gen_file} with your suggested release notes. "
+        f"Then, write your suggested release notes. "
         f"It should follow this structure (+ the style/tone/brevity in this example):\n\n"
         f"\"{example}\""
     )
     return instr
 
 
-def run_codex(prompt: str, quiet: bool) -> int:
+def run_codex(prompt: str, quiet: bool, gen_file: str) -> int:
     if not which("codex"):
         print(
             "Error: codex CLI is required for generation. Use --dump-only to skip.",
@@ -334,7 +334,7 @@ def run_codex(prompt: str, quiet: bool) -> int:
         )
         return 127
 
-    cmd = ["codex", "exec", "--sandbox", "workspace-write", prompt]
+    cmd = ["codex", "exec", "--sandbox", "read-only", "--output-last-message", gen_file, prompt]
     if quiet:
         try:
             proc = subprocess.Popen(
@@ -400,9 +400,9 @@ def main(argv: Sequence[str]) -> int:
         return 0
 
     dump_path = abspath(dump_file)
-    prompt = build_prompt(dump_path, gen_file)
+    prompt = build_prompt(dump_path)
     header(f"Calling codex to generate {gen_file}")
-    status = run_codex(prompt, pargs.quiet)
+    status = run_codex(prompt, pargs.quiet, gen_file)
 
     if gen_file.exists():
         # Output only the generated release notes to stdout
