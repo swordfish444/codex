@@ -124,7 +124,7 @@ def run_codex_exec(prompt: str, last_message_file: Optional[str] = None) -> Tupl
         "codex",
         "--",
         "-c",
-        "model_reasoning_effort=low",
+        "model_reasoning_effort=high",
         "exec",
     ]
     if last_message_file:
@@ -151,10 +151,33 @@ def parse_json_from_text(text: str) -> Optional[Dict]:
     return None
 
 
-def _format_failure_item(item: Any) -> str:
+def _format_failure_display(item: Dict[str, Any]) -> str:
+    issue = str(item.get("issue", "")).strip()
+    file = str(item.get("file", "")).strip()
+    line = item.get("line")
+    try:
+        line = int(line) if line is not None else -1
+    except Exception:
+        line = -1
+    excerpt = str(item.get("excerpt", "")).strip()
+    header = f"@{file}:{line}" if file else "@"
+    lines: List[str] = [header]
+    if excerpt:
+        lines.append(excerpt)
+    if issue:
+        lines.append(f"> {issue}")
+    return "\n".join(lines).strip()
+
+
+def _to_structured_failure(guide: str, item: Any) -> Dict[str, Any]:
     if isinstance(item, str):
-        # Keep backward-compat strings
-        return item.strip()
+        return {
+            "guide": guide,
+            "issue": item.strip(),
+            "file": "",
+            "line": -1,
+            "excerpt": "",
+        }
     if isinstance(item, dict):
         issue = str(item.get("issue", "")).strip()
         file = str(item.get("file", "")).strip()
@@ -164,17 +187,19 @@ def _format_failure_item(item: Any) -> str:
         except Exception:
             line = -1
         excerpt = str(item.get("excerpt", "")).strip()
-        header = f"@{file}:{line}" if file else "@"
-        lines: List[str] = [header]
-        if excerpt:
-            lines.append(excerpt)
-        if issue:
-            lines.append(f"> {issue}")
-        return "\n".join(lines).strip()
-    return str(item).strip()
+        return {"guide": guide, "issue": issue, "file": file, "line": line, "excerpt": excerpt}
+    # Fallback
+    return {"guide": guide, "issue": str(item).strip(), "file": "", "line": -1, "excerpt": ""}
 
 
-def review_one(study_path: str, diff_text: str, branch: str, base_ref: str, out_dir: str) -> Tuple[str, bool, List[str], Optional[str]]:
+def review_one(
+    study_path: str,
+    diff_text: str,
+    branch: str,
+    base_ref: str,
+    out_dir: str,
+    force: bool = False,
+) -> Tuple[str, bool, List[str], List[Dict[str, Any]], Optional[str]]:
     # Returns (study_filename, passes, failures, error)
     try:
         with open(study_path, "r", encoding="utf-8") as f:
@@ -183,107 +208,133 @@ def review_one(study_path: str, diff_text: str, branch: str, base_ref: str, out_
 
         os.makedirs(out_dir, exist_ok=True)
         tmp_outfile = os.path.join(out_dir, os.path.basename(study_path).replace("-study.md", "-review.json"))
-        code, out, err = run_codex_exec(prompt, last_message_file=tmp_outfile)
-        if code != 0:
-            return (os.path.basename(study_path), False, [], f"codex exec failed (exit {code}): {err.strip()}")
 
-        # Prefer file written by codex; fall back to captured stdout
+        # Reuse cached result unless forcing a recompute
         content = None
-        try:
-            if os.path.isfile(tmp_outfile) and os.path.getsize(tmp_outfile) > 0:
+        if (not force) and os.path.isfile(tmp_outfile) and os.path.getsize(tmp_outfile) > 0:
+            try:
                 with open(tmp_outfile, "r", encoding="utf-8") as f:
                     content = f.read()
-        except Exception:
-            pass
+            except Exception:
+                content = None
+
         if content is None:
-            content = out
+            code, out, err = run_codex_exec(prompt, last_message_file=tmp_outfile)
+            if code != 0:
+                return (os.path.basename(study_path), False, [], [], f"codex exec failed (exit {code}): {err.strip()}")
+
+            # Prefer file written by codex; fall back to captured stdout
+            try:
+                if os.path.isfile(tmp_outfile) and os.path.getsize(tmp_outfile) > 0:
+                    with open(tmp_outfile, "r", encoding="utf-8") as f:
+                        content = f.read()
+                else:
+                    content = out
+            except Exception:
+                content = out
 
         data = parse_json_from_text(content)
         if not data:
-            return (os.path.basename(study_path), False, [], "could not parse JSON from model output")
+            return (os.path.basename(study_path), False, [], [], "could not parse JSON from model output")
 
         # Normalize file on disk to pretty-printed raw JSON for future reuse.
+        # Normalize cache file to pretty JSON
         try:
             with open(tmp_outfile, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
                 f.write("\n")
         except Exception:
-            # Non-fatal
             pass
 
         relevant = bool(data.get("relevant", True))
         passes = bool(data.get("passes", False))
         raw_failures = list(data.get("failures") or [])
-        failures = [_format_failure_item(x) for x in raw_failures]
+        structured = [_to_structured_failure(os.path.basename(study_path), x) for x in raw_failures]
+        failures = [_format_failure_display(x) for x in structured]
 
         # If irrelevant, treat as pass-by-default (per schema instructions)
         if not relevant:
             passes = True
             failures = []
+            structured = []
 
-        return (os.path.basename(study_path), passes, failures, None)
+        return (os.path.basename(study_path), passes, failures, structured, None)
     except Exception as e:
         return (os.path.basename(study_path), False, [], str(e))
 
 
-def aggregate_deduplicate(failures_all: List[Tuple[str, str]], diff_text: str, out_dir: str) -> Tuple[str, Optional[str]]:
-    """Run Codex to deduplicate failures. Returns (outfile_path, error_or_none)."""
+def aggregate_deduplicate(failures_all: List[Dict[str, Any]], diff_text: str, out_dir: str) -> Tuple[str, Optional[List[Dict[str, Any]]], Optional[str]]:
+    """Run Codex to deduplicate failures. Returns (outfile_path, dedup_list_or_none, error_or_none)."""
     if not failures_all:
-        return ("", None)
+        return ("", [], None)
 
-    out_path = os.path.join(out_dir, "aggregate-dedup.md")
-    # Build input list
-    items = "\n".join(f"- [{guide}] {text}" for guide, text in failures_all)
+    out_path = os.path.join(out_dir, "aggregate-dedup.json")
+    issues_json = json.dumps(failures_all, indent=2)
     prompt = (
         "You are assisting with de-duplicating code review issues.\n\n"
         "DIFF (unified):\n```diff\n" + diff_text + "\n```\n\n"
-        "Issues to consider (may include duplicates). Each item may include file:line headers and excerpts; treat those as context only.\n"
-        + items + "\n\n"
-        "Please deduplicate these issues. Ignore file paths/line numbers and excerpts when comparing; group by semantic issue.\n"
-        "Output the list of unique issues ONLY as a bullet list, selecting the most descriptive phrasing for each.\n"
-        "Do not add commentary, headings, or reformatting beyond a bullet list."
+        "Issues (JSON array where each item has keys: guide, issue, file, line, excerpt):\n"
+        + issues_json + "\n\n"
+        "Task: Deduplicate issues that are semantically the same, ignoring differences in file, line, or excerpt.\n"
+        "Keep the single most descriptive 'issue' text for each group and retain its metadata (guide, file, line, excerpt).\n"
+        "Output: EXACT RAW JSON array (no Markdown, no backticks) with the same object shape as the input."
     )
     code, out, err = run_codex_exec(prompt, last_message_file=out_path)
     if code != 0:
-        return (out_path, f"codex exec failed (exit {code}): {err.strip()}")
-    # Fallback: ensure the file contains something
+        return (out_path, None, f"codex exec failed (exit {code}): {err.strip()}")
+    # Read result (file or stdout) and parse JSON
+    content = None
     try:
-        wrote = os.path.isfile(out_path) and os.path.getsize(out_path) > 0
-        if not wrote:
-            with open(out_path, "w", encoding="utf-8") as f:
-                f.write(out)
+        if os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
+            with open(out_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        else:
+            content = out
+    except Exception:
+        content = out
+    try:
+        data = json.loads(content)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        return (out_path, data, None)
     except Exception as e:
-        return (out_path, f"failed to write dedup output: {e}")
-    return (out_path, None)
+        return (out_path, None, f"failed to parse dedup JSON: {e}")
 
 
-def aggregate_rank(dedup_text: str, diff_text: str, out_dir: str) -> Tuple[str, Optional[str]]:
-    out_path = os.path.join(out_dir, "aggregate-ranked.md")
+def aggregate_rank(dedup_list: List[Dict[str, Any]], diff_text: str, out_dir: str) -> Tuple[str, Optional[str]]:
+    out_path = os.path.join(out_dir, "aggregate-ranked.json")
+    issues_json = json.dumps(dedup_list, indent=2)
     prompt = (
         "You are assisting with triage and prioritization of code review issues.\n\n"
         "DIFF (unified):\n```diff\n" + diff_text + "\n```\n\n"
-        "Issues (one per line or bullet):\n" + dedup_text + "\n\n"
+        "Issues (JSON array; each item has guide, issue, file, line, excerpt):\n"
+        + issues_json + "\n\n"
         "Task: For each issue, assign a category: P0, P1, P2, NIT, WRONG, IRRELEVANT.\n"
-        "- P0: Must-fix to prevent breakage/security/data loss.\n"
-        "- P1: Strongly recommended for correctness/perf/maintainability.\n"
-        "- P2: Nice-to-have improvements or polish.\n"
-        "- NIT: Stylistic nitpick.\n"
-        "- WRONG: The issue is incorrect given the diff.\n"
-        "- IRRELEVANT: Not applicable to this diff.\n\n"
-        "Output: EXACTLY a Markdown document grouped by sections with these headers (omit empty):\n"
-        "## P0\n- ...\n\n## P1\n- ...\n\n## P2\n- ...\n\n## NIT\n- ...\n\n## WRONG\n- ...\n\n## IRRELEVANT\n- ...\n"
+        "Output: EXACT RAW JSON object mapping category -> array of issues, preserving the same fields for each issue.\n"
+        "Schema: { \"P0\": Issue[], \"P1\": Issue[], \"P2\": Issue[], \"NIT\": Issue[], \"WRONG\": Issue[], \"IRRELEVANT\": Issue[] }"
     )
     code, out, err = run_codex_exec(prompt, last_message_file=out_path)
     if code != 0:
         return (out_path, f"codex exec failed (exit {code}): {err.strip()}")
+    # Parse and normalize JSON
+    content = None
     try:
-        wrote = os.path.isfile(out_path) and os.path.getsize(out_path) > 0
-        if not wrote:
-            with open(out_path, "w", encoding="utf-8") as f:
-                f.write(out)
+        if os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
+            with open(out_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        else:
+            content = out
+    except Exception:
+        content = out
+    try:
+        data = json.loads(content)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        return (out_path, None)
     except Exception as e:
-        return (out_path, f"failed to write ranked output: {e}")
-    return (out_path, None)
+        return (out_path, f"failed to parse ranked JSON: {e}")
 
 
 def print_progress(passed: int, completed: int, total: int, lock: threading.Lock):
@@ -326,6 +377,16 @@ def main():
         help="Use only the first N study guides after sorting (like head -n)",
     )
     parser.add_argument("--show-errors", action="store_true", help="Print per-guide errors encountered")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Recompute review JSONs even if cached results exist",
+    )
+    parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Clear the output directory (review folder) before running",
+    )
 
     args = parser.parse_args()
 
@@ -359,13 +420,20 @@ def main():
     else:
         # Default: sibling 'review' next to the study folder
         out_dir = os.path.join(os.path.dirname(study_dir), "review")
+    if args.clear and os.path.isdir(out_dir):
+        # Danger: delete the review folder to start fresh
+        try:
+            shutil.rmtree(out_dir)
+        except Exception as e:
+            print(f"Failed to clear output dir {out_dir}: {e}", file=sys.stderr)
+            sys.exit(2)
     os.makedirs(out_dir, exist_ok=True)
 
     total = len(guides)
     passed = 0
     completed = 0
     lock = threading.Lock()
-    failures_all: List[Tuple[str, str]] = []  # (guide, failure)
+    failures_all: List[Dict[str, Any]] = []  # structured failures
     errors_all: List[Tuple[str, str]] = []    # (guide, error)
 
     print(f"Running {total} review(s) against {branch} vs {base_ref}…")
@@ -384,12 +452,12 @@ def main():
     print_progress(passed, completed, total, lock)
 
     def task(p: str):
-        return review_one(p, diff_text, branch, base_ref, out_dir)
+        return review_one(p, diff_text, branch, base_ref, out_dir, force=args.force)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
         futs = [ex.submit(task, p) for p in guides]
         for fut in concurrent.futures.as_completed(futs):
-            guide_name, ok, failures, err = fut.result()
+            guide_name, ok, failures_display, failures_structured, err = fut.result()
             with lock:
                 completed += 1
                 if ok:
@@ -397,8 +465,8 @@ def main():
                 else:
                     if err:
                         errors_all.append((guide_name, err))
-                    for f in failures:
-                        failures_all.append((guide_name, f))
+                    for item in failures_structured:
+                        failures_all.append(item)
             print_progress(passed, completed, total, lock)
 
     print("")
@@ -410,43 +478,45 @@ def main():
 
     if failures_all:
         print("\nFailed points:")
-        for g, f in failures_all:
-            print(f"- [{g}] {f}")
+        for item in failures_all:
+            print(f"- [{item.get('guide','?')}] {_format_failure_display(item)}")
     else:
         print("\nNo failed points detected.")
 
     # 4) Aggregate via Codex: deduplicate (optional), then rank
     if failures_all:
         print("\nAggregating failed points…")
-        dedup_text = ''
-        dedup_path = os.path.join(out_dir, "aggregate-dedup.md")
+        dedup_path = os.path.join(out_dir, "aggregate-dedup.json")
+        dedup_list: List[Dict[str, Any]] = []
         if len(failures_all) == 1:
             # Skip model deduplication for a single issue; still write a trace file.
             single = failures_all[0]
-            dedup_text = f"- [{single[0]}] {single[1]}\n"
+            dedup_list = [single]
             try:
                 with open(dedup_path, 'w', encoding='utf-8') as f:
-                    f.write(dedup_text)
+                    json.dump(dedup_list, f, indent=2)
+                    f.write("\n")
             except Exception as e:
                 print(f"Failed to write dedup file: {e}", file=sys.stderr)
         else:
-            path, dedup_err = aggregate_deduplicate(failures_all, diff_text, out_dir)
+            path, data, dedup_err = aggregate_deduplicate(failures_all, diff_text, out_dir)
             if dedup_err:
                 print(f"Dedup error: {dedup_err}", file=sys.stderr)
             else:
                 dedup_path = path
                 try:
                     with open(dedup_path, 'r', encoding='utf-8') as f:
-                        dedup_text = f.read()
+                        dedup_list = json.load(f)
                 except Exception as e:
                     print(f"Failed to read dedup file: {e}", file=sys.stderr)
-                    dedup_text = ''
+                    dedup_list = []
 
-        if dedup_text.strip():
+        if dedup_list:
             print(f"\nDeduplicated issues written to: {dedup_path}\n")
-            print(dedup_text.strip()[:2000])
+            preview = json.dumps(dedup_list, indent=2)[:2000]
+            print(preview)
 
-            ranked_path, rank_err = aggregate_rank(dedup_text, diff_text, out_dir)
+            ranked_path, rank_err = aggregate_rank(dedup_list, diff_text, out_dir)
             if rank_err:
                 print(f"Ranking error: {rank_err}", file=sys.stderr)
             else:
