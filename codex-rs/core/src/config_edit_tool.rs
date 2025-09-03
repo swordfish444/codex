@@ -45,7 +45,7 @@ fn build_all_codex_docs() -> String {
     for path in paths.into_iter() {
         if let Some(file) = EmbeddedDocs::get(&path) {
             push_separator(&mut out);
-            out.push_str(&format!("<!-- Source: {} -->\n\n", path));
+            out.push_str(&format!("<!-- Source: {path} -->\n\n"));
             out.push_str(&String::from_utf8_lossy(&file.data));
         }
     }

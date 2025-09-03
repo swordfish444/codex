@@ -760,7 +760,7 @@ mod tests {
         );
 
         assert_eq!(
-            tools[5],
+            tools[6],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "test_server/do_something_cool".to_string(),
                 parameters: JsonSchema::Object {
@@ -928,12 +928,13 @@ mod tests {
                 "get_config",
                 "set_config",
                 "show_codex_docs",
+                "view_image",
                 "dash/search",
             ],
         );
 
         assert_eq!(
-            tools[5],
+            tools[6],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "dash/search".to_string(),
                 parameters: JsonSchema::Object {
@@ -994,13 +995,13 @@ mod tests {
                 "web_search",
                 "get_config",
                 "set_config",
-                "view_image",
                 "show_codex_docs",
+                "view_image",
                 "dash/paginate",
             ],
         );
         assert_eq!(
-            tools[5],
+            tools[6],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "dash/paginate".to_string(),
                 parameters: JsonSchema::Object {
@@ -1060,12 +1061,13 @@ mod tests {
                 "get_config",
                 "set_config",
                 "show_codex_docs",
+                "view_image",
                 "dash/tags",
             ],
         );
 
         assert_eq!(
-            tools[5],
+            tools[6],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "dash/tags".to_string(),
                 parameters: JsonSchema::Object {
@@ -1128,11 +1130,12 @@ mod tests {
                 "get_config",
                 "set_config",
                 "show_codex_docs",
+                "view_image",
                 "dash/value",
             ],
         );
         assert_eq!(
-            tools[5],
+            tools[6],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "dash/value".to_string(),
                 parameters: JsonSchema::Object {
