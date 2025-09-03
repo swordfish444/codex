@@ -807,7 +807,11 @@ def main():
         default=None,
         help="Use only the first N study guides after sorting (like head -n)",
     )
-    parser.add_argument("--show-errors", action="store_true", help="Print per-guide errors encountered")
+    parser.add_argument(
+        "--hide-errors",
+        action="store_true",
+        help="Do not print per-guide errors encountered",
+    )
     parser.add_argument(
         "--force",
         action="store_true",
@@ -968,7 +972,7 @@ def main():
     print("")
     failures_total = max(0, total - passed)
     print(f"Summary: {failures_total} failed")
-    if args.show_errors and errors_all:
+    if (not args.hide_errors) and errors_all:
         print("\nErrors:")
         for g, e in errors_all:
             print(f"- {g}: {e}")
