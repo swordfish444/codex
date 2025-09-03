@@ -313,7 +313,7 @@ def build_prompt(dump_path: Path, gen_file: Path) -> str:
         "- Fix git root resolution in worktrees (#2585)\n"
         "- Improve error messages & handling (#2695, #2587, #2640, #2540)\n\n\n"
         "## Full list of merged PRs:\n\n"
-        " - #2708 [feat] Simplfy command approval UI\n"
+        " - #2708 [feat] Simplify command approval UI\n"
         " - #2706 [chore] Tweak..."
     )
     instr = (
