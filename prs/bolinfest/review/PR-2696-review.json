@@ -1,24 +1,5 @@
 {
-  "relevant": true,
-  "passes": false,
-  "failures": [
-    {
-      "issue": "Uses blocking std::fs; prefer async I/O with tokio::fs for file reads.",
-      "file": "codex-rs/core/src/config_edit.rs",
-      "line": 47,
-      "excerpt": "let mut doc = match std::fs::read_to_string(&config_path) {"
-    },
-    {
-      "issue": "Uses blocking std::fs; prefer async I/O with tokio::fs for directory creation.",
-      "file": "codex-rs/core/src/config_edit.rs",
-      "line": 78,
-      "excerpt": "std::fs::create_dir_all(codex_home)?;"
-    },
-    {
-      "issue": "Uses blocking std::fs; prefer async I/O with tokio::fs for file writes.",
-      "file": "codex-rs/core/src/config_edit.rs",
-      "line": 80,
-      "excerpt": "std::fs::write(tmp_file.path(), doc.to_string())?;"
-    }
-  ]
+  "relevant": false,
+  "passes": true,
+  "failures": []
 }
