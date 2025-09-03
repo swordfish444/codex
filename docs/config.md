@@ -555,6 +555,23 @@ This is analogous to `model_context_window`, but for the maximum number of outpu
 
 Maximum number of bytes to read from an `AGENTS.md` file to include in the instructions sent with the first turn of a session. Defaults to 32 KiB.
 
+## tools.view_image
+
+Enable the `view_image` tool so the agent can attach local images (paths on disk) to provide extra visual context. Defaults to `true`.
+
+```toml
+[tools]
+view_image = true   # Added Sep 3, 2025
+```
+
+## disable_paste_burst
+
+Disable multi-line paste burst sending in the TUI chat composer to avoid accidental rapid submissions of pasted content. Defaults to `false`.
+
+```toml
+disable_paste_burst = true   # Added Sep 3, 2025
+```
+
 ## tui
 
 Options that are specific to the TUI.
@@ -614,4 +631,6 @@ Options that are specific to the TUI.
 | `responses_originator_header_internal_override` | string | Override `originator` header value. |
 | `projects.<path>.trust_level` | string | Mark project/worktree as trusted (only `"trusted"` is recognized). |
 | `preferred_auth_method` | `chatgpt` \| `apikey` | Select default auth method (default: `chatgpt`). |
+| `disable_paste_burst` | boolean | Disable multi-line paste burst sending in the TUI chat composer (default: false). |
 | `tools.web_search` | boolean | Enable web search tool (alias: `web_search_request`) (default: false). |
+| `tools.view_image` | boolean | Enable the view_image tool so the agent can attach local images (default: true). |
