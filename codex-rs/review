@@ -622,12 +622,12 @@ def aggregate_rank(dedup_list: List[Dict[str, Any]], diff_text: str, out_dir: st
 
 
 def print_progress(passed: int, completed: int, total: int, lock: threading.Lock):
-    pct = int((passed / total) * 100) if total else 0
+    pct = int((completed / total) * 100) if total else 0
     width = 30
-    filled = int((passed / total) * width) if total else 0
+    filled = int((completed / total) * width) if total else 0
     bar = "#" * filled + "-" * (width - filled)
     with lock:
-        print(f"[{bar}] {passed}/{total} passed ({pct}%), {completed}/{total} completed")
+        print(f"[{bar}] {completed}/{total} completed ({pct}%), {passed}/{total} passed")
 
 
 def print_study_progress(completed: int, total: int, lock: threading.Lock):
@@ -819,14 +819,30 @@ def main():
 
     # Build list of (pr_number, studyguide)
     prs = list(data.get("prs") or [])
+    # Optional: array of PR numbers to ignore when reviewing
+    ignore_list = data.get("ignore") or []
+    ignore_set = set()
+    try:
+        for x in ignore_list:
+            try:
+                ignore_set.add(int(x))
+            except Exception:
+                continue
+    except Exception:
+        ignore_set = set()
     pairs: List[Tuple[int, str]] = []
     for p in prs:
         n = p.get("number")
         sg = p.get("studyguide", "")
         if isinstance(n, int) and isinstance(sg, str) and sg.strip():
+            if n in ignore_set:
+                continue
             pairs.append((n, sg))
     if not pairs:
-        print(f"No studyguides present in reviewers/{reviewer}.json. Try: ./review study {reviewer}", file=sys.stderr)
+        msg = f"No studyguides present in reviewers/{reviewer}.json. Try: ./review study {reviewer}"
+        if ignore_set:
+            msg = f"No studyguides to review after applying ignore list ({len(ignore_set)} ignored). Try: ./review study {reviewer}"
+        print(msg, file=sys.stderr)
         sys.exit(2)
     total_available = len(pairs)
     if args.limit is not None:
