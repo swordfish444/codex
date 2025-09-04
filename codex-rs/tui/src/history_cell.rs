@@ -1032,7 +1032,7 @@ pub(crate) fn empty_mcp_output() -> PlainHistoryCell {
         "  • No MCP servers configured.".italic().into(),
         Line::from(vec![
             "    See the ".into(),
-            "\u{1b}]8;;https://github.com/openai/codex/blob/main/codex-rs/config.md#mcp_servers\u{7}MCP docs\u{1b}]8;;\u{7}".underlined(),
+            "\u{1b}]8;;https://github.com/openai/codex/blob/main/docs/config.md#mcp_servers\u{7}MCP docs\u{1b}]8;;\u{7}".underlined(),
             " to configure them.".into(),
         ])
         .style(Style::default().add_modifier(Modifier::DIM)),
@@ -1074,14 +1074,6 @@ pub(crate) fn new_mcp_tools_output(
             let cmd_display = format!("{} {}", cfg.command, cfg.args.join(" "));
 
             lines.push(vec!["    • Command: ".into(), cmd_display.into()].into());
-        }
-
-        if let Some(env) = cfg.env.as_ref()
-            && !env.is_empty()
-        {
-            let mut env_pairs: Vec<String> = env.iter().map(|(k, v)| format!("{k}={v}")).collect();
-            env_pairs.sort();
-            lines.push(vec!["    • Env: ".into(), env_pairs.join(" ").into()].into());
         }
 
         if names.is_empty() {
