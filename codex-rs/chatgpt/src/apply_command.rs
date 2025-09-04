@@ -2,8 +2,10 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use codex_common::CliConfigOverrides;
+use codex_core::config::AdminAuditContext;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
+use codex_core::config::maybe_post_admin_audit_events;
 
 use crate::chatgpt_token::init_chatgpt_token_from_auth;
 use crate::get_task::GetTaskResponse;
@@ -30,6 +32,14 @@ pub async fn run_apply_command(
             .map_err(anyhow::Error::msg)?,
         ConfigOverrides::default(),
     )?;
+    maybe_post_admin_audit_events(
+        &config,
+        AdminAuditContext {
+            sandbox_policy: &config.sandbox_policy,
+            dangerously_bypass_requested: false,
+        },
+    )
+    .await;
 
     init_chatgpt_token_from_auth(&config.codex_home, &config.responses_originator_header).await?;
 

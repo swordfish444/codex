@@ -12,8 +12,10 @@ use codex_core::AuthManager;
 use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_core::ConversationManager;
 use codex_core::NewConversation;
+use codex_core::config::AdminAuditContext;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
+use codex_core::config::maybe_post_admin_audit_events;
 use codex_core::git_info::get_git_repo_root;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::Event;
@@ -178,6 +180,15 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
             .await
             .map_err(|e| anyhow::anyhow!("OSS setup failed: {e}"))?;
     }
+
+    maybe_post_admin_audit_events(
+        &config,
+        AdminAuditContext {
+            sandbox_policy: &config.sandbox_policy,
+            dangerously_bypass_requested: dangerously_bypass_approvals_and_sandbox,
+        },
+    )
+    .await;
 
     // Print the effective configuration and prompt so users can see what Codex
     // is using.

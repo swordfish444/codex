@@ -7,11 +7,13 @@ use app::App;
 use codex_core::AuthManager;
 use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_core::CodexAuth;
+use codex_core::config::AdminAuditContext;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::ConfigToml;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_config_as_toml_with_cli_overrides;
+use codex_core::config::maybe_post_admin_audit_events;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::SandboxPolicy;
 use codex_ollama::DEFAULT_OSS_MODEL;
@@ -220,6 +222,15 @@ pub async fn run_main(
             .await
             .map_err(|e| std::io::Error::other(format!("OSS setup failed: {e}")))?;
     }
+
+    maybe_post_admin_audit_events(
+        &config,
+        AdminAuditContext {
+            sandbox_policy: &config.sandbox_policy,
+            dangerously_bypass_requested: cli.dangerously_bypass_approvals_and_sandbox,
+        },
+    )
+    .await;
 
     let _ = tracing_subscriber::registry().with(file_layer).try_init();
 
