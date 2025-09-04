@@ -286,6 +286,7 @@ pub(crate) struct Session {
     codex_linux_sandbox_exe: Option<PathBuf>,
     user_shell: shell::Shell,
     show_raw_agent_reasoning: bool,
+    shell_snapshot_path: Option<PathBuf>,
 }
 
 /// The context needed for a single turn of the conversation.
@@ -391,7 +392,7 @@ impl Session {
         let rollout_fut = RolloutRecorder::new(&config, session_id, user_instructions.clone());
 
         let mcp_fut = McpConnectionManager::new(config.mcp_servers.clone());
-        let default_shell_fut = shell::default_user_shell();
+        let default_shell_fut = shell::default_user_shell(session_id);
         let history_meta_fut = crate::message_history::history_metadata(&config);
 
         // Join all independent futures.
@@ -464,6 +465,12 @@ impl Session {
             cwd,
             disable_response_storage,
         };
+        // TODO(jif) add support for other shells.
+        let shell_snapshot_path = match &default_shell {
+            shell::Shell::Zsh(zsh) => zsh.snapshot_path.clone(),
+            _ => None,
+        };
+
         let sess = Arc::new(Session {
             session_id,
             tx_event: tx_event.clone(),
@@ -475,6 +482,7 @@ impl Session {
             codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
             user_shell: default_shell,
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
+            shell_snapshot_path,
         });
 
         // Dispatch the SessionConfiguredEvent first and then report any errors.
@@ -947,6 +955,9 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.interrupt_task();
+        if let Some(path) = &self.shell_snapshot_path {
+            shell::delete_shell_snapshot(path);
+        }
     }
 }
 
@@ -2293,13 +2304,25 @@ pub struct ExecInvokeArgs<'a> {
     pub stdout_stream: Option<StdoutStream>,
 }
 
+fn should_translate_shell_command(
+    shell: &crate::shell::Shell,
+    shell_policy: &ShellEnvironmentPolicy,
+) -> bool {
+    matches!(shell, crate::shell::Shell::PowerShell(_))
+        || shell_policy.use_profile
+        || matches!(
+            shell,
+            crate::shell::Shell::Zsh(zsh) if zsh.snapshot_path.is_some()
+        )
+}
+
 fn maybe_translate_shell_command(
     params: ExecParams,
     sess: &Session,
     turn_context: &TurnContext,
 ) -> ExecParams {
-    let should_translate = matches!(sess.user_shell, crate::shell::Shell::PowerShell(_))
-        || turn_context.shell_environment_policy.use_profile;
+    let should_translate =
+        should_translate_shell_command(&sess.user_shell, &turn_context.shell_environment_policy);
 
     if should_translate
         && let Some(command) = sess
@@ -2908,10 +2931,13 @@ fn convert_call_tool_result_to_function_call_output_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config_types::ShellEnvironmentPolicyInherit;
     use mcp_types::ContentBlock;
     use mcp_types::TextContent;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
     use std::time::Duration as StdDuration;
 
     fn text_block(s: &str) -> ContentBlock {
@@ -2920,6 +2946,46 @@ mod tests {
             text: s.to_string(),
             r#type: "text".to_string(),
         })
+    }
+
+    fn shell_policy_with_profile(use_profile: bool) -> ShellEnvironmentPolicy {
+        ShellEnvironmentPolicy {
+            inherit: ShellEnvironmentPolicyInherit::All,
+            ignore_default_excludes: false,
+            exclude: Vec::new(),
+            r#set: HashMap::new(),
+            include_only: Vec::new(),
+            use_profile,
+        }
+    }
+
+    fn zsh_shell(snapshot_path: Option<PathBuf>) -> shell::Shell {
+        shell::Shell::Zsh(shell::ZshShell {
+            shell_path: "/bin/zsh".to_string(),
+            zshrc_path: "/Users/example/.zshrc".to_string(),
+            snapshot_path,
+        })
+    }
+
+    #[test]
+    fn translates_commands_when_shell_policy_requests_profile() {
+        let policy = shell_policy_with_profile(true);
+        let shell = zsh_shell(None);
+        assert!(should_translate_shell_command(&shell, &policy));
+    }
+
+    #[test]
+    fn translates_commands_for_zsh_with_snapshot() {
+        let policy = shell_policy_with_profile(false);
+        let shell = zsh_shell(Some(PathBuf::from("/tmp/snapshot")));
+        assert!(should_translate_shell_command(&shell, &policy));
+    }
+
+    #[test]
+    fn bypasses_translation_for_zsh_without_snapshot_or_profile() {
+        let policy = shell_policy_with_profile(false);
+        let shell = zsh_shell(None);
+        assert!(!should_translate_shell_command(&shell, &policy));
     }
 
     #[test]
