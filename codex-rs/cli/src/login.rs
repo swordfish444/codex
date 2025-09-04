@@ -4,10 +4,10 @@ use codex_core::auth::CLIENT_ID;
 use codex_core::auth::OPENAI_API_KEY_ENV_VAR;
 use codex_core::auth::login_with_api_key;
 use codex_core::auth::logout;
-use codex_core::config::AdminAuditContext;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
-use codex_core::config::maybe_post_admin_audit_events;
+use codex_core::config::audit_admin_run_with_prompt;
+use codex_core::config::prompt_for_admin_danger_reason;
 use codex_login::ServerOptions;
 use codex_login::run_login_server;
 use codex_protocol::mcp_protocol::AuthMode;
@@ -27,7 +27,7 @@ pub async fn login_with_chatgpt(codex_home: PathBuf) -> std::io::Result<()> {
 }
 
 pub async fn run_login_with_chatgpt(cli_config_overrides: CliConfigOverrides) -> ! {
-    let config = load_config_or_exit(cli_config_overrides);
+    let config = load_config_or_exit(cli_config_overrides).await;
 
     match login_with_chatgpt(config.codex_home).await {
         Ok(_) => {
@@ -139,16 +139,22 @@ async fn load_config_or_exit(cli_config_overrides: CliConfigOverrides) -> Config
         }
     };
 
-    maybe_post_admin_audit_events(
-        &config,
-        AdminAuditContext {
-            sandbox_policy: &config.sandbox_policy,
-            dangerously_bypass_requested: false,
-        },
-    )
-    .await;
+    let _admin_override_reason = match prompt_for_admin_danger_reason(&config) {
+        Ok(reason) => reason,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+    };
 
-    config
+    let prompt_result = prompt_for_admin_danger_reason(&config);
+    match audit_admin_run_with_prompt(&config, prompt_result, false).await {
+        Ok(_) => config,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+    }
 }
 
 fn safe_format_key(key: &str) -> String {

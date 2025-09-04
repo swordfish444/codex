@@ -6,10 +6,10 @@ use std::io::Result as IoResult;
 use std::path::PathBuf;
 
 use codex_common::CliConfigOverrides;
-use codex_core::config::AdminAuditContext;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
-use codex_core::config::maybe_post_admin_audit_events;
+use codex_core::config::audit_admin_run_with_prompt;
+use codex_core::config::prompt_for_admin_danger_reason;
 
 use mcp_types::JSONRPCMessage;
 use tokio::io::AsyncBufReadExt;
@@ -98,14 +98,7 @@ pub async fn run_main(
         .map_err(|e| {
             std::io::Error::new(ErrorKind::InvalidData, format!("error loading config: {e}"))
         })?;
-    maybe_post_admin_audit_events(
-        &config,
-        AdminAuditContext {
-            sandbox_policy: &config.sandbox_policy,
-            dangerously_bypass_requested: false,
-        },
-    )
-    .await;
+    audit_admin_run_with_prompt(&config, prompt_for_admin_danger_reason(&config), false).await?;
 
     // Task: process incoming messages.
     let processor_handle = tokio::spawn({

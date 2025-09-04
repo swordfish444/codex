@@ -25,6 +25,9 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::io::IsTerminal;
+use std::io::Write;
+use std::io::{self};
 use std::path::Path;
 use std::path::PathBuf;
 use std::thread;
@@ -44,6 +47,12 @@ const CONFIG_TOML_FILE: &str = "config.toml";
 const DEFAULT_RESPONSES_ORIGINATOR_HEADER: &str = "codex_cli_rs";
 
 const ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE: &str = "Running Codex with --yolo/--dangerously-bypass-approvals-and-sandbox or --sandbox danger-full-access has been disabled by your administrator. Please contact your system administrator.";
+
+const ADMIN_DANGEROUS_SANDBOX_DISABLED_PROMPT_LINES: &[&str] = &[
+    "Running Codex with --yolo/--dangerously-bypass-approvals-and-sandbox or",
+    "--sandbox danger-full-access has been disabled by your administrator.",
+    "Please contact your system administrator if you believe you need this mode.",
+];
 
 #[cfg(target_os = "macos")]
 const MANAGED_PREFERENCES_APPLICATION_ID: &str = "com.openai.codex";
@@ -200,6 +209,8 @@ pub struct Config {
     pub use_experimental_reasoning_summary: bool,
 
     pub admin_controls: AdminControls,
+
+    pub admin_danger_prompt: Option<AdminDangerPrompt>,
 }
 
 impl Config {
@@ -423,6 +434,7 @@ fn load_managed_admin_config_impl() -> std::io::Result<Option<TomlValue>> {
 pub struct AdminAuditContext<'a> {
     pub sandbox_policy: &'a SandboxPolicy,
     pub dangerously_bypass_requested: bool,
+    pub dangerous_mode_justification: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -447,6 +459,8 @@ struct AdminAuditPayload<'a> {
     username: String,
     dangerously_bypass_requested: bool,
     timestamp: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    justification: Option<&'a str>,
 }
 
 pub async fn maybe_post_admin_audit_events(config: &Config, context: AdminAuditContext<'_>) {
@@ -468,6 +482,7 @@ pub async fn maybe_post_admin_audit_events(config: &Config, context: AdminAuditC
             AdminAuditEventKind::CommandInvoked,
             &sandbox_mode,
             context.dangerously_bypass_requested,
+            context.dangerous_mode_justification,
         )
         .await;
     }
@@ -482,8 +497,36 @@ pub async fn maybe_post_admin_audit_events(config: &Config, context: AdminAuditC
             AdminAuditEventKind::DangerousSandbox,
             &sandbox_mode,
             context.dangerously_bypass_requested,
+            context.dangerous_mode_justification,
         )
         .await;
+    }
+}
+
+pub async fn audit_admin_run_with_prompt(
+    config: &Config,
+    prompt_result: Result<Option<String>, std::io::Error>,
+    dangerously_bypass_requested: bool,
+) -> Result<Option<String>, std::io::Error> {
+    let (justification, prompt_error) = match prompt_result {
+        Ok(reason) => (reason, None),
+        Err(err) => (None, Some(err)),
+    };
+
+    maybe_post_admin_audit_events(
+        config,
+        AdminAuditContext {
+            sandbox_policy: &config.sandbox_policy,
+            dangerously_bypass_requested,
+            dangerous_mode_justification: justification.as_deref(),
+        },
+    )
+    .await;
+
+    if let Some(err) = prompt_error {
+        Err(err)
+    } else {
+        Ok(justification)
     }
 }
 
@@ -493,6 +536,7 @@ async fn post_admin_audit_event(
     kind: AdminAuditEventKind,
     sandbox_mode: &str,
     dangerously_bypass_requested: bool,
+    justification: Option<&str>,
 ) {
     let username = whoami::username();
     let timestamp_string;
@@ -504,12 +548,85 @@ async fn post_admin_audit_event(
             username,
             dangerously_bypass_requested,
             timestamp: &timestamp_string,
+            justification,
         }
     };
 
     if let Err(err) = client.post(endpoint).json(&payload).send().await {
         tracing::warn!("Failed to POST admin audit event {}: {err}", kind.label());
     }
+}
+
+pub fn prompt_for_admin_danger_reason(config: &Config) -> std::io::Result<Option<String>> {
+    let Some(prompt) = config.admin_danger_prompt.as_ref() else {
+        return Ok(None);
+    };
+
+    if !prompt.needs_prompt() {
+        return Ok(None);
+    }
+
+    if !io::stdin().is_terminal() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Administrator requires a justification for dangerous sandbox usage, but stdin is not interactive.",
+        ));
+    }
+
+    let red = "\x1b[31m";
+    let reset = "\x1b[0m";
+    let mut stderr = io::stderr();
+    writeln!(stderr)?;
+    writeln!(
+        stderr,
+        "{red}╔════════════════════════════════════════════════════════════╗{reset}"
+    )?;
+    writeln!(
+        stderr,
+        "{red}║  ADMINISTRATOR WARNING                                    ║{reset}"
+    )?;
+    writeln!(
+        stderr,
+        "{red}╚════════════════════════════════════════════════════════════╝{reset}"
+    )?;
+    writeln!(
+        stderr,
+        "{red}Dangerous sandbox access requires administrator approval.{reset}"
+    )?;
+    for line in ADMIN_DANGEROUS_SANDBOX_DISABLED_PROMPT_LINES {
+        writeln!(stderr, "{red}{line}{reset}")?;
+    }
+    if prompt.sandbox {
+        writeln!(
+            stderr,
+            "{red}• Requested flag: --sandbox danger-full-access{reset}"
+        )?;
+    }
+    if prompt.dangerously_bypass {
+        writeln!(
+            stderr,
+            "{red}• Requested flag: --dangerously-bypass-approvals-and-sandbox{reset}"
+        )?;
+    }
+    writeln!(
+        stderr,
+        "{red}Provide a justification below to continue.{reset}"
+    )?;
+    writeln!(stderr)?;
+    write!(stderr, "{red}?{reset} Justification: ")?;
+    stderr.flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let justification = input.trim();
+    if justification.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "An administrator justification is required to proceed.",
+        ));
+    }
+
+    Ok(Some(justification.to_string()))
 }
 
 /// Patch `CODEX_HOME/config.toml` project state.
@@ -638,10 +755,13 @@ fn apply_toml_override(root: &mut TomlValue, path: &str, value: TomlValue) {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AdminConfigToml {
     #[serde(default)]
-    pub allow_dangerous_sandbox: Option<bool>,
+    pub disallow_dangerous_sandbox: Option<bool>,
 
     #[serde(default)]
-    pub allow_dangerously_bypass_approvals_and_sandbox: Option<bool>,
+    pub disallow_dangerously_bypass_approvals_and_sandbox: Option<bool>,
+
+    #[serde(default)]
+    pub allow_danger_with_reason: Option<bool>,
 
     #[serde(default)]
     pub audit: Option<AdminAuditToml>,
@@ -660,16 +780,18 @@ pub struct AdminAuditToml {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdminControls {
-    pub allow_dangerous_sandbox: bool,
-    pub allow_dangerously_bypass_approvals_and_sandbox: bool,
+    pub disallow_dangerous_sandbox: bool,
+    pub disallow_dangerously_bypass_approvals_and_sandbox: bool,
+    pub allow_danger_with_reason: bool,
     pub audit: Option<AdminAudit>,
 }
 
 impl Default for AdminControls {
     fn default() -> Self {
         Self {
-            allow_dangerous_sandbox: true,
-            allow_dangerously_bypass_approvals_and_sandbox: true,
+            disallow_dangerous_sandbox: false,
+            disallow_dangerously_bypass_approvals_and_sandbox: false,
+            allow_danger_with_reason: false,
             audit: None,
         }
     }
@@ -680,12 +802,16 @@ impl AdminControls {
         let mut controls = AdminControls::default();
 
         if let Some(section) = admin {
-            if let Some(value) = section.allow_dangerous_sandbox {
-                controls.allow_dangerous_sandbox = value;
+            if let Some(value) = section.disallow_dangerous_sandbox {
+                controls.disallow_dangerous_sandbox = value;
             }
 
-            if let Some(value) = section.allow_dangerously_bypass_approvals_and_sandbox {
-                controls.allow_dangerously_bypass_approvals_and_sandbox = value;
+            if let Some(value) = section.disallow_dangerously_bypass_approvals_and_sandbox {
+                controls.disallow_dangerously_bypass_approvals_and_sandbox = value;
+            }
+
+            if let Some(value) = section.allow_danger_with_reason {
+                controls.allow_danger_with_reason = value;
             }
 
             controls.audit = section.audit.and_then(AdminAudit::from_toml);
@@ -721,6 +847,18 @@ impl AdminAudit {
 pub struct AdminAuditEvents {
     pub dangerous_sandbox: bool,
     pub all_commands: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AdminDangerPrompt {
+    pub sandbox: bool,
+    pub dangerously_bypass: bool,
+}
+
+impl AdminDangerPrompt {
+    fn needs_prompt(&self) -> bool {
+        self.sandbox || self.dangerously_bypass
+    }
 }
 
 /// Base config deserialized from ~/.codex/config.toml.
@@ -994,28 +1132,36 @@ impl Config {
 
         let admin_controls = AdminControls::from_toml(cfg.admin.clone());
 
-        if matches!(sandbox_policy, SandboxPolicy::DangerFullAccess)
-            && !admin_controls.allow_dangerous_sandbox
-        {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE,
-            ));
-        }
-
         let resolved_approval_policy = approval_policy
             .or(config_profile.approval_policy)
             .or(cfg.approval_policy)
             .unwrap_or_else(AskForApproval::default);
 
-        if resolved_approval_policy == AskForApproval::Never
-            && matches!(sandbox_policy, SandboxPolicy::DangerFullAccess)
-            && !admin_controls.allow_dangerously_bypass_approvals_and_sandbox
-        {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE,
-            ));
+        let sandbox_is_dangerfull = matches!(sandbox_policy, SandboxPolicy::DangerFullAccess);
+        let approval_is_yolo = resolved_approval_policy == AskForApproval::Never;
+
+        let mut admin_danger_prompt = AdminDangerPrompt::default();
+
+        if sandbox_is_dangerfull && admin_controls.disallow_dangerous_sandbox {
+            if admin_controls.allow_danger_with_reason {
+                admin_danger_prompt.sandbox = true;
+            } else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE,
+                ));
+            }
+        }
+
+        if approval_is_yolo && admin_controls.disallow_dangerously_bypass_approvals_and_sandbox {
+            if admin_controls.allow_danger_with_reason {
+                admin_danger_prompt.dangerously_bypass = true;
+            } else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE,
+                ));
+            }
         }
 
         let mut model_providers = built_in_model_providers();
@@ -1175,6 +1321,9 @@ impl Config {
                 .use_experimental_reasoning_summary
                 .unwrap_or(false),
             admin_controls,
+            admin_danger_prompt: admin_danger_prompt
+                .needs_prompt()
+                .then_some(admin_danger_prompt),
         };
         Ok(config)
     }
@@ -1555,6 +1704,7 @@ model_verbosity = "high"
                 disable_paste_burst: false,
                 use_experimental_reasoning_summary: false,
                 admin_controls: AdminControls::default(),
+                admin_danger_prompt: None,
             },
             o3_profile_config
         );
@@ -1615,6 +1765,7 @@ model_verbosity = "high"
             disable_paste_burst: false,
             use_experimental_reasoning_summary: false,
             admin_controls: AdminControls::default(),
+            admin_danger_prompt: None,
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -1690,6 +1841,7 @@ model_verbosity = "high"
             disable_paste_burst: false,
             use_experimental_reasoning_summary: false,
             admin_controls: AdminControls::default(),
+            admin_danger_prompt: None,
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);
@@ -1751,6 +1903,7 @@ model_verbosity = "high"
             disable_paste_burst: false,
             use_experimental_reasoning_summary: false,
             admin_controls: AdminControls::default(),
+            admin_danger_prompt: None,
         };
 
         assert_eq!(expected_gpt5_profile_config, gpt5_profile_config);
