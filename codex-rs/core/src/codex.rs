@@ -286,7 +286,6 @@ pub(crate) struct Session {
     codex_linux_sandbox_exe: Option<PathBuf>,
     user_shell: shell::Shell,
     show_raw_agent_reasoning: bool,
-    shell_snapshot_path: Option<PathBuf>,
 }
 
 /// The context needed for a single turn of the conversation.
@@ -465,11 +464,6 @@ impl Session {
             cwd,
             disable_response_storage,
         };
-        // TODO(jif) add support for other shells.
-        let shell_snapshot_path = match &default_shell {
-            shell::Shell::Zsh(zsh) => zsh.snapshot_path.clone(),
-            _ => None,
-        };
 
         let sess = Arc::new(Session {
             session_id,
@@ -482,7 +476,6 @@ impl Session {
             codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
             user_shell: default_shell,
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
-            shell_snapshot_path,
         });
 
         // Dispatch the SessionConfiguredEvent first and then report any errors.
@@ -955,9 +948,6 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.interrupt_task();
-        if let Some(path) = &self.shell_snapshot_path {
-            shell::delete_shell_snapshot(path);
-        }
     }
 }
 
@@ -2312,7 +2302,7 @@ fn should_translate_shell_command(
         || shell_policy.use_profile
         || matches!(
             shell,
-            crate::shell::Shell::Zsh(zsh) if zsh.snapshot_path.is_some()
+            crate::shell::Shell::Zsh(zsh) if zsh.shell_snapshot.is_some()
         )
 }
 
@@ -2936,6 +2926,7 @@ mod tests {
     use mcp_types::TextContent;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+    use shell::ShellSnapshot;
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::time::Duration as StdDuration;
@@ -2959,11 +2950,11 @@ mod tests {
         }
     }
 
-    fn zsh_shell(snapshot_path: Option<PathBuf>) -> shell::Shell {
+    fn zsh_shell(shell_snapshot: Option<ShellSnapshot>) -> shell::Shell {
         shell::Shell::Zsh(shell::ZshShell {
             shell_path: "/bin/zsh".to_string(),
             zshrc_path: "/Users/example/.zshrc".to_string(),
-            snapshot_path,
+            shell_snapshot,
         })
     }
 
@@ -2977,7 +2968,7 @@ mod tests {
     #[test]
     fn translates_commands_for_zsh_with_snapshot() {
         let policy = shell_policy_with_profile(false);
-        let shell = zsh_shell(Some(PathBuf::from("/tmp/snapshot")));
+        let shell = zsh_shell(Some(ShellSnapshot::new(PathBuf::from("/tmp/snapshot"))));
         assert!(should_translate_shell_command(&shell, &policy));
     }
 

@@ -10,7 +10,24 @@ use uuid::Uuid;
 pub struct ZshShell {
     pub(crate) shell_path: String,
     pub(crate) zshrc_path: String,
-    pub(crate) snapshot_path: Option<PathBuf>,
+    pub(crate) shell_snapshot: Option<ShellSnapshot>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct ShellSnapshot {
+    pub(crate) path: PathBuf,
+}
+
+impl ShellSnapshot {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl Drop for ShellSnapshot {
+    fn drop(&mut self) {
+        delete_shell_snapshot(&self.path);
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -39,10 +56,10 @@ impl Shell {
 
                 let joined = joined?;
 
-                if let Some(snapshot_path) = &zsh.snapshot_path
-                    && snapshot_path.exists()
+                if let Some(shell_snapshot) = &zsh.shell_snapshot
+                    && shell_snapshot.path.exists()
                 {
-                    let snapshot_path_string = snapshot_path.to_string_lossy();
+                    let snapshot_path_string = shell_snapshot.path.to_string_lossy();
                     trace!(
                         snapshot_path = %snapshot_path_string,
                         "using cached zsh snapshot"
@@ -163,7 +180,7 @@ pub async fn default_user_shell(session_id: Uuid) -> Shell {
                     return Shell::Zsh(ZshShell {
                         shell_path: shell_path.to_string(),
                         zshrc_path: home.join(".zshrc").to_string_lossy().to_string(),
-                        snapshot_path,
+                        shell_snapshot: snapshot_path.map(ShellSnapshot::new),
                     });
                 }
             }
@@ -229,7 +246,9 @@ fn zsh_profile_paths(home: &Path) -> Vec<PathBuf> {
 
 #[cfg(target_os = "macos")]
 async fn ensure_zsh_snapshot(shell_path: &str, home: &Path, session_id: Uuid) -> Option<PathBuf> {
-    let snapshot_path = home.join(format!(".codex_shell_snapshot_{session_id}.zsh"));
+    let snapshot_path = home
+        .join(".codex")
+        .join(format!("codex_shell_snapshot_{session_id}.zsh"));
 
     // Check if an update in the profile requires to re-generate the snapshot.
     let snapshot_is_stale = match tokio::fs::metadata(&snapshot_path).await {
@@ -311,6 +330,10 @@ async fn regenerate_zsh_snapshot(
     contents.push_str(&String::from_utf8_lossy(&output.stdout));
     contents.push('\n');
 
+    if let Some(parent) = snapshot_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
     let tmp_path = snapshot_path.with_extension("tmp");
     tokio::fs::write(&tmp_path, contents).await?;
 
@@ -371,7 +394,7 @@ mod tests {
         let shell = Shell::Zsh(ZshShell {
             shell_path: "/bin/zsh".to_string(),
             zshrc_path: "/does/not/exist/.zshrc".to_string(),
-            snapshot_path: None,
+            shell_snapshot: None,
         });
         let actual_cmd = shell.format_default_shell_invocation(vec!["myecho".to_string()]);
         assert_eq!(actual_cmd, None);
@@ -430,7 +453,7 @@ mod tests {
                 std::fs::write(&path, "# test zshrc").unwrap();
                 path.to_string_lossy().to_string()
             },
-            snapshot_path: Some(snapshot_path.clone()),
+            shell_snapshot: Some(ShellSnapshot::new(snapshot_path.clone())),
         });
 
         let invocation = shell.format_default_shell_invocation(vec!["echo".to_string()]);
@@ -501,7 +524,7 @@ mod tests {
             let shell = Shell::Zsh(ZshShell {
                 shell_path: shell_path.to_string(),
                 zshrc_path: zshrc_path.to_str().unwrap().to_string(),
-                snapshot_path: None,
+                shell_snapshot: None,
             });
 
             let actual_cmd = shell
