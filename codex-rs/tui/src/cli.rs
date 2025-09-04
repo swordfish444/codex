@@ -63,7 +63,7 @@ pub struct Cli {
 
     /// Convenience alias for low-friction sandboxed automatic execution.
     ///
-    /// Equilavent to -a on-failure --sandbox workspace-write.
+    /// Equivalent to -a on-failure --sandbox workspace-write.
     #[arg(long = "full-auto", default_value_t = false, conflicts_with_all = ["approval_policy", "sandbox_mode"])]
     pub full_auto: bool,
 
