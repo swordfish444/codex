@@ -24,12 +24,6 @@ impl ShellSnapshot {
     }
 }
 
-impl Drop for ShellSnapshot {
-    fn drop(&mut self) {
-        delete_shell_snapshot(&self.path);
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct PowerShellConfig {
     exe: String, // Executable name or path, e.g. "pwsh" or "powershell.exe".
@@ -318,8 +312,10 @@ async fn regenerate_zsh_snapshot(
         capture_script.push_str(&format!("{profile_sources}; "));
     }
 
+    let zshrc = home.join(".zshrc");
+
     capture_script.push_str(
-        "setopt posixbuiltins; export -p; { alias | sed 's/^/alias /'; } 2>/dev/null || true",
+        &format!("source {}/.zshrc; setopt posixbuiltins; export -p; {{ alias | sed 's/^/alias /'; }} 2>/dev/null || true", zshrc.display()),
     );
     let output = tokio::process::Command::new(shell_path)
         .arg("-lc")

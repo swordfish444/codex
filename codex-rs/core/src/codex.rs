@@ -106,6 +106,8 @@ use crate::safety::SafetyCheck;
 use crate::safety::assess_command_safety;
 use crate::safety::assess_safety_for_untrusted_command;
 use crate::shell;
+use crate::shell::Shell;
+use crate::shell::ShellSnapshot;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::user_instructions::UserInstructions;
 use crate::user_notification::UserNotification;
@@ -286,6 +288,7 @@ pub(crate) struct Session {
     codex_linux_sandbox_exe: Option<PathBuf>,
     user_shell: shell::Shell,
     show_raw_agent_reasoning: bool,
+    shell_snapshot: Option<ShellSnapshot>,
 }
 
 /// The context needed for a single turn of the conversation.
@@ -408,6 +411,11 @@ impl Session {
             ..Default::default()
         };
 
+        let shell_snapshot = match &default_shell {
+            Shell::Zsh(zsh) => zsh.shell_snapshot.clone(),
+            _ => None,
+        };
+
         // Handle MCP manager result and record any startup failures.
         let (mcp_connection_manager, failed_clients) = match mcp_res {
             Ok((mgr, failures)) => (mgr, failures),
@@ -476,6 +484,7 @@ impl Session {
             codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
             user_shell: default_shell,
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
+            shell_snapshot,
         });
 
         // Dispatch the SessionConfiguredEvent first and then report any errors.
@@ -948,6 +957,9 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.interrupt_task();
+        if let Some(shell_snapshot) = &self.shell_snapshot {
+            shell::delete_shell_snapshot(&shell_snapshot.path);
+        }
     }
 }
 
