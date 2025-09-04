@@ -3,9 +3,7 @@ use serde::Serialize;
 use shlex;
 use std::path::Path;
 use std::path::PathBuf;
-use tokio::process::Command;
 use tracing::trace;
-use tracing::warn;
 use uuid::Uuid;
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -142,7 +140,7 @@ fn strip_bash_lc(command: &Vec<String>) -> Option<String> {
 pub async fn default_user_shell(session_id: Uuid) -> Shell {
     let user = whoami::username();
     let home = PathBuf::from(format!("/Users/{user}"));
-    let output = Command::new("dscl")
+    let output = tokio::process::Command::new("dscl")
         .args([".", "-read", home.to_string_lossy().as_ref(), "UserShell"])
         .output()
         .await
@@ -268,7 +266,7 @@ async fn ensure_zsh_snapshot(shell_path: &str, home: &Path, session_id: Uuid) ->
     match regenerate_zsh_snapshot(shell_path, home, &snapshot_path).await {
         Ok(()) => Some(snapshot_path),
         Err(err) => {
-            warn!("failed to generate zsh snapshot: {err}");
+            tracing::warn!("failed to generate zsh snapshot: {err}");
             None
         }
     }
@@ -294,7 +292,7 @@ async fn regenerate_zsh_snapshot(
     let capture_script = format!(
         "{source_profiles}setopt posixbuiltins; export -p; {{ alias | sed 's/^/alias /'; }} 2>/dev/null || true"
     );
-    let output = Command::new(shell_path)
+    let output = tokio::process::Command::new(shell_path)
         .arg("-lc")
         .arg(capture_script)
         .env("HOME", home)
