@@ -238,10 +238,26 @@ pub async fn default_user_shell(_session_id: Uuid) -> Shell {
 
 #[cfg(target_os = "macos")]
 fn zsh_profile_paths(home: &Path) -> Vec<PathBuf> {
-    [".zshrc", ".zprofile", ".zshenv", ".zlogin"]
+    [".zshenv", ".zprofile", ".zshrc", ".zlogin"]
         .into_iter()
         .map(|name| home.join(name))
         .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn zsh_profile_source_script(home: &Path) -> String {
+    zsh_profile_paths(home)
+        .into_iter()
+        .map(|profile| {
+            let profile_string = profile.to_string_lossy().into_owned();
+            let quoted = shlex::try_quote(&profile_string)
+                .map(|cow| cow.into_owned())
+                .unwrap_or(profile_string.clone());
+
+            format!("[ -f {quoted} ] && source {quoted}")
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 #[cfg(target_os = "macos")]
@@ -251,26 +267,28 @@ async fn ensure_zsh_snapshot(shell_path: &str, home: &Path, session_id: Uuid) ->
         .join(format!("codex_shell_snapshot_{session_id}.zsh"));
 
     // Check if an update in the profile requires to re-generate the snapshot.
-let snapshot_is_stale = async {
-    let snapshot_metadata = tokio::fs::metadata(&snapshot_path).await.ok()?;
-    let snapshot_modified = snapshot_metadata.modified().ok()?;
+    let snapshot_is_stale = async {
+        let snapshot_metadata = tokio::fs::metadata(&snapshot_path).await.ok()?;
+        let snapshot_modified = snapshot_metadata.modified().ok()?;
 
-    for profile in zsh_profile_paths(home) {
-        let Ok(profile_metadata) = tokio::fs::metadata(&profile).await else {
-            continue;
-        };
+        for profile in zsh_profile_paths(home) {
+            let Ok(profile_metadata) = tokio::fs::metadata(&profile).await else {
+                continue;
+            };
 
-        let Ok(profile_modified) = profile_metadata.modified() else {
-            return Some(true);
-        };
+            let Ok(profile_modified) = profile_metadata.modified() else {
+                return Some(true);
+            };
 
-        if profile_modified > snapshot_modified {
-            return Some(true);
+            if profile_modified > snapshot_modified {
+                return Some(true);
+            }
         }
-    }
 
-    Some(false)
-}.await.unwrap_or(true);
+        Some(false)
+    }
+    .await
+    .unwrap_or(true);
 
     if !snapshot_is_stale {
         return Some(snapshot_path);
@@ -294,16 +312,14 @@ async fn regenerate_zsh_snapshot(
     // Use `emulate -L sh` instead of `set -o posix` so we work on zsh builds
     // that disable that option. Guard `alias -p` with `|| true` so the script
     // keeps a zero exit status even if aliases are disabled.
-    let mut source_profiles = String::new();
-    for profile in zsh_profile_paths(home) {
-        let profile_string = profile.to_string_lossy().into_owned();
-        let quoted =
-            shlex::try_quote(&profile_string).unwrap_or_else(|_| profile_string.clone().into());
-        source_profiles.push_str(&format!("[ -f {quoted} ] && source {quoted}; "));
+    let mut capture_script = String::new();
+    let profile_sources = zsh_profile_source_script(home);
+    if !profile_sources.is_empty() {
+        capture_script.push_str(&format!("{profile_sources}; "));
     }
 
-    let capture_script = format!(
-        "{source_profiles}setopt posixbuiltins; export -p; {{ alias | sed 's/^/alias /'; }} 2>/dev/null || true"
+    capture_script.push_str(
+        "setopt posixbuiltins; export -p; { alias | sed 's/^/alias /'; } 2>/dev/null || true",
     );
     let output = tokio::process::Command::new(shell_path)
         .arg("-lc")
