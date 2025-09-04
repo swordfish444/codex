@@ -97,6 +97,9 @@ impl OutgoingMessageSender {
         }
     }
 
+    /// This is used with the MCP server, but not the more general JSON-RPC app
+    /// server. Prefer [`OutgoingMessageSender::send_server_notification`] where
+    /// possible.
     pub(crate) async fn send_event_as_notification(
         &self,
         event: &Event,
@@ -123,14 +126,9 @@ impl OutgoingMessageSender {
     }
 
     pub(crate) async fn send_server_notification(&self, notification: ServerNotification) {
-        let method = format!("codex/event/{notification}");
-        let params = match serde_json::to_value(&notification) {
-            Ok(serde_json::Value::Object(mut map)) => map.remove("data"),
-            _ => None,
-        };
-        let outgoing_message =
-            OutgoingMessage::Notification(OutgoingNotification { method, params });
-        let _ = self.sender.send(outgoing_message);
+        let _ = self
+            .sender
+            .send(OutgoingMessage::AppServerNotification(notification));
     }
 
     pub(crate) async fn send_notification(&self, notification: OutgoingNotification) {
@@ -148,6 +146,9 @@ impl OutgoingMessageSender {
 pub(crate) enum OutgoingMessage {
     Request(OutgoingRequest),
     Notification(OutgoingNotification),
+    /// AppServerNotification is specific to the case where this is run as an
+    /// "app server" as opposed to an MCP server.
+    AppServerNotification(ServerNotification),
     Response(OutgoingResponse),
     Error(OutgoingError),
 }
@@ -165,6 +166,21 @@ impl From<OutgoingMessage> for JSONRPCMessage {
                 })
             }
             Notification(OutgoingNotification { method, params }) => {
+                JSONRPCMessage::Notification(JSONRPCNotification {
+                    jsonrpc: JSONRPC_VERSION.into(),
+                    method,
+                    params,
+                })
+            }
+            AppServerNotification(notification) => {
+                let method = notification.to_string();
+                let params = match notification.to_params() {
+                    Ok(params) => Some(params),
+                    Err(err) => {
+                        warn!("failed to serialize notification params: {err}");
+                        None
+                    }
+                };
                 JSONRPCMessage::Notification(JSONRPCNotification {
                     jsonrpc: JSONRPC_VERSION.into(),
                     method,
