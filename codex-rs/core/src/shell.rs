@@ -251,32 +251,26 @@ async fn ensure_zsh_snapshot(shell_path: &str, home: &Path, session_id: Uuid) ->
         .join(format!("codex_shell_snapshot_{session_id}.zsh"));
 
     // Check if an update in the profile requires to re-generate the snapshot.
-    let snapshot_is_stale = match tokio::fs::metadata(&snapshot_path).await {
-        Ok(metadata) => match metadata.modified() {
-            Ok(snapshot_modified) => {
-                let mut stale = false;
-                for profile in zsh_profile_paths(home) {
-                    if let Ok(profile_metadata) = tokio::fs::metadata(&profile).await {
-                        match profile_metadata.modified() {
-                            Ok(profile_modified) => {
-                                if profile_modified > snapshot_modified {
-                                    stale = true;
-                                    break;
-                                }
-                            }
-                            Err(_) => {
-                                stale = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                stale
-            }
-            Err(_) => true,
-        },
-        Err(_) => true,
-    };
+let snapshot_is_stale = async {
+    let snapshot_metadata = tokio::fs::metadata(&snapshot_path).await.ok()?;
+    let snapshot_modified = snapshot_metadata.modified().ok()?;
+
+    for profile in zsh_profile_paths(home) {
+        let Ok(profile_metadata) = tokio::fs::metadata(&profile).await else {
+            continue;
+        };
+
+        let Ok(profile_modified) = profile_metadata.modified() else {
+            return Some(true);
+        };
+
+        if profile_modified > snapshot_modified {
+            return Some(true);
+        }
+    }
+
+    Some(false)
+}.await.unwrap_or(true);
 
     if !snapshot_is_stale {
         return Some(snapshot_path);
