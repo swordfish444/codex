@@ -7,6 +7,7 @@ use app::App;
 use codex_core::AuthManager;
 use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_core::CodexAuth;
+use codex_core::RolloutRecorder;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::ConfigToml;
@@ -41,6 +42,7 @@ mod file_search;
 mod get_git_diff;
 mod history_cell;
 pub mod insert_history;
+mod key_hint;
 pub mod live_wrap;
 mod markdown;
 mod markdown_stream;
@@ -48,6 +50,7 @@ pub mod onboarding;
 mod pager_overlay;
 pub mod public_widgets;
 mod render;
+mod resume_picker;
 mod session_log;
 mod shimmer;
 mod slash_command;
@@ -302,7 +305,13 @@ async fn run_ratatui_app(
     // Initialize high-fidelity session event logging if enabled.
     session_log::maybe_init(&config);
 
-    let Cli { prompt, images, .. } = cli;
+    let Cli {
+        prompt,
+        images,
+        resume,
+        r#continue,
+        ..
+    } = cli;
 
     let auth_manager = AuthManager::shared(
         config.codex_home.clone(),
@@ -332,7 +341,37 @@ async fn run_ratatui_app(
         }
     }
 
-    let app_result = App::run(&mut tui, auth_manager, config, prompt, images).await;
+    let resume_selection = if r#continue {
+        match RolloutRecorder::list_conversations(&config.codex_home, 1, None).await {
+            Ok(page) => page
+                .items
+                .first()
+                .map(|it| resume_picker::ResumeSelection::Resume(it.path.clone()))
+                .unwrap_or(resume_picker::ResumeSelection::StartFresh),
+            Err(_) => resume_picker::ResumeSelection::StartFresh,
+        }
+    } else if resume {
+        match resume_picker::run_resume_picker(&mut tui, &config.codex_home).await? {
+            resume_picker::ResumeSelection::Exit => {
+                restore();
+                session_log::log_session_end();
+                return Ok(codex_core::protocol::TokenUsage::default());
+            }
+            other => other,
+        }
+    } else {
+        resume_picker::ResumeSelection::StartFresh
+    };
+
+    let app_result = App::run(
+        &mut tui,
+        auth_manager,
+        config,
+        prompt,
+        images,
+        resume_selection,
+    )
+    .await;
 
     restore();
     // Mark the end of the recorded session.
