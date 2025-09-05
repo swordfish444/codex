@@ -258,6 +258,7 @@ pub(crate) struct OutgoingError {
 mod tests {
     use codex_core::protocol::EventMsg;
     use codex_core::protocol::SessionConfiguredEvent;
+    use codex_protocol::mcp_protocol::LoginChatGptCompleteNotification;
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use uuid::Uuid;
@@ -339,5 +340,30 @@ mod tests {
             }
         });
         assert_eq!(params.unwrap(), expected_params);
+    }
+
+    #[test]
+    fn verify_server_notification_serialization() {
+        let notification =
+            ServerNotification::LoginChatGptComplete(LoginChatGptCompleteNotification {
+                login_id: Uuid::nil(),
+                success: true,
+                error: None,
+            });
+
+        let jsonrpc_notification: JSONRPCMessage =
+            OutgoingMessage::AppServerNotification(notification).into();
+        assert_eq!(
+            JSONRPCMessage::Notification(JSONRPCNotification {
+                jsonrpc: "2.0".into(),
+                method: "loginChatGptComplete".into(),
+                params: Some(json!({
+                    "loginId": Uuid::nil(),
+                    "success": true,
+                })),
+            }),
+            jsonrpc_notification,
+            "ensure the strum macros serialize the method field correctly"
+        );
     }
 }
