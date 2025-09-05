@@ -26,12 +26,6 @@ pub(crate) fn is_persisted_event(event: &Event) -> bool {
         | EventMsg::ExecCommandOutputDelta(_)
         | EventMsg::GetHistoryEntryResponse(_)
         | EventMsg::AgentMessageDelta(_)
-        | EventMsg::SessionConfigured(_) => false,
-        EventMsg::UserMessage(_)
-        | EventMsg::AgentMessage(_)
-        | EventMsg::AgentReasoning(_)
-        | EventMsg::AgentReasoningRawContent(_)
-        | EventMsg::TokenCount(_)
         | EventMsg::TaskStarted(_)
         | EventMsg::TaskComplete(_)
         | EventMsg::McpToolCallBegin(_)
@@ -52,6 +46,12 @@ pub(crate) fn is_persisted_event(event: &Event) -> bool {
         | EventMsg::TurnAborted(_)
         | EventMsg::StreamError(_)
         | EventMsg::Error(_)
-        | EventMsg::AgentReasoningSectionBreak(_) => true,
+        | EventMsg::AgentReasoningSectionBreak(_)
+        | EventMsg::SessionConfigured(_) => false,
+        EventMsg::UserMessage(_)
+        | EventMsg::AgentMessage(_)
+        | EventMsg::AgentReasoning(_)
+        | EventMsg::AgentReasoningRawContent(_)
+        | EventMsg::TokenCount(_) => true,
     }
 }
