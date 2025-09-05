@@ -156,11 +156,17 @@ impl ConversationManager {
     /// caller's `config`). The new conversation will have a fresh id.
     pub async fn fork_conversation(
         &self,
-        conversation_history: Vec<ResponseItem>,
+        conversation_path: PathBuf,
+        conversation_id: Uuid,
         num_messages_to_drop: usize,
         config: Config,
     ) -> CodexResult<NewConversation> {
         // Compute the prefix up to the cut point.
+        let initial_history = RolloutRecorder::get_rollout_history(&conversation_path).await?;
+        let conversation_history = match initial_history {
+            InitialHistory::Resumed(items) => items,
+            InitialHistory::New => return Err(CodexErr::ConversationNotFound(conversation_id)),
+        };
         let history =
             truncate_after_dropping_last_messages(conversation_history, num_messages_to_drop);
 
@@ -177,21 +183,17 @@ impl ConversationManager {
 
 /// Return a prefix of `items` obtained by dropping the last `n` user messages
 /// and all items that follow them.
-fn truncate_after_dropping_last_messages(items: Vec<ResponseItem>, n: usize) -> InitialHistory {
+fn truncate_after_dropping_last_messages(items: Vec<RolloutItem>, n: usize) -> InitialHistory {
     if n == 0 {
-        return InitialHistory::Resumed(
-            items
-                .into_iter()
-                .map(|ri| RolloutItem::ResponseItem(vec![ri]))
-                .collect(),
-        );
+        return InitialHistory::Resumed(items);
     }
 
     // Walk backwards counting only `user` Message items, find cut index.
     let mut count = 0usize;
     let mut cut_index = 0usize;
     for (idx, item) in items.iter().enumerate().rev() {
-        if let ResponseItem::Message { role, .. } = item
+        if let RolloutItem::ResponseItem(response_item) = item
+            && let ResponseItem::Message { role, .. } = response_item
             && role == "user"
         {
             count += 1;
@@ -206,13 +208,7 @@ fn truncate_after_dropping_last_messages(items: Vec<ResponseItem>, n: usize) -> 
         // No prefix remains after dropping; start a new conversation.
         InitialHistory::New
     } else {
-        InitialHistory::Resumed(
-            items
-                .into_iter()
-                .take(cut_index)
-                .map(|ri| RolloutItem::ResponseItem(vec![ri]))
-                .collect(),
-        )
+        InitialHistory::Resumed(items.into_iter().take(cut_index).collect())
     }
 }
 

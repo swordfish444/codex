@@ -77,6 +77,7 @@ pub struct SavedSession {
 #[derive(Clone)]
 pub struct RolloutRecorder {
     tx: Sender<RolloutCmd>,
+    path: PathBuf,
 }
 
 #[derive(Clone)]
@@ -99,23 +100,26 @@ struct SessionMetaLine<'a> {
 
 #[derive(Debug, Clone)]
 pub enum RolloutItem {
-    ResponseItem(Vec<ResponseItem>),
-    Event(Vec<Event>),
+    ResponseItem(ResponseItem),
+    Event(Event),
     SessionMeta(SessionMetaWithGit),
 }
 
-impl<T> From<T> for RolloutItem
-where
-    T: AsRef<[ResponseItem]>,
-{
-    fn from(items: T) -> Self {
-        RolloutItem::ResponseItem(items.as_ref().to_vec())
+impl From<ResponseItem> for RolloutItem {
+    fn from(item: ResponseItem) -> Self {
+        RolloutItem::ResponseItem(item)
+    }
+}
+
+impl From<Event> for RolloutItem {
+    fn from(event: Event) -> Self {
+        RolloutItem::Event(event)
     }
 }
 
 enum RolloutCmd {
     AddResponseItems(Vec<ResponseItem>),
-    AddEvent(Vec<Event>),
+    AddEvents(Vec<Event>),
     AddSessionMeta(SessionMetaWithGit),
     Shutdown { ack: oneshot::Sender<()> },
 }
@@ -201,48 +205,36 @@ impl RolloutRecorder {
         // driver instead of blocking the runtime.
         tokio::task::spawn(rollout_writer(file, rx, meta, cwd));
 
-        Ok(Self { tx })
+        Ok(Self { tx, path })
     }
 
     pub(crate) async fn record_items(&self, item: RolloutItem) -> std::io::Result<()> {
         match item {
-            RolloutItem::ResponseItem(items) => self.record_response_items(&items).await,
-            RolloutItem::Event(events) => self.record_event(&events).await,
+            RolloutItem::ResponseItem(item) => self.record_response_item(&item).await,
+            RolloutItem::Event(event) => self.record_event(&event).await,
             RolloutItem::SessionMeta(meta) => self.record_session_meta(&meta).await,
         }
     }
 
-    async fn record_response_items(&self, items: &[ResponseItem]) -> std::io::Result<()> {
-        let mut filtered = Vec::new();
-        for item in items {
-            // Note that function calls may look a bit strange if they are
-            // "fully qualified MCP tool calls," so we could consider
-            // reformatting them in that case.
-            if is_persisted_response_item(item) {
-                filtered.push(item.clone());
-            }
-        }
-        if filtered.is_empty() {
+    async fn record_response_item(&self, item: &ResponseItem) -> std::io::Result<()> {
+        // Note that function calls may look a bit strange if they are
+        // "fully qualified MCP tool calls," so we could consider
+        // reformatting them in that case.
+        if !is_persisted_response_item(item) {
             return Ok(());
         }
         self.tx
-            .send(RolloutCmd::AddResponseItems(filtered))
+            .send(RolloutCmd::AddResponseItems(vec![item.clone()]))
             .await
             .map_err(|e| IoError::other(format!("failed to queue rollout items: {e}")))
     }
 
-    async fn record_event(&self, events: &[Event]) -> std::io::Result<()> {
-        let mut filtered = Vec::new();
-        for event in events {
-            if is_persisted_event(event) {
-                filtered.push(event.clone());
-            }
-        }
-        if filtered.is_empty() {
+    async fn record_event(&self, event: &Event) -> std::io::Result<()> {
+        if !is_persisted_event(event) {
             return Ok(());
         }
         self.tx
-            .send(RolloutCmd::AddEvent(filtered))
+            .send(RolloutCmd::AddEvents(vec![event.clone()]))
             .await
             .map_err(|e| IoError::other(format!("failed to queue rollout event: {e}")))
     }
@@ -294,7 +286,7 @@ impl RolloutRecorder {
                         obj.remove("record_type");
                     }
                     match serde_json::from_value::<Event>(ev_val) {
-                        Ok(ev) => items.push(RolloutItem::Event(vec![ev])),
+                        Ok(ev) => items.push(RolloutItem::Event(ev)),
                         Err(e) => warn!("failed to parse event: {v:?}, error: {e}"),
                     }
                 }
@@ -312,7 +304,7 @@ impl RolloutRecorder {
                     match serde_json::from_value::<ResponseItem>(v.clone()) {
                         Ok(item) => {
                             if is_persisted_response_item(&item) {
-                                items.push(RolloutItem::ResponseItem(vec![item]));
+                                items.push(RolloutItem::ResponseItem(item));
                             }
                         }
                         Err(e) => {
@@ -346,6 +338,10 @@ impl RolloutRecorder {
         }))
     }
 
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub async fn shutdown(&self) -> std::io::Result<()> {
         let (tx_done, rx_done) = oneshot::channel();
         match self.tx.send(RolloutCmd::Shutdown { ack: tx_done }).await {
@@ -371,6 +367,9 @@ struct LogFileInfo {
 
     /// Timestamp for the start of the session.
     timestamp: OffsetDateTime,
+
+    /// Full filesystem path to the rollout file.
+    path: PathBuf,
 }
 
 fn create_log_file(
@@ -407,6 +406,7 @@ fn create_log_file(
         file,
         conversation_id,
         timestamp,
+        path,
     })
 }
 
@@ -444,7 +444,7 @@ async fn rollout_writer(
                     }
                 }
             }
-            RolloutCmd::AddEvent(events) => {
+            RolloutCmd::AddEvents(events) => {
                 for event in events {
                     #[derive(Serialize)]
                     struct EventLine<'a> {

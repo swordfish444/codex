@@ -3,7 +3,7 @@ use codex_core::ConversationManager;
 use codex_core::ModelProviderInfo;
 use codex_core::NewConversation;
 use codex_core::built_in_model_providers;
-use codex_core::protocol::ConversationHistoryResponseEvent;
+use codex_core::protocol::ConversationPathResponseEvent;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
@@ -72,13 +72,13 @@ async fn fork_conversation_twice_drops_to_first_message() {
     }
 
     // Request history from the base conversation.
-    codex.submit(Op::GetHistory).await.unwrap();
+    codex.submit(Op::GetConversationPath).await.unwrap();
     let base_history =
         wait_for_event(&codex, |ev| matches!(ev, EventMsg::ConversationHistory(_))).await;
 
     // Capture entries from the base history and compute expected prefixes after each fork.
     let entries_after_three = match &base_history {
-        EventMsg::ConversationHistory(ConversationHistoryResponseEvent { entries, .. }) => {
+        EventMsg::ConversationHistory(ConversationPathResponseEvent { entries, .. }) => {
             entries.clone()
         }
         _ => panic!("expected ConversationHistory event"),
@@ -117,16 +117,16 @@ async fn fork_conversation_twice_drops_to_first_message() {
         .await
         .expect("fork 1");
 
-    codex_fork1.submit(Op::GetHistory).await.unwrap();
+    codex_fork1.submit(Op::GetConversationPath).await.unwrap();
     let fork1_history = wait_for_event(&codex_fork1, |ev| {
         matches!(ev, EventMsg::ConversationHistory(_))
     })
     .await;
     let entries_after_first_fork = match &fork1_history {
-        EventMsg::ConversationHistory(ConversationHistoryResponseEvent { entries, .. }) => {
+        EventMsg::ConversationHistory(ConversationPathResponseEvent { entries, .. }) => {
             assert!(matches!(
                 fork1_history,
-                EventMsg::ConversationHistory(ConversationHistoryResponseEvent { ref entries, .. }) if *entries == expected_after_first
+                EventMsg::ConversationHistory(ConversationPathResponseEvent { ref entries, .. }) if *entries == expected_after_first
             ));
             entries.clone()
         }
@@ -142,13 +142,13 @@ async fn fork_conversation_twice_drops_to_first_message() {
         .await
         .expect("fork 2");
 
-    codex_fork2.submit(Op::GetHistory).await.unwrap();
+    codex_fork2.submit(Op::GetConversationPath).await.unwrap();
     let fork2_history = wait_for_event(&codex_fork2, |ev| {
         matches!(ev, EventMsg::ConversationHistory(_))
     })
     .await;
     assert!(matches!(
         fork2_history,
-        EventMsg::ConversationHistory(ConversationHistoryResponseEvent { ref entries, .. }) if *entries == expected_after_second
+        EventMsg::ConversationHistory(ConversationPathResponseEvent { ref entries, .. }) if *entries == expected_after_second
     ));
 }
