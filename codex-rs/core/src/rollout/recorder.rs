@@ -31,6 +31,7 @@ use crate::conversation_manager::InitialHistory;
 use crate::conversation_manager::ResumedHistory;
 use crate::git_info::GitInfo;
 use crate::git_info::collect_git_info;
+use crate::rollout::policy::is_persisted_event;
 use codex_protocol::models::ResponseItem;
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -215,8 +216,17 @@ impl RolloutRecorder {
     }
 
     async fn record_event(&self, events: &[Event]) -> std::io::Result<()> {
+        let mut filtered = Vec::new();
+        for event in events {
+            if is_persisted_event(event) {
+                filtered.push(event.clone());
+            }
+        }
+        if filtered.is_empty() {
+            return Ok(());
+        }
         self.tx
-            .send(RolloutCmd::AddEvent(events.to_vec()))
+            .send(RolloutCmd::AddEvent(filtered))
             .await
             .map_err(|e| IoError::other(format!("failed to queue rollout event: {e}")))
     }

@@ -587,25 +587,8 @@ impl Session {
             }
         }
         if !responses.is_empty() {
-            self.record_conversation_items_internal(&responses, false)
-                .await;
+            self.record_conversation_items_internal(&responses, false).await;
         }
-
-        let mut msgs = Vec::new();
-        for item in items {
-            match item {
-                RolloutItem::ResponseItem(responses) => msgs.extend(
-                    responses
-                        .iter()
-                        .flat_map(|ri| {
-                            map_response_item_to_event_messages(ri, self.show_raw_agent_reasoning)
-                        })
-                        .filter(|m| matches!(m, EventMsg::UserMessage(_))),
-                ),
-                RolloutItem::Event(events) => msgs.extend(events.iter().map(|e| e.msg.clone())),
-            }
-        }
-        msgs
     }
 
     /// Sends the given event to the client and records it to the rollout (if enabled).
