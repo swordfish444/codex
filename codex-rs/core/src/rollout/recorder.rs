@@ -7,6 +7,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use codex_protocol::mcp_protocol::ConversationId;
+use codex_protocol::protocol::Event;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -47,7 +48,7 @@ struct SessionMetaWithGit {
     git: Option<GitInfo>,
 }
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct SessionStateSnapshot {}
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -85,9 +86,24 @@ pub enum RolloutRecorderParams {
     },
 }
 
+#[derive(Debug, Clone)]
+pub enum RolloutItem {
+    ResponseItem(Vec<ResponseItem>),
+    Event(Vec<Event>),
+}
+
+impl<T> From<T> for RolloutItem
+where
+    T: AsRef<[ResponseItem]>,
+{
+    fn from(items: T) -> Self {
+        RolloutItem::ResponseItem(items.as_ref().to_vec())
+    }
+}
+
 enum RolloutCmd {
-    AddItems(Vec<ResponseItem>),
-    UpdateState(SessionStateSnapshot),
+    AddResponseItems(Vec<ResponseItem>),
+    AddEvent(Vec<Event>),
     Shutdown { ack: oneshot::Sender<()> },
 }
 
@@ -172,7 +188,14 @@ impl RolloutRecorder {
         Ok(Self { tx })
     }
 
-    pub(crate) async fn record_items(&self, items: &[ResponseItem]) -> std::io::Result<()> {
+    pub(crate) async fn record_items(&self, item: RolloutItem) -> std::io::Result<()> {
+        match item {
+            RolloutItem::ResponseItem(items) => self.record_response_items(&items).await,
+            RolloutItem::Event(events) => self.record_event(&events).await,
+        }
+    }
+
+    async fn record_response_items(&self, items: &[ResponseItem]) -> std::io::Result<()> {
         let mut filtered = Vec::new();
         for item in items {
             // Note that function calls may look a bit strange if they are
@@ -186,16 +209,16 @@ impl RolloutRecorder {
             return Ok(());
         }
         self.tx
-            .send(RolloutCmd::AddItems(filtered))
+            .send(RolloutCmd::AddResponseItems(filtered))
             .await
             .map_err(|e| IoError::other(format!("failed to queue rollout items: {e}")))
     }
 
-    pub(crate) async fn record_state(&self, state: SessionStateSnapshot) -> std::io::Result<()> {
+    async fn record_event(&self, events: &[Event]) -> std::io::Result<()> {
         self.tx
-            .send(RolloutCmd::UpdateState(state))
+            .send(RolloutCmd::AddEvent(events.to_vec()))
             .await
-            .map_err(|e| IoError::other(format!("failed to queue rollout state: {e}")))
+            .map_err(|e| IoError::other(format!("failed to queue rollout event: {e}")))
     }
 
     pub async fn get_rollout_history(path: &Path) -> std::io::Result<InitialHistory> {
@@ -221,7 +244,7 @@ impl RolloutRecorder {
             }
         };
 
-        let mut items = Vec::new();
+        let mut items: Vec<RolloutItem> = Vec::new();
         for line in lines {
             if line.trim().is_empty() {
                 continue;
@@ -230,21 +253,32 @@ impl RolloutRecorder {
                 Ok(v) => v,
                 Err(_) => continue,
             };
-            if v.get("record_type")
-                .and_then(|rt| rt.as_str())
-                .map(|s| s == "state")
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            match serde_json::from_value::<ResponseItem>(v.clone()) {
-                Ok(item) => {
-                    if is_persisted_response_item(&item) {
-                        items.push(item);
+            match v.get("record_type").and_then(|rt| rt.as_str()) {
+                Some("state") => continue,
+                Some("event") => {
+                    let mut ev_val = v.clone();
+                    if let Some(obj) = ev_val.as_object_mut() {
+                        obj.remove("record_type");
+                    }
+                    match serde_json::from_value::<Event>(ev_val) {
+                        Ok(ev) => items.push(RolloutItem::Event(vec![ev])),
+                        Err(e) => warn!("failed to parse event: {v:?}, error: {e}"),
                     }
                 }
-                Err(e) => {
-                    warn!("failed to parse item: {v:?}, error: {e}");
+                Some("response") | None => {
+                    match serde_json::from_value::<ResponseItem>(v.clone()) {
+                        Ok(item) => {
+                            if is_persisted_response_item(&item) {
+                                items.push(RolloutItem::ResponseItem(vec![item]));
+                            }
+                        }
+                        Err(e) => {
+                            warn!("failed to parse response item: {v:?}, error: {e}");
+                        }
+                    }
+                }
+                Some(other) => {
+                    warn!("unknown record_type in rollout: {other}");
                 }
             }
         }
@@ -356,26 +390,28 @@ async fn rollout_writer(
     // Process rollout commands
     while let Some(cmd) = rx.recv().await {
         match cmd {
-            RolloutCmd::AddItems(items) => {
+            RolloutCmd::AddResponseItems(items) => {
                 for item in items {
                     if is_persisted_response_item(&item) {
                         writer.write_line(&item).await?;
                     }
                 }
             }
-            RolloutCmd::UpdateState(state) => {
-                #[derive(Serialize)]
-                struct StateLine<'a> {
-                    record_type: &'static str,
-                    #[serde(flatten)]
-                    state: &'a SessionStateSnapshot,
+            RolloutCmd::AddEvent(events) => {
+                for event in events {
+                    #[derive(Serialize)]
+                    struct EventLine<'a> {
+                        record_type: &'static str,
+                        #[serde(flatten)]
+                        event: &'a Event,
+                    }
+                    writer
+                        .write_line(&EventLine {
+                            record_type: "event",
+                            event: &event,
+                        })
+                        .await?;
                 }
-                writer
-                    .write_line(&StateLine {
-                        record_type: "state",
-                        state: &state,
-                    })
-                    .await?;
             }
             RolloutCmd::Shutdown { ack } => {
                 let _ = ack.send(());

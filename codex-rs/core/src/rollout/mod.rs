@@ -6,6 +6,7 @@ pub mod list;
 pub(crate) mod policy;
 pub mod recorder;
 
+pub use recorder::RolloutItem;
 pub use recorder::RolloutRecorder;
 pub use recorder::RolloutRecorderParams;
 pub use recorder::SessionMeta;
