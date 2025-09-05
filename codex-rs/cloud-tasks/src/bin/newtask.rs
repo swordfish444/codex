@@ -82,10 +82,10 @@ async fn main() -> anyhow::Result<()> {
                         .or_else(|| extract_chatgpt_account_id(&token))
                     {
                         println!("auth: ChatGPT-Account-Id: {account_id}");
-                        if let Ok(name) = HeaderName::from_bytes(b"ChatGPT-Account-Id") {
-                            if let Ok(hv) = HeaderValue::from_str(&account_id) {
-                                headers.insert(name, hv);
-                            }
+                        if let Ok(name) = HeaderName::from_bytes(b"ChatGPT-Account-Id")
+                            && let Ok(hv) = HeaderValue::from_str(&account_id)
+                        {
+                            headers.insert(name, hv);
                         }
                     }
                 }
@@ -141,13 +141,13 @@ async fn main() -> anyhow::Result<()> {
     }));
 
     // Optional: starting diff via env var for quick testing
-    if let Ok(diff) = std::env::var("CODEX_STARTING_DIFF") {
-        if !diff.is_empty() {
-            input_items.push(serde_json::json!({
-                "type": "pre_apply_patch",
-                "output_diff": { "diff": diff }
-            }));
-        }
+    if let Ok(diff) = std::env::var("CODEX_STARTING_DIFF")
+        && !diff.is_empty()
+    {
+        input_items.push(serde_json::json!({
+            "type": "pre_apply_patch",
+            "output_diff": { "diff": diff }
+        }));
     }
 
     let request_body = serde_json::json!({

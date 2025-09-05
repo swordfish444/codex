@@ -1,4 +1,3 @@
-use codex_tui::ComposerAction;
 use codex_tui::ComposerInput;
 
 #[derive(Default)]
@@ -24,7 +23,5 @@ impl NewTaskPage {
         }
     }
 
-    pub fn can_submit(&self) -> bool {
-        self.env_id.is_some() && !self.submitting
-    }
+    // Additional helpers can be added as usage evolves.
 }

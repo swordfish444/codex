@@ -5,7 +5,7 @@ use codex_cloud_tasks_client::MockClient;
 
 #[tokio::test]
 async fn mock_backend_varies_by_env() {
-    let client = MockClient::default();
+    let client = MockClient;
 
     let root = CloudBackend::list_tasks(&client, None).await.unwrap();
     assert!(root.iter().any(|t| t.title.contains("Update README")));

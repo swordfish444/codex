@@ -144,15 +144,11 @@ impl ScrollableDiff {
                         out.push(prefix.trim_end().to_string());
                         out_idx.push(raw_idx);
                         line = rest.trim_start().to_string();
-                        line_cols = UnicodeWidthStr::width(line.as_str());
                         last_soft_idx = None;
                         // retry add current ch now that line may be shorter
-                    } else {
-                        if !line.is_empty() {
-                            out.push(std::mem::take(&mut line));
-                            out_idx.push(raw_idx);
-                            line_cols = 0;
-                        }
+                    } else if !line.is_empty() {
+                        out.push(std::mem::take(&mut line));
+                        out_idx.push(raw_idx);
                     }
                 }
                 if ch.is_whitespace()

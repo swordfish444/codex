@@ -150,10 +150,10 @@ pub fn draw_new_task_page(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     // Place cursor where composer wants it
-    if let Some(page) = app.new_task.as_ref() {
-        if let Some((x, y)) = page.composer.cursor_pos(composer_area) {
-            frame.set_cursor_position((x, y));
-        }
+    if let Some(page) = app.new_task.as_ref()
+        && let Some((x, y)) = page.composer.cursor_pos(composer_area)
+    {
+        frame.set_cursor_position((x, y));
     }
 }
 
@@ -627,22 +627,7 @@ fn draw_centered_spinner(
     draw_inline_spinner(frame, cols[1], state, label);
 }
 
-fn style_diff_fragment(src_line: &str, fragment: &str) -> Line<'static> {
-    if src_line.starts_with("@@") {
-        return Line::from(fragment.to_string().magenta().bold());
-    }
-    if src_line.starts_with("diff --git ") || src_line.starts_with("index ") {
-        return Line::from(fragment.to_string().dim());
-    }
-    if src_line.starts_with("+++") || src_line.starts_with("---") {
-        return Line::from(fragment.to_string().dim());
-    }
-    match src_line.as_bytes().first().copied() {
-        Some(b'+') => Line::from(fragment.to_string().green()),
-        Some(b'-') => Line::from(fragment.to_string().red()),
-        _ => Line::from(fragment.to_string()),
-    }
-}
+// Styling helpers for diff rendering live inline where used.
 
 pub fn draw_env_modal(frame: &mut Frame, area: Rect, app: &mut App) {
     use ratatui::widgets::Wrap;

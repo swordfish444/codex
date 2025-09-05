@@ -77,10 +77,10 @@ async fn main() -> anyhow::Result<()> {
                         .or_else(|| extract_chatgpt_account_id(&token))
                     {
                         println!("auth: ChatGPT-Account-Id: {account_id}");
-                        if let Ok(name) = HeaderName::from_bytes(b"ChatGPT-Account-Id") {
-                            if let Ok(hv) = HeaderValue::from_str(&account_id) {
-                                headers.insert(name, hv);
-                            }
+                        if let Ok(name) = HeaderName::from_bytes(b"ChatGPT-Account-Id")
+                            && let Ok(hv) = HeaderValue::from_str(&account_id)
+                        {
+                            headers.insert(name, hv);
                         }
                     }
                 }

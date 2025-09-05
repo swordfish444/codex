@@ -174,37 +174,37 @@ fn get_git_origins() -> Vec<String> {
     let out = std::process::Command::new("git")
         .args(["config", "--get-regexp", "remote\\..*\\.url"])
         .output();
-    if let Ok(ok) = out {
-        if ok.status.success() {
-            let s = String::from_utf8_lossy(&ok.stdout);
-            let mut urls = Vec::new();
-            for line in s.lines() {
-                if let Some((_, url)) = line.split_once(' ') {
-                    urls.push(url.trim().to_string());
-                }
+    if let Ok(ok) = out
+        && ok.status.success()
+    {
+        let s = String::from_utf8_lossy(&ok.stdout);
+        let mut urls = Vec::new();
+        for line in s.lines() {
+            if let Some((_, url)) = line.split_once(' ') {
+                urls.push(url.trim().to_string());
             }
-            if !urls.is_empty() {
-                return uniq(urls);
-            }
+        }
+        if !urls.is_empty() {
+            return uniq(urls);
         }
     }
     // Fallback: git remote -v
     let out = std::process::Command::new("git")
         .args(["remote", "-v"])
         .output();
-    if let Ok(ok) = out {
-        if ok.status.success() {
-            let s = String::from_utf8_lossy(&ok.stdout);
-            let mut urls = Vec::new();
-            for line in s.lines() {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    urls.push(parts[1].to_string());
-                }
+    if let Ok(ok) = out
+        && ok.status.success()
+    {
+        let s = String::from_utf8_lossy(&ok.stdout);
+        let mut urls = Vec::new();
+        for line in s.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                urls.push(parts[1].to_string());
             }
-            if !urls.is_empty() {
-                return uniq(urls);
-            }
+        }
+        if !urls.is_empty() {
+            return uniq(urls);
         }
     }
     Vec::new()

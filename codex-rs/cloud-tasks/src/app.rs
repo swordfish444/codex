@@ -34,12 +34,9 @@ pub struct ApplyModalState {
 
 use crate::scrollable_diff::ScrollableDiff;
 use codex_cloud_tasks_api::CloudBackend;
-use codex_cloud_tasks_api::DiffSummary;
 use codex_cloud_tasks_api::TaskId;
 use codex_cloud_tasks_api::TaskSummary;
 use throbber_widgets_tui::ThrobberState;
-use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Default)]
 pub struct App {
@@ -65,8 +62,7 @@ pub struct App {
     // Background enrichment coordination
     pub list_generation: u64,
     pub in_flight: std::collections::HashSet<String>,
-    pub summary_cache: std::collections::HashMap<String, (DiffSummary, std::time::Instant)>,
-    pub no_diff_yet: std::collections::HashSet<String>,
+    // Background enrichment caches were planned; currently unused.
 }
 
 impl App {
@@ -90,8 +86,6 @@ impl App {
             apply_preflight_inflight: false,
             list_generation: 0,
             in_flight: std::collections::HashSet::new(),
-            summary_cache: std::collections::HashMap::new(),
-            no_diff_yet: std::collections::HashSet::new(),
         }
     }
 
@@ -136,14 +130,7 @@ pub enum AppEvent {
         env: Option<String>,
         result: anyhow::Result<Vec<TaskSummary>>,
     },
-    /// Background diff summary computed for a task (or determined absent)
-    TaskSummaryUpdated {
-        generation: u64,
-        id: TaskId,
-        summary: DiffSummary,
-        no_diff_yet: bool,
-        environment_id: Option<String>,
-    },
+    // Background diff summary events were planned; removed for now to keep code minimal.
     /// Autodetection of a likely environment id finished
     EnvironmentAutodetected(anyhow::Result<crate::env_detect::AutodetectSelection>),
     /// Background completion of environment list fetch
@@ -176,9 +163,7 @@ pub enum AppEvent {
     },
 }
 
-pub type AppEventTx = UnboundedSender<AppEvent>;
-pub type AppEventRx = UnboundedReceiver<AppEvent>;
-
+// Convenience aliases; currently unused.
 #[cfg(test)]
 mod tests {
     use super::*;

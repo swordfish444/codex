@@ -1261,7 +1261,7 @@ impl WidgetRef for ChatComposer {
                     let mut out: Vec<Span> = Vec::new();
                     for (i, (key, label)) in items.iter().enumerate() {
                         out.push(Span::from(" "));
-                        out.push(key.as_str().set_style(key_hint_style));
+                        out.push(key_hint::plain(key));
                         out.push(Span::from(format!(" {label}")));
                         if i + 1 != items.len() {
                             out.push(Span::from("   "));

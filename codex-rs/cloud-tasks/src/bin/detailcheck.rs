@@ -19,10 +19,10 @@ async fn main() -> anyhow::Result<()> {
             AuthMode::ChatGPT,
             "codex_cloud_tasks_detailcheck".to_string(),
         );
-        if let Some(auth) = am.auth() {
-            if let Ok(tok) = auth.get_token().await {
-                client = client.with_bearer_token(tok);
-            }
+        if let Some(auth) = am.auth()
+            && let Ok(tok) = auth.get_token().await
+        {
+            client = client.with_bearer_token(tok);
         }
     }
 

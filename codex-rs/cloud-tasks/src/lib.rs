@@ -29,47 +29,7 @@ pub(crate) fn append_error_log(message: impl AsRef<str>) {
     }
 }
 
-/// Summarize a unified or codex-style patch into counts for UI display.
-fn summarize_diff(patch: &str) -> codex_cloud_tasks_api::DiffSummary {
-    // Count +/- lines via simple prefix scan (skip headers)
-    let (mut adds, mut dels) = (0usize, 0usize);
-    for line in patch.lines() {
-        if line.starts_with("+++") || line.starts_with("---") || line.starts_with("@@") {
-            continue;
-        }
-        match line.as_bytes().first().copied() {
-            Some(b'+') => adds += 1,
-            Some(b'-') => dels += 1,
-            _ => {}
-        }
-    }
-
-    // Count files: prefer codex patch file ops, else git diff headers, else infer 1 if any changes.
-    let mut files = 0usize;
-    for line in patch.lines() {
-        if line.starts_with("*** Add File:")
-            || line.starts_with("*** Update File:")
-            || line.starts_with("*** Delete File:")
-        {
-            files += 1;
-        }
-    }
-    if files == 0 {
-        files = patch
-            .lines()
-            .filter(|l| l.starts_with("diff --git "))
-            .count();
-    }
-    if files == 0 && (adds > 0 || dels > 0) {
-        files = 1;
-    }
-
-    codex_cloud_tasks_api::DiffSummary {
-        files_changed: files,
-        lines_added: adds,
-        lines_removed: dels,
-    }
-}
+// (no standalone patch summarizer needed – UI displays raw diffs)
 
 /// Entry point for the `codex cloud-tasks` subcommand.
 pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
@@ -211,7 +171,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
     // New list generation; reset background enrichment coordination
     app.list_generation = app.list_generation.saturating_add(1);
     app.in_flight.clear();
-    app.no_diff_yet.clear();
+    // reset any in-flight enrichment state
 
     // Event stream
     use crossterm::event::Event;
@@ -266,21 +226,22 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                     codex_login::AuthMode::ChatGPT,
                     "codex_cloud_tasks_tui".to_string(),
                 );
-                if let Some(auth) = am.auth() {
-                    if let Ok(tok) = auth.get_token().await && !tok.is_empty() {
-                        let v = format!("Bearer {tok}");
-                        if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) {
-                            headers.insert(reqwest::header::AUTHORIZATION, hv);
-                        }
-                        if let Some(acc) = auth
-                            .get_account_id()
-                            .or_else(|| extract_chatgpt_account_id(&tok))
-                            && let Ok(name) =
-                                reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
-                            && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc)
-                        {
-                            headers.insert(name, hv);
-                        }
+                if let Some(auth) = am.auth()
+                    && let Ok(tok) = auth.get_token().await
+                    && !tok.is_empty()
+                {
+                    let v = format!("Bearer {tok}");
+                    if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) {
+                        headers.insert(reqwest::header::AUTHORIZATION, hv);
+                    }
+                    if let Some(acc) = auth
+                        .get_account_id()
+                        .or_else(|| extract_chatgpt_account_id(&tok))
+                        && let Ok(name) =
+                            reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
+                        && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc)
+                    {
+                        headers.insert(name, hv);
                     }
                 }
             }
@@ -322,22 +283,23 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                     codex_login::AuthMode::ChatGPT,
                     "codex_cloud_tasks_tui".to_string(),
                 );
-                if let Some(auth) = am.auth() {
-                    if let Ok(token) = auth.get_token().await && !token.is_empty() {
-                        if let Ok(hv) =
-                            reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
-                        {
-                            headers.insert(reqwest::header::AUTHORIZATION, hv);
-                        }
-                        if let Some(account_id) = auth
-                            .get_account_id()
-                            .or_else(|| extract_chatgpt_account_id(&token))
-                            && let Ok(name) =
-                                reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
-                            && let Ok(hv) = reqwest::header::HeaderValue::from_str(&account_id)
-                        {
-                            headers.insert(name, hv);
-                        }
+                if let Some(auth) = am.auth()
+                    && let Ok(token) = auth.get_token().await
+                    && !token.is_empty()
+                {
+                    if let Ok(hv) =
+                        reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+                    {
+                        headers.insert(reqwest::header::AUTHORIZATION, hv);
+                    }
+                    if let Some(account_id) = auth
+                        .get_account_id()
+                        .or_else(|| extract_chatgpt_account_id(&token))
+                        && let Ok(name) =
+                            reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
+                        && let Ok(hv) = reqwest::header::HeaderValue::from_str(&account_id)
+                    {
+                        headers.insert(name, hv);
                     }
                 }
             }
@@ -388,7 +350,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
     let _ = frame_tx.send(Instant::now());
 
     // Render helper to centralize immediate redraws after handling events.
-    let mut render_if_needed = |terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    let render_if_needed = |terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
                                 app: &mut app::App,
                                 needs_redraw: &mut bool|
      -> anyhow::Result<()> {
@@ -480,22 +442,12 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 }
                             }
                         }
-                        app::AppEvent::TaskSummaryUpdated { generation, id, summary, no_diff_yet, environment_id: _ } => {
-                            // Ignore stale generations
-                            if generation != app.list_generation { continue; }
-                            let id_str = id.0.clone();
-                            if let Some(t) = app.tasks.iter_mut().find(|t| t.id.0 == id_str) {
-                                t.summary = summary.clone();
-                            }
-                            app.summary_cache.insert(id_str.clone(), (summary, std::time::Instant::now()));
-                            if no_diff_yet { app.no_diff_yet.insert(id_str); } else { app.no_diff_yet.remove(&id.0); }
-                            needs_redraw = true;
-                            let _ = frame_tx.send(Instant::now());
-                        }
+                        // (removed TaskSummaryUpdated; unused in this prototype)
                         app::AppEvent::ApplyPreflightFinished { id, title, message, level, skipped, conflicts } => {
                             // Only update if modal is still open and ids match
-                            if let Some(m) = app.apply_modal.as_mut() {
-                                if m.task_id == id {
+                            if let Some(m) = app.apply_modal.as_mut()
+                                && m.task_id == id
+                            {
                                     m.title = title;
                                     m.result_message = Some(message);
                                     m.result_level = Some(level);
@@ -504,7 +456,6 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                     app.apply_preflight_inflight = false;
                                     needs_redraw = true;
                                     let _ = frame_tx.send(Instant::now());
-                                }
                             }
                         }
                         app::AppEvent::EnvironmentsLoaded(result) => {
@@ -543,7 +494,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                     app.refresh_inflight = true;
                                     app.list_generation = app.list_generation.saturating_add(1);
                                     app.in_flight.clear();
-                                    app.no_diff_yet.clear();
+                            // reset spinner state
                                     needs_redraw = true;
                                     let backend2 = backend.clone();
                                     let tx2 = tx.clone();
@@ -571,15 +522,16 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                 codex_login::AuthMode::ChatGPT,
                                                 "codex_cloud_tasks_tui".to_string(),
                                             );
-                                            if let Some(auth) = am.auth() {
-                                                if let Ok(tok) = auth.get_token().await && !tok.is_empty() {
-                                                    let v = format!("Bearer {tok}");
-                                                    if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
-                                                    if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok))
-                                                        && let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
-                                                        && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) {
-                                                        headers.insert(name, hv);
-                                                    }
+                                            if let Some(auth) = am.auth()
+                                                && let Ok(tok) = auth.get_token().await
+                                                && !tok.is_empty()
+                                            {
+                                                let v = format!("Bearer {tok}");
+                                                if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
+                                                if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok))
+                                                    && let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
+                                                    && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) {
+                                                    headers.insert(name, hv);
                                                 }
                                             }
                                         }
@@ -593,7 +545,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                         }
                         app::AppEvent::DetailsDiffLoaded { id, title, diff } => {
                             // Only update if the overlay still corresponds to this id.
-                            if let Some(ov) = &app.diff_overlay { if ov.task_id != id { continue; } }
+                                        if let Some(ov) = &app.diff_overlay && ov.task_id != id { continue; }
                             let mut sd = crate::scrollable_diff::ScrollableDiff::new();
                             sd.set_content(diff.lines().map(|s| s.to_string()).collect());
                             app.diff_overlay = Some(app::DiffOverlay{ title, task_id: id, sd, can_apply: true });
@@ -602,7 +554,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                             needs_redraw = true;
                         }
                         app::AppEvent::DetailsMessagesLoaded { id, title, messages } => {
-                            if let Some(ov) = &app.diff_overlay { if ov.task_id != id { continue; } }
+                                        if let Some(ov) = &app.diff_overlay && ov.task_id != id { continue; }
                             let mut lines = Vec::new();
                             for m in messages { lines.extend(m.lines().map(|s| s.to_string())); lines.push(String::new()); }
                             if lines.is_empty() { lines.push("<no output>".to_string()); }
@@ -614,7 +566,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                             needs_redraw = true;
                         }
                         app::AppEvent::DetailsFailed { id, title, error } => {
-                            if let Some(ov) = &app.diff_overlay { if ov.task_id != id { continue; } }
+                            if let Some(ov) = &app.diff_overlay && ov.task_id != id { continue; }
                             append_error_log(format!("details failed for {}: {error}", id.0));
                             let pretty = pretty_lines_from_error(&error);
                             let mut sd = crate::scrollable_diff::ScrollableDiff::new();
@@ -777,7 +729,6 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 KeyCode::Char('y') => {
                                     if let Some(m) = app.apply_modal.take() {
                                         app.status = format!("Applying '{}'...", m.title);
-                                        needs_redraw = true;
                                         match codex_cloud_tasks_api::CloudBackend::apply_task(&*backend, m.task_id.clone()).await {
                                             Ok(outcome) => {
                                                 app.status = outcome.message.clone();
@@ -791,7 +742,6 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                 app.status = format!("Apply failed: {e}");
                                             }
                                         }
-                                        needs_redraw = true;
                                     }
                                 }
                                 KeyCode::Char('p') => {
@@ -990,7 +940,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                     // Resolve selection over filtered set
                                     if let Some(state) = app.env_modal.take() {
                                         let q = state.query.to_lowercase();
-                                        let mut filtered: Vec<&app::EnvironmentRow> = app.environments.iter().filter(|r| {
+                                        let filtered: Vec<&app::EnvironmentRow> = app.environments.iter().filter(|r| {
                                             if q.is_empty() { return true; }
                                             let mut hay = String::new();
                                             if let Some(l) = &r.label { hay.push_str(&l.to_lowercase()); hay.push(' '); }
@@ -1021,7 +971,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         app.refresh_inflight = true;
                                         app.list_generation = app.list_generation.saturating_add(1);
                                         app.in_flight.clear();
-                                        app.no_diff_yet.clear();
+                                        // reset spinner state
                                         needs_redraw = true;
                                         let backend2 = backend.clone();
                                         let tx2 = tx.clone();
@@ -1059,7 +1009,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                     app.refresh_inflight = true;
                                     app.list_generation = app.list_generation.saturating_add(1);
                                     app.in_flight.clear();
-                                    app.no_diff_yet.clear();
+                                        // reset spinner state
                                     needs_redraw = true;
                                     // Spawn background refresh
                                     let backend2 = backend.clone();
@@ -1251,8 +1201,9 @@ fn pretty_lines_from_error(raw: &str) -> Vec<String> {
     }
 
     // Try to parse the embedded JSON body: find the first '{' after " body=" and decode.
-    if let Some(body_idx) = raw.find(" body=") {
-        if let Some(json_start_rel) = raw[body_idx..].find('{') {
+    if let Some(body_idx) = raw.find(" body=")
+        && let Some(json_start_rel) = raw[body_idx..].find('{')
+    {
             let json_start = body_idx + json_start_rel;
             let json_str = raw[json_start..].trim();
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
@@ -1288,15 +1239,13 @@ fn pretty_lines_from_error(raw: &str) -> Vec<String> {
                         .get("latest_event")
                         .and_then(|e| e.get("text"))
                         .and_then(|s| s.as_str())
+                        && !text.trim().is_empty()
                     {
-                        if !text.trim().is_empty() {
-                            lines.push(format!("Latest event: {}", text.trim()));
-                        }
+                        lines.push(format!("Latest event: {}", text.trim()));
                     }
                 }
             }
         }
-    }
 
     if lines.len() == 1 {
         // Parsing yielded nothing; include a trimmed, short raw message tail for context.
