@@ -7,6 +7,7 @@ use app::App;
 use codex_core::AuthManager;
 use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_core::CodexAuth;
+use codex_core::RolloutRecorder;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::ConfigToml;
@@ -43,12 +44,14 @@ mod file_search;
 mod get_git_diff;
 mod history_cell;
 pub mod insert_history;
+mod key_hint;
 pub mod live_wrap;
 mod markdown;
 mod markdown_stream;
 pub mod onboarding;
 mod pager_overlay;
 mod render;
+mod resume_picker;
 mod session_log;
 mod shimmer;
 mod slash_command;
@@ -57,6 +60,8 @@ mod streaming;
 mod text_formatting;
 mod tui;
 mod user_approval_widget;
+mod version;
+mod wrapping;
 
 // Internal vt100-based replay tests live as a separate source file to keep them
 // close to the widget code. Include them in unit tests.
@@ -128,7 +133,6 @@ pub async fn run_main(
         include_plan_tool: Some(true),
         include_apply_patch_tool: None,
         include_view_image_tool: None,
-        disable_response_storage: cli.oss.then_some(true),
         show_raw_agent_reasoning: cli.oss.then_some(true),
         tools_web_search_request: cli.web_search.then_some(true),
     };
@@ -309,7 +313,13 @@ async fn run_ratatui_app(
     // Initialize high-fidelity session event logging if enabled.
     session_log::maybe_init(&config);
 
-    let Cli { prompt, images, .. } = cli;
+    let Cli {
+        prompt,
+        images,
+        resume,
+        r#continue,
+        ..
+    } = cli;
 
     let auth_manager = AuthManager::shared(
         config.codex_home.clone(),
@@ -322,13 +332,11 @@ async fn run_ratatui_app(
     if should_show_onboarding {
         let directory_trust_decision = run_onboarding_app(
             OnboardingScreenArgs {
-                codex_home: config.codex_home.clone(),
-                cwd: config.cwd.clone(),
                 show_login_screen: should_show_login_screen(login_status, &config),
                 show_trust_screen: should_show_trust_screen,
                 login_status,
-                preferred_auth_method: config.preferred_auth_method,
                 auth_manager: auth_manager.clone(),
+                config: config.clone(),
             },
             &mut tui,
         )
@@ -339,7 +347,37 @@ async fn run_ratatui_app(
         }
     }
 
-    let app_result = App::run(&mut tui, auth_manager, config, prompt, images).await;
+    let resume_selection = if r#continue {
+        match RolloutRecorder::list_conversations(&config.codex_home, 1, None).await {
+            Ok(page) => page
+                .items
+                .first()
+                .map(|it| resume_picker::ResumeSelection::Resume(it.path.clone()))
+                .unwrap_or(resume_picker::ResumeSelection::StartFresh),
+            Err(_) => resume_picker::ResumeSelection::StartFresh,
+        }
+    } else if resume {
+        match resume_picker::run_resume_picker(&mut tui, &config.codex_home).await? {
+            resume_picker::ResumeSelection::Exit => {
+                restore();
+                session_log::log_session_end();
+                return Ok(codex_core::protocol::TokenUsage::default());
+            }
+            other => other,
+        }
+    } else {
+        resume_picker::ResumeSelection::StartFresh
+    };
+
+    let app_result = App::run(
+        &mut tui,
+        auth_manager,
+        config,
+        prompt,
+        images,
+        resume_selection,
+    )
+    .await;
 
     restore();
     // Mark the end of the recorded session.
