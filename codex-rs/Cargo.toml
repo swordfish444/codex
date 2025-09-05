@@ -6,7 +6,6 @@ members = [
     "arg0",
     "codex-backend-openapi-models",
     "cloud-tasks",
-    "cloud-tasks-api",
     "cloud-tasks-client",
     "cli",
     "common",

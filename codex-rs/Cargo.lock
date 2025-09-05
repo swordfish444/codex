@@ -735,7 +735,6 @@ dependencies = [
  "chrono",
  "clap",
  "codex-backend-client",
- "codex-cloud-tasks-api",
  "codex-cloud-tasks-client",
  "codex-common",
  "codex-core",
@@ -755,16 +754,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-cloud-tasks-api"
-version = "0.0.0"
-dependencies = [
- "async-trait",
- "chrono",
- "serde",
- "thiserror 2.0.16",
-]
-
-[[package]]
 name = "codex-cloud-tasks-client"
 version = "0.0.0"
 dependencies = [
@@ -772,7 +761,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "codex-backend-client",
- "codex-cloud-tasks-api",
  "diffy",
  "once_cell",
  "regex",

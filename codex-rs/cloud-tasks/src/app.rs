@@ -33,9 +33,9 @@ pub struct ApplyModalState {
 }
 
 use crate::scrollable_diff::ScrollableDiff;
-use codex_cloud_tasks_api::CloudBackend;
-use codex_cloud_tasks_api::TaskId;
-use codex_cloud_tasks_api::TaskSummary;
+use codex_cloud_tasks_client::CloudBackend;
+use codex_cloud_tasks_client::TaskId;
+use codex_cloud_tasks_client::TaskSummary;
 use throbber_widgets_tui::ThrobberState;
 
 #[derive(Default)]
@@ -151,7 +151,7 @@ pub enum AppEvent {
         error: String,
     },
     /// Background completion of new task submission
-    NewTaskSubmitted(Result<codex_cloud_tasks_api::CreatedTask, String>),
+    NewTaskSubmitted(Result<codex_cloud_tasks_client::CreatedTask, String>),
     /// Background completion of apply preflight when opening modal or on demand
     ApplyPreflightFinished {
         id: TaskId,
@@ -175,11 +175,11 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl codex_cloud_tasks_api::CloudBackend for FakeBackend {
+    impl codex_cloud_tasks_client::CloudBackend for FakeBackend {
         async fn list_tasks(
             &self,
             env: Option<&str>,
-        ) -> codex_cloud_tasks_api::Result<Vec<TaskSummary>> {
+        ) -> codex_cloud_tasks_client::Result<Vec<TaskSummary>> {
             let key = env.map(|s| s.to_string());
             let titles = self
                 .by_env
@@ -191,18 +191,18 @@ mod tests {
                 out.push(TaskSummary {
                     id: TaskId(format!("T-{i}")),
                     title: t.to_string(),
-                    status: codex_cloud_tasks_api::TaskStatus::Ready,
+                    status: codex_cloud_tasks_client::TaskStatus::Ready,
                     updated_at: Utc::now(),
                     environment_id: env.map(|s| s.to_string()),
                     environment_label: None,
-                    summary: codex_cloud_tasks_api::DiffSummary::default(),
+                    summary: codex_cloud_tasks_client::DiffSummary::default(),
                 });
             }
             Ok(out)
         }
 
-        async fn get_task_diff(&self, _id: TaskId) -> codex_cloud_tasks_api::Result<String> {
-            Err(codex_cloud_tasks_api::Error::Unimplemented(
+        async fn get_task_diff(&self, _id: TaskId) -> codex_cloud_tasks_client::Result<String> {
+            Err(codex_cloud_tasks_client::Error::Unimplemented(
                 "not used in test",
             ))
         }
@@ -210,15 +210,15 @@ mod tests {
         async fn get_task_messages(
             &self,
             _id: TaskId,
-        ) -> codex_cloud_tasks_api::Result<Vec<String>> {
+        ) -> codex_cloud_tasks_client::Result<Vec<String>> {
             Ok(vec![])
         }
 
         async fn apply_task(
             &self,
             _id: TaskId,
-        ) -> codex_cloud_tasks_api::Result<codex_cloud_tasks_api::ApplyOutcome> {
-            Err(codex_cloud_tasks_api::Error::Unimplemented(
+        ) -> codex_cloud_tasks_client::Result<codex_cloud_tasks_client::ApplyOutcome> {
+            Err(codex_cloud_tasks_client::Error::Unimplemented(
                 "not used in test",
             ))
         }
@@ -229,8 +229,8 @@ mod tests {
             _prompt: &str,
             _git_ref: &str,
             _qa_mode: bool,
-        ) -> codex_cloud_tasks_api::Result<codex_cloud_tasks_api::CreatedTask> {
-            Err(codex_cloud_tasks_api::Error::Unimplemented(
+        ) -> codex_cloud_tasks_client::Result<codex_cloud_tasks_client::CreatedTask> {
+            Err(codex_cloud_tasks_client::Error::Unimplemented(
                 "not used in test",
             ))
         }

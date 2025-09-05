@@ -17,7 +17,6 @@ mock = []
 
 [dependencies]
 anyhow = "1"
-codex-cloud-tasks-api = { path = "../cloud-tasks-api" }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 diffy = "0.4.2"

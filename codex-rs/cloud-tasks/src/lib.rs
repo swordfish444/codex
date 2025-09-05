@@ -54,7 +54,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
     );
 
     use std::sync::Arc;
-    let backend: Arc<dyn codex_cloud_tasks_api::CloudBackend> = if use_mock {
+    let backend: Arc<dyn codex_cloud_tasks_client::CloudBackend> = if use_mock {
         Arc::new(codex_cloud_tasks_client::MockClient)
     } else {
         // Build an HTTP client against the configured (or default) base URL.
@@ -647,8 +647,8 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                             codex_login::AuthMode::ChatGPT,
                                             "codex_cloud_tasks_tui".to_string(),
                                         );
-                                        if let Some(auth) = am.auth() {
-                                            if let Ok(tok) = auth.get_token().await && !tok.is_empty() {
+                                        if let Some(auth) = am.auth()
+                                            && let Ok(tok) = auth.get_token().await && !tok.is_empty() {
                                                 let v = format!("Bearer {tok}");
                                                 if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
                                                 if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok))
@@ -657,7 +657,6 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                     headers.insert(name, hv);
                                                 }
                                             }
-                                        }
                                     }
                                     let res = crate::env_detect::list_environments(&base_url, &headers).await;
                                     let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
@@ -682,31 +681,29 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 _ => {
                                     if page.submitting {
                                         // Ignore input while submitting
-                                    } else {
-                                        if let codex_tui::ComposerAction::Submitted(text) = page.composer.input(key) {
-                                                // Submit only if we have an env id
-                                                if let Some(env) = page.env_id.clone() {
-                                                    append_error_log(format!(
-                                                        "new-task: submit env={} size={}",
-                                                        env,
-                                                        text.chars().count()
-                                                    ));
-                                                    page.submitting = true;
-                                                    app.status = "Submitting new task…".to_string();
-                                                    let tx2 = tx.clone();
-                                                    let backend2 = backend.clone();
-                                                    tokio::spawn(async move {
-                                                        let result = codex_cloud_tasks_api::CloudBackend::create_task(&*backend2, &env, &text, "main", false).await;
-                                                        let evt = match result {
-                                                            Ok(ok) => app::AppEvent::NewTaskSubmitted(Ok(ok)),
-                                                            Err(e) => app::AppEvent::NewTaskSubmitted(Err(format!("{e}"))),
-                                                        };
-                                                        let _ = tx2.send(evt);
-                                                    });
-                                                } else {
-                                                    app.status = "No environment selected (press 'e' to choose)".to_string();
-                                                }
-                                        }
+                                    } else if let codex_tui::ComposerAction::Submitted(text) = page.composer.input(key) {
+                                            // Submit only if we have an env id
+                                            if let Some(env) = page.env_id.clone() {
+                                                append_error_log(format!(
+                                                    "new-task: submit env={} size={}",
+                                                    env,
+                                                    text.chars().count()
+                                                ));
+                                                page.submitting = true;
+                                                app.status = "Submitting new task…".to_string();
+                                                let tx2 = tx.clone();
+                                                let backend2 = backend.clone();
+                                                tokio::spawn(async move {
+                                                    let result = codex_cloud_tasks_client::CloudBackend::create_task(&*backend2, &env, &text, "main", false).await;
+                                                    let evt = match result {
+                                                        Ok(ok) => app::AppEvent::NewTaskSubmitted(Ok(ok)),
+                                                        Err(e) => app::AppEvent::NewTaskSubmitted(Err(format!("{e}"))),
+                                                    };
+                                                    let _ = tx2.send(evt);
+                                                });
+                                            } else {
+                                                app.status = "No environment selected (press 'e' to choose)".to_string();
+                                            }
                                     }
                                     needs_redraw = true;
                                     // If paste‑burst is active, schedule a micro‑flush frame.
@@ -729,10 +726,10 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 KeyCode::Char('y') => {
                                     if let Some(m) = app.apply_modal.take() {
                                         app.status = format!("Applying '{}'...", m.title);
-                                        match codex_cloud_tasks_api::CloudBackend::apply_task(&*backend, m.task_id.clone()).await {
+                                        match codex_cloud_tasks_client::CloudBackend::apply_task(&*backend, m.task_id.clone()).await {
                                             Ok(outcome) => {
                                                 app.status = outcome.message.clone();
-                                                if matches!(outcome.status, codex_cloud_tasks_api::ApplyStatus::Success) {
+                                                if matches!(outcome.status, codex_cloud_tasks_client::ApplyStatus::Success) {
                                                     app.diff_overlay = None;
                                                     if let Ok(tasks) = app::load_tasks(&*backend, app.env_filter.as_deref()).await { app.tasks = tasks; }
                                                 }
@@ -757,14 +754,14 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         let title2 = m.title.clone();
                                         tokio::spawn(async move {
                                             unsafe { std::env::set_var("CODEX_APPLY_PREFLIGHT", "1") };
-                                            let out = codex_cloud_tasks_api::CloudBackend::apply_task(&*backend2, id2.clone()).await;
+                                            let out = codex_cloud_tasks_client::CloudBackend::apply_task(&*backend2, id2.clone()).await;
                                             unsafe { std::env::remove_var("CODEX_APPLY_PREFLIGHT") };
                                             let evt = match out {
                                                 Ok(outcome) => {
                                                     let level = match outcome.status {
-                                                        codex_cloud_tasks_api::ApplyStatus::Success => app::ApplyResultLevel::Success,
-                                                        codex_cloud_tasks_api::ApplyStatus::Partial => app::ApplyResultLevel::Partial,
-                                                        codex_cloud_tasks_api::ApplyStatus::Error => app::ApplyResultLevel::Error,
+                                                        codex_cloud_tasks_client::ApplyStatus::Success => app::ApplyResultLevel::Success,
+                                                        codex_cloud_tasks_client::ApplyStatus::Partial => app::ApplyResultLevel::Partial,
+                                                        codex_cloud_tasks_client::ApplyStatus::Error => app::ApplyResultLevel::Error,
                                                     };
                                                     app::AppEvent::ApplyPreflightFinished { id: id2, title: title2, message: outcome.message, level, skipped: outcome.skipped_paths, conflicts: outcome.conflict_paths }
                                                 }
@@ -794,14 +791,14 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                             let title2 = ov.title.clone();
                                             tokio::spawn(async move {
                                                 unsafe { std::env::set_var("CODEX_APPLY_PREFLIGHT", "1") };
-                                                let out = codex_cloud_tasks_api::CloudBackend::apply_task(&*backend2, id2.clone()).await;
+                                                let out = codex_cloud_tasks_client::CloudBackend::apply_task(&*backend2, id2.clone()).await;
                                                 unsafe { std::env::remove_var("CODEX_APPLY_PREFLIGHT") };
                                                 let evt = match out {
                                                     Ok(outcome) => {
                                                         let level = match outcome.status {
-                                                            codex_cloud_tasks_api::ApplyStatus::Success => app::ApplyResultLevel::Success,
-                                                            codex_cloud_tasks_api::ApplyStatus::Partial => app::ApplyResultLevel::Partial,
-                                                            codex_cloud_tasks_api::ApplyStatus::Error => app::ApplyResultLevel::Error,
+                                                            codex_cloud_tasks_client::ApplyStatus::Success => app::ApplyResultLevel::Success,
+                                                            codex_cloud_tasks_client::ApplyStatus::Partial => app::ApplyResultLevel::Partial,
+                                                            codex_cloud_tasks_client::ApplyStatus::Error => app::ApplyResultLevel::Error,
                                                         };
                                                         app::AppEvent::ApplyPreflightFinished { id: id2, title: title2, message: outcome.message, level, skipped: outcome.skipped_paths, conflicts: outcome.conflict_paths }
                                                     }
@@ -838,7 +835,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                     codex_login::AuthMode::ChatGPT,
                                                     "codex_cloud_tasks_tui".to_string(),
                                                 );
-                                                if let Some(auth) = am.auth() { if let Ok(tok) = auth.get_token().await && !tok.is_empty() {
+                                                if let Some(auth) = am.auth() && let Ok(tok) = auth.get_token().await && !tok.is_empty() {
                                                     let v = format!("Bearer {tok}");
                                                     if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
                                                     if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok))
@@ -846,7 +843,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                         && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) {
                                                         headers.insert(name, hv);
                                                     }
-                                                }}
+                                                }
                                             }
                                             let res = crate::env_detect::list_environments(&base_url, &headers).await;
                                             let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
@@ -900,17 +897,14 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                 codex_login::AuthMode::ChatGPT,
                                                 "codex_cloud_tasks_tui".to_string(),
                                             );
-                                            if let Some(auth) = am.auth() {
-                                                if let Ok(tok) = auth.get_token().await { if !tok.is_empty() {
+                                            if let Some(auth) = am.auth()
+                                                && let Ok(tok) = auth.get_token().await && !tok.is_empty() {
                                                     let v = format!("Bearer {tok}");
                                                     if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
-                                                    if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok)) {
-                                                        if let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id") {
-                                                            if let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) { headers.insert(name, hv); }
-                                                        }
-                                                    }
-                                                }}
-                                            }
+                                                    if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok))
+                                                        && let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
+                                                            && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) { headers.insert(name, hv); }
+                                                }
                                         }
                                         let res = crate::env_detect::list_environments(&base_url, &headers).await;
                                         let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
@@ -1042,17 +1036,14 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                     codex_login::AuthMode::ChatGPT,
                                                     "codex_cloud_tasks_tui".to_string(),
                                                 );
-                                                if let Some(auth) = am.auth() {
-                                                    if let Ok(tok) = auth.get_token().await { if !tok.is_empty() {
+                                                if let Some(auth) = am.auth()
+                                                    && let Ok(tok) = auth.get_token().await && !tok.is_empty() {
                                                         let v = format!("Bearer {tok}");
                                                         if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
-                                                        if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok)) {
-                                                            if let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id") {
-                                                                if let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) { headers.insert(name, hv); }
-                                                            }
-                                                        }
-                                                    }}
-                                                }
+                                                        if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok))
+                                                            && let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
+                                                                && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) { headers.insert(name, hv); }
+                                                    }
                                             }
                                             let res = crate::env_detect::list_environments(&base_url, &headers).await;
                                             let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
@@ -1078,14 +1069,14 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         let backend2 = backend.clone();
                                         let tx2 = tx.clone();
                                         tokio::spawn(async move {
-                                            match codex_cloud_tasks_api::CloudBackend::get_task_diff(&*backend2, task.id.clone()).await {
+                                            match codex_cloud_tasks_client::CloudBackend::get_task_diff(&*backend2, task.id.clone()).await {
                                                 Ok(diff) => {
                                                     let _ = tx2.send(app::AppEvent::DetailsDiffLoaded { id: task.id, title: task.title, diff });
                                                 }
                                                 Err(e) => {
                                                     // Always log errors while we debug non-success states.
                                                     append_error_log(format!("get_task_diff failed for {}: {e}", task.id.0));
-                                                    match codex_cloud_tasks_api::CloudBackend::get_task_messages(&*backend2, task.id.clone()).await {
+                                                    match codex_cloud_tasks_client::CloudBackend::get_task_messages(&*backend2, task.id.clone()).await {
                                                         Ok(msgs) => {
                                                             let _ = tx2.send(app::AppEvent::DetailsMessagesLoaded { id: task.id, title: task.title, messages: msgs });
                                                         }
@@ -1102,7 +1093,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 }
                                 KeyCode::Char('a') => {
                                     if let Some(task) = app.tasks.get(app.selected) {
-                                        match codex_cloud_tasks_api::CloudBackend::get_task_diff(&*backend, task.id.clone()).await {
+                                        match codex_cloud_tasks_client::CloudBackend::get_task_diff(&*backend, task.id.clone()).await {
                                             Ok(_) => {
                                                 app.apply_modal = Some(app::ApplyModalState { task_id: task.id.clone(), title: task.title.clone(), result_message: None, result_level: None, skipped_paths: Vec::new(), conflict_paths: Vec::new() });
                                                 app.apply_preflight_inflight = true;
@@ -1113,14 +1104,14 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                 let title2 = task.title.clone();
                                                 tokio::spawn(async move {
                                                     unsafe { std::env::set_var("CODEX_APPLY_PREFLIGHT", "1") };
-                                                    let out = codex_cloud_tasks_api::CloudBackend::apply_task(&*backend2, id2.clone()).await;
+                                                    let out = codex_cloud_tasks_client::CloudBackend::apply_task(&*backend2, id2.clone()).await;
                                                     unsafe { std::env::remove_var("CODEX_APPLY_PREFLIGHT") };
                                                     let evt = match out {
                                                         Ok(outcome) => {
                                                             let level = match outcome.status {
-                                                                codex_cloud_tasks_api::ApplyStatus::Success => app::ApplyResultLevel::Success,
-                                                                codex_cloud_tasks_api::ApplyStatus::Partial => app::ApplyResultLevel::Partial,
-                                                                codex_cloud_tasks_api::ApplyStatus::Error => app::ApplyResultLevel::Error,
+                                                                codex_cloud_tasks_client::ApplyStatus::Success => app::ApplyResultLevel::Success,
+                                                                codex_cloud_tasks_client::ApplyStatus::Partial => app::ApplyResultLevel::Partial,
+                                                                codex_cloud_tasks_client::ApplyStatus::Error => app::ApplyResultLevel::Error,
                                                             };
                                                             app::AppEvent::ApplyPreflightFinished { id: id2, title: title2, message: outcome.message, level, skipped: outcome.skipped_paths, conflicts: outcome.conflict_paths }
                                                         }

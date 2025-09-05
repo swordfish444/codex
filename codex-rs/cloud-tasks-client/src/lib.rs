@@ -1,14 +1,17 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+mod api;
+
 pub use api::ApplyOutcome;
 pub use api::ApplyStatus;
 pub use api::CloudBackend;
+pub use api::CreatedTask;
+pub use api::DiffSummary;
 pub use api::Error;
 pub use api::Result;
 pub use api::TaskId;
 pub use api::TaskStatus;
 pub use api::TaskSummary;
-use codex_cloud_tasks_api as api;
 
 #[cfg(feature = "mock")]
 mod mock;

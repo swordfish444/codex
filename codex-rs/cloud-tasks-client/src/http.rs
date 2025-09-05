@@ -1,6 +1,7 @@
 use crate::ApplyOutcome;
 use crate::ApplyStatus;
 use crate::CloudBackend;
+use crate::DiffSummary;
 use crate::Error;
 use crate::Result;
 use crate::TaskId;
@@ -8,7 +9,6 @@ use crate::TaskStatus;
 use crate::TaskSummary;
 use chrono::DateTime;
 use chrono::Utc;
-use codex_cloud_tasks_api::DiffSummary;
 
 use serde_json::Value;
 use std::collections::HashMap;
@@ -306,7 +306,7 @@ impl CloudBackend for HttpClient {
         prompt: &str,
         git_ref: &str,
         qa_mode: bool,
-    ) -> Result<codex_cloud_tasks_api::CreatedTask> {
+    ) -> Result<crate::CreatedTask> {
         // Build request payload patterned after VSCode/newtask.rs
         let mut input_items: Vec<serde_json::Value> = Vec::new();
         input_items.push(serde_json::json!({
@@ -341,7 +341,7 @@ impl CloudBackend for HttpClient {
                     env_id,
                     prompt.chars().count()
                 ));
-                Ok(codex_cloud_tasks_api::CreatedTask { id: TaskId(id) })
+                Ok(crate::CreatedTask { id: TaskId(id) })
             }
             Err(e) => {
                 append_error_log(&format!(

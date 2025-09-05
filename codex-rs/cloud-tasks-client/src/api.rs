@@ -1,5 +1,3 @@
-#![deny(clippy::unwrap_used, clippy::expect_used)]
-
 use chrono::DateTime;
 use chrono::Utc;
 use serde::Deserialize;

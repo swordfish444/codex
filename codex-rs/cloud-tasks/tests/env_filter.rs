@@ -1,6 +1,6 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-use codex_cloud_tasks_api::CloudBackend;
+use codex_cloud_tasks_client::CloudBackend;
 use codex_cloud_tasks_client::MockClient;
 
 #[tokio::test]

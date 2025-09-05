@@ -1,11 +1,11 @@
 use crate::ApplyOutcome;
 use crate::CloudBackend;
+use crate::DiffSummary;
 use crate::Result;
 use crate::TaskId;
 use crate::TaskStatus;
 use crate::TaskSummary;
 use chrono::Utc;
-use codex_cloud_tasks_api::DiffSummary;
 
 #[derive(Clone, Default)]
 pub struct MockClient;
@@ -81,10 +81,10 @@ impl CloudBackend for MockClient {
         prompt: &str,
         git_ref: &str,
         qa_mode: bool,
-    ) -> Result<codex_cloud_tasks_api::CreatedTask> {
+    ) -> Result<crate::CreatedTask> {
         let _ = (env_id, prompt, git_ref, qa_mode);
         let id = format!("task_local_{}", chrono::Utc::now().timestamp_millis());
-        Ok(codex_cloud_tasks_api::CreatedTask { id: TaskId(id) })
+        Ok(crate::CreatedTask { id: TaskId(id) })
     }
 }
 

@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 use crate::app::App;
 use chrono::Local;
 use chrono::Utc;
-use codex_cloud_tasks_api::TaskStatus;
+use codex_cloud_tasks_client::TaskStatus;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
@@ -502,7 +502,7 @@ fn style_diff_line(raw: &str) -> Line<'static> {
     Line::from(vec![Span::raw(raw.to_string())])
 }
 
-fn render_task_item(_app: &App, t: &codex_cloud_tasks_api::TaskSummary) -> ListItem<'static> {
+fn render_task_item(_app: &App, t: &codex_cloud_tasks_client::TaskSummary) -> ListItem<'static> {
     let status = match t.status {
         TaskStatus::Ready => "READY".green(),
         TaskStatus::Pending => "PENDING".magenta(),
