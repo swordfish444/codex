@@ -14,6 +14,8 @@ use crate::model_provider_info::built_in_model_providers;
 use crate::openai_model_info::get_model_info;
 use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPolicy;
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use chrono::Utc;
 use codex_protocol::config_types::ReasoningEffort;
 use codex_protocol::config_types::ReasoningSummary;
@@ -25,9 +27,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::io::IsTerminal;
-use std::io::Write;
-use std::io::{self};
+use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::path::PathBuf;
 use std::thread;
@@ -46,18 +46,18 @@ const CONFIG_TOML_FILE: &str = "config.toml";
 
 const DEFAULT_RESPONSES_ORIGINATOR_HEADER: &str = "codex_cli_rs";
 
-const ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE: &str = "Running Codex with --yolo/--dangerously-bypass-approvals-and-sandbox or --sandbox danger-full-access has been disabled by your administrator. Please contact your system administrator.";
+const ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE: &str = "Running Codex with --dangerously-bypass-approvals-and-sandbox or --sandbox danger-full-access has been disabled by your administrator. Please contact your system administrator or try: codex --full-auto";
 
 const ADMIN_DANGEROUS_SANDBOX_DISABLED_PROMPT_LINES: &[&str] = &[
-    "Running Codex with --yolo/--dangerously-bypass-approvals-and-sandbox or",
+    "Running Codex with --dangerously-bypass-approvals-and-sandbox or",
     "--sandbox danger-full-access has been disabled by your administrator.",
-    "Please contact your system administrator if you believe you need this mode.",
+    "\nPlease contact your system administrator or try: codex --full-auto",
 ];
 
 #[cfg(target_os = "macos")]
 const MANAGED_PREFERENCES_APPLICATION_ID: &str = "com.openai.codex";
 #[cfg(target_os = "macos")]
-const MANAGED_PREFERENCES_CONFIG_KEY: &str = "config.toml";
+const MANAGED_PREFERENCES_CONFIG_KEY: &str = "config_toml_base64";
 
 /// Application configuration loaded from disk and merged with overrides.
 #[derive(Debug, Clone, PartialEq)]
@@ -334,10 +334,7 @@ fn join_config_result(
     }
 }
 
-fn read_config_from_path(
-    path: &Path,
-    log_missing_as_info: bool,
-) -> std::io::Result<Option<TomlValue>> {
+fn read_config_from_path(path: &Path, log_missing_as_info: bool) -> std::io::Result<Option<TomlValue>> {
     match std::fs::read_to_string(path) {
         Ok(contents) => match toml::from_str::<TomlValue>(&contents) {
             Ok(value) => Ok(Some(value)),
@@ -415,8 +412,21 @@ fn load_managed_admin_config_impl() -> std::io::Result<Option<TomlValue>> {
 
     let value = unsafe { CFString::wrap_under_create_rule(value_ref as _) };
     let contents = value.to_string();
+    let trimmed = contents.trim();
 
-    match toml::from_str::<TomlValue>(&contents) {
+    let decoded = BASE64_STANDARD
+        .decode(trimmed.as_bytes())
+        .map_err(|err| {
+            tracing::error!("Failed to decode managed preferences as base64: {err}");
+            std::io::Error::new(std::io::ErrorKind::InvalidData, err)
+        })?;
+
+    let decoded_str = String::from_utf8(decoded).map_err(|err| {
+        tracing::error!("Managed preferences base64 contents were not valid UTF-8: {err}");
+        std::io::Error::new(std::io::ErrorKind::InvalidData, err)
+    })?;
+
+    match toml::from_str::<TomlValue>(&decoded_str) {
         Ok(parsed) => Ok(Some(parsed)),
         Err(err) => {
             tracing::error!("Failed to parse managed preferences TOML: {err}");
@@ -433,8 +443,12 @@ fn load_managed_admin_config_impl() -> std::io::Result<Option<TomlValue>> {
 #[derive(Debug, Clone, Copy)]
 pub struct AdminAuditContext<'a> {
     pub sandbox_policy: &'a SandboxPolicy,
+    pub approval_policy: &'a AskForApproval,
+    pub cwd: &'a Path,
+    pub command: Option<&'a [String]>,
     pub dangerously_bypass_requested: bool,
     pub dangerous_mode_justification: Option<&'a str>,
+    pub record_command_event: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -461,6 +475,10 @@ struct AdminAuditPayload<'a> {
     timestamp: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     justification: Option<&'a str>,
+    approval_policy: &'a str,
+    cwd: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command: Option<&'a [String]>,
 }
 
 pub async fn maybe_post_admin_audit_events(config: &Config, context: AdminAuditContext<'_>) {
@@ -473,9 +491,12 @@ pub async fn maybe_post_admin_audit_events(config: &Config, context: AdminAuditC
     }
 
     let sandbox_mode = context.sandbox_policy.to_string();
+    let approval_policy_display = context.approval_policy.to_string();
+    let cwd_display = context.cwd.display().to_string();
+    let command_args = context.command;
     let client = Client::new();
 
-    if audit.events.all_commands {
+    if audit.events.all_commands && context.record_command_event {
         post_admin_audit_event(
             &client,
             &audit.endpoint,
@@ -483,6 +504,9 @@ pub async fn maybe_post_admin_audit_events(config: &Config, context: AdminAuditC
             &sandbox_mode,
             context.dangerously_bypass_requested,
             context.dangerous_mode_justification,
+            &approval_policy_display,
+            &cwd_display,
+            command_args,
         )
         .await;
     }
@@ -498,6 +522,9 @@ pub async fn maybe_post_admin_audit_events(config: &Config, context: AdminAuditC
             &sandbox_mode,
             context.dangerously_bypass_requested,
             context.dangerous_mode_justification,
+            &approval_policy_display,
+            &cwd_display,
+            command_args,
         )
         .await;
     }
@@ -517,8 +544,12 @@ pub async fn audit_admin_run_with_prompt(
         config,
         AdminAuditContext {
             sandbox_policy: &config.sandbox_policy,
+            approval_policy: &config.approval_policy,
+            cwd: &config.cwd,
+            command: None,
             dangerously_bypass_requested,
             dangerous_mode_justification: justification.as_deref(),
+            record_command_event: false,
         },
     )
     .await;
@@ -537,6 +568,9 @@ async fn post_admin_audit_event(
     sandbox_mode: &str,
     dangerously_bypass_requested: bool,
     justification: Option<&str>,
+    approval_policy: &str,
+    cwd: &str,
+    command: Option<&[String]>,
 ) {
     let username = whoami::username();
     let timestamp_string;
@@ -549,6 +583,9 @@ async fn post_admin_audit_event(
             dangerously_bypass_requested,
             timestamp: &timestamp_string,
             justification,
+            approval_policy,
+            cwd,
+            command,
         }
     };
 
@@ -575,45 +612,26 @@ pub fn prompt_for_admin_danger_reason(config: &Config) -> std::io::Result<Option
 
     let red = "\x1b[31m";
     let reset = "\x1b[0m";
+    let blue = "\x1b[34m";
     let mut stderr = io::stderr();
     writeln!(stderr)?;
     writeln!(
         stderr,
-        "{red}╔════════════════════════════════════════════════════════════╗{reset}"
+        "{red}╔══════════════════════════════════════════════════════════════╗{reset}"
     )?;
     writeln!(
         stderr,
-        "{red}║  ADMINISTRATOR WARNING                                    ║{reset}"
+        "{red}║  DANGEROUS USAGE WARNING                                     ║{reset}"
     )?;
     writeln!(
         stderr,
-        "{red}╚════════════════════════════════════════════════════════════╝{reset}"
-    )?;
-    writeln!(
-        stderr,
-        "{red}Dangerous sandbox access requires administrator approval.{reset}"
+        "{red}╚══════════════════════════════════════════════════════════════╝{reset}"
     )?;
     for line in ADMIN_DANGEROUS_SANDBOX_DISABLED_PROMPT_LINES {
         writeln!(stderr, "{red}{line}{reset}")?;
     }
-    if prompt.sandbox {
-        writeln!(
-            stderr,
-            "{red}• Requested flag: --sandbox danger-full-access{reset}"
-        )?;
-    }
-    if prompt.dangerously_bypass {
-        writeln!(
-            stderr,
-            "{red}• Requested flag: --dangerously-bypass-approvals-and-sandbox{reset}"
-        )?;
-    }
-    writeln!(
-        stderr,
-        "{red}Provide a justification below to continue.{reset}"
-    )?;
     writeln!(stderr)?;
-    write!(stderr, "{red}?{reset} Justification: ")?;
+    write!(stderr, "{red}?{reset} {blue}Or provide a justification to continue anyway:{reset} ")?;
     stderr.flush()?;
 
     let mut input = String::new();
@@ -622,7 +640,13 @@ pub fn prompt_for_admin_danger_reason(config: &Config) -> std::io::Result<Option
     if justification.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "An administrator justification is required to proceed.",
+            "Justification is required by your administrator to proceed with dangerous usage.",
+        ));
+    }
+    if justification.len() < 4 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Justification must be at least 4 characters long and is required by your administrator to proceed with dangerous usage.",
         ));
     }
 
