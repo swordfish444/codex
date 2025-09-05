@@ -290,6 +290,7 @@ impl App {
         let result = self
             .perform_fork(ev.entries.clone(), drop_count, cfg.clone())
             .await;
+        // We aren't using the initial history UI replay in session configured because we have more accurate version of the history.
         match result {
             Ok(new_conv) => {
                 self.install_forked_conversation(tui, cfg, new_conv, drop_count, &prefill)
