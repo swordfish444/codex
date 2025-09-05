@@ -592,22 +592,12 @@ impl Session {
         let mut msgs = Vec::new();
         for item in items.clone() {
             match item {
-<<<<<<< HEAD
-                RolloutItem::ResponseItem(ref v) => {
-                    responses.extend(v.clone());
-                    let new_msgs: Vec<EventMsg> = v
-                        .iter()
-                        .flat_map(|ri| {
-                            map_response_item_to_event_messages(ri, self.show_raw_agent_reasoning)
-                        })
-                        .collect();
-=======
-                RolloutItem::ResponseItem(response) => {
+                RolloutItem::ResponseItem(ref response) => {
+                    responses.push(response.clone());
                     let new_msgs: Vec<EventMsg> = map_response_item_to_event_messages(
-                        &response,
+                        response,
                         self.show_raw_agent_reasoning,
                     );
->>>>>>> 4245659e (progress)
                     if before_resume_session {
                         msgs.extend(new_msgs);
                     } else {
@@ -618,15 +608,8 @@ impl Session {
                         );
                     }
                 }
-<<<<<<< HEAD
-                RolloutItem::Event(events) => msgs.extend(events.iter().map(|e| e.msg.clone())),
-                RolloutItem::SessionMeta(..) => {}
-=======
                 RolloutItem::Event(event) => msgs.push(event.msg.clone()),
-                RolloutItem::SessionMeta(..) => {
-                    // Session meta does not emit events
-                }
->>>>>>> 4245659e (progress)
+                RolloutItem::SessionMeta(..) => {}
             }
         }
 
@@ -742,7 +725,6 @@ impl Session {
 
     /// Records items to both the rollout and the chat completions/ZDR
     /// transcript, if enabled.
-<<<<<<< HEAD
     async fn record_conversation_items(&self, items: &[ResponseItem]) {
         self.record_conversation_items_internal(items, true).await;
     }
@@ -752,20 +734,6 @@ impl Session {
         if persist {
             self.record_state_snapshot(RolloutItem::ResponseItem(items.to_vec()))
                 .await;
-=======
-    async fn record_conversation_items<T>(&self, item: T)
-    where
-        T: Into<RolloutItem>,
-    {
-        let item: RolloutItem = item.into();
-        debug!("Recording items for conversation: {item:?}");
-        self.record_state_snapshot(item.clone()).await;
-        if let RolloutItem::ResponseItem(response_item) = &item {
-            self.state
-                .lock_unchecked()
-                .history
-                .record_items(std::slice::from_ref(response_item));
->>>>>>> 4245659e (progress)
         }
 
         self.state.lock_unchecked().history.record_items(items);

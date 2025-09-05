@@ -263,6 +263,8 @@ mod tests {
             assistant_msg("a4"),
         ];
 
+        let items: Vec<RolloutItem> = items.into_iter().map(RolloutItem::from).collect();
+
         let truncated = truncate_after_dropping_last_messages(items.clone(), 1);
         if let InitialHistory::Resumed(resumed) = truncated {
             let get_text = |ri: &ResponseItem| -> Option<String> {
@@ -279,7 +281,7 @@ mod tests {
             let texts: Vec<String> = resumed
                 .iter()
                 .filter_map(|it| match it {
-                    RolloutItem::ResponseItem(v) if !v.is_empty() => get_text(&v[0]),
+                    RolloutItem::ResponseItem(ri) => get_text(ri),
                     _ => None,
                 })
                 .collect();
