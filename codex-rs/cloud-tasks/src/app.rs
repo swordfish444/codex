@@ -59,6 +59,8 @@ pub struct App {
     pub new_task: Option<crate::new_task::NewTaskPage>,
     // Apply preflight spinner state
     pub apply_preflight_inflight: bool,
+    // Apply action spinner state
+    pub apply_inflight: bool,
     // Background enrichment coordination
     pub list_generation: u64,
     pub in_flight: std::collections::HashSet<String>,
@@ -84,6 +86,7 @@ impl App {
             env_error: None,
             new_task: None,
             apply_preflight_inflight: false,
+            apply_inflight: false,
             list_generation: 0,
             in_flight: std::collections::HashSet::new(),
         }
@@ -160,6 +163,11 @@ pub enum AppEvent {
         level: ApplyResultLevel,
         skipped: Vec<String>,
         conflicts: Vec<String>,
+    },
+    /// Background completion of apply action (actual patch application)
+    ApplyFinished {
+        id: TaskId,
+        result: std::result::Result<codex_cloud_tasks_client::ApplyOutcome, String>,
     },
 }
 

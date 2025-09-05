@@ -257,7 +257,12 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &mut App) {
     // Draw help text; avoid clearing the whole footer area every frame.
     frame.render_widget(para, top[0]);
     // Right side: spinner or clear the spinner area if idle to prevent stale glyphs.
-    if app.refresh_inflight || app.details_inflight || app.env_loading {
+    if app.refresh_inflight
+        || app.details_inflight
+        || app.env_loading
+        || app.apply_preflight_inflight
+        || app.apply_inflight
+    {
         draw_inline_spinner(frame, top[1], &mut app.throbber, "Loading…");
     } else {
         frame.render_widget(Clear, top[1]);
@@ -419,9 +424,13 @@ pub fn draw_apply_modal(frame: &mut Frame, area: Rect, app: &mut App) {
             .split(content);
 
         frame.render_widget(header, rows[0]);
-        // Body: spinner while preflight runs; otherwise show result message and path lists
-        if app.apply_preflight_inflight || m.result_message.is_none() {
+        // Body: spinner while preflight/apply runs; otherwise show result message and path lists
+        if app.apply_preflight_inflight {
             draw_centered_spinner(frame, rows[1], &mut app.throbber, "Checking…");
+        } else if app.apply_inflight {
+            draw_centered_spinner(frame, rows[1], &mut app.throbber, "Applying…");
+        } else if m.result_message.is_none() {
+            draw_centered_spinner(frame, rows[1], &mut app.throbber, "Loading…");
         } else if let Some(msg) = &m.result_message {
             let mut body_lines: Vec<Line> = Vec::new();
             let first = match m.result_level {

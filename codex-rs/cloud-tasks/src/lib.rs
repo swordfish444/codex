@@ -373,7 +373,12 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                     }
                 }
                 // Advance throbber only while loading.
-                if app.refresh_inflight || app.details_inflight || app.env_loading || app.apply_preflight_inflight {
+                if app.refresh_inflight
+                    || app.details_inflight
+                    || app.env_loading
+                    || app.apply_preflight_inflight
+                    || app.apply_inflight
+                {
                     app.throbber.calc_next();
                     needs_redraw = true;
                     let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
@@ -575,6 +580,37 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                             app.details_inflight = false;
                             needs_redraw = true;
                         }
+                        app::AppEvent::ApplyFinished { id, result } => {
+                            // Only update if the modal still corresponds to this id.
+                            if let Some(m) = &app.apply_modal {
+                                if m.task_id != id { continue; }
+                            } else {
+                                continue;
+                            }
+                            app.apply_inflight = false;
+                            match result {
+                                Ok(outcome) => {
+                                    app.status = outcome.message.clone();
+                                    if matches!(outcome.status, codex_cloud_tasks_client::ApplyStatus::Success) {
+                                        app.apply_modal = None;
+                                        app.diff_overlay = None;
+                                        // Refresh tasks after successful apply
+                                        let backend2 = backend.clone();
+                                        let tx2 = tx.clone();
+                                        let env_sel = app.env_filter.clone();
+                                        tokio::spawn(async move {
+                                            let res = app::load_tasks(&*backend2, env_sel.as_deref()).await;
+                                            let _ = tx2.send(app::AppEvent::TasksLoaded { env: env_sel, result: res });
+                                        });
+                                    }
+                                }
+                                Err(e) => {
+                                    append_error_log(format!("apply_task failed for {}: {e}", id.0));
+                                    app.status = format!("Apply failed: {e}");
+                                }
+                            }
+                            needs_redraw = true;
+                        }
                     }
                 }
                 // Render immediately after processing app events.
@@ -724,21 +760,22 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                             // Simple apply confirmation modal: y apply, p preflight, n/Esc cancel
                             match key.code {
                                 KeyCode::Char('y') => {
-                                    if let Some(m) = app.apply_modal.take() {
+                                    if let Some(m) = app.apply_modal.as_ref() {
+                                        // Keep modal open and animate a spinner while applying
+                                        app.apply_inflight = true;
                                         app.status = format!("Applying '{}'...", m.title);
-                                        match codex_cloud_tasks_client::CloudBackend::apply_task(&*backend, m.task_id.clone()).await {
-                                            Ok(outcome) => {
-                                                app.status = outcome.message.clone();
-                                                if matches!(outcome.status, codex_cloud_tasks_client::ApplyStatus::Success) {
-                                                    app.diff_overlay = None;
-                                                    if let Ok(tasks) = app::load_tasks(&*backend, app.env_filter.as_deref()).await { app.tasks = tasks; }
-                                                }
-                                            }
-                                            Err(e) => {
-                                                append_error_log(format!("apply_task failed for {}: {e}", m.task_id.0));
-                                                app.status = format!("Apply failed: {e}");
-                                            }
-                                        }
+                                        needs_redraw = true;
+                                        let backend2 = backend.clone();
+                                        let tx2 = tx.clone();
+                                        let id2 = m.task_id.clone();
+                                        tokio::spawn(async move {
+                                            let res = codex_cloud_tasks_client::CloudBackend::apply_task(&*backend2, id2.clone()).await;
+                                            let evt = match res {
+                                                Ok(outcome) => app::AppEvent::ApplyFinished { id: id2, result: Ok(outcome) },
+                                                Err(e) => app::AppEvent::ApplyFinished { id: id2, result: Err(format!("{e}")) },
+                                            };
+                                            let _ = tx2.send(evt);
+                                        });
                                     }
                                 }
                                 KeyCode::Char('p') => {
