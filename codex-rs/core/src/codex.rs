@@ -1444,6 +1444,9 @@ async fn run_task(
     if input.is_empty() {
         return;
     }
+    let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
+    sess.record_conversation_items(ResponseItem::from(initial_input_for_turn.clone()))
+        .await;
     let event = Event {
         id: sub_id.clone(),
         msg: EventMsg::TaskStarted(TaskStartedEvent {
@@ -1451,10 +1454,6 @@ async fn run_task(
         }),
     };
     sess.send_event(event).await;
-
-    let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
-    sess.record_conversation_items(ResponseItem::from(initial_input_for_turn.clone()))
-        .await;
 
     let mut last_agent_message: Option<String> = None;
     // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
