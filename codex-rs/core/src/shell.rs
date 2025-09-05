@@ -28,6 +28,7 @@ impl ShellSnapshot {
 pub struct BashShell {
     shell_path: String,
     bashrc_path: String,
+    pub(crate) shell_snapshot: Option<ShellSnapshot>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -47,12 +48,18 @@ pub enum Shell {
 impl Shell {
     pub fn format_default_shell_invocation(&self, command: Vec<String>) -> Option<Vec<String>> {
         match self {
-            Shell::Zsh(zsh) => {
-                format_shell_invocation_with_rc(&command, &zsh.shell_path, &zsh.zshrc_path)
-            }
-            Shell::Bash(bash) => {
-                format_shell_invocation_with_rc(&command, &bash.shell_path, &bash.bashrc_path)
-            }
+            Shell::Zsh(zsh) => format_shell_invocation_with_rc(
+                &command,
+                &zsh.shell_path,
+                &zsh.zshrc_path,
+                &zsh.shell_snapshot,
+            ),
+            Shell::Bash(bash) => format_shell_invocation_with_rc(
+                &command,
+                &bash.shell_path,
+                &bash.bashrc_path,
+                &bash.shell_snapshot,
+            ),
             Shell::PowerShell(ps) => {
                 // If model generated a bash command, prefer a detected bash fallback
                 if let Some(script) = strip_bash_lc(&command) {
@@ -120,17 +127,29 @@ fn format_shell_invocation_with_rc(
     command: &Vec<String>,
     shell_path: &str,
     rc_path: &str,
+    shell_snapshot: &Option<ShellSnapshot>,
 ) -> Option<Vec<String>> {
     let joined = strip_bash_lc(command)
         .or_else(|| shlex::try_join(command.iter().map(|s| s.as_str())).ok())?;
 
-    let rc_command = if std::path::Path::new(rc_path).exists() {
-        format!("source {rc_path} && ({joined})")
+    let mut source_path = Path::new(rc_path);
+
+    let session_cmd = if let Some(shell_snapshot) = shell_snapshot
+        && shell_snapshot.path.exists()
+    {
+        source_path = shell_snapshot.path.as_path();
+        "-c".to_string()
+    } else {
+        "-lc".to_string()
+    };
+
+    let rc_command = if source_path.exists() {
+        format!("source {} && ({joined})", source_path.to_string_lossy())
     } else {
         joined
     };
 
-    Some(vec![shell_path.to_string(), "-lc".to_string(), rc_command])
+    Some(vec![shell_path.to_string(), session_cmd, rc_command])
 }
 
 fn strip_bash_lc(command: &Vec<String>) -> Option<String> {
@@ -147,7 +166,7 @@ fn strip_bash_lc(command: &Vec<String>) -> Option<String> {
 }
 
 #[cfg(unix)]
-fn detect_default_user_shell() -> Shell {
+async fn detect_default_user_shell(session_id: Uuid) -> Shell {
     use libc::getpwuid;
     use libc::getuid;
     use std::ffi::CStr;
@@ -162,10 +181,18 @@ fn detect_default_user_shell() -> Shell {
                 .into_owned();
             let home_path = CStr::from_ptr((*pw).pw_dir).to_string_lossy().into_owned();
 
+            let snapshot_path =
+                ensure_zsh_snapshot(&shell_path, Path::new(&home_path), session_id).await;
+            if snapshot_path.is_none() {
+                trace!("failed to prepare zsh snapshot; using live profile");
+            }
+            let shell_snapshot = snapshot_path.map(ShellSnapshot::new);
+
             if shell_path.ends_with("/zsh") {
                 return Shell::Zsh(ZshShell {
                     shell_path,
                     zshrc_path: format!("{home_path}/.zshrc"),
+                    shell_snapshot,
                 });
             }
 
@@ -173,6 +200,7 @@ fn detect_default_user_shell() -> Shell {
                 return Shell::Bash(BashShell {
                     shell_path,
                     bashrc_path: format!("{home_path}/.bashrc"),
+                    shell_snapshot,
                 });
             }
         }
@@ -181,8 +209,8 @@ fn detect_default_user_shell() -> Shell {
 }
 
 #[cfg(unix)]
-pub async fn default_user_shell() -> Shell {
-    detect_default_user_shell()
+pub async fn default_user_shell(session_id: Uuid) -> Shell {
+    detect_default_user_shell(session_id).await
 }
 
 #[cfg(target_os = "windows")]
@@ -226,10 +254,9 @@ pub async fn default_user_shell(_session_id: Uuid) -> Shell {
 }
 
 #[cfg(all(not(target_os = "windows"), not(unix)))]
-pub async fn default_user_shell() -> Shell {
+pub async fn default_user_shell(session_id: Uuid) -> Shell {
     Shell::Unknown
 }
-
 
 #[cfg(target_os = "macos")]
 fn zsh_profile_paths(home: &Path) -> Vec<PathBuf> {
@@ -371,7 +398,7 @@ pub(crate) fn delete_shell_snapshot(_path: &Path) {}
 #[cfg(unix)]
 mod tests {
     use super::*;
-    use std::path::Path;
+
     use std::process::Command;
     use uuid::Uuid;
 
@@ -419,6 +446,7 @@ mod tests {
         let shell = Shell::Bash(BashShell {
             shell_path: "/bin/bash".to_string(),
             bashrc_path: "/does/not/exist/.bashrc".to_string(),
+            shell_snapshot: None,
         });
         let actual_cmd = shell.format_default_shell_invocation(vec!["myecho".to_string()]);
         assert_eq!(
@@ -475,6 +503,7 @@ mod tests {
             let shell = Shell::Bash(BashShell {
                 shell_path: shell_path.to_string(),
                 bashrc_path: bashrc_path.to_str().unwrap().to_string(),
+                shell_snapshot: None,
             });
 
             let actual_cmd = shell
