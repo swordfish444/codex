@@ -25,8 +25,6 @@ pub(crate) fn is_persisted_event(event: &Event) -> bool {
         | EventMsg::AgentReasoningRawContentDelta(_)
         | EventMsg::ExecCommandOutputDelta(_)
         | EventMsg::GetHistoryEntryResponse(_)
-        | EventMsg::StreamError(_)
-        | EventMsg::Error(_)
         | EventMsg::AgentMessageDelta(_)
         | EventMsg::SessionConfigured(_) => false,
         EventMsg::UserMessage(_)
@@ -52,6 +50,8 @@ pub(crate) fn is_persisted_event(event: &Event) -> bool {
         | EventMsg::ConversationHistory(_)
         | EventMsg::PlanUpdate(_)
         | EventMsg::TurnAborted(_)
+        | EventMsg::StreamError(_)
+        | EventMsg::Error(_)
         | EventMsg::AgentReasoningSectionBreak(_) => true,
     }
 }
