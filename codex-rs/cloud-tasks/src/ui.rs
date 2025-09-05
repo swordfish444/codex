@@ -95,7 +95,6 @@ fn overlay_content(area: Rect) -> Rect {
 }
 
 pub fn draw_new_task_page(frame: &mut Frame, area: Rect, app: &mut App) {
-
     let title_spans = {
         let mut spans: Vec<ratatui::text::Span> = vec!["New Task".magenta().bold()];
         if let Some(id) = app
@@ -172,7 +171,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
             .find(|r| &r.id == id)
             .and_then(|r| r.label.clone())
             .unwrap_or_else(|| "Selected".to_string());
-    format!(" • {label}").dim()
+        format!(" • {label}").dim()
     } else {
         " • All".dim()
     };
@@ -181,7 +180,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
         "  • 0%".dim()
     } else {
         let p = ((app.selected as f32) / ((app.tasks.len() - 1) as f32) * 100.0).round() as i32;
-    format!("  • {}%", p.clamp(0, 100)).dim()
+        format!("  • {}%", p.clamp(0, 100)).dim()
     };
     let title_line = {
         let base = Line::from(vec!["Cloud Tasks".into(), suffix_span, percent_span]);
@@ -452,7 +451,7 @@ pub fn draw_apply_modal(frame: &mut Frame, area: Rect, app: &mut App) {
                     body_lines.push(Line::from(""));
                     body_lines.push(
                         Line::from(format!("Skipped ({}):", m.skipped_paths.len()))
-                    .magenta()
+                            .magenta()
                             .bold(),
                     );
                     for p in &m.skipped_paths {

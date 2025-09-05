@@ -79,7 +79,8 @@ enum Subcommand {
     GenerateTs(GenerateTsCommand),
 
     /// Browse and apply tasks from the cloud.
-    CloudTasks(CloudTasksCli),
+    #[clap(name = "cloud", alias = "cloud-tasks")]
+    Cloud(CloudTasksCli),
 }
 
 #[derive(Debug, Parser)]
@@ -191,7 +192,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
         Some(Subcommand::Completion(completion_cli)) => {
             print_completion(completion_cli);
         }
-        Some(Subcommand::CloudTasks(mut cloud_cli)) => {
+        Some(Subcommand::Cloud(mut cloud_cli)) => {
             prepend_config_flags(&mut cloud_cli.config_overrides, cli.config_overrides);
             codex_cloud_tasks::run_main(cloud_cli, codex_linux_sandbox_exe).await?;
         }

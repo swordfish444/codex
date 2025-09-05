@@ -31,7 +31,7 @@ pub(crate) fn append_error_log(message: impl AsRef<str>) {
 
 // (no standalone patch summarizer needed – UI displays raw diffs)
 
-/// Entry point for the `codex cloud-tasks` subcommand.
+/// Entry point for the `codex cloud` subcommand.
 pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
     // Very minimal logging setup; mirrors other crates' pattern.
     let default_level = "error";
@@ -107,7 +107,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                     }
                     _ => {
                         eprintln!(
-                            "Not signed in. Please run 'codex login' to sign in with ChatGPT, then re-run 'codex cloud-tasks'."
+                            "Not signed in. Please run 'codex login' to sign in with ChatGPT, then re-run 'codex cloud'."
                         );
                         std::process::exit(1);
                     }
@@ -115,7 +115,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
             }
             None => {
                 eprintln!(
-                    "Not signed in. Please run 'codex login' to sign in with ChatGPT, then re-run 'codex cloud-tasks'."
+                    "Not signed in. Please run 'codex login' to sign in with ChatGPT, then re-run 'codex cloud'."
                 );
                 std::process::exit(1);
             }
@@ -351,8 +351,8 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
 
     // Render helper to centralize immediate redraws after handling events.
     let render_if_needed = |terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-                                app: &mut app::App,
-                                needs_redraw: &mut bool|
+                            app: &mut app::App,
+                            needs_redraw: &mut bool|
      -> anyhow::Result<()> {
         if *needs_redraw {
             terminal.draw(|f| ui::draw(f, app))?;
@@ -1204,48 +1204,48 @@ fn pretty_lines_from_error(raw: &str) -> Vec<String> {
     if let Some(body_idx) = raw.find(" body=")
         && let Some(json_start_rel) = raw[body_idx..].find('{')
     {
-            let json_start = body_idx + json_start_rel;
-            let json_str = raw[json_start..].trim();
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
-                // Prefer assistant turn context.
-                let turn = v
-                    .get("current_assistant_turn")
-                    .and_then(|x| x.as_object())
-                    .cloned()
-                    .or_else(|| {
-                        v.get("current_diff_task_turn")
-                            .and_then(|x| x.as_object())
-                            .cloned()
-                    });
-                if let Some(t) = turn {
-                    if let Some(err) = t.get("error").and_then(|e| e.as_object()) {
-                        let code = err.get("code").and_then(|s| s.as_str()).unwrap_or("");
-                        let msg = err.get("message").and_then(|s| s.as_str()).unwrap_or("");
-                        if !code.is_empty() || !msg.is_empty() {
-                            let summary = if code.is_empty() {
-                                msg.to_string()
-                            } else if msg.is_empty() {
-                                code.to_string()
-                            } else {
-                                format!("{code}: {msg}")
-                            };
-                            lines.push(format!("Assistant error: {summary}"));
-                        }
+        let json_start = body_idx + json_start_rel;
+        let json_str = raw[json_start..].trim();
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+            // Prefer assistant turn context.
+            let turn = v
+                .get("current_assistant_turn")
+                .and_then(|x| x.as_object())
+                .cloned()
+                .or_else(|| {
+                    v.get("current_diff_task_turn")
+                        .and_then(|x| x.as_object())
+                        .cloned()
+                });
+            if let Some(t) = turn {
+                if let Some(err) = t.get("error").and_then(|e| e.as_object()) {
+                    let code = err.get("code").and_then(|s| s.as_str()).unwrap_or("");
+                    let msg = err.get("message").and_then(|s| s.as_str()).unwrap_or("");
+                    if !code.is_empty() || !msg.is_empty() {
+                        let summary = if code.is_empty() {
+                            msg.to_string()
+                        } else if msg.is_empty() {
+                            code.to_string()
+                        } else {
+                            format!("{code}: {msg}")
+                        };
+                        lines.push(format!("Assistant error: {summary}"));
                     }
-                    if let Some(status) = t.get("turn_status").and_then(|s| s.as_str()) {
-                        lines.push(format!("Status: {status}"));
-                    }
-                    if let Some(text) = t
-                        .get("latest_event")
-                        .and_then(|e| e.get("text"))
-                        .and_then(|s| s.as_str())
-                        && !text.trim().is_empty()
-                    {
-                        lines.push(format!("Latest event: {}", text.trim()));
-                    }
+                }
+                if let Some(status) = t.get("turn_status").and_then(|s| s.as_str()) {
+                    lines.push(format!("Status: {status}"));
+                }
+                if let Some(text) = t
+                    .get("latest_event")
+                    .and_then(|e| e.get("text"))
+                    .and_then(|s| s.as_str())
+                    && !text.trim().is_empty()
+                {
+                    lines.push(format!("Latest event: {}", text.trim()));
                 }
             }
         }
+    }
 
     if lines.len() == 1 {
         // Parsing yielded nothing; include a trimmed, short raw message tail for context.

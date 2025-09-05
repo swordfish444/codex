@@ -95,9 +95,7 @@ pub async fn autodetect_environment_id(
         anyhow::bail!("GET {list_url} failed: {status}; content-type={ct}; body={body}");
     }
     let all_envs: Vec<CodeEnvironment> = serde_json::from_str(&body).map_err(|e| {
-        anyhow::anyhow!(
-            "Decode error for {list_url}: {e}; content-type={ct}; body={body}"
-        )
+        anyhow::anyhow!("Decode error for {list_url}: {e}; content-type={ct}; body={body}")
     })?;
     if let Some(env) = pick_environment_row(&all_envs, desired_label.as_deref()) {
         return Ok(AutodetectSelection {
@@ -230,9 +228,7 @@ fn parse_owner_repo(url: &str) -> Option<(String, String)> {
         let mut parts = rest.splitn(2, '/');
         let owner = parts.next()?.to_string();
         let repo = parts.next()?.to_string();
-        crate::append_error_log(format!(
-            "env: parsed SSH GitHub origin => {owner}/{repo}"
-        ));
+        crate::append_error_log(format!("env: parsed SSH GitHub origin => {owner}/{repo}"));
         return Some((owner, repo));
     }
     // HTTPS or git protocol
@@ -247,9 +243,7 @@ fn parse_owner_repo(url: &str) -> Option<(String, String)> {
             let mut parts = rest.splitn(2, '/');
             let owner = parts.next()?.to_string();
             let repo = parts.next()?.to_string();
-            crate::append_error_log(format!(
-                "env: parsed HTTP GitHub origin => {owner}/{repo}"
-            ));
+            crate::append_error_log(format!("env: parsed HTTP GitHub origin => {owner}/{repo}"));
             return Some((owner, repo));
         }
     }

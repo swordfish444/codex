@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
         || base_url.starts_with("https://chat.openai.com"))
         && !base_url.contains("/backend-api")
     {
-    base_url = format!("{base_url}/backend-api");
+        base_url = format!("{base_url}/backend-api");
     }
     println!("base_url: {base_url}");
     println!(
