@@ -649,7 +649,11 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                         if key.modifiers.contains(KeyModifiers::CONTROL)
                             && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
                         {
-                            if app.apply_modal.is_some() {
+                            if app.env_modal.is_some() {
+                                // Close environment selector if open (don’t quit composer).
+                                app.env_modal = None;
+                                needs_redraw = true;
+                            } else if app.apply_modal.is_some() {
                                 app.apply_modal = None;
                                 app.status = "Apply canceled".to_string();
                                 needs_redraw = true;

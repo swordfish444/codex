@@ -128,13 +128,14 @@ pub fn draw_new_task_page(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(block.clone(), area);
     let content = block.inner(area);
 
-    // Clamp composer height between 3 and 6 rows for readability.
+    // Expand composer height up to (terminal height - 6), with a 3-line minimum.
+    let max_allowed = frame.area().height.saturating_sub(6).max(3);
     let desired = app
         .new_task
         .as_ref()
         .map(|p| p.composer.desired_height(content.width))
         .unwrap_or(3)
-        .clamp(3, 6);
+        .clamp(3, max_allowed);
 
     // Anchor the composer to the bottom-left by allocating a flexible spacer
     // above it and a fixed `desired`-height area for the composer.
