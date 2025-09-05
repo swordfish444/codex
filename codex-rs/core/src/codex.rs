@@ -106,7 +106,6 @@ use crate::safety::SafetyCheck;
 use crate::safety::assess_command_safety;
 use crate::safety::assess_safety_for_untrusted_command;
 use crate::shell;
-use crate::shell::Shell;
 use crate::shell::ShellSnapshot;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::user_instructions::UserInstructions;
@@ -411,10 +410,7 @@ impl Session {
             ..Default::default()
         };
 
-        let shell_snapshot = match &default_shell {
-            Shell::Zsh(zsh) => zsh.shell_snapshot.clone(),
-            _ => None,
-        };
+        let shell_snapshot = default_shell.get_snapshot();
 
         // Handle MCP manager result and record any startup failures.
         let (mcp_connection_manager, failed_clients) = match mcp_res {
@@ -2314,7 +2310,7 @@ fn should_translate_shell_command(
         || shell_policy.use_profile
         || matches!(
             shell,
-            crate::shell::Shell::Zsh(zsh) if zsh.shell_snapshot.is_some()
+            crate::shell::Shell::Posix(shell) if shell.shell_snapshot.is_some()
         )
 }
 
@@ -2963,9 +2959,9 @@ mod tests {
     }
 
     fn zsh_shell(shell_snapshot: Option<ShellSnapshot>) -> shell::Shell {
-        shell::Shell::Zsh(shell::ZshShell {
+        shell::Shell::Posix(shell::PosixShell {
             shell_path: "/bin/zsh".to_string(),
-            zshrc_path: "/Users/example/.zshrc".to_string(),
+            rc_path: "/Users/example/.zshrc".to_string(),
             shell_snapshot,
         })
     }
