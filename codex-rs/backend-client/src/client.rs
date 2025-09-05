@@ -36,7 +36,7 @@ impl Client {
             || base_url.starts_with("https://chat.openai.com"))
             && !base_url.contains("/backend-api")
         {
-            base_url = format!("{}/backend-api", base_url);
+            base_url = format!("{base_url}/backend-api");
         }
         let http = reqwest::Client::builder().build()?;
         let path_style = if base_url.contains("/backend-api") {
@@ -84,17 +84,16 @@ impl Client {
             h.insert(USER_AGENT, HeaderValue::from_static("codex-cli"));
         }
         if let Some(token) = &self.bearer_token {
-            let value = format!("Bearer {}", token);
+            let value = format!("Bearer {token}");
             if let Ok(hv) = HeaderValue::from_str(&value) {
                 h.insert(AUTHORIZATION, hv);
             }
         }
-        if let Some(acc) = &self.chatgpt_account_id {
-            if let Ok(name) = HeaderName::from_bytes(b"ChatGPT-Account-Id") {
-                if let Ok(hv) = HeaderValue::from_str(acc) {
-                    h.insert(name, hv);
-                }
-            }
+        if let Some(acc) = &self.chatgpt_account_id
+            && let Ok(name) = HeaderName::from_bytes(b"ChatGPT-Account-Id")
+            && let Ok(hv) = HeaderValue::from_str(acc)
+        {
+            h.insert(name, hv);
         }
         // Optional internal toggle: send WHAM-FORCE-INTERNAL header when requested.
         // if matches!(

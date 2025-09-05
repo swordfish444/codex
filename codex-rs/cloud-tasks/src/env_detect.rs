@@ -28,7 +28,7 @@ pub async fn autodetect_environment_id(
 ) -> anyhow::Result<AutodetectSelection> {
     // 1) Try repo-specific environments based on local git origins (GitHub only, like VSCode)
     let origins = get_git_origins();
-    crate::append_error_log(format!("env: git origins: {:?}", origins));
+    crate::append_error_log(format!("env: git origins: {origins:?}"));
     let mut by_repo_envs: Vec<CodeEnvironment> = Vec::new();
     for origin in &origins {
         if let Some((owner, repo)) = parse_owner_repo(origin) {
@@ -43,20 +43,17 @@ pub async fn autodetect_environment_id(
                     base_url, "github", owner, repo
                 )
             };
-            crate::append_error_log(format!("env: GET {}", url));
+            crate::append_error_log(format!("env: GET {url}"));
             match get_json::<Vec<CodeEnvironment>>(&url, headers).await {
                 Ok(mut list) => {
                     crate::append_error_log(format!(
-                        "env: by-repo returned {} env(s) for {}/{}",
+                        "env: by-repo returned {} env(s) for {owner}/{repo}",
                         list.len(),
-                        owner,
-                        repo
                     ));
                     by_repo_envs.append(&mut list);
                 }
                 Err(e) => crate::append_error_log(format!(
-                    "env: by-repo fetch failed for {}/{}: {e}",
-                    owner, repo
+                    "env: by-repo fetch failed for {owner}/{repo}: {e}"
                 )),
             }
         }
@@ -70,11 +67,11 @@ pub async fn autodetect_environment_id(
 
     // 2) Fallback to the full list
     let list_url = if base_url.contains("/backend-api") {
-        format!("{}/wham/environments", base_url)
+        format!("{base_url}/wham/environments")
     } else {
-        format!("{}/api/codex/environments", base_url)
+        format!("{base_url}/api/codex/environments")
     };
-    crate::append_error_log(format!("env: GET {}", list_url));
+    crate::append_error_log(format!("env: GET {list_url}"));
     // Fetch and log the full environments JSON for debugging
     let http = reqwest::Client::builder().build()?;
     let res = http.get(&list_url).headers(headers.clone()).send().await?;
@@ -86,25 +83,21 @@ pub async fn autodetect_environment_id(
         .unwrap_or("")
         .to_string();
     let body = res.text().await.unwrap_or_default();
-    crate::append_error_log(format!("env: status={} content-type={}", status, ct));
+    crate::append_error_log(format!("env: status={status} content-type={ct}"));
     match serde_json::from_str::<serde_json::Value>(&body) {
         Ok(v) => {
             let pretty = serde_json::to_string_pretty(&v).unwrap_or(body.clone());
-            crate::append_error_log(format!("env: /environments JSON (pretty):\n{}", pretty));
+            crate::append_error_log(format!("env: /environments JSON (pretty):\n{pretty}"));
         }
-        Err(_) => crate::append_error_log(format!("env: /environments (raw):\n{}", body)),
+        Err(_) => crate::append_error_log(format!("env: /environments (raw):\n{body}")),
     }
     if !status.is_success() {
-        anyhow::bail!(format!(
-            "GET {} failed: {}; content-type={}; body={}",
-            list_url, status, ct, body
-        ));
+        anyhow::bail!("GET {list_url} failed: {status}; content-type={ct}; body={body}");
     }
     let all_envs: Vec<CodeEnvironment> = serde_json::from_str(&body).map_err(|e| {
-        anyhow::anyhow!(format!(
-            "Decode error for {}: {}; content-type={}; body={}",
-            list_url, e, ct, body
-        ))
+        anyhow::anyhow!(
+            "Decode error for {list_url}: {e}; content-type={ct}; body={body}"
+        )
     })?;
     if let Some(env) = pick_environment_row(&all_envs, desired_label.as_deref()) {
         return Ok(AutodetectSelection {
@@ -128,7 +121,7 @@ fn pick_environment_row(
             .iter()
             .find(|e| e.label.as_deref().unwrap_or("").to_lowercase() == lc)
         {
-            crate::append_error_log(format!("env: matched by label: {} -> {}", label, e.id));
+            crate::append_error_log(format!("env: matched by label: {label} -> {}", e.id));
             return Some(e.clone());
         }
     }
@@ -166,16 +159,12 @@ async fn get_json<T: serde::de::DeserializeOwned>(
         .unwrap_or("")
         .to_string();
     let body = res.text().await.unwrap_or_default();
-    crate::append_error_log(format!("env: status={} content-type={}", status, ct));
+    crate::append_error_log(format!("env: status={status} content-type={ct}"));
     if !status.is_success() {
-        anyhow::bail!(format!(
-            "GET {url} failed: {status}; content-type={ct}; body={body}"
-        ));
+        anyhow::bail!("GET {url} failed: {status}; content-type={ct}; body={body}");
     }
     let parsed = serde_json::from_str::<T>(&body).map_err(|e| {
-        anyhow::anyhow!(format!(
-            "Decode error for {url}: {e}; content-type={ct}; body={body}"
-        ))
+        anyhow::anyhow!("Decode error for {url}: {e}; content-type={ct}; body={body}")
     })?;
     Ok(parsed)
 }
@@ -242,8 +231,7 @@ fn parse_owner_repo(url: &str) -> Option<(String, String)> {
         let owner = parts.next()?.to_string();
         let repo = parts.next()?.to_string();
         crate::append_error_log(format!(
-            "env: parsed SSH GitHub origin => {}/{}",
-            owner, repo
+            "env: parsed SSH GitHub origin => {owner}/{repo}"
         ));
         return Some((owner, repo));
     }
@@ -260,8 +248,7 @@ fn parse_owner_repo(url: &str) -> Option<(String, String)> {
             let owner = parts.next()?.to_string();
             let repo = parts.next()?.to_string();
             crate::append_error_log(format!(
-                "env: parsed HTTP GitHub origin => {}/{}",
-                owner, repo
+                "env: parsed HTTP GitHub origin => {owner}/{repo}"
             ));
             return Some((owner, repo));
         }
@@ -302,7 +289,7 @@ pub async fn list_environments(
                                     id: e.id.clone(),
                                     label: e.label.clone(),
                                     is_pinned: e.is_pinned.unwrap_or(false),
-                                    repo_hints: Some(format!("{}/{}", owner, repo)),
+                                    repo_hints: Some(format!("{owner}/{repo}")),
                                 });
                         // Merge: keep label if present, or use new; accumulate pinned flag
                         if entry.label.is_none() {
@@ -310,7 +297,7 @@ pub async fn list_environments(
                         }
                         entry.is_pinned = entry.is_pinned || e.is_pinned.unwrap_or(false);
                         if entry.repo_hints.is_none() {
-                            entry.repo_hints = Some(format!("{}/{}", owner, repo));
+                            entry.repo_hints = Some(format!("{owner}/{repo}"));
                         }
                     }
                 }
@@ -326,9 +313,9 @@ pub async fn list_environments(
 
     // 2) Fallback to the full list; on error return what we have if any.
     let list_url = if base_url.contains("/backend-api") {
-        format!("{}/wham/environments", base_url)
+        format!("{base_url}/wham/environments")
     } else {
-        format!("{}/api/codex/environments", base_url)
+        format!("{base_url}/api/codex/environments")
     };
     match get_json::<Vec<CodeEnvironment>>(&list_url, headers).await {
         Ok(list) => {

@@ -95,7 +95,6 @@ fn overlay_content(area: Rect) -> Rect {
 }
 
 pub fn draw_new_task_page(frame: &mut Frame, area: Rect, app: &mut App) {
-    use ratatui::widgets::Wrap;
 
     let title_spans = {
         let mut spans: Vec<ratatui::text::Span> = vec!["New Task".magenta().bold()];
@@ -153,7 +152,7 @@ pub fn draw_new_task_page(frame: &mut Frame, area: Rect, app: &mut App) {
     // Place cursor where composer wants it
     if let Some(page) = app.new_task.as_ref() {
         if let Some((x, y)) = page.composer.cursor_pos(composer_area) {
-            frame.set_cursor(x, y);
+            frame.set_cursor_position((x, y));
         }
     }
 }
@@ -173,7 +172,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
             .find(|r| &r.id == id)
             .and_then(|r| r.label.clone())
             .unwrap_or_else(|| "Selected".to_string());
-        format!(" • {}", label).dim()
+    format!(" • {label}").dim()
     } else {
         " • All".dim()
     };
@@ -182,7 +181,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
         "  • 0%".dim()
     } else {
         let p = ((app.selected as f32) / ((app.tasks.len() - 1) as f32) * 100.0).round() as i32;
-        format!("  • {}%", p.clamp(0, 100)).dim()
+    format!("  • {}%", p.clamp(0, 100)).dim()
     };
     let title_line = {
         let base = Line::from(vec!["Cloud Tasks".into(), suffix_span, percent_span]);
@@ -270,7 +269,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &mut App) {
     if status_line.len() > 2000 {
         // hard cap to avoid TUI noise
         status_line.truncate(2000);
-        status_line.push_str("…");
+        status_line.push('…');
     }
     // Clear the status row to avoid trailing characters when the message shrinks.
     frame.render_widget(Clear, rows[1]);
@@ -332,7 +331,7 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     };
     if let Some(p) = pct_opt {
         title_spans.push("  • ".dim());
-        title_spans.push(format!("{}%", p).dim());
+        title_spans.push(format!("{p}%").dim());
     }
     let block = overlay_block().title(Line::from(title_spans));
     frame.render_widget(Clear, inner);
@@ -428,7 +427,7 @@ pub fn draw_apply_modal(frame: &mut Frame, area: Rect, app: &mut App) {
             let mut body_lines: Vec<Line> = Vec::new();
             let first = match m.result_level {
                 Some(crate::app::ApplyResultLevel::Success) => msg.clone().green(),
-                Some(crate::app::ApplyResultLevel::Partial) => msg.clone().yellow(),
+                Some(crate::app::ApplyResultLevel::Partial) => msg.clone().magenta(),
                 Some(crate::app::ApplyResultLevel::Error) => msg.clone().red(),
                 None => msg.clone().into(),
             };
@@ -453,7 +452,7 @@ pub fn draw_apply_modal(frame: &mut Frame, area: Rect, app: &mut App) {
                     body_lines.push(Line::from(""));
                     body_lines.push(
                         Line::from(format!("Skipped ({}):", m.skipped_paths.len()))
-                            .yellow()
+                    .magenta()
                             .bold(),
                     );
                     for p in &m.skipped_paths {
@@ -504,7 +503,7 @@ fn style_diff_line(raw: &str) -> Line<'static> {
     Line::from(vec![Span::raw(raw.to_string())])
 }
 
-fn render_task_item(app: &App, t: &codex_cloud_tasks_api::TaskSummary) -> ListItem<'static> {
+fn render_task_item(_app: &App, t: &codex_cloud_tasks_api::TaskSummary) -> ListItem<'static> {
     let status = match t.status {
         TaskStatus::Ready => "READY".green(),
         TaskStatus::Pending => "PENDING".magenta(),
@@ -543,13 +542,13 @@ fn render_task_item(app: &App, t: &codex_cloud_tasks_api::TaskSummary) -> ListIt
         let dels = t.summary.lines_removed;
         let files = t.summary.files_changed;
         Line::from(vec![
-            format!("+{}", adds).green(),
+            format!("+{adds}").green(),
             "/".into(),
-            format!("−{}", dels).red(),
+            format!("−{dels}").red(),
             " ".into(),
             "•".dim(),
             " ".into(),
-            format!("{}", files).into(),
+            format!("{files}").into(),
             " ".into(),
             "files".dim(),
         ])
@@ -569,15 +568,15 @@ fn format_relative_time(ts: chrono::DateTime<Utc>) -> String {
         secs = 0;
     }
     if secs < 60 {
-        return format!("{}s ago", secs);
+        return format!("{secs}s ago");
     }
     let mins = secs / 60;
     if mins < 60 {
-        return format!("{}m ago", mins);
+        return format!("{mins}m ago");
     }
     let hours = mins / 60;
     if hours < 24 {
-        return format!("{}h ago", hours);
+        return format!("{hours}h ago");
     }
     let local = ts.with_timezone(&Local);
     local.format("%b %e %H:%M").to_string()
@@ -689,7 +688,7 @@ pub fn draw_env_modal(frame: &mut Frame, area: Rect, app: &mut App) {
         .map(|m| m.query.clone())
         .unwrap_or_default();
     let ql = query.to_lowercase();
-    let search = Paragraph::new(format!("Search: {}", query)).wrap(Wrap { trim: true });
+    let search = Paragraph::new(format!("Search: {query}")).wrap(Wrap { trim: true });
     frame.render_widget(search, rows[1]);
 
     // Filter environments by query (case-insensitive substring over label/id/hints)

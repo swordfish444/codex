@@ -112,7 +112,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
         append_error_log(format!("startup: base_url={base_url} path_style={style}"));
 
         // Require ChatGPT login (SWIC). Exit with a clear message if missing.
-        let token = match codex_core::config::find_codex_home()
+        let _token = match codex_core::config::find_codex_home()
             .ok()
             .map(|home| {
                 codex_login::AuthManager::new(
@@ -250,7 +250,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                 || base_url.starts_with("https://chat.openai.com"))
                 && !base_url.contains("/backend-api")
             {
-                base_url = format!("{}/backend-api", base_url);
+                base_url = format!("{base_url}/backend-api");
             }
             let ua =
                 codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
@@ -267,30 +267,25 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                     "codex_cloud_tasks_tui".to_string(),
                 );
                 if let Some(auth) = am.auth() {
-                    if let Ok(tok) = auth.get_token().await {
-                        if !tok.is_empty() {
-                            let v = format!("Bearer {}", tok);
-                            if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) {
-                                headers.insert(reqwest::header::AUTHORIZATION, hv);
-                            }
-                            if let Some(acc) = auth
-                                .get_account_id()
-                                .or_else(|| extract_chatgpt_account_id(&tok))
-                            {
-                                if let Ok(name) =
-                                    reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
-                                {
-                                    if let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) {
-                                        headers.insert(name, hv);
-                                    }
-                                }
-                            }
+                    if let Ok(tok) = auth.get_token().await && !tok.is_empty() {
+                        let v = format!("Bearer {tok}");
+                        if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) {
+                            headers.insert(reqwest::header::AUTHORIZATION, hv);
+                        }
+                        if let Some(acc) = auth
+                            .get_account_id()
+                            .or_else(|| extract_chatgpt_account_id(&tok))
+                            && let Ok(name) =
+                                reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
+                            && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc)
+                        {
+                            headers.insert(name, hv);
                         }
                     }
                 }
             }
             let res = crate::env_detect::list_environments(&base_url, &headers).await;
-            let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res.map_err(|e| e.into())));
+            let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
         });
     }
 
@@ -309,7 +304,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                 || base_url.starts_with("https://chat.openai.com"))
                 && !base_url.contains("/backend-api")
             {
-                base_url = format!("{}/backend-api", base_url);
+                base_url = format!("{base_url}/backend-api");
             }
 
             // Build headers: UA + ChatGPT auth if available
@@ -328,27 +323,20 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                     "codex_cloud_tasks_tui".to_string(),
                 );
                 if let Some(auth) = am.auth() {
-                    if let Ok(token) = auth.get_token().await {
-                        if !token.is_empty() {
-                            if let Ok(hv) =
-                                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
-                            {
-                                headers.insert(reqwest::header::AUTHORIZATION, hv);
-                            }
-                            if let Some(account_id) = auth
-                                .get_account_id()
-                                .or_else(|| extract_chatgpt_account_id(&token))
-                            {
-                                if let Ok(name) =
-                                    reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
-                                {
-                                    if let Ok(hv) =
-                                        reqwest::header::HeaderValue::from_str(&account_id)
-                                    {
-                                        headers.insert(name, hv);
-                                    }
-                                }
-                            }
+                    if let Ok(token) = auth.get_token().await && !token.is_empty() {
+                        if let Ok(hv) =
+                            reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+                        {
+                            headers.insert(reqwest::header::AUTHORIZATION, hv);
+                        }
+                        if let Some(account_id) = auth
+                            .get_account_id()
+                            .or_else(|| extract_chatgpt_account_id(&token))
+                            && let Ok(name) =
+                                reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
+                            && let Ok(hv) = reqwest::header::HeaderValue::from_str(&account_id)
+                        {
+                            headers.insert(name, hv);
                         }
                     }
                 }
@@ -356,9 +344,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
 
             // Run autodetect. If it fails, we keep using "All".
             let res = crate::env_detect::autodetect_environment_id(&base_url, &headers, None).await;
-            let _ = tx2.send(app::AppEvent::EnvironmentAutodetected(
-                res.map_err(|e| e.into()),
-            ));
+            let _ = tx2.send(app::AppEvent::EnvironmentAutodetected(res));
         });
     }
 
@@ -382,7 +368,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                 recv = frame_rx.recv() => {
                     match recv {
                         Some(at) => {
-                            if next_deadline.map_or(true, |cur| at < cur) {
+                            if next_deadline.is_none_or(|cur| at < cur) {
                                 next_deadline = Some(at);
                             }
                             continue; // recompute sleep target
@@ -486,9 +472,9 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                     let _ = frame_tx.send(Instant::now());
                                 }
                                 Err(msg) => {
-                                    append_error_log(format!("new-task: submit failed: {}", msg));
+                                    append_error_log(format!("new-task: submit failed: {msg}"));
                                     if let Some(page) = app.new_task.as_mut() { page.submitting = false; }
-                                    app.status = format!("Submit failed: {}. See error.log for details.", msg);
+                                    app.status = format!("Submit failed: {msg}. See error.log for details.");
                                     needs_redraw = true;
                                     let _ = frame_tx.send(Instant::now());
                                 }
@@ -574,7 +560,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         let mut base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL").unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
                                         while base_url.ends_with('/') { base_url.pop(); }
                                         if (base_url.starts_with("https://chatgpt.com") || base_url.starts_with("https://chat.openai.com")) && !base_url.contains("/backend-api") {
-                                            base_url = format!("{}/backend-api", base_url);
+                                            base_url = format!("{base_url}/backend-api");
                                         }
                                         let ua = codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
                                         let mut headers = reqwest::header::HeaderMap::new();
@@ -586,19 +572,19 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                 "codex_cloud_tasks_tui".to_string(),
                                             );
                                             if let Some(auth) = am.auth() {
-                                                if let Ok(tok) = auth.get_token().await { if !tok.is_empty() {
-                                                    let v = format!("Bearer {}", tok);
+                                                if let Ok(tok) = auth.get_token().await && !tok.is_empty() {
+                                                    let v = format!("Bearer {tok}");
                                                     if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
-                                                    if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok)) {
-                                                        if let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id") {
-                                                            if let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) { headers.insert(name, hv); }
-                                                        }
+                                                    if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok))
+                                                        && let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
+                                                        && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) {
+                                                        headers.insert(name, hv);
                                                     }
-                                                }}
+                                                }
                                             }
                                         }
                                         let res = crate::env_detect::list_environments(&base_url, &headers).await;
-                                        let _ = tx3.send(app::AppEvent::EnvironmentsLoaded(res.map_err(|e| e.into())));
+                                        let _ = tx3.send(app::AppEvent::EnvironmentsLoaded(res));
                                     });
                                     let _ = frame_tx.send(Instant::now());
                                 }
@@ -629,7 +615,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                         }
                         app::AppEvent::DetailsFailed { id, title, error } => {
                             if let Some(ov) = &app.diff_overlay { if ov.task_id != id { continue; } }
-                            append_error_log(format!("details failed for {}: {}", id.0, error));
+                            append_error_log(format!("details failed for {}: {error}", id.0));
                             let pretty = pretty_lines_from_error(&error);
                             let mut sd = crate::scrollable_diff::ScrollableDiff::new();
                             sd.set_content(pretty);
@@ -698,7 +684,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         .unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
                                     while base_url.ends_with('/') { base_url.pop(); }
                                     if (base_url.starts_with("https://chatgpt.com") || base_url.starts_with("https://chat.openai.com")) && !base_url.contains("/backend-api") {
-                                        base_url = format!("{}/backend-api", base_url);
+                                        base_url = format!("{base_url}/backend-api");
                                     }
                                     let ua = codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
                                     let mut headers = reqwest::header::HeaderMap::new();
@@ -710,19 +696,19 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                             "codex_cloud_tasks_tui".to_string(),
                                         );
                                         if let Some(auth) = am.auth() {
-                                            if let Ok(tok) = auth.get_token().await { if !tok.is_empty() {
-                                                let v = format!("Bearer {}", tok);
+                                            if let Ok(tok) = auth.get_token().await && !tok.is_empty() {
+                                                let v = format!("Bearer {tok}");
                                                 if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
-                                                if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok)) {
-                                                    if let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id") {
-                                                        if let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) { headers.insert(name, hv); }
-                                                    }
+                                                if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok))
+                                                    && let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
+                                                    && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) {
+                                                    headers.insert(name, hv);
                                                 }
-                                            }}
+                                            }
                                         }
                                     }
                                     let res = crate::env_detect::list_environments(&base_url, &headers).await;
-                                    let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res.map_err(|e| e.into())));
+                                    let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
                                 });
                             }
                             // Render after opening env modal to show it instantly.
@@ -745,8 +731,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                     if page.submitting {
                                         // Ignore input while submitting
                                     } else {
-                                        match page.composer.input(key) {
-                                            codex_tui::ComposerAction::Submitted(text) => {
+                                        if let codex_tui::ComposerAction::Submitted(text) = page.composer.input(key) {
                                                 // Submit only if we have an env id
                                                 if let Some(env) = page.env_id.clone() {
                                                     append_error_log(format!(
@@ -762,15 +747,13 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                         let result = codex_cloud_tasks_api::CloudBackend::create_task(&*backend2, &env, &text, "main", false).await;
                                                         let evt = match result {
                                                             Ok(ok) => app::AppEvent::NewTaskSubmitted(Ok(ok)),
-                                                            Err(e) => app::AppEvent::NewTaskSubmitted(Err(format!("{}", e))),
+                                                            Err(e) => app::AppEvent::NewTaskSubmitted(Err(format!("{e}"))),
                                                         };
                                                         let _ = tx2.send(evt);
                                                     });
                                                 } else {
                                                     app.status = "No environment selected (press 'e' to choose)".to_string();
                                                 }
-                                            }
-                                            _ => {}
                                         }
                                     }
                                     needs_redraw = true;
@@ -895,7 +878,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                             // Build headers (UA + ChatGPT token + account id)
                                             let mut base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL").unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
                                             while base_url.ends_with('/') { base_url.pop(); }
-                                            if (base_url.starts_with("https://chatgpt.com") || base_url.starts_with("https://chat.openai.com")) && !base_url.contains("/backend-api") { base_url = format!("{}/backend-api", base_url); }
+                                            if (base_url.starts_with("https://chatgpt.com") || base_url.starts_with("https://chat.openai.com")) && !base_url.contains("/backend-api") { base_url = format!("{base_url}/backend-api"); }
                                             let ua = codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
                                             let mut headers = reqwest::header::HeaderMap::new();
                                             headers.insert(reqwest::header::USER_AGENT, reqwest::header::HeaderValue::from_str(&ua).unwrap_or(reqwest::header::HeaderValue::from_static("codex-cli")));
@@ -905,18 +888,18 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                     codex_login::AuthMode::ChatGPT,
                                                     "codex_cloud_tasks_tui".to_string(),
                                                 );
-                                                if let Some(auth) = am.auth() { if let Ok(tok) = auth.get_token().await { if !tok.is_empty() {
-                                                    let v = format!("Bearer {}", tok);
+                                                if let Some(auth) = am.auth() { if let Ok(tok) = auth.get_token().await && !tok.is_empty() {
+                                                    let v = format!("Bearer {tok}");
                                                     if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
-                                                    if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok)) {
-                                                        if let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id") {
-                                                            if let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) { headers.insert(name, hv); }
-                                                        }
+                                                    if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok))
+                                                        && let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
+                                                        && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) {
+                                                        headers.insert(name, hv);
                                                     }
-                                                }}}
+                                                }}
                                             }
                                             let res = crate::env_detect::list_environments(&base_url, &headers).await;
-                                            let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res.map_err(|e| e.into())));
+                                            let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
                                         });
                                     }
                                 }
@@ -957,7 +940,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         // Build headers (UA + ChatGPT token + account id)
                                         let mut base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL").unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
                                         while base_url.ends_with('/') { base_url.pop(); }
-                                        if (base_url.starts_with("https://chatgpt.com") || base_url.starts_with("https://chat.openai.com")) && !base_url.contains("/backend-api") { base_url = format!("{}/backend-api", base_url); }
+                                        if (base_url.starts_with("https://chatgpt.com") || base_url.starts_with("https://chat.openai.com")) && !base_url.contains("/backend-api") { base_url = format!("{base_url}/backend-api"); }
                                         let ua = codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
                                         let mut headers = reqwest::header::HeaderMap::new();
                                         headers.insert(reqwest::header::USER_AGENT, reqwest::header::HeaderValue::from_str(&ua).unwrap_or(reqwest::header::HeaderValue::from_static("codex-cli")));
@@ -969,7 +952,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                             );
                                             if let Some(auth) = am.auth() {
                                                 if let Ok(tok) = auth.get_token().await { if !tok.is_empty() {
-                                                    let v = format!("Bearer {}", tok);
+                                                    let v = format!("Bearer {tok}");
                                                     if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
                                                     if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok)) {
                                                         if let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id") {
@@ -980,7 +963,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                             }
                                         }
                                         let res = crate::env_detect::list_environments(&base_url, &headers).await;
-                                        let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res.map_err(|e| e.into())));
+                                        let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
                                     });
                                 }
                                 KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
@@ -1099,7 +1082,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                             // Build headers (UA + ChatGPT token + account id)
                                             let mut base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL").unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
                                             while base_url.ends_with('/') { base_url.pop(); }
-                                            if (base_url.starts_with("https://chatgpt.com") || base_url.starts_with("https://chat.openai.com")) && !base_url.contains("/backend-api") { base_url = format!("{}/backend-api", base_url); }
+                                            if (base_url.starts_with("https://chatgpt.com") || base_url.starts_with("https://chat.openai.com")) && !base_url.contains("/backend-api") { base_url = format!("{base_url}/backend-api"); }
                                             let ua = codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
                                             let mut headers = reqwest::header::HeaderMap::new();
                                             headers.insert(reqwest::header::USER_AGENT, reqwest::header::HeaderValue::from_str(&ua).unwrap_or(reqwest::header::HeaderValue::from_static("codex-cli")));
@@ -1111,7 +1094,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                 );
                                                 if let Some(auth) = am.auth() {
                                                     if let Ok(tok) = auth.get_token().await { if !tok.is_empty() {
-                                                        let v = format!("Bearer {}", tok);
+                                                        let v = format!("Bearer {tok}");
                                                         if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
                                                         if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok)) {
                                                             if let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id") {
@@ -1122,7 +1105,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                 }
                                             }
                                             let res = crate::env_detect::list_environments(&base_url, &headers).await;
-                                            let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res.map_err(|e| e.into())));
+                                            let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
                                         });
                                     }
                                 }
@@ -1134,7 +1117,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 }
                                 KeyCode::Enter => {
                                     if let Some(task) = app.tasks.get(app.selected).cloned() {
-                                        app.status = format!("Loading details for {}…", task.title);
+                                        app.status = format!("Loading details for {title}…", title = task.title);
                                         app.details_inflight = true;
                                         // Open empty overlay immediately; content arrives via events
                                         let mut sd = crate::scrollable_diff::ScrollableDiff::new();
@@ -1157,7 +1140,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                             let _ = tx2.send(app::AppEvent::DetailsMessagesLoaded { id: task.id, title: task.title, messages: msgs });
                                                         }
                                                         Err(e2) => {
-                                                            let _ = tx2.send(app::AppEvent::DetailsFailed { id: task.id, title: task.title, error: format!("{}", e2) });
+                                                            let _ = tx2.send(app::AppEvent::DetailsFailed { id: task.id, title: task.title, error: format!("{e2}") });
                                                         }
                                                     }
                                                 }
@@ -1295,11 +1278,11 @@ fn pretty_lines_from_error(raw: &str) -> Vec<String> {
                             } else {
                                 format!("{code}: {msg}")
                             };
-                            lines.push(format!("Assistant error: {}", summary));
+                            lines.push(format!("Assistant error: {summary}"));
                         }
                     }
                     if let Some(status) = t.get("turn_status").and_then(|s| s.as_str()) {
-                        lines.push(format!("Status: {}", status));
+                        lines.push(format!("Status: {status}"));
                     }
                     if let Some(text) = t
                         .get("latest_event")

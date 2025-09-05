@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
         || base_url.starts_with("https://chat.openai.com"))
         && !base_url.contains("/backend-api")
     {
-        base_url = format!("{}/backend-api", base_url);
+    base_url = format!("{base_url}/backend-api");
     }
     println!("base_url: {base_url}");
     let is_wham = base_url.contains("/backend-api");
@@ -73,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
                 Ok(token) if !token.is_empty() => {
                     have_auth = true;
                     println!("auth: ChatGPT token present ({} chars)", token.len());
-                    let value = format!("Bearer {}", token);
+                    let value = format!("Bearer {token}");
                     if let Ok(hv) = HeaderValue::from_str(&value) {
                         headers.insert(AUTHORIZATION, hv);
                     }
@@ -123,9 +123,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Build request payload patterned after VSCode: POST /wham/tasks
     let url = if is_wham {
-        format!("{}/wham/tasks", base_url)
+        format!("{base_url}/wham/tasks")
     } else {
-        format!("{}/api/codex/tasks", base_url)
+        format!("{base_url}/api/codex/tasks")
     };
     println!(
         "request: POST {}",
@@ -176,14 +176,14 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or("")
         .to_string();
     let body = res.text().await.unwrap_or_default();
-    println!("status: {}", status);
-    println!("content-type: {}", ct);
+    println!("status: {status}");
+    println!("content-type: {ct}");
     match serde_json::from_str::<serde_json::Value>(&body) {
         Ok(v) => println!(
             "response (pretty JSON):\n{}",
             serde_json::to_string_pretty(&v).unwrap_or(body)
         ),
-        Err(_) => println!("response (raw):\n{}", body),
+        Err(_) => println!("response (raw):\n{body}"),
     }
 
     if !status.is_success() {

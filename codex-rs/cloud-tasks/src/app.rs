@@ -204,7 +204,7 @@ mod tests {
             let mut out = Vec::new();
             for (i, t) in titles.into_iter().enumerate() {
                 out.push(TaskSummary {
-                    id: TaskId(format!("T-{}", i)),
+                    id: TaskId(format!("T-{i}")),
                     title: t.to_string(),
                     status: codex_cloud_tasks_api::TaskStatus::Ready,
                     updated_at: Utc::now(),

@@ -62,15 +62,14 @@ impl CodeTaskDetailsResponseExt for CodeTaskDetailsResponse {
                 .and_then(|v| v.as_array());
             if let Some(items) = items {
                 for item in items {
-                    if item.get("type").and_then(Value::as_str) == Some("message") {
-                        if let Some(content) = item.get("content").and_then(Value::as_array) {
-                            for part in content {
-                                if part.get("content_type").and_then(Value::as_str) == Some("text")
-                                {
-                                    if let Some(txt) = part.get("text").and_then(Value::as_str) {
-                                        out.push(txt.to_string());
-                                    }
-                                }
+                    if item.get("type").and_then(Value::as_str) == Some("message")
+                        && let Some(content) = item.get("content").and_then(Value::as_array)
+                    {
+                        for part in content {
+                            if part.get("content_type").and_then(Value::as_str) == Some("text")
+                                && let Some(txt) = part.get("text").and_then(Value::as_str)
+                            {
+                                out.push(txt.to_string());
                             }
                         }
                     }
@@ -88,7 +87,7 @@ impl CodeTaskDetailsResponseExt for CodeTaskDetailsResponse {
         if message.is_empty() && code.is_empty() {
             None
         } else if message.is_empty() {
-            Some(format!("{code}"))
+            Some(code.to_string())
         } else if code.is_empty() {
             Some(message.to_string())
         } else {
@@ -111,31 +110,30 @@ impl CodeTaskDetailsResponseExt for CodeTaskDetailsResponse {
                     }
                     if let Some(od) = obj.get("output_diff").and_then(Value::as_object) {
                         if let Some(fm) = od.get("files_modified") {
-                            if let Some(map) = fm.as_object() {
-                                if map.len() == 1 {
-                                    if let Some((k, _)) = map.iter().next() {
-                                        let p = k.to_string();
-                                        return Some((p.clone(), p));
-                                    }
+                            if let Some(map) = fm.as_object()
+                                && map.len() == 1
+                                && let Some((k, _)) = map.iter().next()
+                            {
+                                let p = k.to_string();
+                                return Some((p.clone(), p));
+                            } else if let Some(arr) = fm.as_array()
+                                && arr.len() == 1
+                            {
+                                let el = &arr[0];
+                                if let Some(p) = el.as_str() {
+                                    let p = p.to_string();
+                                    return Some((p.clone(), p));
                                 }
-                            } else if let Some(arr) = fm.as_array() {
-                                if arr.len() == 1 {
-                                    let el = &arr[0];
-                                    if let Some(p) = el.as_str() {
+                                if let Some(o) = el.as_object() {
+                                    let path = o.get("path").and_then(Value::as_str);
+                                    let oldp = o.get("old_path").and_then(Value::as_str);
+                                    let newp = o.get("new_path").and_then(Value::as_str);
+                                    if let Some(p) = path {
                                         let p = p.to_string();
                                         return Some((p.clone(), p));
                                     }
-                                    if let Some(o) = el.as_object() {
-                                        let path = o.get("path").and_then(Value::as_str);
-                                        let oldp = o.get("old_path").and_then(Value::as_str);
-                                        let newp = o.get("new_path").and_then(Value::as_str);
-                                        if let Some(p) = path {
-                                            let p = p.to_string();
-                                            return Some((p.clone(), p));
-                                        }
-                                        if let (Some(o1), Some(n1)) = (oldp, newp) {
-                                            return Some((o1.to_string(), n1.to_string()));
-                                        }
+                                    if let (Some(o1), Some(n1)) = (oldp, newp) {
+                                        return Some((o1.to_string(), n1.to_string()));
                                     }
                                 }
                             }
@@ -152,12 +150,11 @@ impl CodeTaskDetailsResponseExt for CodeTaskDetailsResponse {
         let candidates: [&Option<std::collections::HashMap<String, serde_json::Value>>; 2] =
             [&self.current_diff_task_turn, &self.current_assistant_turn];
         for map in candidates {
-            if let Some(m) = map.as_ref() {
-                if let Some(items) = m.get("output_items").and_then(serde_json::Value::as_array) {
-                    if let Some(p) = try_from_items(items) {
-                        return Some(p);
-                    }
-                }
+            if let Some(m) = map.as_ref()
+                && let Some(items) = m.get("output_items").and_then(serde_json::Value::as_array)
+                && let Some(p) = try_from_items(items)
+            {
+                return Some(p);
             }
         }
         None
@@ -223,10 +220,10 @@ pub fn extract_file_paths_list(details: &CodeTaskDetailsResponse) -> Vec<(String
         &details.current_assistant_turn,
     ];
     for map in candidates {
-        if let Some(m) = map.as_ref() {
-            if let Some(items) = m.get("output_items").and_then(Value::as_array) {
-                push_from_items(&mut out, items);
-            }
+        if let Some(m) = map.as_ref()
+            && let Some(items) = m.get("output_items").and_then(Value::as_array)
+        {
+            push_from_items(&mut out, items);
         }
     }
     out

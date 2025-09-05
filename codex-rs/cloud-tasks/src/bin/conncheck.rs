@@ -105,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
             // Print the full response object for debugging/inspection.
             match serde_json::to_string_pretty(&list) {
                 Ok(json) => {
-                    println!("\nfull response object (pretty JSON):\n{}", json);
+                    println!("\nfull response object (pretty JSON):\n{json}");
                 }
                 Err(e) => {
                     println!("failed to serialize response to JSON: {e}");

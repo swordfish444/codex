@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
         || base_url.starts_with("https://chat.openai.com"))
         && !base_url.contains("/backend-api")
     {
-        base_url = format!("{}/backend-api", base_url);
+    base_url = format!("{base_url}/backend-api");
     }
     println!("base_url: {base_url}");
     println!(
@@ -68,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
             match auth.get_token().await {
                 Ok(token) if !token.is_empty() => {
                     println!("auth: ChatGPT token present ({} chars)", token.len());
-                    let value = format!("Bearer {}", token);
+                    let value = format!("Bearer {token}");
                     if let Ok(hv) = HeaderValue::from_str(&value) {
                         headers.insert(AUTHORIZATION, hv);
                     }
