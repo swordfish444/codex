@@ -38,11 +38,14 @@ use codex_protocol::models::ResponseItem;
 pub struct SessionMeta {
     pub id: ConversationId,
     pub timestamp: String,
+    pub cwd: String,
+    pub originator: String,
+    pub cli_version: String,
     pub instructions: Option<String>,
 }
 
-#[derive(Serialize)]
-struct SessionMetaWithGit {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SessionMetaWithGit {
     #[serde(flatten)]
     meta: SessionMeta,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -87,10 +90,18 @@ pub enum RolloutRecorderParams {
     },
 }
 
+#[derive(Serialize)]
+struct SessionMetaLine<'a> {
+    record_type: &'static str,
+    #[serde(flatten)]
+    meta: &'a SessionMetaWithGit,
+}
+
 #[derive(Debug, Clone)]
 pub enum RolloutItem {
     ResponseItem(Vec<ResponseItem>),
     Event(Vec<Event>),
+    SessionMeta(SessionMetaWithGit),
 }
 
 impl<T> From<T> for RolloutItem
@@ -105,6 +116,7 @@ where
 enum RolloutCmd {
     AddResponseItems(Vec<ResponseItem>),
     AddEvent(Vec<Event>),
+    AddSessionMeta(SessionMetaWithGit),
     Shutdown { ack: oneshot::Sender<()> },
 }
 
@@ -160,6 +172,9 @@ impl RolloutRecorder {
                     Some(SessionMeta {
                         timestamp,
                         id: session_id,
+                        cwd: config.cwd.to_string_lossy().to_string(),
+                        originator: config.responses_originator_header.clone(),
+                        cli_version: env!("CARGO_PKG_VERSION").to_string(),
                         instructions,
                     }),
                 )
@@ -193,6 +208,7 @@ impl RolloutRecorder {
         match item {
             RolloutItem::ResponseItem(items) => self.record_response_items(&items).await,
             RolloutItem::Event(events) => self.record_event(&events).await,
+            RolloutItem::SessionMeta(meta) => self.record_session_meta(&meta).await,
         }
     }
 
@@ -229,6 +245,13 @@ impl RolloutRecorder {
             .send(RolloutCmd::AddEvent(filtered))
             .await
             .map_err(|e| IoError::other(format!("failed to queue rollout event: {e}")))
+    }
+
+    async fn record_session_meta(&self, meta: &SessionMetaWithGit) -> std::io::Result<()> {
+        self.tx
+            .send(RolloutCmd::AddSessionMeta(meta.clone()))
+            .await
+            .map_err(|e| IoError::other(format!("failed to queue rollout session meta: {e}")))
     }
 
     pub async fn get_rollout_history(path: &Path) -> std::io::Result<InitialHistory> {
@@ -273,6 +296,16 @@ impl RolloutRecorder {
                     match serde_json::from_value::<Event>(ev_val) {
                         Ok(ev) => items.push(RolloutItem::Event(vec![ev])),
                         Err(e) => warn!("failed to parse event: {v:?}, error: {e}"),
+                    }
+                }
+                Some("prev_session_meta") | Some("session_meta") => {
+                    let mut meta_val = v.clone();
+                    if let Some(obj) = meta_val.as_object_mut() {
+                        obj.remove("record_type");
+                    }
+                    match serde_json::from_value::<SessionMetaWithGit>(meta_val) {
+                        Ok(meta) => items.push(RolloutItem::SessionMeta(meta)),
+                        Err(e) => warn!("failed to parse prev_session_meta: {v:?}, error: {e}"),
                     }
                 }
                 Some("response") | None => {
@@ -392,9 +425,13 @@ async fn rollout_writer(
             meta: session_meta,
             git: git_info,
         };
-
         // Write the SessionMeta as the first item in the file
-        writer.write_line(&session_meta_with_git).await?;
+        writer
+            .write_line(&SessionMetaLine {
+                record_type: "session_meta",
+                meta: &session_meta_with_git,
+            })
+            .await?;
     }
 
     // Process rollout commands
@@ -422,6 +459,14 @@ async fn rollout_writer(
                         })
                         .await?;
                 }
+            }
+            RolloutCmd::AddSessionMeta(meta) => {
+                writer
+                    .write_line(&SessionMetaLine {
+                        record_type: "prev_session_meta",
+                        meta: &meta,
+                    })
+                    .await?;
             }
             RolloutCmd::Shutdown { ack } => {
                 let _ = ack.send(());

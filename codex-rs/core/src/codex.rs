@@ -581,14 +581,42 @@ impl Session {
 
     async fn record_initial_history_resumed(&self, items: Vec<RolloutItem>) -> Vec<EventMsg> {
         let mut responses: Vec<ResponseItem> = Vec::new();
+        // Include everything before we see a session meta marker; after that, include only user messages
+        let before_resume_session = items
+            .get(0)
+            .map(|it| !matches!(it, RolloutItem::SessionMeta(..)))
+            .unwrap_or(true);
+
+        let mut msgs = Vec::new();
         for item in items.clone() {
-            if let RolloutItem::ResponseItem(v) = item {
-                responses.extend(v);
+            match item {
+                RolloutItem::ResponseItem(ref v) => {
+                    responses.extend(v.clone());
+                    let new_msgs: Vec<EventMsg> = v
+                        .iter()
+                        .flat_map(|ri| {
+                            map_response_item_to_event_messages(ri, self.show_raw_agent_reasoning)
+                        })
+                        .collect();
+                    if before_resume_session {
+                        msgs.extend(new_msgs);
+                    } else {
+                        msgs.extend(
+                            new_msgs
+                                .into_iter()
+                                .filter(|m| matches!(m, EventMsg::UserMessage(_))),
+                        );
+                    }
+                }
+                RolloutItem::Event(events) => msgs.extend(events.iter().map(|e| e.msg.clone())),
+                RolloutItem::SessionMeta(..) => {}
             }
         }
+
         if !responses.is_empty() {
             self.record_conversation_items_internal(&responses, false).await;
         }
+        msgs
     }
 
     /// Sends the given event to the client and records it to the rollout (if enabled).
