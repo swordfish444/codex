@@ -369,9 +369,6 @@ pub(crate) fn delete_shell_snapshot(path: &Path) {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn delete_shell_snapshot(_path: &Path) {}
-
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
