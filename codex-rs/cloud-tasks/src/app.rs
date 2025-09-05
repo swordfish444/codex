@@ -15,6 +15,23 @@ pub struct EnvModalState {
     pub selected: usize,
 }
 
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+pub enum ApplyResultLevel {
+    Success,
+    Partial,
+    Error,
+}
+
+#[derive(Clone, Debug)]
+pub struct ApplyModalState {
+    pub task_id: TaskId,
+    pub title: String,
+    pub result_message: Option<String>,
+    pub result_level: Option<ApplyResultLevel>,
+    pub skipped_paths: Vec<String>,
+    pub conflict_paths: Vec<String>,
+}
+
 use crate::scrollable_diff::ScrollableDiff;
 use codex_cloud_tasks_api::CloudBackend;
 use codex_cloud_tasks_api::DiffSummary;
@@ -30,19 +47,21 @@ pub struct App {
     pub selected: usize,
     pub status: String,
     pub diff_overlay: Option<DiffOverlay>,
-    pub pending_apply: Option<(TaskId, String)>,
     pub throbber: ThrobberState,
     pub refresh_inflight: bool,
     pub details_inflight: bool,
     // Environment filter state
     pub env_filter: Option<String>,
     pub env_modal: Option<EnvModalState>,
+    pub apply_modal: Option<ApplyModalState>,
     pub environments: Vec<EnvironmentRow>,
     pub env_last_loaded: Option<std::time::Instant>,
     pub env_loading: bool,
     pub env_error: Option<String>,
     // New Task page
     pub new_task: Option<crate::new_task::NewTaskPage>,
+    // Apply preflight spinner state
+    pub apply_preflight_inflight: bool,
     // Background enrichment coordination
     pub list_generation: u64,
     pub in_flight: std::collections::HashSet<String>,
@@ -57,17 +76,18 @@ impl App {
             selected: 0,
             status: "Press r to refresh".to_string(),
             diff_overlay: None,
-            pending_apply: None,
             throbber: ThrobberState::default(),
             refresh_inflight: false,
             details_inflight: false,
             env_filter: None,
             env_modal: None,
+            apply_modal: None,
             environments: Vec::new(),
             env_last_loaded: None,
             env_loading: false,
             env_error: None,
             new_task: None,
+            apply_preflight_inflight: false,
             list_generation: 0,
             in_flight: std::collections::HashSet::new(),
             summary_cache: std::collections::HashMap::new(),
@@ -145,6 +165,15 @@ pub enum AppEvent {
     },
     /// Background completion of new task submission
     NewTaskSubmitted(Result<codex_cloud_tasks_api::CreatedTask, String>),
+    /// Background completion of apply preflight when opening modal or on demand
+    ApplyPreflightFinished {
+        id: TaskId,
+        title: String,
+        message: String,
+        level: ApplyResultLevel,
+        skipped: Vec<String>,
+        conflicts: Vec<String>,
+    },
 }
 
 pub type AppEventTx = UnboundedSender<AppEvent>;

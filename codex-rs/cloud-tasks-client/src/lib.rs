@@ -23,4 +23,5 @@ pub use mock::MockClient;
 pub use http::HttpClient;
 
 // Reusable apply engine (git apply runner and helpers)
-pub mod patch_apply;
+// Legacy engine remains until migration completes. New engine lives in git_apply.
+mod git_apply;

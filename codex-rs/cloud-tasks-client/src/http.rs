@@ -15,7 +15,6 @@ use std::collections::HashMap;
 
 use codex_backend_client as backend;
 use codex_backend_client::CodeTaskDetailsResponseExt;
-use codex_backend_client::types::extract_file_paths_list;
 
 #[derive(Clone)]
 pub struct HttpClient {
@@ -43,6 +42,24 @@ impl HttpClient {
     pub fn with_chatgpt_account_id(mut self, account_id: impl Into<String>) -> Self {
         self.backend = self.backend.clone().with_chatgpt_account_id(account_id);
         self
+    }
+}
+
+fn is_unified_diff(diff: &str) -> bool {
+    let t = diff.trim_start();
+    if t.starts_with("diff --git ") {
+        return true;
+    }
+    let has_dash_headers = diff.contains("\n--- ") && diff.contains("\n+++ ");
+    let has_hunk = diff.contains("\n@@ ") || diff.starts_with("@@ ");
+    has_dash_headers && has_hunk
+}
+
+fn tail(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        s[s.len() - max..].to_string()
     }
 }
 
@@ -125,15 +142,12 @@ impl CloudBackend for HttpClient {
                                     }
                                     continue;
                                 }
-                                if let Some(obj) = p.as_object() {
-                                    if obj.get("content_type").and_then(|t| t.as_str())
+                                if let Some(obj) = p.as_object()
+                                    && obj.get("content_type").and_then(|t| t.as_str())
                                         == Some("text")
-                                    {
-                                        if let Some(txt) = obj.get("text").and_then(|t| t.as_str())
-                                        {
-                                            msgs.push(txt.to_string());
-                                        }
-                                    }
+                                    && let Some(txt) = obj.get("text").and_then(|t| t.as_str())
+                                {
+                                    msgs.push(txt.to_string());
                                 }
                             }
                         }
@@ -169,101 +183,111 @@ impl CloudBackend for HttpClient {
         let diff = details
             .unified_diff()
             .ok_or_else(|| Error::Msg(format!("No diff available for task {id}")))?;
-        let diff = match crate::patch_apply::classify_patch(&diff) {
-            crate::patch_apply::PatchKind::HunkOnly => {
-                let files = extract_file_paths_list(&details);
-                if files.len() > 1 {
-                    let parts = crate::patch_apply::split_hunk_body_into_files(&diff);
-                    if parts.len() == files.len() {
-                        let mut acc = String::new();
-                        for (i, (oldp, newp)) in files.iter().enumerate() {
-                            let u = crate::patch_apply::synthesize_unified_single_file(
-                                &parts[i], oldp, newp,
-                            );
-                            acc.push_str(&u);
-                            if !acc.ends_with("\n") {
-                                acc.push('\n');
-                            }
-                        }
-                        acc
-                    } else if let Some((oldp, newp)) = details.single_file_paths() {
-                        crate::patch_apply::synthesize_unified_single_file(&diff, &oldp, &newp)
-                    } else {
-                        diff
-                    }
-                } else if let Some((oldp, newp)) = details.single_file_paths() {
-                    crate::patch_apply::synthesize_unified_single_file(&diff, &oldp, &newp)
-                } else {
-                    diff
-                }
-            }
-            _ => diff,
-        };
+        // Enforce unified diff format only
+        if !is_unified_diff(&diff) {
+            let summary = summarize_patch_for_logging(&diff);
+            append_error_log(&format!(
+                "apply_error: id={id} format=non-unified; {summary}"
+            ));
+            return Ok(ApplyOutcome {
+                applied: false,
+                status: ApplyStatus::Error,
+                message: "Expected unified git diff; backend returned an incompatible format."
+                    .to_string(),
+                skipped_paths: Vec::new(),
+                conflict_paths: Vec::new(),
+            });
+        }
 
-        // Run the centralized Git apply path (supports unified diffs and Codex conversion)
-        let ctx = crate::patch_apply::context_from_env(
-            std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir()),
-        );
-        let res = crate::patch_apply::apply_patch(&diff, &ctx);
-        let status = match res.status {
-            crate::patch_apply::ApplyStatus::Success => ApplyStatus::Success,
-            crate::patch_apply::ApplyStatus::Partial => ApplyStatus::Partial,
-            crate::patch_apply::ApplyStatus::Error => ApplyStatus::Error,
+        // Run the new Git apply engine
+        let req = crate::git_apply::ApplyGitRequest {
+            cwd: std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir()),
+            diff: diff.clone(),
+            revert: false,
         };
-        let applied = matches!(status, ApplyStatus::Success);
-        let message = match status {
-            ApplyStatus::Success => format!(
-                "Applied task {id} locally ({} changed)",
-                res.changed_paths.len()
-            ),
-            ApplyStatus::Partial => format!(
-                "Apply partially succeeded for task {id} (changed={}, skipped={}, conflicts={})",
-                res.changed_paths.len(),
-                res.skipped_paths.len(),
-                res.conflict_paths.len()
-            ),
-            ApplyStatus::Error => {
-                let is_check = res.diagnostics.contains("apply --check failed");
-                if is_check {
+        let r = crate::git_apply::apply_git_patch(&req)
+            .map_err(|e| Error::Io(format!("git apply failed to run: {e}")))?;
+
+        let status = if r.exit_code == 0 {
+            ApplyStatus::Success
+        } else if !r.applied_paths.is_empty() || !r.conflicted_paths.is_empty() {
+            ApplyStatus::Partial
+        } else {
+            ApplyStatus::Error
+        };
+        let is_preflight = r.cmd_for_log.contains("--check");
+        let applied = matches!(status, ApplyStatus::Success) && !is_preflight;
+        let message = if is_preflight {
+            match status {
+                ApplyStatus::Success => format!("Preflight passed for task {id} (applies cleanly)"),
+                ApplyStatus::Partial => format!(
+                    "Preflight: patch does not fully apply for task {id} (applied={}, skipped={}, conflicts={})",
+                    r.applied_paths.len(),
+                    r.skipped_paths.len(),
+                    r.conflicted_paths.len()
+                ),
+                ApplyStatus::Error => format!(
+                    "Preflight failed for task {id} (applied={}, skipped={}, conflicts={})",
+                    r.applied_paths.len(),
+                    r.skipped_paths.len(),
+                    r.conflicted_paths.len()
+                ),
+            }
+        } else {
+            match status {
+                ApplyStatus::Success => {
                     format!(
-                        "Apply check failed for task {id}: patch does not apply to your working tree. No changes were made. See error.log for details.",
-                    )
-                } else {
-                    // Compact, single-line fallback; avoid embedding multiline stderr directly.
-                    let mut diag = res.diagnostics.replace('\n', " ");
-                    if diag.len() > 600 {
-                        diag.truncate(600);
-                        diag.push_str("…");
-                    }
-                    format!(
-                        "Apply failed for task {id} (changed={}, skipped={}, conflicts={}); {}",
-                        res.changed_paths.len(),
-                        res.skipped_paths.len(),
-                        res.conflict_paths.len(),
-                        diag
+                        "Applied task {id} locally ({} files)",
+                        r.applied_paths.len()
                     )
                 }
+                ApplyStatus::Partial => {
+                    format!(
+                        "Apply partially succeeded for task {id} (applied={}, skipped={}, conflicts={})",
+                        r.applied_paths.len(),
+                        r.skipped_paths.len(),
+                        r.conflicted_paths.len()
+                    )
+                }
+                ApplyStatus::Error => {
+                    format!(
+                        "Apply failed for task {id} (applied={}, skipped={}, conflicts={})",
+                        r.applied_paths.len(),
+                        r.skipped_paths.len(),
+                        r.conflicted_paths.len()
+                    )
+                }
             }
         };
 
-        // On apply failure, log a detailed record including the diff we attempted.
-        if matches!(status, ApplyStatus::Error) {
+        // Log details on partial and error
+        if matches!(status, ApplyStatus::Partial | ApplyStatus::Error)
+            || (is_preflight && !matches!(status, ApplyStatus::Success))
+        {
             let mut log = String::new();
             let summary = summarize_patch_for_logging(&diff);
             use std::fmt::Write as _;
             let _ = writeln!(
                 &mut log,
-                "apply_error: id={} changed={} skipped={} conflicts={}; {}",
+                "apply_result: id={} status={:?} applied={} skipped={} conflicts={} cmd={}",
                 id,
-                res.changed_paths.len(),
-                res.skipped_paths.len(),
-                res.conflict_paths.len(),
-                res.diagnostics
+                status,
+                r.applied_paths.len(),
+                r.skipped_paths.len(),
+                r.conflicted_paths.len(),
+                r.cmd_for_log
+            );
+            let _ = writeln!(
+                &mut log,
+                "stdout_tail=\n{}\nstderr_tail=\n{}",
+                tail(&r.stdout, 2000),
+                tail(&r.stderr, 2000)
             );
             let _ = writeln!(&mut log, "{summary}");
-            let _ = writeln!(&mut log, "----- PATCH BEGIN -----");
-            let _ = writeln!(&mut log, "{diff}");
-            let _ = writeln!(&mut log, "----- PATCH END -----");
+            let _ = writeln!(
+                &mut log,
+                "----- PATCH BEGIN -----\n{diff}\n----- PATCH END -----"
+            );
             append_error_log(&log);
         }
 
@@ -271,8 +295,8 @@ impl CloudBackend for HttpClient {
             applied,
             status,
             message,
-            skipped_paths: res.skipped_paths,
-            conflict_paths: res.conflict_paths,
+            skipped_paths: r.skipped_paths,
+            conflict_paths: r.conflicted_paths,
         })
     }
 
@@ -291,13 +315,13 @@ impl CloudBackend for HttpClient {
             "content": [{ "content_type": "text", "text": prompt }]
         }));
 
-        if let Ok(diff) = std::env::var("CODEX_STARTING_DIFF") {
-            if !diff.is_empty() {
-                input_items.push(serde_json::json!({
-                    "type": "pre_apply_patch",
-                    "output_diff": { "diff": diff }
-                }));
-            }
+        if let Ok(diff) = std::env::var("CODEX_STARTING_DIFF")
+            && !diff.is_empty()
+        {
+            input_items.push(serde_json::json!({
+                "type": "pre_apply_patch",
+                "output_diff": { "diff": diff }
+            }));
         }
 
         let request_body = serde_json::json!({
@@ -344,21 +368,21 @@ fn map_task_list_item_to_summary(src: backend::TaskListItem) -> TaskSummary {
         }
         if let Some(o) = raw.as_object() {
             // Best-effort support for rich shapes: { text: "..." } or { plain_text: "..." }
-            if let Some(s) = o.get("text").and_then(Value::as_str) {
-                if !s.trim().is_empty() {
-                    return Some(s.to_string());
-                }
+            if let Some(s) = o.get("text").and_then(Value::as_str)
+                && !s.trim().is_empty()
+            {
+                return Some(s.to_string());
             }
-            if let Some(s) = o.get("plain_text").and_then(Value::as_str) {
-                if !s.trim().is_empty() {
-                    return Some(s.to_string());
-                }
+            if let Some(s) = o.get("plain_text").and_then(Value::as_str)
+                && !s.trim().is_empty()
+            {
+                return Some(s.to_string());
             }
             // Fallback: compact JSON for debugging
-            if let Ok(s) = serde_json::to_string(o) {
-                if !s.is_empty() {
-                    return Some(s);
-                }
+            if let Ok(s) = serde_json::to_string(o)
+                && !s.is_empty()
+            {
+                return Some(s);
             }
         }
         None
@@ -403,17 +427,16 @@ fn map_status(v: Option<&HashMap<String, Value>>) -> TaskStatus {
         if let Some(turn) = val
             .get("latest_turn_status_display")
             .and_then(Value::as_object)
+            && let Some(s) = turn.get("turn_status").and_then(Value::as_str)
         {
-            if let Some(s) = turn.get("turn_status").and_then(Value::as_str) {
-                return match s {
-                    "failed" => TaskStatus::Error,
-                    "completed" => TaskStatus::Ready,
-                    "in_progress" => TaskStatus::Pending,
-                    "pending" => TaskStatus::Pending,
-                    "cancelled" => TaskStatus::Error,
-                    _ => TaskStatus::Pending,
-                };
-            }
+            return match s {
+                "failed" => TaskStatus::Error,
+                "completed" => TaskStatus::Ready,
+                "in_progress" => TaskStatus::Pending,
+                "pending" => TaskStatus::Pending,
+                "cancelled" => TaskStatus::Error,
+                _ => TaskStatus::Pending,
+            };
         }
         // Legacy or alternative flat state.
         if let Some(state) = val.get("state").and_then(Value::as_str) {

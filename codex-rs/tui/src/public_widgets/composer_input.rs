@@ -8,6 +8,7 @@ use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::WidgetRef;
+use std::time::Duration;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -85,6 +86,23 @@ impl ComposerInput {
     /// Render the input into the provided buffer at `area`.
     pub fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         WidgetRef::render_ref(&self.inner, area, buf);
+    }
+
+    /// Return true if a paste-burst detection is currently active.
+    pub fn is_in_paste_burst(&self) -> bool {
+        self.inner.is_in_paste_burst()
+    }
+
+    /// Flush a pending paste-burst if the inter-key timeout has elapsed.
+    /// Returns true if text changed and a redraw is warranted.
+    pub fn flush_paste_burst_if_due(&mut self) -> bool {
+        self.inner.flush_paste_burst_if_due()
+    }
+
+    /// Recommended delay to schedule the next micro-flush frame while a
+    /// paste-burst is active.
+    pub fn recommended_flush_delay() -> Duration {
+        crate::bottom_pane::ChatComposer::recommended_paste_flush_delay()
     }
 }
 

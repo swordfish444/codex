@@ -362,10 +362,44 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
         });
     }
 
-    // Simple draw loop driven by input; keep a 250ms tick for spinner animation.
+    // Event-driven redraws with a tiny coalescing scheduler (snappy UI, no fixed 250ms tick).
     let mut needs_redraw = true;
-    let tick = tokio::time::interval(Duration::from_millis(250));
-    tokio::pin!(tick);
+    use std::time::Instant;
+    use tokio::time::Instant as TokioInstant;
+    use tokio::time::sleep_until;
+    let (frame_tx, mut frame_rx) = tokio::sync::mpsc::unbounded_channel::<Instant>();
+    let (redraw_tx, mut redraw_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+
+    // Coalesce frame requests to the earliest deadline; emit a single redraw signal.
+    tokio::spawn(async move {
+        let mut next_deadline: Option<Instant> = None;
+        loop {
+            let target =
+                next_deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(24 * 60 * 60));
+            let sleeper = sleep_until(TokioInstant::from_std(target));
+            tokio::pin!(sleeper);
+            tokio::select! {
+                recv = frame_rx.recv() => {
+                    match recv {
+                        Some(at) => {
+                            if next_deadline.map_or(true, |cur| at < cur) {
+                                next_deadline = Some(at);
+                            }
+                            continue; // recompute sleep target
+                        }
+                        None => break,
+                    }
+                }
+                _ = &mut sleeper => {
+                    if next_deadline.take().is_some() {
+                        let _ = redraw_tx.send(());
+                    }
+                }
+            }
+        }
+    });
+    // Kick an initial draw so the UI appears immediately.
+    let _ = frame_tx.send(Instant::now());
 
     // Render helper to centralize immediate redraws after handling events.
     let mut render_if_needed = |terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
@@ -381,10 +415,21 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
 
     let exit_code = loop {
         tokio::select! {
-            _ = tick.tick() => {
-                // When a network request is inflight, keep the spinner moving
-                if app.refresh_inflight || app.details_inflight || app.env_loading { app.throbber.calc_next(); needs_redraw = true; }
-                // Tick is for animation; still draw here if something changed.
+            // Coalesced redraw requests: spinner animation and paste-burst micro‑flush.
+            Some(()) = redraw_rx.recv() => {
+                // Micro‑flush pending first key held by paste‑burst.
+                if let Some(page) = app.new_task.as_mut() {
+                    if page.composer.flush_paste_burst_if_due() { needs_redraw = true; }
+                    if page.composer.is_in_paste_burst() {
+                        let _ = frame_tx.send(Instant::now() + codex_tui::ComposerInput::recommended_flush_delay());
+                    }
+                }
+                // Advance throbber only while loading.
+                if app.refresh_inflight || app.details_inflight || app.env_loading || app.apply_preflight_inflight {
+                    app.throbber.calc_next();
+                    needs_redraw = true;
+                    let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
+                }
                 render_if_needed(&mut terminal, &mut app, &mut needs_redraw)?;
             }
             maybe_app_event = rx.recv() => {
@@ -418,6 +463,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 }
                             }
                             needs_redraw = true;
+                            let _ = frame_tx.send(Instant::now());
                         }
                         app::AppEvent::NewTaskSubmitted(result) => {
                             match result {
@@ -437,12 +483,14 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         let res = app::load_tasks(&*backend2, env_sel.as_deref()).await;
                                         let _ = tx2.send(app::AppEvent::TasksLoaded { env: env_sel, result: res });
                                     });
+                                    let _ = frame_tx.send(Instant::now());
                                 }
                                 Err(msg) => {
                                     append_error_log(format!("new-task: submit failed: {}", msg));
                                     if let Some(page) = app.new_task.as_mut() { page.submitting = false; }
                                     app.status = format!("Submit failed: {}. See error.log for details.", msg);
                                     needs_redraw = true;
+                                    let _ = frame_tx.send(Instant::now());
                                 }
                             }
                         }
@@ -456,6 +504,22 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                             app.summary_cache.insert(id_str.clone(), (summary, std::time::Instant::now()));
                             if no_diff_yet { app.no_diff_yet.insert(id_str); } else { app.no_diff_yet.remove(&id.0); }
                             needs_redraw = true;
+                            let _ = frame_tx.send(Instant::now());
+                        }
+                        app::AppEvent::ApplyPreflightFinished { id, title, message, level, skipped, conflicts } => {
+                            // Only update if modal is still open and ids match
+                            if let Some(m) = app.apply_modal.as_mut() {
+                                if m.task_id == id {
+                                    m.title = title;
+                                    m.result_message = Some(message);
+                                    m.result_level = Some(level);
+                                    m.skipped_paths = skipped;
+                                    m.conflict_paths = conflicts;
+                                    app.apply_preflight_inflight = false;
+                                    needs_redraw = true;
+                                    let _ = frame_tx.send(Instant::now());
+                                }
+                            }
                         }
                         app::AppEvent::EnvironmentsLoaded(result) => {
                             app.env_loading = false;
@@ -470,6 +534,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 }
                             }
                             needs_redraw = true;
+                            let _ = frame_tx.send(Instant::now());
                         }
                         app::AppEvent::EnvironmentAutodetected(result) => {
                             if let Ok(sel) = result {
@@ -535,6 +600,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         let res = crate::env_detect::list_environments(&base_url, &headers).await;
                                         let _ = tx3.send(app::AppEvent::EnvironmentsLoaded(res.map_err(|e| e.into())));
                                     });
+                                    let _ = frame_tx.send(Instant::now());
                                 }
                             }
                             // on Err, silently continue with All
@@ -578,13 +644,13 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
             }
             maybe_event = events.next() => {
                 match maybe_event {
-                    Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
+                    Some(Ok(Event::Key(key))) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
                         // Treat Ctrl-C like pressing 'q' in the current context.
                         if key.modifiers.contains(KeyModifiers::CONTROL)
                             && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
                         {
-                            if app.pending_apply.is_some() {
-                                app.pending_apply = None;
+                            if app.apply_modal.is_some() {
+                                app.apply_modal = None;
                                 app.status = "Apply canceled".to_string();
                                 needs_redraw = true;
                             } else if app.new_task.is_some() {
@@ -609,7 +675,6 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                             || matches!(key.code, KeyCode::Char('\u{000F}'));
                         if is_ctrl_o && app.new_task.is_some() {
                             // Close task modal/pending apply if present before opening env modal
-                            app.pending_apply = None;
                             app.diff_overlay = None;
                             app.env_modal = Some(app::EnvModalState { query: String::new(), selected: 0 });
                             // Cache environments until user explicitly refreshes with 'r' inside the modal.
@@ -617,6 +682,8 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                             if should_fetch {
                                 app.env_loading = true;
                                 app.env_error = None;
+                                // Ensure spinner animates while loading environments.
+                                let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
                             }
                             needs_redraw = true;
                             if should_fetch {
@@ -703,49 +770,77 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         }
                                     }
                                     needs_redraw = true;
+                                    // If paste‑burst is active, schedule a micro‑flush frame.
+                                    if page.composer.is_in_paste_burst() {
+                                        let _ = frame_tx.send(Instant::now() + codex_tui::ComposerInput::recommended_flush_delay());
+                                    }
+                                    // Always schedule an immediate redraw for key edits in the composer.
+                                    let _ = frame_tx.send(Instant::now());
+                                    // Draw now so non-char edits (e.g., Option+Delete) reflect instantly.
+                                    render_if_needed(&mut terminal, &mut app, &mut needs_redraw)?;
                                 }
                             }
                             continue;
                             }
                         }
                         // If a diff overlay is open, handle its keys first.
-                        if app.pending_apply.is_some() {
+                        if app.apply_modal.is_some() {
+                            // Simple apply confirmation modal: y apply, p preflight, n/Esc cancel
                             match key.code {
                                 KeyCode::Char('y') => {
-                                    if let Some((task_id, title)) = app.pending_apply.take() {
-                                        app.status = format!("Applying '{title}'...");
+                                    if let Some(m) = app.apply_modal.take() {
+                                        app.status = format!("Applying '{}'...", m.title);
                                         needs_redraw = true;
-                                        match codex_cloud_tasks_api::CloudBackend::apply_task(&*backend, task_id.clone()).await {
+                                        match codex_cloud_tasks_api::CloudBackend::apply_task(&*backend, m.task_id.clone()).await {
                                             Ok(outcome) => {
-                                                // Always surface the message in the status bar.
                                                 app.status = outcome.message.clone();
-                                                // If the apply failed, also write a line to error.log for post-mortem debugging.
-                                                if matches!(outcome.status, codex_cloud_tasks_api::ApplyStatus::Error) {
-                                                    append_error_log(format!(
-                                                        "apply_task failed for {}: {}",
-                                                        task_id.0, outcome.message
-                                                    ));
-                                                }
-                                                // Keep the overlay open on errors/partial success so users can keep context.
-                                                // Only close and refresh on full success.
                                                 if matches!(outcome.status, codex_cloud_tasks_api::ApplyStatus::Success) {
                                                     app.diff_overlay = None;
-                                                if let Ok(tasks) = app::load_tasks(&*backend, app.env_filter.as_deref()).await { app.tasks = tasks; }
+                                                    if let Ok(tasks) = app::load_tasks(&*backend, app.env_filter.as_deref()).await { app.tasks = tasks; }
                                                 }
                                             }
                                             Err(e) => {
-                                                append_error_log(format!("apply_task failed for {}: {e}", task_id.0));
+                                                append_error_log(format!("apply_task failed for {}: {e}", m.task_id.0));
                                                 app.status = format!("Apply failed: {e}");
                                             }
                                         }
                                         needs_redraw = true;
                                     }
                                 }
-                                KeyCode::Esc | KeyCode::Char('n') => {
-                                    app.pending_apply = None;
-                                    app.status = "Apply canceled".to_string();
-                                    needs_redraw = true;
+                                KeyCode::Char('p') => {
+                                    if let Some(m) = app.apply_modal.take() {
+                                        // Kick off async preflight; show spinner in modal body
+                                        app.apply_preflight_inflight = true;
+                                        app.apply_modal = Some(app::ApplyModalState { task_id: m.task_id.clone(), title: m.title.clone(), result_message: None, result_level: None, skipped_paths: Vec::new(), conflict_paths: Vec::new() });
+                                        needs_redraw = true;
+                                        let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
+                                        let backend2 = backend.clone();
+                                        let tx2 = tx.clone();
+                                        let id2 = m.task_id.clone();
+                                        let title2 = m.title.clone();
+                                        tokio::spawn(async move {
+                                            unsafe { std::env::set_var("CODEX_APPLY_PREFLIGHT", "1") };
+                                            let out = codex_cloud_tasks_api::CloudBackend::apply_task(&*backend2, id2.clone()).await;
+                                            unsafe { std::env::remove_var("CODEX_APPLY_PREFLIGHT") };
+                                            let evt = match out {
+                                                Ok(outcome) => {
+                                                    let level = match outcome.status {
+                                                        codex_cloud_tasks_api::ApplyStatus::Success => app::ApplyResultLevel::Success,
+                                                        codex_cloud_tasks_api::ApplyStatus::Partial => app::ApplyResultLevel::Partial,
+                                                        codex_cloud_tasks_api::ApplyStatus::Error => app::ApplyResultLevel::Error,
+                                                    };
+                                                    app::AppEvent::ApplyPreflightFinished { id: id2, title: title2, message: outcome.message, level, skipped: outcome.skipped_paths, conflicts: outcome.conflict_paths }
+                                                }
+                                                Err(e) => app::AppEvent::ApplyPreflightFinished { id: id2, title: title2, message: format!("Preflight failed: {e}"), level: app::ApplyResultLevel::Error, skipped: Vec::new(), conflicts: Vec::new() },
+                                            };
+                                            let _ = tx2.send(evt);
+                                        });
+                                    }
                                 }
+                                KeyCode::Esc
+                                | KeyCode::Char('n')
+                                | KeyCode::Char('q')
+                                | KeyCode::Char('Q') => { app.apply_modal = None; app.status = "Apply canceled".to_string(); needs_redraw = true; }
                                 _ => {}
                             }
                         } else if app.diff_overlay.is_some() {
@@ -753,8 +848,30 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 KeyCode::Char('a') => {
                                     if let Some(ov) = &app.diff_overlay {
                                         if ov.can_apply {
-                                            app.pending_apply = Some((ov.task_id.clone(), ov.title.clone()));
-                                            app.status = format!("Apply '{}' ? y/N", ov.title);
+                                            app.apply_modal = Some(app::ApplyModalState { task_id: ov.task_id.clone(), title: ov.title.clone(), result_message: None, result_level: None, skipped_paths: Vec::new(), conflict_paths: Vec::new() });
+                                            app.apply_preflight_inflight = true;
+                                            let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
+                                            let backend2 = backend.clone();
+                                            let tx2 = tx.clone();
+                                            let id2 = ov.task_id.clone();
+                                            let title2 = ov.title.clone();
+                                            tokio::spawn(async move {
+                                                unsafe { std::env::set_var("CODEX_APPLY_PREFLIGHT", "1") };
+                                                let out = codex_cloud_tasks_api::CloudBackend::apply_task(&*backend2, id2.clone()).await;
+                                                unsafe { std::env::remove_var("CODEX_APPLY_PREFLIGHT") };
+                                                let evt = match out {
+                                                    Ok(outcome) => {
+                                                        let level = match outcome.status {
+                                                            codex_cloud_tasks_api::ApplyStatus::Success => app::ApplyResultLevel::Success,
+                                                            codex_cloud_tasks_api::ApplyStatus::Partial => app::ApplyResultLevel::Partial,
+                                                            codex_cloud_tasks_api::ApplyStatus::Error => app::ApplyResultLevel::Error,
+                                                        };
+                                                        app::AppEvent::ApplyPreflightFinished { id: id2, title: title2, message: outcome.message, level, skipped: outcome.skipped_paths, conflicts: outcome.conflict_paths }
+                                                    }
+                                                    Err(e) => app::AppEvent::ApplyPreflightFinished { id: id2, title: title2, message: format!("Preflight failed: {e}"), level: app::ApplyResultLevel::Error, skipped: Vec::new(), conflicts: Vec::new() },
+                                                };
+                                                let _ = tx2.send(evt);
+                                            });
                                         } else {
                                             app.status = "No diff available to apply".to_string();
                                         }
@@ -763,7 +880,6 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 }
                                 // From task modal, 'o' should close it and open the env selector
                                 KeyCode::Char('o') | KeyCode::Char('O') => {
-                                    app.pending_apply = None;
                                     app.diff_overlay = None;
                                     app.env_modal = Some(app::EnvModalState { query: String::new(), selected: 0 });
                                     // Use cached environments unless empty
@@ -831,6 +947,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 KeyCode::Char('r') | KeyCode::Char('R') => {
                                     // Trigger refresh of environments
                                     app.env_loading = true; app.env_error = None; needs_redraw = true;
+                                    let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
                                     let tx2 = tx.clone();
                                     tokio::spawn(async move {
                                         // Build headers (UA + ChatGPT token + account id)
@@ -1042,14 +1159,38 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                 }
                                             }
                                         });
+                                        // Animate spinner while details load.
+                                        let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
                                     }
                                 }
                                 KeyCode::Char('a') => {
                                     if let Some(task) = app.tasks.get(app.selected) {
                                         match codex_cloud_tasks_api::CloudBackend::get_task_diff(&*backend, task.id.clone()).await {
                                             Ok(_) => {
-                                                app.pending_apply = Some((task.id.clone(), task.title.clone()));
-                                                app.status = format!("Apply '{}' ? y/N", task.title);
+                                                app.apply_modal = Some(app::ApplyModalState { task_id: task.id.clone(), title: task.title.clone(), result_message: None, result_level: None, skipped_paths: Vec::new(), conflict_paths: Vec::new() });
+                                                app.apply_preflight_inflight = true;
+                                                let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
+                                                let backend2 = backend.clone();
+                                                let tx2 = tx.clone();
+                                                let id2 = task.id.clone();
+                                                let title2 = task.title.clone();
+                                                tokio::spawn(async move {
+                                                    unsafe { std::env::set_var("CODEX_APPLY_PREFLIGHT", "1") };
+                                                    let out = codex_cloud_tasks_api::CloudBackend::apply_task(&*backend2, id2.clone()).await;
+                                                    unsafe { std::env::remove_var("CODEX_APPLY_PREFLIGHT") };
+                                                    let evt = match out {
+                                                        Ok(outcome) => {
+                                                            let level = match outcome.status {
+                                                                codex_cloud_tasks_api::ApplyStatus::Success => app::ApplyResultLevel::Success,
+                                                                codex_cloud_tasks_api::ApplyStatus::Partial => app::ApplyResultLevel::Partial,
+                                                                codex_cloud_tasks_api::ApplyStatus::Error => app::ApplyResultLevel::Error,
+                                                            };
+                                                            app::AppEvent::ApplyPreflightFinished { id: id2, title: title2, message: outcome.message, level, skipped: outcome.skipped_paths, conflicts: outcome.conflict_paths }
+                                                        }
+                                                        Err(e) => app::AppEvent::ApplyPreflightFinished { id: id2, title: title2, message: format!("Preflight failed: {e}"), level: app::ApplyResultLevel::Error, skipped: Vec::new(), conflicts: Vec::new() },
+                                                    };
+                                                    let _ = tx2.send(evt);
+                                                });
                                             }
                                             Err(_) => {
                                                 app.status = "No diff available to apply".to_string();

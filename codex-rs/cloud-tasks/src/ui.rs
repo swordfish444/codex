@@ -44,6 +44,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.env_modal.is_some() {
         draw_env_modal(frame, area, app);
     }
+    if app.apply_modal.is_some() {
+        draw_apply_modal(frame, area, app);
+    }
 }
 
 // ===== Overlay helpers (geometry + styling) =====
@@ -160,7 +163,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
     // Selection reflects the actual task index (no artificial spacer item).
     let mut state = ListState::default().with_selected(Some(app.selected));
     // Dim task list when a modal/overlay is active to emphasize focus.
-    let dim_bg = app.env_modal.is_some() || app.diff_overlay.is_some();
+    let dim_bg = app.env_modal.is_some() || app.apply_modal.is_some() || app.diff_overlay.is_some();
     // Dynamic title includes current environment filter
     let suffix_span = if let Some(ref id) = app.env_filter {
         let label = app
@@ -383,6 +386,85 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
             .unwrap_or(0);
         let content = Paragraph::new(Text::from(styled_lines)).scroll((scroll, 0));
         frame.render_widget(content, content_area);
+    }
+}
+
+pub fn draw_apply_modal(frame: &mut Frame, area: Rect, app: &mut App) {
+    use ratatui::widgets::Wrap;
+    let inner = overlay_outer(area);
+    let title = Line::from("Apply Changes?".magenta().bold());
+    let block = overlay_block().title(title);
+    frame.render_widget(Clear, inner);
+    frame.render_widget(block.clone(), inner);
+    let content = overlay_content(inner);
+
+    if let Some(m) = &app.apply_modal {
+        // Header
+        let header = Paragraph::new(Line::from(
+            format!("Apply '{}' ?", m.title).magenta().bold(),
+        ))
+        .wrap(Wrap { trim: true });
+        // Footer instructions
+        let footer =
+            Paragraph::new(Line::from("Press Y to apply, P to preflight, N to cancel.").dim())
+                .wrap(Wrap { trim: true });
+
+        // Split into header/body/footer
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(1),
+            ])
+            .split(content);
+
+        frame.render_widget(header, rows[0]);
+        // Body: spinner while preflight runs; otherwise show result message and path lists
+        if app.apply_preflight_inflight || m.result_message.is_none() {
+            draw_centered_spinner(frame, rows[1], &mut app.throbber, "Checking…");
+        } else if let Some(msg) = &m.result_message {
+            let mut body_lines: Vec<Line> = Vec::new();
+            let first = match m.result_level {
+                Some(crate::app::ApplyResultLevel::Success) => msg.clone().green(),
+                Some(crate::app::ApplyResultLevel::Partial) => msg.clone().yellow(),
+                Some(crate::app::ApplyResultLevel::Error) => msg.clone().red(),
+                None => msg.clone().into(),
+            };
+            body_lines.push(Line::from(first));
+
+            // On partial or error, show conflicts/skips if present
+            if !matches!(m.result_level, Some(crate::app::ApplyResultLevel::Success)) {
+                use ratatui::text::Span;
+                if !m.conflict_paths.is_empty() {
+                    body_lines.push(Line::from(""));
+                    body_lines.push(
+                        Line::from(format!("Conflicts ({}):", m.conflict_paths.len()))
+                            .red()
+                            .bold(),
+                    );
+                    for p in &m.conflict_paths {
+                        body_lines
+                            .push(Line::from(vec!["  • ".into(), Span::raw(p.clone()).dim()]));
+                    }
+                }
+                if !m.skipped_paths.is_empty() {
+                    body_lines.push(Line::from(""));
+                    body_lines.push(
+                        Line::from(format!("Skipped ({}):", m.skipped_paths.len()))
+                            .yellow()
+                            .bold(),
+                    );
+                    for p in &m.skipped_paths {
+                        body_lines
+                            .push(Line::from(vec!["  • ".into(), Span::raw(p.clone()).dim()]));
+                    }
+                }
+            }
+            let body = Paragraph::new(body_lines).wrap(Wrap { trim: true });
+            frame.render_widget(body, rows[1]);
+        }
+        frame.render_widget(footer, rows[2]);
     }
 }
 

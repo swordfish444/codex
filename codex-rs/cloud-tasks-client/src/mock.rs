@@ -1,6 +1,5 @@
 use crate::ApplyOutcome;
 use crate::CloudBackend;
-use crate::Error;
 use crate::Result;
 use crate::TaskId;
 use crate::TaskStatus;
@@ -31,7 +30,7 @@ impl CloudBackend for MockClient {
         let environment_label = match _env {
             Some("env-A") => Some("Env A".to_string()),
             Some("env-B") => Some("Env B".to_string()),
-            Some(other) => Some(format!("{other}")),
+            Some(other) => Some(other.to_string()),
             None => Some("Global".to_string()),
         };
         let mut out = Vec::new();
