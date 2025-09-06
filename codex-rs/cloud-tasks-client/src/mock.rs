@@ -1,4 +1,5 @@
 use crate::ApplyOutcome;
+use crate::api::TaskText;
 use crate::CloudBackend;
 use crate::DiffSummary;
 use crate::Result;
@@ -63,6 +64,13 @@ impl CloudBackend for MockClient {
         Ok(vec![
             "Mock assistant output: this task contains no diff.".to_string(),
         ])
+    }
+
+    async fn get_task_text(&self, _id: TaskId) -> Result<TaskText> {
+        Ok(TaskText {
+            prompt: Some("Why is there no diff?".to_string()),
+            messages: vec!["Mock assistant output: this task contains no diff.".to_string()],
+        })
     }
 
     async fn apply_task(&self, id: TaskId) -> Result<ApplyOutcome> {

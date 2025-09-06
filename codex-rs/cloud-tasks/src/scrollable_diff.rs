@@ -42,6 +42,8 @@ impl ScrollableDiff {
         self.wrapped.clear();
         self.wrapped_src_idx.clear();
         self.state.content_h = 0;
+        // Force rewrap on next set_width even if width is unchanged
+        self.wrap_cols = None;
     }
 
     /// Set the wrap width. If changed, rebuild wrapped lines and clamp scroll.

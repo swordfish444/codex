@@ -552,20 +552,28 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                             // Only update if the overlay still corresponds to this id.
                                         if let Some(ov) = &app.diff_overlay && ov.task_id != id { continue; }
                             let mut sd = crate::scrollable_diff::ScrollableDiff::new();
-                            sd.set_content(diff.lines().map(|s| s.to_string()).collect());
-                            app.diff_overlay = Some(app::DiffOverlay{ title, task_id: id, sd, can_apply: true });
+                            let diff_lines: Vec<String> = diff.lines().map(|s| s.to_string()).collect();
+                            sd.set_content(diff_lines.clone());
+                            app.diff_overlay = Some(app::DiffOverlay{ title, task_id: id, sd, can_apply: true, diff_lines, text_lines: Vec::new(), prompt: None, current_view: app::DetailView::Diff });
                             app.details_inflight = false;
                             app.status.clear();
                             needs_redraw = true;
                         }
-                        app::AppEvent::DetailsMessagesLoaded { id, title, messages } => {
+                        app::AppEvent::DetailsMessagesLoaded { id, title, messages, prompt } => {
                                         if let Some(ov) = &app.diff_overlay && ov.task_id != id { continue; }
-                            let mut lines = Vec::new();
-                            for m in messages { lines.extend(m.lines().map(|s| s.to_string())); lines.push(String::new()); }
-                            if lines.is_empty() { lines.push("<no output>".to_string()); }
-                            let mut sd = crate::scrollable_diff::ScrollableDiff::new();
-                            sd.set_content(lines);
-                            app.diff_overlay = Some(app::DiffOverlay{ title, task_id: id, sd, can_apply: false });
+                            let conv = conversation_lines(prompt.clone(), &messages);
+                            if let Some(ov) = app.diff_overlay.as_mut() {
+                                ov.text_lines = conv.clone();
+                                ov.prompt = prompt;
+                                if !ov.can_apply {
+                                    ov.sd.set_content(conv);
+                                    ov.current_view = app::DetailView::Prompt;
+                                }
+                            } else {
+                                let mut sd = crate::scrollable_diff::ScrollableDiff::new();
+                                sd.set_content(conv.clone());
+                                app.diff_overlay = Some(app::DiffOverlay{ title, task_id: id, sd, can_apply: false, diff_lines: Vec::new(), text_lines: conv, prompt, current_view: app::DetailView::Prompt });
+                            }
                             app.details_inflight = false;
                             app.status.clear();
                             needs_redraw = true;
@@ -576,7 +584,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                             let pretty = pretty_lines_from_error(&error);
                             let mut sd = crate::scrollable_diff::ScrollableDiff::new();
                             sd.set_content(pretty);
-                            app.diff_overlay = Some(app::DiffOverlay{ title, task_id: id, sd, can_apply: false });
+                            app.diff_overlay = Some(app::DiffOverlay{ title, task_id: id, sd, can_apply: false, diff_lines: Vec::new(), text_lines: Vec::new(), prompt: None, current_view: app::DetailView::Prompt });
                             app.details_inflight = false;
                             needs_redraw = true;
                         }
@@ -887,6 +895,34 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         });
                                     }
                                 }
+                                KeyCode::Left => {
+                                    if let Some(ov) = &mut app.diff_overlay {
+                                        let has_text = !ov.text_lines.is_empty() || ov.prompt.is_some();
+                                        let has_diff = !ov.diff_lines.is_empty() || ov.can_apply;
+                                        if has_text && has_diff {
+                                            ov.current_view = app::DetailView::Prompt;
+                                            let lines = if ov.text_lines.is_empty() { conversation_lines(ov.prompt.clone(), &[]) } else { ov.text_lines.clone() };
+                                            ov.sd.set_content(lines);
+                                            ov.sd.to_top();
+                                            needs_redraw = true;
+                                        }
+                                    }
+                                }
+                                KeyCode::Right => {
+                                    if let Some(ov) = &mut app.diff_overlay {
+                                        let has_text = !ov.text_lines.is_empty() || ov.prompt.is_some();
+                                        let has_diff = !ov.diff_lines.is_empty() || ov.can_apply;
+                                        if has_text && has_diff {
+                                            ov.current_view = app::DetailView::Diff;
+                                            let lines = ov.diff_lines.clone();
+                                            if !lines.is_empty() {
+                                                ov.sd.set_content(lines);
+                                            }
+                                            ov.sd.to_top();
+                                            needs_redraw = true;
+                                        }
+                                    }
+                                }
                                 KeyCode::Esc | KeyCode::Char('q') => {
                                     app.diff_overlay = None;
                                     needs_redraw = true;
@@ -1100,30 +1136,46 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         // Open empty overlay immediately; content arrives via events
                                         let mut sd = crate::scrollable_diff::ScrollableDiff::new();
                                         sd.set_content(Vec::new());
-                                        app.diff_overlay = Some(app::DiffOverlay{ title: task.title.clone(), task_id: task.id.clone(), sd, can_apply: false });
+                                        app.diff_overlay = Some(app::DiffOverlay{ title: task.title.clone(), task_id: task.id.clone(), sd, can_apply: false, diff_lines: Vec::new(), text_lines: Vec::new(), prompt: None, current_view: app::DetailView::Prompt });
                                         needs_redraw = true;
                                         // Spawn background details load (diff first, then messages fallback)
                                         let backend2 = backend.clone();
                                         let tx2 = tx.clone();
+                                        let id1 = task.id.clone();
+                                        let title1 = task.title.clone();
+                                        let id2 = id1.clone();
+                                        let title2 = title1.clone();
                                         tokio::spawn(async move {
-                                            match codex_cloud_tasks_client::CloudBackend::get_task_diff(&*backend2, task.id.clone()).await {
+                                            match codex_cloud_tasks_client::CloudBackend::get_task_diff(&*backend2, id1.clone()).await {
                                                 Ok(diff) => {
-                                                    let _ = tx2.send(app::AppEvent::DetailsDiffLoaded { id: task.id, title: task.title, diff });
+                                                    let _ = tx2.send(app::AppEvent::DetailsDiffLoaded { id: id1, title: title1, diff });
                                                 }
                                                 Err(e) => {
                                                     // Always log errors while we debug non-success states.
-                                                    append_error_log(format!("get_task_diff failed for {}: {e}", task.id.0));
-                                                    match codex_cloud_tasks_client::CloudBackend::get_task_messages(&*backend2, task.id.clone()).await {
-                                                        Ok(msgs) => {
-                                                            let _ = tx2.send(app::AppEvent::DetailsMessagesLoaded { id: task.id, title: task.title, messages: msgs });
+                                                    append_error_log(format!("get_task_diff failed for {}: {e}", id1.0));
+                                                    match codex_cloud_tasks_client::CloudBackend::get_task_text(&*backend2, id1.clone()).await {
+                                                        Ok(text) => {
+                                                            let _ = tx2.send(app::AppEvent::DetailsMessagesLoaded { id: id1, title: title1, messages: text.messages, prompt: text.prompt });
                                                         }
                                                         Err(e2) => {
-                                                            let _ = tx2.send(app::AppEvent::DetailsFailed { id: task.id, title: task.title, error: format!("{e2}") });
+                                                            let _ = tx2.send(app::AppEvent::DetailsFailed { id: id1, title: title1, error: format!("{e2}") });
                                                         }
                                                     }
                                                 }
                                             }
                                         });
+                                        // Also fetch conversation text even when diff exists
+                                        {
+                                            let backend3 = backend.clone();
+                                            let tx3 = tx.clone();
+                                            let id3 = id2;
+                                            let title3 = title2;
+                                            tokio::spawn(async move {
+                                                if let Ok(text) = codex_cloud_tasks_client::CloudBackend::get_task_text(&*backend3, id3.clone()).await {
+                                                    let _ = tx3.send(app::AppEvent::DetailsMessagesLoaded { id: id3, title: title3, messages: text.messages, prompt: text.prompt });
+                                                }
+                                            });
+                                        }
                                         // Animate spinner while details load.
                                         let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
                                     }
@@ -1212,6 +1264,33 @@ fn extract_chatgpt_account_id(token: &str) -> Option<String> {
         .and_then(|auth| auth.get("chatgpt_account_id"))
         .and_then(|id| id.as_str())
         .map(|s| s.to_string())
+}
+
+/// Build plain-text conversation lines: a labeled user prompt followed by assistant messages.
+fn conversation_lines(prompt: Option<String>, messages: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(p) = prompt {
+        out.push("user:".to_string());
+        for l in p.lines() {
+            out.push(l.to_string());
+        }
+        out.push(String::new());
+    }
+    if !messages.is_empty() {
+        out.push("assistant:".to_string());
+        for (i, m) in messages.iter().enumerate() {
+            for l in m.lines() {
+                out.push(l.to_string());
+            }
+            if i + 1 < messages.len() {
+                out.push(String::new());
+            }
+        }
+    }
+    if out.is_empty() {
+        out.push("<no output>".to_string());
+    }
+    out
 }
 
 /// Convert a verbose HTTP error with embedded JSON body into concise, user-friendly lines

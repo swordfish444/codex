@@ -123,6 +123,17 @@ pub struct DiffOverlay {
     pub task_id: TaskId,
     pub sd: ScrollableDiff,
     pub can_apply: bool,
+    pub diff_lines: Vec<String>,
+    // Optional alternate view: conversation text (prompt + assistant messages)
+    pub text_lines: Vec<String>,
+    pub prompt: Option<String>,
+    pub current_view: DetailView,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DetailView {
+    Diff,
+    Prompt,
 }
 
 /// Internal app events delivered from background tasks.
@@ -147,6 +158,7 @@ pub enum AppEvent {
         id: TaskId,
         title: String,
         messages: Vec<String>,
+        prompt: Option<String>,
     },
     DetailsFailed {
         id: TaskId,
@@ -220,6 +232,12 @@ mod tests {
             _id: TaskId,
         ) -> codex_cloud_tasks_client::Result<Vec<String>> {
             Ok(vec![])
+        }
+        async fn get_task_text(
+            &self,
+            _id: TaskId,
+        ) -> codex_cloud_tasks_client::Result<codex_cloud_tasks_client::TaskText> {
+            Ok(codex_cloud_tasks_client::TaskText { prompt: Some("Example prompt".to_string()), messages: Vec::new() })
         }
 
         async fn apply_task(

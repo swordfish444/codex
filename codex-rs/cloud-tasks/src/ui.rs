@@ -14,6 +14,7 @@ use ratatui::widgets::ListItem;
 use ratatui::widgets::ListState;
 use ratatui::widgets::Padding;
 use ratatui::widgets::Paragraph;
+use ratatui::widgets::Wrap;
 use std::sync::OnceLock;
 
 use crate::app::App;
@@ -282,73 +283,87 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
-    // Centered overlay rect (deduped geometry) and padded content via helpers.
     let inner = overlay_outer(area);
-
     if app.diff_overlay.is_none() {
         return;
     }
-    let is_error = if let Some(overlay) = app.diff_overlay.as_ref() {
-        !overlay.can_apply
-            && overlay
-                .sd
-                .wrapped_lines()
-                .first()
-                .map(|s| s.trim_start().starts_with("Task failed:"))
-                .unwrap_or(false)
-    } else {
-        false
-    };
-    let can_apply = app
+    let ov_can_apply = app.diff_overlay.as_ref().map(|o| o.can_apply).unwrap_or(false);
+    let is_error = app
         .diff_overlay
         .as_ref()
-        .map(|o| o.can_apply)
-        .unwrap_or(false);
+        .and_then(|o| o.sd.wrapped_lines().first().cloned())
+        .map(|s| s.trim_start().starts_with("Task failed:"))
+        .unwrap_or(false)
+        && !ov_can_apply;
     let title = app
         .diff_overlay
         .as_ref()
         .map(|o| o.title.clone())
         .unwrap_or_default();
-    // Ensure ScrollableDiff knows geometry using padded content area.
-    let content_area = overlay_content(inner);
-    if let Some(ov) = app.diff_overlay.as_mut() {
-        ov.sd.set_width(content_area.width);
-        ov.sd.set_viewport(content_area.height);
-    }
 
-    // Optional percent scrolled label
-    let pct_opt = app
-        .diff_overlay
-        .as_ref()
-        .and_then(|o| o.sd.percent_scrolled());
+    // Title block
     let mut title_spans: Vec<ratatui::text::Span> = if is_error {
-        vec![
-            "Details ".magenta(),
-            "[FAILED]".red().bold(),
-            " ".into(),
-            title.clone().magenta(),
-        ]
-    } else if can_apply {
+        vec!["Details ".magenta(), "[FAILED]".red().bold(), " ".into(), title.clone().magenta()]
+    } else if ov_can_apply {
         vec!["Diff: ".magenta(), title.clone().magenta()]
     } else {
         vec!["Details: ".magenta(), title.clone().magenta()]
     };
-    if let Some(p) = pct_opt {
+    if let Some(p) = app
+        .diff_overlay
+        .as_ref()
+        .and_then(|o| o.sd.percent_scrolled())
+    {
         title_spans.push("  • ".dim());
         title_spans.push(format!("{p}%").dim());
     }
-    let block = overlay_block().title(Line::from(title_spans));
     frame.render_widget(Clear, inner);
-    frame.render_widget(block.clone(), inner);
+    frame.render_widget(overlay_block().title(Line::from(title_spans)).clone(), inner);
 
-    let styled_lines: Vec<Line<'static>> = if can_apply {
+    // Content area and optional status bar
+    let content_full = overlay_content(inner);
+    let mut content_area = content_full;
+    if let Some(ov) = app.diff_overlay.as_mut() {
+        let has_text = !ov.text_lines.is_empty() || ov.prompt.is_some();
+        let has_diff = !ov.diff_lines.is_empty() || ov_can_apply;
+        if has_diff || has_text {
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(1)])
+                .split(content_full);
+            // Status bar label
+            let mut spans: Vec<ratatui::text::Span> = Vec::new();
+            if has_diff && has_text {
+                let prompt_lbl = if matches!(ov.current_view, crate::app::DetailView::Prompt) { "[Prompt]".magenta().bold() } else { "Prompt".dim() };
+                let diff_lbl = if matches!(ov.current_view, crate::app::DetailView::Diff) { "[Diff]".magenta().bold() } else { "Diff".dim() };
+                spans.extend(vec![prompt_lbl, "  ".into(), diff_lbl, "  ".into(), "(← → to switch)".dim()]);
+            } else if has_text {
+                spans.push("Conversation".magenta().bold());
+            } else {
+                spans.push("Diff".magenta().bold());
+            }
+            frame.render_widget(Paragraph::new(Line::from(spans)), rows[0]);
+            ov.sd.set_width(rows[1].width);
+            ov.sd.set_viewport(rows[1].height);
+            content_area = rows[1];
+        } else {
+            ov.sd.set_width(content_full.width);
+            ov.sd.set_viewport(content_full.height);
+            content_area = content_full;
+        }
+    }
+
+    // Styled content render
+    // Choose styling by the active view, not just presence of a diff
+    let is_diff_view = app
+        .diff_overlay
+        .as_ref()
+        .map(|o| matches!(o.current_view, crate::app::DetailView::Diff))
+        .unwrap_or(false);
+    let styled_lines: Vec<Line<'static>> = if is_diff_view {
         let raw = app.diff_overlay.as_ref().map(|o| o.sd.wrapped_lines());
-        raw.unwrap_or(&[])
-            .iter()
-            .map(|l| style_diff_line(l))
-            .collect()
+        raw.unwrap_or(&[]).iter().map(|l| style_diff_line(l)).collect()
     } else {
-        // Basic markdown styling for assistant messages
         let mut in_code = false;
         let raw = app.diff_overlay.as_ref().map(|o| o.sd.wrapped_lines());
         raw.unwrap_or(&[])
@@ -379,10 +394,8 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
         .map(|o| o.sd.wrapped_lines().is_empty())
         .unwrap_or(true);
     if app.details_inflight && raw_empty {
-        // Show a centered spinner while loading details
         draw_centered_spinner(frame, content_area, &mut app.throbber, "Loading details…");
     } else {
-        // We pre-wrapped lines in ScrollableDiff; do not enable Paragraph-level wrapping here.
         let scroll = app
             .diff_overlay
             .as_ref()

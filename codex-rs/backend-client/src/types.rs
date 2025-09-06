@@ -10,6 +10,8 @@ pub trait CodeTaskDetailsResponseExt {
     fn unified_diff(&self) -> Option<String>;
     /// Extract assistant text output messages (no diff) from current turns.
     fn assistant_text_messages(&self) -> Vec<String>;
+    /// Extract the user's prompt text from the current user turn, when present.
+    fn user_text_prompt(&self) -> Option<String>;
     /// Extract an assistant error message (if the turn failed and provided one).
     fn assistant_error_message(&self) -> Option<String>;
     /// Best-effort: extract a single file old/new path for header synthesis when only hunk bodies are provided.
@@ -77,6 +79,36 @@ impl CodeTaskDetailsResponseExt for CodeTaskDetailsResponse {
             }
         }
         out
+    }
+
+    fn user_text_prompt(&self) -> Option<String> {
+        use serde_json::Value;
+        let map = self.current_user_turn.as_ref()?;
+        let items = map.get("input_items").and_then(Value::as_array)?;
+        let mut parts: Vec<String> = Vec::new();
+        for item in items {
+            if item.get("type").and_then(Value::as_str) == Some("message") {
+                // optional role filter (prefer user)
+                let is_user = item
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .map(|r| r.eq_ignore_ascii_case("user"))
+                    .unwrap_or(true);
+                if !is_user {
+                    continue;
+                }
+                if let Some(content) = item.get("content").and_then(Value::as_array) {
+                    for c in content {
+                        if c.get("content_type").and_then(Value::as_str) == Some("text")
+                            && let Some(txt) = c.get("text").and_then(Value::as_str)
+                        {
+                            parts.push(txt.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
     }
 
     fn assistant_error_message(&self) -> Option<String> {

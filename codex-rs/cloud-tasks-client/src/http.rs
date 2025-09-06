@@ -1,4 +1,5 @@
 use crate::ApplyOutcome;
+use crate::api::TaskText;
 use crate::ApplyStatus;
 use crate::CloudBackend;
 use crate::DiffSummary;
@@ -170,6 +171,59 @@ impl CloudBackend for HttpClient {
         Err(Error::Http(format!(
             "No assistant text messages in response. GET {url}; content-type={ct}; body={body}"
         )))
+    }
+
+    async fn get_task_text(&self, _id: TaskId) -> Result<TaskText> {
+        let id = _id.0;
+        let (details, body, _ct) = self
+            .backend
+            .get_task_details_with_body(&id)
+            .await
+            .map_err(|e| Error::Http(format!("get_task_details failed: {e}")))?;
+        let prompt = details.user_text_prompt();
+        let mut messages = details.assistant_text_messages();
+        if messages.is_empty() {
+            if let Ok(full) = serde_json::from_str::<serde_json::Value>(&body) {
+                if let Some(arr) = full
+                    .get("current_assistant_turn")
+                    .and_then(|v| v.get("worklog"))
+                    .and_then(|v| v.get("messages"))
+                    .and_then(|v| v.as_array())
+                {
+                    for m in arr {
+                        let is_assistant = m
+                            .get("author")
+                            .and_then(|a| a.get("role"))
+                            .and_then(|r| r.as_str())
+                            == Some("assistant");
+                        if !is_assistant {
+                            continue;
+                        }
+                        if let Some(parts) = m
+                            .get("content")
+                            .and_then(|c| c.get("parts"))
+                            .and_then(|p| p.as_array())
+                        {
+                            for p in parts {
+                                if let Some(s) = p.as_str() {
+                                    if !s.is_empty() {
+                                        messages.push(s.to_string());
+                                    }
+                                    continue;
+                                }
+                                if let Some(obj) = p.as_object()
+                                    && obj.get("content_type").and_then(|t| t.as_str()) == Some("text")
+                                    && let Some(txt) = obj.get("text").and_then(|t| t.as_str())
+                                {
+                                    messages.push(txt.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(TaskText { prompt, messages })
     }
 
     async fn apply_task(&self, _id: TaskId) -> Result<ApplyOutcome> {

@@ -12,6 +12,7 @@ pub use api::Result;
 pub use api::TaskId;
 pub use api::TaskStatus;
 pub use api::TaskSummary;
+pub use api::TaskText;
 
 #[cfg(feature = "mock")]
 mod mock;
