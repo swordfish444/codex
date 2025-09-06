@@ -182,42 +182,40 @@ impl CloudBackend for HttpClient {
             .map_err(|e| Error::Http(format!("get_task_details failed: {e}")))?;
         let prompt = details.user_text_prompt();
         let mut messages = details.assistant_text_messages();
-        if messages.is_empty() {
-            if let Ok(full) = serde_json::from_str::<serde_json::Value>(&body) {
-                if let Some(arr) = full
-                    .get("current_assistant_turn")
-                    .and_then(|v| v.get("worklog"))
-                    .and_then(|v| v.get("messages"))
-                    .and_then(|v| v.as_array())
+        if messages.is_empty()
+            && let Ok(full) = serde_json::from_str::<serde_json::Value>(&body)
+            && let Some(arr) = full
+                .get("current_assistant_turn")
+                .and_then(|v| v.get("worklog"))
+                .and_then(|v| v.get("messages"))
+                .and_then(|v| v.as_array())
+        {
+            for m in arr {
+                let is_assistant = m
+                    .get("author")
+                    .and_then(|a| a.get("role"))
+                    .and_then(|r| r.as_str())
+                    == Some("assistant");
+                if !is_assistant {
+                    continue;
+                }
+                if let Some(parts) = m
+                    .get("content")
+                    .and_then(|c| c.get("parts"))
+                    .and_then(|p| p.as_array())
                 {
-                    for m in arr {
-                        let is_assistant = m
-                            .get("author")
-                            .and_then(|a| a.get("role"))
-                            .and_then(|r| r.as_str())
-                            == Some("assistant");
-                        if !is_assistant {
+                    for p in parts {
+                        if let Some(s) = p.as_str() {
+                            if !s.is_empty() {
+                                messages.push(s.to_string());
+                            }
                             continue;
                         }
-                        if let Some(parts) = m
-                            .get("content")
-                            .and_then(|c| c.get("parts"))
-                            .and_then(|p| p.as_array())
+                        if let Some(obj) = p.as_object()
+                            && obj.get("content_type").and_then(|t| t.as_str()) == Some("text")
+                            && let Some(txt) = obj.get("text").and_then(|t| t.as_str())
                         {
-                            for p in parts {
-                                if let Some(s) = p.as_str() {
-                                    if !s.is_empty() {
-                                        messages.push(s.to_string());
-                                    }
-                                    continue;
-                                }
-                                if let Some(obj) = p.as_object()
-                                    && obj.get("content_type").and_then(|t| t.as_str()) == Some("text")
-                                    && let Some(txt) = obj.get("text").and_then(|t| t.as_str())
-                                {
-                                    messages.push(txt.to_string());
-                                }
-                            }
+                            messages.push(txt.to_string());
                         }
                     }
                 }

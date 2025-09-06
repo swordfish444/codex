@@ -14,7 +14,6 @@ use ratatui::widgets::ListItem;
 use ratatui::widgets::ListState;
 use ratatui::widgets::Padding;
 use ratatui::widgets::Paragraph;
-use ratatui::widgets::Wrap;
 use std::sync::OnceLock;
 
 use crate::app::App;
