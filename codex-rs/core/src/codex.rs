@@ -1997,22 +1997,7 @@ async fn handle_response_item(
                 .clone()
                 .or_else(|| session_id.clone())
                 .unwrap_or_else(|| format!("ishell:{}", Uuid::new_v4()));
-            let spawn_command = match crate::ishell::spawn_command_for_shell(&sess.user_shell) {
-                Some(command) => command,
-                None => {
-                    return Ok(Some(ResponseInputItem::FunctionCallOutput {
-                        call_id,
-                        output: FunctionCallOutputPayload {
-                            content: "interactive shell is not available on this platform"
-                                .to_string(),
-                            success: Some(false),
-                        },
-                    }));
-                }
-            };
-
             let parsed_session_id = match session_id {
-                // todo useless
                 Some(value) => match value.parse::<i32>() {
                     Ok(parsed) => Some(parsed),
                     Err(_) => {
@@ -2032,7 +2017,6 @@ async fn handle_response_item(
                 session_id: parsed_session_id,
                 input: &arguments,
                 timeout_ms,
-                spawn_command: &spawn_command,
             };
 
             let result = sess.ishell_manager.handle_request(request).await;
@@ -2041,7 +2025,7 @@ async fn handle_response_item(
                 Ok(value) => {
                     #[derive(serde::Serialize)]
                     struct SerializedIshellResult<'a> {
-                        session_id: i32,
+                        session_id: Option<i32>,
                         output: &'a str,
                     }
 

@@ -30,19 +30,6 @@ pub enum Shell {
 }
 
 impl Shell {
-    pub(crate) fn interactive_spawn_command(&self) -> Option<Vec<String>> {
-        match self {
-            Shell::Zsh(zsh) => Some(vec![zsh.shell_path.clone(), "-i".to_string()]),
-            Shell::Bash(bash) => Some(vec![bash.shell_path.clone(), "-i".to_string()]),
-            Shell::PowerShell(ps) => Some(vec![
-                ps.exe.clone(),
-                "-NoLogo".to_string(),
-                "-NoProfile".to_string(),
-            ]),
-            Shell::Unknown => None,
-        }
-    }
-
     pub fn format_default_shell_invocation(&self, command: Vec<String>) -> Option<Vec<String>> {
         match self {
             Shell::Zsh(zsh) => {
