@@ -3,8 +3,11 @@ use portable_pty::PtySize;
 use portable_pty::native_pty_system;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::env;
 use std::io::ErrorKind;
 use std::io::Read;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicBool;
@@ -28,7 +31,7 @@ const ISHELL_OUTPUT_MAX_BYTES: usize = 16 * 1024; // 16 KiB
 #[derive(Debug)]
 pub(crate) struct InteractiveShellRequest<'a> {
     pub session_id: Option<i32>,
-    pub input: &'a str,
+    pub input_chunks: &'a [String],
     pub timeout_ms: Option<u64>,
 }
 
@@ -106,6 +109,7 @@ impl InteractiveShellSessionManager {
         &self,
         request: InteractiveShellRequest<'_>,
     ) -> Result<InteractiveShellResult, error::InteractiveShellError> {
+        tracing::error!("In the exec");
         // todo update the errors
         let timeout_ms = request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
 
@@ -132,7 +136,7 @@ impl InteractiveShellSessionManager {
                 }
             }
         } else {
-            let command = parse_command_line(request.input)?;
+            let command = command_from_chunks(request.input_chunks)?;
             let new_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
             let session = create_shell_session(&command).await?;
             let managed_session = ManagedInteractiveSession::new(session);
@@ -144,14 +148,12 @@ impl InteractiveShellSessionManager {
             new_session = Some(managed_session);
         };
 
-        if request.session_id.is_some()
-            && !request.input.is_empty()
-            && writer_tx
-                .send(request.input.as_bytes().to_vec())
-                .await
-                .is_err()
-        {
-            return Err(error::InteractiveShellError::WriteToStdin);
+        if request.session_id.is_some() {
+            let joined_input = join_input_chunks(request.input_chunks);
+            if !joined_input.is_empty() && writer_tx.send(joined_input.into_bytes()).await.is_err()
+            {
+                return Err(error::InteractiveShellError::WriteToStdin);
+            }
         }
 
         let mut collected: Vec<u8> = Vec::with_capacity(4096);
@@ -249,7 +251,8 @@ async fn create_shell_session(
         })
         .map_err(error::InteractiveShellError::create_session)?;
 
-    let mut command_builder = CommandBuilder::new(&command[0]);
+    let resolved_command = resolve_command_path(&command[0])?;
+    let mut command_builder = CommandBuilder::new(&resolved_command);
     for arg in &command[1..] {
         command_builder.arg(arg);
     }
@@ -324,6 +327,106 @@ async fn create_shell_session(
         wait_handle,
         exit_status,
     ))
+}
+
+fn resolve_command_path(command: &str) -> Result<String, error::InteractiveShellError> {
+    if command.is_empty() {
+        return Err(error::InteractiveShellError::MissingCommandLine);
+    }
+
+    if is_explicit_path(command) {
+        return ensure_executable(Path::new(command))
+            .then_some(command.to_string())
+            .ok_or_else(|| error::InteractiveShellError::CommandNotFound {
+                command: command.to_string(),
+            });
+    }
+
+    if let Some(resolved) = find_in_path(command) {
+        return Ok(resolved.to_string_lossy().to_string());
+    }
+
+    Err(error::InteractiveShellError::CommandNotFound {
+        command: command.to_string(),
+    })
+}
+
+fn command_from_chunks(chunks: &[String]) -> Result<Vec<String>, error::InteractiveShellError> {
+    match chunks {
+        [] => Err(error::InteractiveShellError::MissingCommandLine),
+        [single] => parse_command_line(single),
+        _ => Ok(chunks.to_vec()),
+    }
+}
+
+fn join_input_chunks(chunks: &[String]) -> String {
+    match chunks {
+        [] => String::new(),
+        [single] => single.clone(),
+        _ => chunks.concat(),
+    }
+}
+
+fn is_explicit_path(command: &str) -> bool {
+    let path = Path::new(command);
+    path.is_absolute() || path.components().count() > 1
+}
+
+fn find_in_path(command: &str) -> Option<PathBuf> {
+    let path_var = env::var_os("PATH")?;
+    env::split_paths(&path_var)
+        .flat_map(|dir| candidate_paths(dir, command))
+        .find(|candidate| ensure_executable(candidate))
+}
+
+fn candidate_paths(dir: PathBuf, command: &str) -> Vec<PathBuf> {
+    build_platform_candidates(dir.join(command))
+}
+
+#[cfg(unix)]
+fn build_platform_candidates(candidate: PathBuf) -> Vec<PathBuf> {
+    vec![candidate]
+}
+
+#[cfg(windows)]
+fn build_platform_candidates(candidate: PathBuf) -> Vec<PathBuf> {
+    if candidate.extension().is_some() {
+        return vec![candidate];
+    }
+
+    let pathext = env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+    let mut candidates = Vec::new();
+    for ext in pathext.split(';') {
+        if ext.is_empty() {
+            continue;
+        }
+        let mut path_with_ext = candidate.clone();
+        let new_ext = ext.trim_start_matches('.');
+        path_with_ext.set_extension(new_ext);
+        candidates.push(path_with_ext);
+    }
+    if candidates.is_empty() {
+        candidates.push(candidate);
+    }
+    candidates
+}
+
+fn ensure_executable(path: &Path) -> bool {
+    match path.metadata() {
+        Ok(metadata) => metadata.is_file() && is_executable(&metadata),
+        Err(_) => false,
+    }
+}
+
+#[cfg(unix)]
+fn is_executable(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(metadata: &std::fs::Metadata) -> bool {
+    metadata.is_file()
 }
 
 /// Truncate the middle of a UTF-8 string to at most `max_bytes` bytes,
@@ -437,6 +540,8 @@ mod error {
         MissingCommandLine,
         #[error("invalid command line: {command_line}")]
         InvalidCommandLine { command_line: String },
+        #[error("command not found: {command}")]
+        CommandNotFound { command: String },
     }
 
     impl InteractiveShellError {
@@ -486,7 +591,7 @@ mod tests {
         let open_shell = manager
             .handle_request(InteractiveShellRequest {
                 session_id: None,
-                input: "/bin/bash -i",
+                input_chunks: &["/bin/bash".to_string(), "-i".to_string()],
                 timeout_ms: Some(1_500),
             })
             .await?;
@@ -495,7 +600,7 @@ mod tests {
         manager
             .handle_request(InteractiveShellRequest {
                 session_id: Some(session_id),
-                input: "export CODEX_INTERACTIVE_SHELL_VAR=codex\n",
+                input_chunks: &["export CODEX_INTERACTIVE_SHELL_VAR=codex\n".to_string()],
                 timeout_ms: Some(1_500),
             })
             .await?;
@@ -503,7 +608,7 @@ mod tests {
         let out_2 = manager
             .handle_request(InteractiveShellRequest {
                 session_id: Some(session_id),
-                input: "echo $CODEX_INTERACTIVE_SHELL_VAR\n",
+                input_chunks: &["echo $CODEX_INTERACTIVE_SHELL_VAR\n".to_string()],
                 timeout_ms: Some(1_500),
             })
             .await?;
@@ -523,7 +628,7 @@ mod tests {
         let shell_a = manager
             .handle_request(InteractiveShellRequest {
                 session_id: None,
-                input: "/bin/bash -i",
+                input_chunks: &["/bin/bash".to_string(), "-i".to_string()],
                 timeout_ms: Some(1_500),
             })
             .await?;
@@ -532,7 +637,7 @@ mod tests {
         manager
             .handle_request(InteractiveShellRequest {
                 session_id: Some(session_a),
-                input: "export CODEX_INTERACTIVE_SHELL_VAR=codex\n",
+                input_chunks: &["export CODEX_INTERACTIVE_SHELL_VAR=codex\n".to_string()],
                 timeout_ms: Some(1_500),
             })
             .await?;
@@ -540,7 +645,7 @@ mod tests {
         let out_2 = manager
             .handle_request(InteractiveShellRequest {
                 session_id: None,
-                input: "/bin/echo $CODEX_INTERACTIVE_SHELL_VAR\n",
+                input_chunks: &["/bin/echo $CODEX_INTERACTIVE_SHELL_VAR\n".to_string()],
                 timeout_ms: Some(1_500),
             })
             .await?;
@@ -549,7 +654,7 @@ mod tests {
         let out_3 = manager
             .handle_request(InteractiveShellRequest {
                 session_id: Some(session_a),
-                input: "echo $CODEX_INTERACTIVE_SHELL_VAR\n",
+                input_chunks: &["echo $CODEX_INTERACTIVE_SHELL_VAR\n".to_string()],
                 timeout_ms: Some(1_500),
             })
             .await?;
@@ -557,6 +662,8 @@ mod tests {
 
         Ok(())
     }
+
+    // todo add a test for the path
 
     #[cfg(unix)]
     /// Confirms that output emitted after an initial request times out can be
@@ -568,7 +675,7 @@ mod tests {
         let open_shell = manager
             .handle_request(InteractiveShellRequest {
                 session_id: None,
-                input: "/bin/bash -i",
+                input_chunks: &["/bin/bash".to_string(), "-i".to_string()],
                 timeout_ms: Some(1_500),
             })
             .await?;
@@ -577,7 +684,7 @@ mod tests {
         manager
             .handle_request(InteractiveShellRequest {
                 session_id: Some(session_id),
-                input: "export CODEX_INTERACTIVE_SHELL_VAR=codex\n",
+                input_chunks: &["export CODEX_INTERACTIVE_SHELL_VAR=codex\n".to_string()],
                 timeout_ms: Some(1_500),
             })
             .await?;
@@ -585,7 +692,7 @@ mod tests {
         let out_2 = manager
             .handle_request(InteractiveShellRequest {
                 session_id: Some(session_id),
-                input: "sleep 5 && echo $CODEX_INTERACTIVE_SHELL_VAR\n",
+                input_chunks: &["sleep 5 && echo $CODEX_INTERACTIVE_SHELL_VAR\n".to_string()],
                 timeout_ms: Some(10),
             })
             .await?;
@@ -594,10 +701,11 @@ mod tests {
         // Wait for the end of the bash sleep (preventing the usage of tokio controlled clock).
         tokio::time::sleep(Duration::from_secs(7)).await;
 
+        let empty = Vec::new();
         let out_3 = manager
             .handle_request(InteractiveShellRequest {
                 session_id: Some(session_id),
-                input: "",
+                input_chunks: &empty,
                 timeout_ms: Some(100),
             })
             .await?;
@@ -609,13 +717,16 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    /// Ensure that commands which immediately complete do not create persistent
+    /// interactive shell sessions, preventing leftover empty sessions from
+    /// accumulating.
     async fn completed_commands_do_not_persist_sessions() -> Result<(), error::InteractiveShellError>
     {
         let manager = InteractiveShellSessionManager::default();
         let result = manager
             .handle_request(InteractiveShellRequest {
                 session_id: None,
-                input: "/bin/echo codex",
+                input_chunks: &["/bin/echo".to_string(), "codex".to_string()],
                 timeout_ms: Some(1_500),
             })
             .await?;
@@ -630,12 +741,13 @@ mod tests {
 
     #[test]
     fn truncate_middle_no_newlines_fallback() {
+        // todo double check the truncation logic
         // Long string without newlines forces a pure byte/char-boundary truncation.
         let s = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         let max_bytes = 16; // force truncation
         let (out, original) = truncate_middle(s, max_bytes);
         // For very small caps, we return a full, untruncated marker that may exceed the cap.
-        assert_eq!(out, "…16 tokens truncated…");
+        assert_eq!(out, "…16 tokens truncated…"); // todo rename the token word
         // Original is ceil(62/4) = 16 tokens.
         assert_eq!(original, Some(16));
     }

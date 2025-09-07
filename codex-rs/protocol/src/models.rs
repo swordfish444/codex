@@ -122,7 +122,7 @@ pub enum ResponseItem {
         session_id: Option<String>,
         /// Characters that should be written to the interactive shell's
         /// standard input.
-        arguments: String,
+        arguments: Vec<String>,
         /// Maximum amount of time to wait for additional output after writing
         /// to stdin.
         timeout_ms: Option<u64>,

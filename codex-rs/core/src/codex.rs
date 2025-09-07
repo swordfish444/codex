@@ -21,6 +21,7 @@ use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
 use futures::prelude::*;
 use mcp_types::CallToolResult;
+use serde::Deserialize;
 use serde::Serialize;
 use serde_json;
 use tokio::sync::oneshot;
@@ -1997,62 +1998,10 @@ async fn handle_response_item(
                 .clone()
                 .or_else(|| session_id.clone())
                 .unwrap_or_else(|| format!("ishell:{}", Uuid::new_v4()));
-            let parsed_session_id = match session_id {
-                Some(value) => match value.parse::<i32>() {
-                    Ok(parsed) => Some(parsed),
-                    Err(_) => {
-                        return Ok(Some(ResponseInputItem::FunctionCallOutput {
-                            call_id,
-                            output: FunctionCallOutputPayload {
-                                content: format!("invalid session_id: {value}"),
-                                success: Some(false),
-                            },
-                        }));
-                    }
-                },
-                None => None,
-            };
-
-            let request = crate::ishell::InteractiveShellRequest {
-                session_id: parsed_session_id,
-                input: &arguments,
-                timeout_ms,
-            };
-
-            let result = sess.ishell_manager.handle_request(request).await;
-
-            let output_payload = match result {
-                Ok(value) => {
-                    #[derive(serde::Serialize)]
-                    struct SerializedIshellResult<'a> {
-                        session_id: Option<i32>,
-                        output: &'a str,
-                    }
-
-                    match serde_json::to_string(&SerializedIshellResult {
-                        session_id: value.session_id,
-                        output: &value.output,
-                    }) {
-                        Ok(serialized) => FunctionCallOutputPayload {
-                            content: serialized,
-                            success: Some(true),
-                        },
-                        Err(err) => FunctionCallOutputPayload {
-                            content: format!("failed to serialize interactive shell output: {err}"),
-                            success: Some(false),
-                        },
-                    }
-                }
-                Err(err) => FunctionCallOutputPayload {
-                    content: err.to_string(),
-                    success: Some(false),
-                },
-            };
-
-            Some(ResponseInputItem::FunctionCallOutput {
-                call_id,
-                output: output_payload,
-            })
+            Some(
+                handle_ishell_tool_call(sess, call_id, session_id.clone(), arguments, timeout_ms)
+                    .await,
+            )
         }
         ResponseItem::CustomToolCall {
             id: _,
@@ -2098,6 +2047,72 @@ async fn handle_response_item(
     Ok(output)
 }
 
+
+async fn handle_ishell_tool_call(
+    sess: &Session,
+    call_id: String,
+    session_id: Option<String>,
+    arguments: Vec<String>,
+    timeout_ms: Option<u64>,
+) -> ResponseInputItem {
+
+    let parsed_session_id = if let Some(session_id) = session_id {
+        match session_id.parse::<i32>() {
+            Ok(parsed) => Some(parsed),
+            Err(output) => return ResponseInputItem::FunctionCallOutput {
+                call_id: call_id.to_string(),
+                output: FunctionCallOutputPayload {
+                    content: format!("invalid session_id: {session_id} due to error {output}"),
+                    success: Some(false),
+                },
+            }
+        }
+    } else {
+        None
+    };
+
+    let request = crate::ishell::InteractiveShellRequest {
+        session_id: parsed_session_id,
+        input_chunks: &arguments,
+        timeout_ms,
+    };
+
+    let result = sess.ishell_manager.handle_request(request).await;
+
+    let output_payload = match result {
+        Ok(value) => {
+            #[derive(Serialize)]
+            struct SerializedIshellResult<'a> {
+                session_id: Option<i32>,
+                output: &'a str,
+            }
+
+            match serde_json::to_string(&SerializedIshellResult {
+                session_id: value.session_id,
+                output: &value.output,
+            }) {
+                Ok(serialized) => FunctionCallOutputPayload {
+                    content: serialized,
+                    success: Some(true),
+                },
+                Err(err) => FunctionCallOutputPayload {
+                    content: format!("failed to serialize interactive shell output: {err}"),
+                    success: Some(false),
+                },
+            }
+        }
+        Err(err) => FunctionCallOutputPayload {
+            content: err.to_string(),
+            success: Some(false),
+        },
+    };
+
+    ResponseInputItem::FunctionCallOutput {
+        call_id,
+        output: output_payload,
+    }
+}
+
 async fn handle_function_call(
     sess: &Session,
     turn_context: &TurnContext,
@@ -2124,6 +2139,32 @@ async fn handle_function_call(
                 call_id,
             )
             .await
+        }
+        "unified_exec" => {
+            #[derive(Deserialize)]
+            struct UnifiedExecArgs {
+                input: Vec<String>,
+                #[serde(default)]
+                session_id: Option<String>,
+                #[serde(default)]
+                timeout_ms: Option<u64>,
+            }
+
+            let args = match serde_json::from_str::<UnifiedExecArgs>(&arguments) {
+                Ok(args) => args,
+                Err(err) => {
+                    return ResponseInputItem::FunctionCallOutput {
+                        call_id,
+                        output: FunctionCallOutputPayload {
+                            content: format!("failed to parse function arguments: {err}"),
+                            success: Some(false),
+                        },
+                    };
+                }
+            };
+
+            handle_ishell_tool_call(sess, call_id, args.session_id, args.input, args.timeout_ms)
+                .await
         }
         "view_image" => {
             #[derive(serde::Deserialize)]

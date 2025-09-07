@@ -204,11 +204,12 @@ fn create_unified_exec_tool() -> OpenAiTool {
     let mut properties = BTreeMap::new();
     properties.insert(
         "input".to_string(),
-        JsonSchema::String {
+        JsonSchema::Array {
+            items: Box::new(JsonSchema::String { description: None }),
             description: Some(
-                "When no session_id is provided, the entire input is treated as the command \
-                 to launch. When a session_id is present, this string is written to the \
-                 session's stdin."
+                "When no session_id is provided, treat the array as the command and arguments \
+                 to launch. When session_id is set, concatenate the strings (in order) and write \
+                 them to the session's stdin."
                     .to_string(),
             ),
         },
@@ -625,22 +626,19 @@ pub(crate) fn get_openai_tools(
     if config.include_view_image_tool {
         tools.push(create_view_image_tool());
     }
-    //
-    // if let Some(mcp_tools) = mcp_tools {
-    //     // Ensure deterministic ordering to maximize prompt cache hits.
-    //     // HashMap iteration order is non-deterministic, so sort by fully-qualified tool name.
-    //     let mut entries: Vec<(String, mcp_types::Tool)> = mcp_tools.into_iter().collect();
-    //     entries.sort_by(|a, b| a.0.cmp(&b.0));
-    //
-    //     for (name, tool) in entries.into_iter() {
-    //         match mcp_tool_to_openai_tool(name.clone(), tool.clone()) {
-    //             Ok(converted_tool) => tools.push(OpenAiTool::Function(converted_tool)),
-    //             Err(e) => {
-    //                 tracing::error!("Failed to convert {name:?} MCP tool to OpenAI tool: {e:?}");
-    //             }
-    //         }
-    //     }
-    // }
+    if let Some(mcp_tools) = mcp_tools {
+        let mut entries: Vec<(String, mcp_types::Tool)> = mcp_tools.into_iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        for (name, tool) in entries.into_iter() {
+            match mcp_tool_to_openai_tool(name.clone(), tool.clone()) {
+                Ok(converted_tool) => tools.push(OpenAiTool::Function(converted_tool)),
+                Err(e) => {
+                    tracing::error!("Failed to convert {name:?} MCP tool to OpenAI tool: {e:?}");
+                }
+            }
+        }
+    }
 
     tools
 }
