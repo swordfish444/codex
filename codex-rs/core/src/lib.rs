@@ -28,6 +28,7 @@ pub mod exec_env;
 mod flags;
 pub mod git_info;
 mod is_safe_command;
+mod ishell;
 pub mod landlock;
 mod mcp_connection_manager;
 mod mcp_tool_call;

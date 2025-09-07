@@ -62,6 +62,7 @@ use crate::exec_command::ExecSessionManager;
 use crate::exec_command::WRITE_STDIN_TOOL_NAME;
 use crate::exec_command::WriteStdinParams;
 use crate::exec_env::create_env;
+use crate::ishell::InteractiveShellSessionManager;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::mcp_tool_call::handle_mcp_tool_call;
 use crate::model_family::find_family_for_model;
@@ -273,6 +274,7 @@ pub(crate) struct Session {
     /// Manager for external MCP servers/tools.
     mcp_connection_manager: McpConnectionManager,
     session_manager: ExecSessionManager,
+    ishell_manager: InteractiveShellSessionManager,
 
     /// External notifier command (will be passed as args to exec()). When
     /// `None` this feature is disabled.
@@ -463,6 +465,7 @@ impl Session {
             tx_event: tx_event.clone(),
             mcp_connection_manager,
             session_manager: ExecSessionManager::default(),
+            ishell_manager: InteractiveShellSessionManager::default(),
             notify,
             state: Mutex::new(state),
             rollout: Mutex::new(Some(rollout_recorder)),
@@ -1983,6 +1986,89 @@ async fn handle_response_item(
                 )
                 .await,
             )
+        }
+        ResponseItem::IShell {
+            id,
+            session_id,
+            arguments,
+            timeout_ms,
+        } => {
+            let call_id = id
+                .clone()
+                .or_else(|| session_id.clone())
+                .unwrap_or_else(|| format!("ishell:{}", Uuid::new_v4()));
+            let spawn_command = match crate::ishell::spawn_command_for_shell(&sess.user_shell) {
+                Some(command) => command,
+                None => {
+                    return Ok(Some(ResponseInputItem::FunctionCallOutput {
+                        call_id,
+                        output: FunctionCallOutputPayload {
+                            content: "interactive shell is not available on this platform"
+                                .to_string(),
+                            success: Some(false),
+                        },
+                    }));
+                }
+            };
+
+            let parsed_session_id = match session_id {
+                // todo useless
+                Some(value) => match value.parse::<i32>() {
+                    Ok(parsed) => Some(parsed),
+                    Err(_) => {
+                        return Ok(Some(ResponseInputItem::FunctionCallOutput {
+                            call_id,
+                            output: FunctionCallOutputPayload {
+                                content: format!("invalid session_id: {value}"),
+                                success: Some(false),
+                            },
+                        }));
+                    }
+                },
+                None => None,
+            };
+
+            let request = crate::ishell::InteractiveShellRequest {
+                session_id: parsed_session_id,
+                input: &arguments,
+                timeout_ms,
+                spawn_command: &spawn_command,
+            };
+
+            let result = sess.ishell_manager.handle_request(request).await;
+
+            let output_payload = match result {
+                Ok(value) => {
+                    #[derive(serde::Serialize)]
+                    struct SerializedIshellResult<'a> {
+                        session_id: i32,
+                        output: &'a str,
+                    }
+
+                    match serde_json::to_string(&SerializedIshellResult {
+                        session_id: value.session_id,
+                        output: &value.output,
+                    }) {
+                        Ok(serialized) => FunctionCallOutputPayload {
+                            content: serialized,
+                            success: Some(true),
+                        },
+                        Err(err) => FunctionCallOutputPayload {
+                            content: format!("failed to serialize interactive shell output: {err}"),
+                            success: Some(false),
+                        },
+                    }
+                }
+                Err(err) => FunctionCallOutputPayload {
+                    content: err.to_string(),
+                    success: Some(false),
+                },
+            };
+
+            Some(ResponseInputItem::FunctionCallOutput {
+                call_id,
+                output: output_payload,
+            })
         }
         ResponseItem::CustomToolCall {
             id: _,
