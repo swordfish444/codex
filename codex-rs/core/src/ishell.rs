@@ -591,7 +591,7 @@ mod tests {
             .await?;
         assert!(!out_2.output.contains("codex"));
 
-        // Wait for the end of the bash sleep.
+        // Wait for the end of the bash sleep (preventing the usage of tokio controlled clock).
         tokio::time::sleep(Duration::from_secs(7)).await;
 
         let out_3 = manager

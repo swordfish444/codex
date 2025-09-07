@@ -200,6 +200,52 @@ fn create_shell_tool() -> OpenAiTool {
     })
 }
 
+fn create_unified_exec_tool() -> OpenAiTool {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "input".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "When no session_id is provided, the entire input is treated as the command \
+                 to launch. When a session_id is present, this string is written to the \
+                 session's stdin."
+                    .to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "session_id".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Identifier for an existing interactive session. If omitted, a new command \
+                 is spawned."
+                    .to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "timeout_ms".to_string(),
+        JsonSchema::Number {
+            description: Some(
+                "Maximum time in milliseconds to wait for output after writing the input."
+                    .to_string(),
+            ),
+        },
+    );
+
+    OpenAiTool::Function(ResponsesApiTool {
+        name: "unified_exec".to_string(),
+        description:
+            "Runs a command in a PTY. Provide a session_id to reuse an existing interactive session.".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["input".to_string()]),
+            additional_properties: Some(false),
+        },
+    })
+}
+
 fn create_shell_tool_for_sandbox(sandbox_policy: &SandboxPolicy) -> OpenAiTool {
     let mut properties = BTreeMap::new();
     properties.insert(
@@ -554,6 +600,8 @@ pub(crate) fn get_openai_tools(
         }
     }
 
+    tools.push(create_unified_exec_tool());
+
     if config.plan_tool {
         tools.push(PLAN_TOOL.clone());
     }
@@ -577,22 +625,22 @@ pub(crate) fn get_openai_tools(
     if config.include_view_image_tool {
         tools.push(create_view_image_tool());
     }
-
-    if let Some(mcp_tools) = mcp_tools {
-        // Ensure deterministic ordering to maximize prompt cache hits.
-        // HashMap iteration order is non-deterministic, so sort by fully-qualified tool name.
-        let mut entries: Vec<(String, mcp_types::Tool)> = mcp_tools.into_iter().collect();
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
-
-        for (name, tool) in entries.into_iter() {
-            match mcp_tool_to_openai_tool(name.clone(), tool.clone()) {
-                Ok(converted_tool) => tools.push(OpenAiTool::Function(converted_tool)),
-                Err(e) => {
-                    tracing::error!("Failed to convert {name:?} MCP tool to OpenAI tool: {e:?}");
-                }
-            }
-        }
-    }
+    //
+    // if let Some(mcp_tools) = mcp_tools {
+    //     // Ensure deterministic ordering to maximize prompt cache hits.
+    //     // HashMap iteration order is non-deterministic, so sort by fully-qualified tool name.
+    //     let mut entries: Vec<(String, mcp_types::Tool)> = mcp_tools.into_iter().collect();
+    //     entries.sort_by(|a, b| a.0.cmp(&b.0));
+    //
+    //     for (name, tool) in entries.into_iter() {
+    //         match mcp_tool_to_openai_tool(name.clone(), tool.clone()) {
+    //             Ok(converted_tool) => tools.push(OpenAiTool::Function(converted_tool)),
+    //             Err(e) => {
+    //                 tracing::error!("Failed to convert {name:?} MCP tool to OpenAI tool: {e:?}");
+    //             }
+    //         }
+    //     }
+    // }
 
     tools
 }
@@ -647,7 +695,13 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["local_shell", "update_plan", "web_search", "view_image"],
+            &[
+                "local_shell",
+                "unified_exec",
+                "update_plan",
+                "web_search",
+                "view_image",
+            ],
         );
     }
 
@@ -668,7 +722,13 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["shell", "update_plan", "web_search", "view_image"],
+            &[
+                "shell",
+                "unified_exec",
+                "update_plan",
+                "web_search",
+                "view_image",
+            ],
         );
     }
 
@@ -727,6 +787,7 @@ mod tests {
             &tools,
             &[
                 "shell",
+                "unified_exec",
                 "web_search",
                 "view_image",
                 "test_server/do_something_cool",
@@ -734,7 +795,7 @@ mod tests {
         );
 
         assert_eq!(
-            tools[3],
+            tools[4],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "test_server/do_something_cool".to_string(),
                 parameters: JsonSchema::Object {
@@ -846,6 +907,7 @@ mod tests {
             &tools,
             &[
                 "shell",
+                "unified_exec",
                 "view_image",
                 "test_server/cool",
                 "test_server/do",
@@ -893,11 +955,17 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["shell", "web_search", "view_image", "dash/search"],
+            &[
+                "shell",
+                "unified_exec",
+                "web_search",
+                "view_image",
+                "dash/search",
+            ],
         );
 
         assert_eq!(
-            tools[3],
+            tools[4],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "dash/search".to_string(),
                 parameters: JsonSchema::Object {
@@ -953,10 +1021,16 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["shell", "web_search", "view_image", "dash/paginate"],
+            &[
+                "shell",
+                "unified_exec",
+                "web_search",
+                "view_image",
+                "dash/paginate",
+            ],
         );
         assert_eq!(
-            tools[3],
+            tools[4],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "dash/paginate".to_string(),
                 parameters: JsonSchema::Object {
@@ -1008,9 +1082,18 @@ mod tests {
             )])),
         );
 
-        assert_eq_tool_names(&tools, &["shell", "web_search", "view_image", "dash/tags"]);
+        assert_eq_tool_names(
+            &tools,
+            &[
+                "shell",
+                "unified_exec",
+                "web_search",
+                "view_image",
+                "dash/tags",
+            ],
+        );
         assert_eq!(
-            tools[3],
+            tools[4],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "dash/tags".to_string(),
                 parameters: JsonSchema::Object {
@@ -1065,9 +1148,18 @@ mod tests {
             )])),
         );
 
-        assert_eq_tool_names(&tools, &["shell", "web_search", "view_image", "dash/value"]);
+        assert_eq_tool_names(
+            &tools,
+            &[
+                "shell",
+                "unified_exec",
+                "web_search",
+                "view_image",
+                "dash/value",
+            ],
+        );
         assert_eq!(
-            tools[3],
+            tools[4],
             OpenAiTool::Function(ResponsesApiTool {
                 name: "dash/value".to_string(),
                 parameters: JsonSchema::Object {
