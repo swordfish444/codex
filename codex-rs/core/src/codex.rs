@@ -394,7 +394,7 @@ impl Session {
         let rollout_fut = RolloutRecorder::new(&config, conversation_id, user_instructions.clone());
 
         let mcp_fut = McpConnectionManager::new(config.mcp_servers.clone());
-        let default_shell_fut = shell::default_user_shell(session_id);
+        let default_shell_fut = shell::default_user_shell(conversation_id.0, &config.codex_home);
         let history_meta_fut = crate::message_history::history_metadata(&config);
 
         // Join all independent futures.

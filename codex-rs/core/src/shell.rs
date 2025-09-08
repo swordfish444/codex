@@ -56,7 +56,10 @@ impl Shell {
                 };
 
                 let rc_command = if source_path.exists() {
-                    format!("source {} && ({joined})", source_path.to_string_lossy())
+                    format!(
+                        "source {} && ({joined})",
+                        shlex::try_quote(source_path.to_string_lossy().as_ref()).ok()?
+                    )
                 } else {
                     joined
                 };
@@ -144,7 +147,7 @@ fn strip_bash_lc(command: &Vec<String>) -> Option<String> {
 }
 
 #[cfg(unix)]
-async fn detect_default_user_shell(session_id: Uuid) -> Shell {
+async fn detect_default_user_shell(session_id: Uuid, codex_home: &Path) -> Shell {
     use libc::getpwuid;
     use libc::getuid;
     use std::ffi::CStr;
@@ -159,11 +162,15 @@ async fn detect_default_user_shell(session_id: Uuid) -> Shell {
                 .into_owned();
             let home_path = CStr::from_ptr((*pw).pw_dir).to_string_lossy().into_owned();
 
-            let snapshot_path =
-                snapshots::ensure_posix_snapshot(&shell_path, Path::new(&home_path), session_id)
-                    .await;
+            let snapshot_path = snapshots::ensure_posix_snapshot(
+                &shell_path,
+                Path::new(&home_path),
+                codex_home,
+                session_id,
+            )
+            .await;
             if snapshot_path.is_none() {
-                trace!("failed to prepare zsh snapshot; using live profile");
+                trace!("failed to prepare posix snapshot; using live profile");
             }
             let shell_snapshot = snapshot_path.map(ShellSnapshot::new);
 
@@ -186,12 +193,12 @@ async fn detect_default_user_shell(session_id: Uuid) -> Shell {
 }
 
 #[cfg(unix)]
-pub async fn default_user_shell(session_id: Uuid) -> Shell {
-    detect_default_user_shell(session_id).await
+pub async fn default_user_shell(session_id: Uuid, codex_home: &Path) -> Shell {
+    detect_default_user_shell(session_id, codex_home).await
 }
 
 #[cfg(target_os = "windows")]
-pub async fn default_user_shell(_session_id: Uuid) -> Shell {
+pub async fn default_user_shell(_session_id: Uuid, _codex_home: &Path) -> Shell {
     use tokio::process::Command;
 
     // Prefer PowerShell 7+ (`pwsh`) if available, otherwise fall back to Windows PowerShell.
@@ -231,7 +238,7 @@ pub async fn default_user_shell(_session_id: Uuid) -> Shell {
 }
 
 #[cfg(all(not(target_os = "windows"), not(unix)))]
-pub async fn default_user_shell(session_id: Uuid) -> Shell {
+pub async fn default_user_shell(_session_id: Uuid, _codex_home: &Path) -> Shell {
     Shell::Unknown
 }
 
@@ -255,7 +262,7 @@ mod snapshots {
                     .map(|cow| cow.into_owned())
                     .unwrap_or(profile_string.clone());
 
-                format!("[ -f {quoted} ] && source {quoted}")
+                format!("[ -f {quoted} ] && . {quoted}")
             })
             .collect::<Vec<_>>()
             .join("; ")
@@ -264,11 +271,10 @@ mod snapshots {
     pub(crate) async fn ensure_posix_snapshot(
         shell_path: &str,
         home: &Path,
+        codex_home: &Path,
         session_id: Uuid,
     ) -> Option<PathBuf> {
-        let snapshot_path = home
-            .join(".codex")
-            .join(format!("codex_shell_snapshot_{session_id}.zsh"));
+        let snapshot_path = codex_home.join(format!("shell_snapshots/snapshot_{session_id}.zsh"));
 
         // Check if an update in the profile requires to re-generate the snapshot.
         let snapshot_is_stale = async {
@@ -301,7 +307,7 @@ mod snapshots {
         match regenerate_posix_snapshot(shell_path, home, &snapshot_path).await {
             Ok(()) => Some(snapshot_path),
             Err(err) => {
-                tracing::warn!("failed to generate zsh snapshot: {err}");
+                tracing::warn!("failed to generate posix snapshot: {err}");
                 None
             }
         }
@@ -365,7 +371,7 @@ mod snapshots {
 
 pub(crate) fn delete_shell_snapshot(path: &Path) {
     if let Err(err) = std::fs::remove_file(path) {
-        trace!(?path, %err, "failed to delete shell snapshot");
+        trace!("failed to delete shell snapshot {path:?}: {err}");
     }
 }
 
@@ -374,6 +380,7 @@ pub(crate) fn delete_shell_snapshot(path: &Path) {
 mod tests {
     use super::*;
 
+    use std::path::PathBuf;
     use std::process::Command;
     use uuid::Uuid;
 
@@ -388,7 +395,10 @@ mod tests {
         let home = std::env::var("HOME").unwrap();
         let shell_path = String::from_utf8_lossy(&shell.stdout).trim().to_string();
         if shell_path.ends_with("/zsh") {
-            match default_user_shell(Uuid::new_v4()).await {
+            let codex_home = std::env::var("CODEX_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from(format!("{home}/.codex")));
+            match default_user_shell(Uuid::new_v4(), &codex_home).await {
                 Shell::Posix(shell) => {
                     assert_eq!(shell.shell_path, shell_path);
                     assert_eq!(shell.rc_path, format!("{home}/.zshrc"));
@@ -520,6 +530,7 @@ mod macos_tests {
         }
 
         let temp_home = tempfile::tempdir().unwrap();
+        let codex_home = tempfile::tempdir().unwrap();
         std::fs::write(
             temp_home.path().join(".zshrc"),
             "export SNAPSHOT_TEST_VAR=1\nalias snapshot_test_alias='echo hi'\n",
@@ -527,9 +538,10 @@ mod macos_tests {
         .unwrap();
 
         let session_id = Uuid::new_v4();
-        let snapshot_path = ensure_posix_snapshot(shell_path, temp_home.path(), session_id)
-            .await
-            .expect("snapshot path");
+        let snapshot_path =
+            ensure_posix_snapshot(shell_path, temp_home.path(), codex_home.path(), session_id)
+                .await
+                .expect("snapshot path");
 
         let filename = snapshot_path
             .file_name()
@@ -539,9 +551,10 @@ mod macos_tests {
         assert!(filename.contains(&session_id.to_string()));
         assert!(snapshot_path.exists());
 
-        let snapshot_path_second = ensure_posix_snapshot(shell_path, temp_home.path(), session_id)
-            .await
-            .expect("snapshot path");
+        let snapshot_path_second =
+            ensure_posix_snapshot(shell_path, temp_home.path(), codex_home.path(), session_id)
+                .await
+                .expect("snapshot path");
         assert_eq!(snapshot_path, snapshot_path_second);
 
         let contents = std::fs::read_to_string(&snapshot_path).unwrap();
