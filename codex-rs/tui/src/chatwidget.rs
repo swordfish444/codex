@@ -1267,21 +1267,21 @@ impl ChatWidget {
             tx.send(AppEvent::CodexOp(Op::UndoLastTurnDiff));
         })];
 
-        let mut items = Vec::new();
-        items.push(SelectionItem {
+        let items = vec![
+        SelectionItem {
             name: "Undo last turn diff".to_string(),
             description: Some(
                 "Revert files that Codex changed during the most recent turn.".to_string(),
             ),
             is_current: false,
             actions: undo_actions,
-        });
-        items.push(SelectionItem {
+        },
+        SelectionItem {
             name: "Cancel".to_string(),
             description: Some("Close without undoing any files.".to_string()),
             is_current: false,
             actions: Vec::new(),
-        });
+        }];
 
         self.bottom_pane.show_selection_view(
             "Undo last Codex turn?".to_string(),

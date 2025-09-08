@@ -816,6 +816,12 @@ impl Session {
                             }
                             Err(error) => {
                                 warn!("failed to prepare undo patch: {error:#}");
+                                self.clear_last_undo_patch();
+                                self.notify_background_event(
+                                    &context.sub_id,
+                                    format!("Undo is unavailable for this turn: {error:#}"),
+                                )
+                                .await;
                             }
                         }
                     }
@@ -827,6 +833,17 @@ impl Session {
                 }
                 Err(error) => {
                     warn!("failed to compute unified diff: {error:#}");
+                    if *exit_code == 0 {
+                        self.clear_last_undo_patch();
+                        self
+                            .notify_background_event(
+                                &context.sub_id,
+                                format!(
+                                    "Undo is unavailable for this turn: failed to compute diff: {error:#}"
+                                ),
+                            )
+                            .await;
+                    }
                 }
             }
         }
