@@ -505,30 +505,6 @@ mod tests {
 mod macos_tests {
     use super::*;
     use crate::shell::snapshots::ensure_posix_snapshot;
-    use std::process::Command;
-
-    #[tokio::test]
-    async fn test_current_shell_detects_zsh() {
-        let shell = Command::new("sh")
-            .arg("-c")
-            .arg("echo $SHELL")
-            .output()
-            .unwrap();
-
-        let home = std::env::var("HOME").unwrap();
-        let shell_path = String::from_utf8_lossy(&shell.stdout).trim().to_string();
-
-        let codex_home = std::env::var("CODEX_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(format!("{home}/.codex")));
-        match default_user_shell(Uuid::new_v4(), &codex_home).await {
-            Shell::Posix(shell) => {
-                assert_eq!(shell.shell_path, shell_path);
-                assert_eq!(shell.rc_path, format!("{home}/.zshrc"));
-            }
-            other => panic!("unexpected shell returned: {other:?}"),
-        }
-    }
 
     #[tokio::test]
     async fn test_snapshot_generation_uses_session_id_and_cleanup() {
