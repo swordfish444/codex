@@ -122,7 +122,7 @@ impl Shell {
 
     pub fn name(&self) -> Option<String> {
         match self {
-            Shell::Posix(shell) => Path::new(&shell.rc_path)
+            Shell::Posix(shell) => Path::new(&shell.shell_path)
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string()),
             Shell::PowerShell(ps) => Some(ps.exe.clone()),
@@ -336,7 +336,7 @@ mod snapshots {
         let zshrc = home.join(".zshrc");
 
         capture_script.push_str(
-            &format!("source {}/.zshrc; setopt posixbuiltins; export -p; {{ alias | sed 's/^/alias /'; }} 2>/dev/null || true", zshrc.display()),
+            &format!("source {}; setopt posixbuiltins; export -p; {{ alias | sed 's/^/alias /'; }} 2>/dev/null || true", zshrc.display()),
         );
         let output = tokio::process::Command::new(shell_path)
             .arg("-lc")
