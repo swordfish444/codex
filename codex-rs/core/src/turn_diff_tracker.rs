@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -247,6 +248,64 @@ impl TurnDiffTracker {
         } else {
             Ok(Some(aggregated))
         }
+    }
+
+    pub fn build_undo_patch(&mut self) -> Result<Option<String>> {
+        let mut delete_paths: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut add_entries: Vec<(PathBuf, String)> = Vec::new();
+
+        let mut baseline_file_names: Vec<String> =
+            self.baseline_file_info.keys().cloned().collect();
+        baseline_file_names.sort();
+
+        for internal in baseline_file_names {
+            let Some(info) = self.baseline_file_info.get(&internal) else {
+                continue;
+            };
+            let current_path = self
+                .get_path_for_internal(&internal)
+                .unwrap_or(info.path.clone());
+            if current_path.exists() {
+                delete_paths.insert(current_path);
+            }
+
+            if info.oid.as_str() != ZERO_OID {
+                let content = String::from_utf8(info.content.clone()).map_err(|_| {
+                    anyhow!(
+                        "undo is not supported for non-UTF8 baseline file {}",
+                        info.path.display()
+                    )
+                })?;
+                add_entries.push((info.path.clone(), content));
+            }
+        }
+
+        if delete_paths.is_empty() && add_entries.is_empty() {
+            return Ok(None);
+        }
+
+        add_entries.sort_by(|(left_path, _), (right_path, _)| left_path.cmp(right_path));
+
+        let mut patch = String::from("*** Begin Patch\n");
+        for path in delete_paths {
+            patch.push_str(&format!("*** Delete File: {}\n", path.display()));
+        }
+
+        for (path, content) in add_entries {
+            patch.push_str(&format!("*** Add File: {}\n", path.display()));
+            if !content.is_empty() {
+                for line in content.split_terminator('\n') {
+                    patch.push('+');
+                    patch.push_str(line);
+                    patch.push('\n');
+                }
+                if !content.ends_with('\n') {
+                    patch.push_str("+\n");
+                }
+            }
+        }
+        patch.push_str("*** End Patch\n");
+        Ok(Some(patch))
     }
 
     fn get_file_diff(&mut self, internal_file_name: &str) -> String {

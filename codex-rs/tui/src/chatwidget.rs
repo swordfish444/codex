@@ -862,6 +862,10 @@ impl ChatWidget {
                     tx.send(AppEvent::DiffResult(text));
                 });
             }
+            SlashCommand::Undo => {
+                self.app_event_tx
+                    .send(AppEvent::CodexOp(Op::UndoLastTurnDiff));
+            }
             SlashCommand::Mention => {
                 self.insert_str("@");
             }
