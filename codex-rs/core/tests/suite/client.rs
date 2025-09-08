@@ -7,7 +7,9 @@ use codex_core::built_in_model_providers;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::InputItem;
+use codex_core::protocol::InputMessageKind;
 use codex_core::protocol::Op;
+use codex_core::protocol::UserMessageEvent;
 use codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_protocol::mcp_protocol::AuthMode;
 use core_test_support::load_default_config_for_test;
@@ -157,6 +159,19 @@ async fn resume_includes_initial_messages_and_sends_prior_items() {
         serde_json::json!("2025-01-01T00:00:00Z"),
     );
     writeln!(f, "{}", serde_json::Value::Object(prior_user_obj)).unwrap();
+
+    // Also include a matching user message event to preserve ordering at resume
+    let prior_user_event = EventMsg::UserMessage(UserMessageEvent {
+        message: "resumed user message".to_string(),
+        kind: Some(InputMessageKind::Plain),
+    });
+    let prior_user_event_line = serde_json::json!({
+        "timestamp": "2025-01-01T00:00:00Z",
+        "record_type": "event",
+        "id": "resume-0",
+        "msg": prior_user_event,
+    });
+    writeln!(f, "{prior_user_event_line}").unwrap();
 
     // Prior item: system message (excluded from API history)
     let prior_system = codex_protocol::models::ResponseItem::Message {

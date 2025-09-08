@@ -586,29 +586,12 @@ impl Session {
             self.record_conversation_items_internal(&responses, false).await;
         }
 
-        // Build initial UI messages: include everything before session resume marker,
-        // and only user messages afterwards
-        let before_resume_session = items
-            .get(0)
-            .map(|it| !matches!(it, RolloutItem::SessionMeta(..)))
-            .unwrap_or(true);
-
         let mut msgs = Vec::new();
-        for response in items.as_slice().get_response_items() {
-            let new_msgs: Vec<EventMsg> =
-                map_response_item_to_event_messages(&response, self.show_raw_agent_reasoning);
-            if before_resume_session {
-                msgs.extend(new_msgs);
-            } else {
-                msgs.extend(
-                    new_msgs
-                        .into_iter()
-                        .filter(|m| matches!(m, EventMsg::UserMessage(_))),
-                );
-            }
-        }
         for event in items.as_slice().get_events() {
-            msgs.push(event.msg);
+            match event.msg {
+                EventMsg::UserMessage(_) | EventMsg::AgentMessage(_) => msgs.push(event.msg),
+                _ => {}
+            }
         }
         msgs
     }
@@ -743,6 +726,27 @@ impl Session {
             && let Err(e) = rec.record_items(item).await
         {
             error!("failed to record rollout items: {e:#}");
+        }
+    }
+
+    /// Records a user input into conversation history AND a corresponding UserMessage event in rollout.
+    /// Does not send events to the UI.
+    async fn record_user_input(&self, sub_id: &str, response_item: ResponseItem) {
+        // Record the message/tool input in conversation history/rollout state
+        self.record_conversation_items(response_item.clone()).await;
+
+        // Derive and record a UserMessage event alongside it in the rollout
+        let user_events =
+            map_response_item_to_event_messages(&response_item, self.show_raw_agent_reasoning)
+                .into_iter()
+                .filter(|m| matches!(m, EventMsg::UserMessage(_)));
+
+        for msg in user_events {
+            let event = Event {
+                id: sub_id.to_string(),
+                msg,
+            };
+            self.record_state_snapshot(RolloutItem::Event(event)).await;
         }
     }
 
@@ -1448,8 +1452,9 @@ async fn run_task(
         return;
     }
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
-    sess.record_conversation_items(ResponseItem::from(initial_input_for_turn.clone()))
-        .await;
+    // Record the user's input and corresponding event into the rollout
+    let user_input_response: ResponseItem = ResponseItem::from(initial_input_for_turn.clone());
+    sess.record_user_input(&sub_id, user_input_response).await;
     let event = Event {
         id: sub_id.clone(),
         msg: EventMsg::TaskStarted(TaskStartedEvent {
@@ -1472,8 +1477,8 @@ async fn run_task(
             .into_iter()
             .map(ResponseItem::from)
             .collect::<Vec<ResponseItem>>();
-        for item in pending_input.iter().cloned() {
-            sess.record_conversation_items(item).await;
+        for item in pending_input.iter() {
+            sess.record_user_input(&sub_id, item.clone()).await;
         }
 
         // Construct the input that we will send to the model. When using the

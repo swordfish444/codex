@@ -424,7 +424,7 @@ pub enum EventMsg {
     /// Agent text output message
     AgentMessage(AgentMessageEvent),
 
-    /// User/system input message (what was sent to the model)
+    /// User/system input message (what was sent to the model).
     UserMessage(UserMessageEvent),
 
     /// Agent text output delta message
