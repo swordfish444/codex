@@ -581,25 +581,25 @@ pub(crate) fn get_openai_tools(
 ) -> Vec<OpenAiTool> {
     let mut tools: Vec<OpenAiTool> = Vec::new();
 
-    match &config.shell_type {
-        ConfigShellToolType::DefaultShell => {
-            tools.push(create_shell_tool());
-        }
-        ConfigShellToolType::ShellWithRequest { sandbox_policy } => {
-            tools.push(create_shell_tool_for_sandbox(sandbox_policy));
-        }
-        ConfigShellToolType::LocalShell => {
-            tools.push(OpenAiTool::LocalShell {});
-        }
-        ConfigShellToolType::StreamableShell => {
-            tools.push(OpenAiTool::Function(
-                crate::exec_command::create_exec_command_tool_for_responses_api(),
-            ));
-            tools.push(OpenAiTool::Function(
-                crate::exec_command::create_write_stdin_tool_for_responses_api(),
-            ));
-        }
-    }
+    // match &config.shell_type {
+    //     ConfigShellToolType::DefaultShell => {
+    //         tools.push(create_shell_tool());
+    //     }
+    //     ConfigShellToolType::ShellWithRequest { sandbox_policy } => {
+    //         tools.push(create_shell_tool_for_sandbox(sandbox_policy));
+    //     }
+    //     ConfigShellToolType::LocalShell => {
+    //         tools.push(OpenAiTool::LocalShell {});
+    //     }
+    //     ConfigShellToolType::StreamableShell => {
+    //         tools.push(OpenAiTool::Function(
+    //             crate::exec_command::create_exec_command_tool_for_responses_api(),
+    //         ));
+    //         tools.push(OpenAiTool::Function(
+    //             crate::exec_command::create_write_stdin_tool_for_responses_api(),
+    //         ));
+    //     }
+    // }
 
     tools.push(create_unified_exec_tool());
 
