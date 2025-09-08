@@ -31,7 +31,8 @@ use path::resolve_command_path;
 use truncation::truncate_middle;
 
 const DEFAULT_TIMEOUT_MS: u64 = 250;
-const UNIFIED_EXEC_OUTPUT_MAX_BYTES: usize = 16 * 1024; // 16 KiB
+const MAX_TIMEOUT_MS: u64 = 60_000;
+const UNIFIED_EXEC_OUTPUT_MAX_BYTES: usize = 128 * 1024; // 128 KiB
 
 #[derive(Debug)]
 pub(crate) struct UnifiedExecRequest<'a> {
@@ -114,7 +115,16 @@ impl UnifiedExecSessionManager {
         &self,
         request: UnifiedExecRequest<'_>,
     ) -> Result<UnifiedExecResult, UnifiedExecError> {
-        let timeout_ms = request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
+        let (timeout_ms, timeout_warning) = match request.timeout_ms {
+            Some(requested) if requested > MAX_TIMEOUT_MS => (
+                MAX_TIMEOUT_MS,
+                Some(format!(
+                    "Warning: requested timeout {requested}ms exceeds maximum of {MAX_TIMEOUT_MS}ms; clamping to {MAX_TIMEOUT_MS}ms.\n"
+                )),
+            ),
+            Some(requested) => (requested, None),
+            None => (DEFAULT_TIMEOUT_MS, None),
+        };
 
         let mut new_session: Option<ManagedUnifiedExecSession> = None;
         let session_id;
@@ -205,6 +215,11 @@ impl UnifiedExecSessionManager {
             &String::from_utf8_lossy(&collected),
             UNIFIED_EXEC_OUTPUT_MAX_BYTES,
         );
+        let output = if let Some(warning) = timeout_warning {
+            format!("{warning}{output}")
+        } else {
+            output
+        };
 
         let should_store_session = if let Some(session) = new_session.as_ref() {
             !session.has_exited()
@@ -485,6 +500,27 @@ mod tests {
             .await?;
 
         assert!(out_3.output.contains("codex"));
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn requests_with_large_timeout_are_capped() -> Result<(), UnifiedExecError> {
+        let manager = UnifiedExecSessionManager::default();
+
+        let result = manager
+            .handle_request(UnifiedExecRequest {
+                session_id: None,
+                input_chunks: &["/bin/echo".to_string(), "codex".to_string()],
+                timeout_ms: Some(120_000),
+            })
+            .await?;
+
+        assert!(result.output.starts_with(
+            "Warning: requested timeout 120000ms exceeds maximum of 60000ms; clamping to 60000ms.\n"
+        ));
+        assert!(result.output.contains("codex"));
 
         Ok(())
     }
