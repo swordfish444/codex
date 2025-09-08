@@ -114,7 +114,7 @@ pub enum ResponseItem {
         status: Option<String>,
         action: WebSearchAction,
     },
-    IShell {
+    UnifiedExec {
         #[serde(skip_serializing)]
         id: Option<String>,
         /// Identifier for the interactive shell session. When absent, a new

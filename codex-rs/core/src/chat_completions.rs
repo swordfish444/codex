@@ -58,7 +58,7 @@ pub(crate) async fn stream_chat_completions(
             ResponseItem::Message { role, .. } => last_emitted_role = Some(role.as_str()),
             ResponseItem::FunctionCall { .. }
             | ResponseItem::LocalShellCall { .. }
-            | ResponseItem::IShell { .. } => last_emitted_role = Some("assistant"),
+            | ResponseItem::UnifiedExec { .. } => last_emitted_role = Some("assistant"),
             ResponseItem::FunctionCallOutput { .. } => last_emitted_role = Some("tool"),
             ResponseItem::Reasoning { .. } | ResponseItem::Other => {}
             ResponseItem::CustomToolCall { .. } => {}
@@ -121,7 +121,7 @@ pub(crate) async fn stream_chat_completions(
                     match &input[idx + 1] {
                         ResponseItem::FunctionCall { .. }
                         | ResponseItem::LocalShellCall { .. }
-                        | ResponseItem::IShell { .. } => {
+                        | ResponseItem::UnifiedExec { .. } => {
                             reasoning_by_anchor_index
                                 .entry(idx + 1)
                                 .and_modify(|v| v.push_str(&text))
@@ -226,7 +226,7 @@ pub(crate) async fn stream_chat_completions(
                 }
                 messages.push(msg);
             }
-            ResponseItem::IShell { .. } => {
+            ResponseItem::UnifiedExec { .. } => {
                 // The interactive shell tool is currently exposed only via the
                 // Responses API. Ignore these items when using Chat
                 // Completions to maintain feature parity with existing

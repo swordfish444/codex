@@ -1988,7 +1988,7 @@ async fn handle_response_item(
                 .await,
             )
         }
-        ResponseItem::IShell {
+        ResponseItem::UnifiedExec {
             id,
             session_id,
             arguments,
