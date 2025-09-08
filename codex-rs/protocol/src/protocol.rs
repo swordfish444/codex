@@ -15,7 +15,6 @@ use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use crate::custom_prompts::CustomPrompt;
 use crate::mcp_protocol::ConversationId;
 use crate::message_history::HistoryEntry;
-use crate::models::ResponseItem;
 use crate::num_format::format_with_separators;
 use crate::parse_command::ParsedCommand;
 use crate::plan_tool::UpdatePlanArgs;
