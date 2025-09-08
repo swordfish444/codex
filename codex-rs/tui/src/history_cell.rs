@@ -27,6 +27,7 @@ use codex_core::protocol::McpInvocation;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::SessionConfiguredEvent;
 use codex_core::protocol::TokenUsage;
+use codex_protocol::mcp_protocol::ConversationId;
 use codex_protocol::parse_command::ParsedCommand;
 use image::DynamicImage;
 use image::ImageReader;
@@ -49,7 +50,6 @@ use std::time::Duration;
 use std::time::Instant;
 use tracing::error;
 use unicode_width::UnicodeWidthStr;
-use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CommandOutput {
@@ -821,7 +821,7 @@ pub(crate) fn new_completed_mcp_tool_call(
 pub(crate) fn new_status_output(
     config: &Config,
     usage: &TokenUsage,
-    session_id: &Option<Uuid>,
+    session_id: &Option<ConversationId>,
 ) -> PlainHistoryCell {
     let mut lines: Vec<Line<'static>> = Vec::new();
     lines.push("/status".magenta().into());
@@ -950,6 +950,12 @@ pub(crate) fn new_status_output(
 
     lines.push("".into());
 
+    // 💻 Client
+    let cli_version = crate::version::CODEX_CLI_VERSION;
+    lines.push(vec![padded_emoji("💻").into(), "Client".bold()].into());
+    lines.push(vec!["  • CLI Version: ".into(), cli_version.into()].into());
+    lines.push("".into());
+
     // 📊 Token Usage
     lines.push(vec!["📊 ".into(), "Token Usage".bold()].into());
     if let Some(session_id) = session_id {
@@ -960,9 +966,8 @@ pub(crate) fn new_status_output(
         "  • Input: ".into(),
         usage.non_cached_input().to_string().into(),
     ];
-    if let Some(cached) = usage.cached_input_tokens
-        && cached > 0
-    {
+    if usage.cached_input_tokens > 0 {
+        let cached = usage.cached_input_tokens;
         input_line_spans.push(format!(" (+ {cached} cached)").into());
     }
     lines.push(Line::from(input_line_spans));
@@ -1172,13 +1177,14 @@ pub(crate) fn new_proposed_command(command: &[String]) -> PlainHistoryCell {
     let mut lines: Vec<Line<'static>> = Vec::new();
     lines.push(Line::from(vec!["• ".into(), "Proposed Command".bold()]));
 
-    let cmd_lines: Vec<Line<'static>> = cmd
-        .lines()
-        .map(|part| Line::from(part.to_string()))
-        .collect();
+    let highlighted_lines = crate::render::highlight::highlight_bash_to_lines(&cmd);
     let initial_prefix: Span<'static> = "  └ ".dim();
     let subsequent_prefix: Span<'static> = "    ".into();
-    lines.extend(prefix_lines(cmd_lines, initial_prefix, subsequent_prefix));
+    lines.extend(prefix_lines(
+        highlighted_lines,
+        initial_prefix,
+        subsequent_prefix,
+    ));
 
     PlainHistoryCell { lines }
 }
