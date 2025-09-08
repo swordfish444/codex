@@ -387,8 +387,6 @@ mod tests {
     use super::*;
 
     use std::path::PathBuf;
-    use std::process::Command;
-    use uuid::Uuid;
 
     #[tokio::test]
     async fn test_run_with_profile_zshrc_not_exists() {
@@ -505,9 +503,9 @@ mod tests {
 #[cfg(test)]
 #[cfg(target_os = "macos")]
 mod macos_tests {
-    use std::process::Command;
     use super::*;
     use crate::shell::snapshots::ensure_posix_snapshot;
+    use std::process::Command;
 
     #[tokio::test]
     async fn test_current_shell_detects_zsh() {
