@@ -100,19 +100,6 @@ async fn fork_conversation_twice_drops_to_first_message() {
         }
         out
     }
-    async fn read_response_entries_with_retry(
-        path: &std::path::Path,
-        min_len: usize,
-    ) -> Vec<ResponseItem> {
-        for _ in 0..50u32 {
-            let entries = read_response_entries(path).await;
-            if entries.len() >= min_len {
-                return entries;
-            }
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        }
-        read_response_entries(path).await
-    }
     let entries_after_three: Vec<ResponseItem> = read_response_entries(&base_path).await;
     // History layout for this test:
     // [0] user instructions,
@@ -160,8 +147,7 @@ async fn fork_conversation_twice_drops_to_first_message() {
         }) => (*conversation_id, path.clone()),
         _ => panic!("expected ConversationHistory event after first fork"),
     };
-    let entries_after_first_fork: Vec<ResponseItem> =
-        read_response_entries_with_retry(&fork1_path, expected_after_first.len()).await;
+    let entries_after_first_fork: Vec<ResponseItem> = read_response_entries(&fork1_path).await;
     assert_eq!(entries_after_first_fork, expected_after_first);
 
     // Fork again with n=1 → drops the (new) last user message, leaving only the first.
@@ -185,7 +171,6 @@ async fn fork_conversation_twice_drops_to_first_message() {
         }) => (*conversation_id, path.clone()),
         _ => panic!("expected ConversationHistory event after second fork"),
     };
-    let entries_after_second_fork: Vec<ResponseItem> =
-        read_response_entries_with_retry(&fork2_path, expected_after_second.len()).await;
+    let entries_after_second_fork: Vec<ResponseItem> = read_response_entries(&fork2_path).await;
     assert_eq!(entries_after_second_fork, expected_after_second);
 }

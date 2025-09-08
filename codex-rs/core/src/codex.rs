@@ -586,14 +586,7 @@ impl Session {
             self.record_conversation_items_internal(&responses, false).await;
         }
 
-        let mut msgs = Vec::new();
-        for event in items.as_slice().get_events() {
-            match event.msg {
-                EventMsg::UserMessage(_) | EventMsg::AgentMessage(_) => msgs.push(event.msg),
-                _ => {}
-            }
-        }
-        msgs
+        items.as_slice().get_events()
     }
 
     /// Sends the given event to the client and records it to the rollout (if enabled).

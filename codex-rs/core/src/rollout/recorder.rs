@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use codex_protocol::mcp_protocol::ConversationId;
 use codex_protocol::protocol::Event;
+use codex_protocol::protocol::EventMsg;
 use serde::Deserialize;
 use serde::Serialize;
 use time::OffsetDateTime;
@@ -133,7 +134,7 @@ impl From<Event> for RolloutItem {
 /// Convenience helpers to extract typed items from a list of rollout items.
 pub trait RolloutItemSliceExt {
     fn get_response_items(&self) -> Vec<ResponseItem>;
-    fn get_events(&self) -> Vec<Event>;
+    fn get_events(&self) -> Vec<EventMsg>;
 }
 
 impl RolloutItemSliceExt for [RolloutItem] {
@@ -146,10 +147,10 @@ impl RolloutItemSliceExt for [RolloutItem] {
             .collect()
     }
 
-    fn get_events(&self) -> Vec<Event> {
+    fn get_events(&self) -> Vec<EventMsg> {
         self.iter()
             .filter_map(|it| match it {
-                RolloutItem::Event(ev) => Some(ev.clone()),
+                RolloutItem::Event(ev) => Some(ev.msg.clone()),
                 _ => None,
             })
             .collect()

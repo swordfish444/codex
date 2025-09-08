@@ -47,7 +47,7 @@ impl InitialHistory {
     }
 
     /// Return all events contained in this initial history.
-    pub fn get_events(&self) -> Vec<crate::protocol::Event> {
+    pub fn get_events(&self) -> Vec<crate::protocol::EventMsg> {
         match self {
             InitialHistory::New => Vec::new(),
             InitialHistory::Resumed(items) => items.as_slice().get_events(),
