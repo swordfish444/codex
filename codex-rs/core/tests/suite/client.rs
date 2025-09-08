@@ -154,7 +154,7 @@ async fn resume_includes_initial_messages_and_sends_prior_items() {
     prior_user_obj.insert("record_type".to_string(), serde_json::json!("response"));
     prior_user_obj.insert(
         "timestamp".to_string(),
-        serde_json::json!("2025-01-01T00:00:00.000+00:00"),
+        serde_json::json!("2025-01-01T00:00:00Z"),
     );
     writeln!(f, "{}", serde_json::Value::Object(prior_user_obj)).unwrap();
 
@@ -174,7 +174,7 @@ async fn resume_includes_initial_messages_and_sends_prior_items() {
     prior_system_obj.insert("record_type".to_string(), serde_json::json!("response"));
     prior_system_obj.insert(
         "timestamp".to_string(),
-        serde_json::json!("2025-01-01T00:00:00.000+00:00"),
+        serde_json::json!("2025-01-01T00:00:00Z"),
     );
     writeln!(f, "{}", serde_json::Value::Object(prior_system_obj)).unwrap();
 
@@ -194,14 +194,14 @@ async fn resume_includes_initial_messages_and_sends_prior_items() {
     prior_item_obj.insert("record_type".to_string(), serde_json::json!("response"));
     prior_item_obj.insert(
         "timestamp".to_string(),
-        serde_json::json!("2025-01-01T00:00:00.000+00:00"),
+        serde_json::json!("2025-01-01T00:00:00Z"),
     );
     writeln!(f, "{}", serde_json::Value::Object(prior_item_obj)).unwrap();
     let prior_item_event = EventMsg::AgentMessage(AgentMessageEvent {
         message: "resumed assistant message".to_string(),
     });
     let prior_event_line = serde_json::json!({
-        "timestamp": "2025-01-01T00:00:00.000+00:00",
+        "timestamp": "2025-01-01T00:00:00Z",
         "record_type": "event",
         "id": "resume-1",
         "msg": prior_item_event,

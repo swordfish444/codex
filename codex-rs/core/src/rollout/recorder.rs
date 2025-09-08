@@ -193,11 +193,10 @@ impl RolloutRecorder {
             path,
         } = create_log_file(config, conversation_id)?;
 
-        let fixed_offset = timestamp.offset();
         let timestamp_format: &[FormatItem] =
-            format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]");
+            format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z");
         let timestamp = timestamp
-            .to_offset(fixed_offset)
+            .to_offset(time::UtcOffset::UTC)
             .format(timestamp_format)
             .map_err(|e| IoError::other(format!("failed to format timestamp: {e}")))?;
 
@@ -217,7 +216,6 @@ impl RolloutRecorder {
                 instructions,
             }),
             cwd,
-            fixed_offset,
         ));
 
         Ok(Self { tx, path })
@@ -391,8 +389,7 @@ fn create_log_file(
     conversation_id: ConversationId,
 ) -> std::io::Result<LogFileInfo> {
     // Resolve ~/.codex/sessions/YYYY/MM/DD and create it if missing.
-    let timestamp = OffsetDateTime::now_local()
-        .map_err(|e| IoError::other(format!("failed to get local time: {e}")))?;
+    let timestamp = OffsetDateTime::now_utc();
     let mut dir = config.codex_home.clone();
     dir.push(SESSIONS_SUBDIR);
     dir.push(timestamp.year().to_string());
@@ -429,9 +426,8 @@ async fn rollout_writer(
     mut rx: mpsc::Receiver<RolloutCmd>,
     mut meta: Option<SessionMeta>,
     cwd: std::path::PathBuf,
-    fixed_offset: time::UtcOffset,
 ) -> std::io::Result<()> {
-    let mut writer = JsonlWriter { file, fixed_offset };
+    let mut writer = JsonlWriter { file };
 
     // If we have a meta, collect git info asynchronously and write meta first
     if let Some(session_meta) = meta.take() {
@@ -484,7 +480,6 @@ async fn rollout_writer(
 
 struct JsonlWriter {
     file: tokio::fs::File,
-    fixed_offset: time::UtcOffset,
 }
 
 impl JsonlWriter {
@@ -497,11 +492,8 @@ impl JsonlWriter {
     }
 
     async fn write_tagged(&mut self, record: TaggedLine) -> std::io::Result<()> {
-        let ts_format: &[FormatItem] =
-            format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]");
-        let now = time::OffsetDateTime::now_utc().to_offset(self.fixed_offset);
-        let timestamp = now
-            .format(ts_format)
+        let timestamp = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
             .map_err(|e| IoError::other(format!("failed to format timestamp: {e}")))?;
         let line = TimestampedLine { timestamp, record };
         self.write_line(&line).await
