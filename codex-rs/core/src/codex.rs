@@ -11,6 +11,7 @@ use std::time::Duration;
 use crate::AuthManager;
 use crate::event_mapping::map_response_item_to_event_messages;
 use crate::rollout::RolloutItem;
+use crate::rollout::recorder::RolloutItemSliceExt;
 use async_channel::Receiver;
 use async_channel::Sender;
 use codex_apply_patch::ApplyPatchAction;
@@ -204,9 +205,6 @@ impl Codex {
             error!("Failed to create session: {e:#}");
             CodexErr::InternalAgentDied
         })?;
-        let _ = session
-            .apply_initial_history(&turn_context, conversation_history)
-            .await;
         let conversation_id = session.conversation_id;
 
         // This task will run until Op::Shutdown is received.
@@ -582,39 +580,35 @@ impl Session {
     }
 
     async fn record_initial_history_resumed(&self, items: Vec<RolloutItem>) -> Vec<EventMsg> {
-        let mut responses: Vec<ResponseItem> = Vec::new();
-        // Include everything before we see a session meta marker; after that, include only user messages
+        // Record transcript (without persisting again)
+        let responses: Vec<ResponseItem> = items.as_slice().get_response_items();
+        if !responses.is_empty() {
+            self.record_conversation_items_internal(&responses, false).await;
+        }
+
+        // Build initial UI messages: include everything before session resume marker,
+        // and only user messages afterwards
         let before_resume_session = items
             .get(0)
             .map(|it| !matches!(it, RolloutItem::SessionMeta(..)))
             .unwrap_or(true);
 
         let mut msgs = Vec::new();
-        for item in items.clone() {
-            match item {
-                RolloutItem::ResponseItem(ref response) => {
-                    responses.push(response.clone());
-                    let new_msgs: Vec<EventMsg> = map_response_item_to_event_messages(
-                        response,
-                        self.show_raw_agent_reasoning,
-                    );
-                    if before_resume_session {
-                        msgs.extend(new_msgs);
-                    } else {
-                        msgs.extend(
-                            new_msgs
-                                .into_iter()
-                                .filter(|m| matches!(m, EventMsg::UserMessage(_))),
-                        );
-                    }
-                }
-                RolloutItem::Event(event) => msgs.push(event.msg.clone()),
-                RolloutItem::SessionMeta(..) => {}
+        for response in items.as_slice().get_response_items() {
+            let new_msgs: Vec<EventMsg> =
+                map_response_item_to_event_messages(&response, self.show_raw_agent_reasoning);
+            if before_resume_session {
+                msgs.extend(new_msgs);
+            } else {
+                msgs.extend(
+                    new_msgs
+                        .into_iter()
+                        .filter(|m| matches!(m, EventMsg::UserMessage(_))),
+                );
             }
         }
-
-        if !responses.is_empty() {
-            self.record_conversation_items_internal(&responses, false).await;
+        for event in items.as_slice().get_events() {
+            msgs.push(event.msg);
         }
         msgs
     }
@@ -1404,7 +1398,11 @@ async fn submission_loop(
             }
             Op::GetConversationPath => {
                 let sub_id = sub.id.clone();
-
+                // Ensure rollout file is flushed so consumers can read it immediately.
+                let rec_opt = { sess.rollout.lock_unchecked().as_ref().cloned() };
+                if let Some(rec) = rec_opt {
+                    let _ = rec.flush().await;
+                }
                 let event = Event {
                     id: sub_id.clone(),
                     msg: EventMsg::ConversationHistory(ConversationPathResponseEvent {

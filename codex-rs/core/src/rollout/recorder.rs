@@ -229,10 +229,6 @@ impl RolloutRecorder {
     /// processes the channel serially; when it dequeues `Flush`, all prior
     /// `AddResponseItems`/`AddEvents`/`AddSessionMeta` have already been written
     /// via `write_line`, which calls `file.flush()` (OS‐buffer flush).
-    ///
-    /// Note: this does NOT perform an fsync (`sync_data`/`sync_all`). If durable
-    /// persistence is required (power‑loss safety), we should add that here or
-    /// provide a separate method.
     pub async fn flush(&self) -> std::io::Result<()> {
         let (tx_done, rx_done) = oneshot::channel();
         self.tx
