@@ -391,30 +391,6 @@ mod tests {
     use uuid::Uuid;
 
     #[tokio::test]
-    async fn test_current_shell_detects_zsh() {
-        let shell = Command::new("sh")
-            .arg("-c")
-            .arg("echo $SHELL")
-            .output()
-            .unwrap();
-
-        let home = std::env::var("HOME").unwrap();
-        let shell_path = String::from_utf8_lossy(&shell.stdout).trim().to_string();
-        if shell_path.ends_with("/zsh") {
-            let codex_home = std::env::var("CODEX_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from(format!("{home}/.codex")));
-            match default_user_shell(Uuid::new_v4(), &codex_home).await {
-                Shell::Posix(shell) => {
-                    assert_eq!(shell.shell_path, shell_path);
-                    assert_eq!(shell.rc_path, format!("{home}/.zshrc"));
-                }
-                other => panic!("unexpected shell returned: {other:?}"),
-            }
-        }
-    }
-
-    #[tokio::test]
     async fn test_run_with_profile_zshrc_not_exists() {
         let shell = Shell::Posix(PosixShell {
             shell_path: "/bin/zsh".to_string(),
@@ -529,15 +505,36 @@ mod tests {
 #[cfg(test)]
 #[cfg(target_os = "macos")]
 mod macos_tests {
+    use std::process::Command;
     use super::*;
     use crate::shell::snapshots::ensure_posix_snapshot;
 
     #[tokio::test]
+    async fn test_current_shell_detects_zsh() {
+        let shell = Command::new("sh")
+            .arg("-c")
+            .arg("echo $SHELL")
+            .output()
+            .unwrap();
+
+        let home = std::env::var("HOME").unwrap();
+        let shell_path = String::from_utf8_lossy(&shell.stdout).trim().to_string();
+
+        let codex_home = std::env::var("CODEX_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(format!("{home}/.codex")));
+        match default_user_shell(Uuid::new_v4(), &codex_home).await {
+            Shell::Posix(shell) => {
+                assert_eq!(shell.shell_path, shell_path);
+                assert_eq!(shell.rc_path, format!("{home}/.zshrc"));
+            }
+            other => panic!("unexpected shell returned: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn test_snapshot_generation_uses_session_id_and_cleanup() {
         let shell_path = "/bin/zsh";
-        if !Path::new(shell_path).exists() {
-            return;
-        }
 
         let temp_home = tempfile::tempdir().unwrap();
         let codex_home = tempfile::tempdir().unwrap();
