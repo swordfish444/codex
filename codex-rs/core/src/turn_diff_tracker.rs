@@ -564,7 +564,44 @@ mod tests {
 
     fn normalize_patch_for_test(input: &str, root: &Path) -> String {
         let root_str = root.display().to_string().replace('\\', "/");
-        let mut replaced = input.replace(&root_str, "<TMP>");
+        let mut replaced = input.replace('\\', "/");
+        replaced = replaced.replace(&root_str, "<TMP>");
+
+        if let Some(root_name) = root.file_name().and_then(|name| name.to_str()) {
+            let marker = format!("/{root_name}");
+            let mut normalized = String::with_capacity(replaced.len());
+            let mut search_start = 0;
+
+            while let Some(relative_pos) = replaced[search_start..].find(&marker) {
+                let absolute_pos = search_start + relative_pos;
+
+                let path_start = replaced[..absolute_pos]
+                    .rfind(['\n', ' '])
+                    .map(|idx| idx + 1)
+                    .unwrap_or(0);
+
+                let prefix_end = replaced[path_start..absolute_pos]
+                    .find('/')
+                    .map(|idx| path_start + idx + 1)
+                    .unwrap_or(path_start);
+
+                normalized.push_str(&replaced[search_start..prefix_end]);
+                normalized.push_str("<TMP>");
+
+                let after_marker = absolute_pos + marker.len();
+                let mut rest_start = after_marker;
+                if after_marker < replaced.len() && replaced.as_bytes()[after_marker] == b'/' {
+                    normalized.push('/');
+                    rest_start += 1;
+                }
+
+                search_start = rest_start;
+            }
+
+            normalized.push_str(&replaced[search_start..]);
+            replaced = normalized;
+        }
+
         if !replaced.ends_with('\n') {
             replaced.push('\n');
         }
