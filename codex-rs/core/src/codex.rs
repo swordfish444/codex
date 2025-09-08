@@ -1839,13 +1839,11 @@ async fn try_run_turn(
                     st.token_info = info.clone();
                     info
                 };
-                sess.tx_event
-                    .send(Event {
-                        id: sub_id.to_string(),
-                        msg: EventMsg::TokenCount(crate::protocol::TokenCountEvent { info }),
-                    })
-                    .await
-                    .ok();
+                sess.send_event(Event {
+                    id: sub_id.to_string(),
+                    msg: EventMsg::TokenCount(crate::protocol::TokenCountEvent { info }),
+                })
+                .await;
 
                 let unified_diff = turn_diff_tracker.get_unified_diff();
                 if let Ok(Some(unified_diff)) = unified_diff {
@@ -2920,13 +2918,11 @@ async fn drain_to_completed(
                     info
                 };
 
-                sess.tx_event
-                    .send(Event {
-                        id: sub_id.to_string(),
-                        msg: EventMsg::TokenCount(crate::protocol::TokenCountEvent { info }),
-                    })
-                    .await
-                    .ok();
+                sess.send_event(Event {
+                    id: sub_id.to_string(),
+                    msg: EventMsg::TokenCount(crate::protocol::TokenCountEvent { info }),
+                })
+                .await;
 
                 return Ok(());
             }
