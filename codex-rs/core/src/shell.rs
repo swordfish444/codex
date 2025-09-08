@@ -3,10 +3,12 @@ use serde::Serialize;
 use shlex;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::trace;
 use uuid::Uuid;
 
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// This structure cannot derive Clone or this will break the Drop implementation.
 pub struct ShellSnapshot {
     pub(crate) path: PathBuf,
 }
@@ -17,11 +19,18 @@ impl ShellSnapshot {
     }
 }
 
+impl Drop for ShellSnapshot {
+    fn drop(&mut self) {
+        delete_shell_snapshot(&self.path);
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct PosixShell {
     pub(crate) shell_path: String,
     pub(crate) rc_path: String,
-    pub(crate) shell_snapshot: Option<ShellSnapshot>,
+    #[serde(skip_serializing, skip_deserializing)]
+    pub(crate) shell_snapshot: Option<Arc<ShellSnapshot>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -121,7 +130,7 @@ impl Shell {
         }
     }
 
-    pub fn get_snapshot(&self) -> Option<ShellSnapshot> {
+    pub fn get_snapshot(&self) -> Option<Arc<ShellSnapshot>> {
         match self {
             Shell::Posix(shell) => shell.shell_snapshot.clone(),
             _ => None,
@@ -168,7 +177,8 @@ async fn detect_default_user_shell(session_id: Uuid, codex_home: &Path) -> Shell
             if snapshot_path.is_none() {
                 trace!("failed to prepare posix snapshot; using live profile");
             }
-            let shell_snapshot = snapshot_path.map(ShellSnapshot::new);
+            let shell_snapshot =
+                snapshot_path.map(|snapshot| Arc::new(ShellSnapshot::new(snapshot)));
 
             let rc_path = if shell_path.ends_with("/zsh") {
                 format!("{home_path}/.zshrc")
@@ -578,7 +588,7 @@ mod macos_tests {
                 std::fs::write(&path, "# test zshrc").unwrap();
                 path.to_string_lossy().to_string()
             },
-            shell_snapshot: Some(ShellSnapshot::new(snapshot_path.clone())),
+            shell_snapshot: Some(Arc::new(ShellSnapshot::new(snapshot_path.clone()))),
         });
 
         let invocation = shell.format_default_shell_invocation(vec!["echo".to_string()]);
