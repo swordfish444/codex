@@ -562,6 +562,109 @@ mod tests {
         out
     }
 
+    fn normalize_patch_for_test(input: &str, root: &Path) -> String {
+        let root_str = root.display().to_string().replace('\\', "/");
+        let mut replaced = input.replace(&root_str, "<TMP>");
+        if !replaced.ends_with('\n') {
+            replaced.push('\n');
+        }
+        replaced
+    }
+
+    #[test]
+    fn build_undo_patch_returns_none_without_baseline() {
+        let mut tracker = TurnDiffTracker::new();
+        assert_eq!(tracker.build_undo_patch().unwrap(), None);
+    }
+
+    #[test]
+    fn build_undo_patch_restores_updated_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("undo.txt");
+        fs::write(&path, "before\n").unwrap();
+
+        let mut tracker = TurnDiffTracker::new();
+        let update_changes = HashMap::from([(
+            path.clone(),
+            FileChange::Update {
+                unified_diff: String::new(),
+                move_path: None,
+            },
+        )]);
+        tracker.on_patch_begin(&update_changes);
+
+        fs::write(&path, "after\n").unwrap();
+
+        let patch = tracker
+            .build_undo_patch()
+            .expect("undo patch")
+            .expect("some undo patch");
+        let normalized = normalize_patch_for_test(&patch, dir.path());
+        let expected = concat!(
+            "*** Begin Patch\n",
+            "*** Delete File: <TMP>/undo.txt\n",
+            "*** Add File: <TMP>/undo.txt\n",
+            "+before\n",
+            "*** End Patch\n",
+        );
+        assert_eq!(normalized, expected);
+    }
+
+    #[test]
+    fn build_undo_patch_restores_deleted_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("gone.txt");
+        fs::write(&path, "gone\n").unwrap();
+
+        let mut tracker = TurnDiffTracker::new();
+        let delete_changes = HashMap::from([(
+            path.clone(),
+            FileChange::Delete {
+                content: "gone\n".to_string(),
+            },
+        )]);
+        tracker.on_patch_begin(&delete_changes);
+
+        fs::remove_file(&path).unwrap();
+
+        let patch = tracker
+            .build_undo_patch()
+            .expect("undo patch")
+            .expect("some undo patch");
+        let normalized = normalize_patch_for_test(&patch, dir.path());
+        let expected = concat!(
+            "*** Begin Patch\n",
+            "*** Add File: <TMP>/gone.txt\n",
+            "+gone\n",
+            "*** End Patch\n",
+        );
+        assert_eq!(normalized, expected);
+    }
+
+    #[test]
+    fn build_undo_patch_rejects_non_utf8_content() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("binary.bin");
+        fs::write(&path, [0xff, 0xfe, 0x00]).unwrap();
+
+        let mut tracker = TurnDiffTracker::new();
+        let update_changes = HashMap::from([(
+            path.clone(),
+            FileChange::Update {
+                unified_diff: String::new(),
+                move_path: None,
+            },
+        )]);
+        tracker.on_patch_begin(&update_changes);
+
+        let err = tracker.build_undo_patch().unwrap_err();
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("undo is not supported for non-UTF8 baseline file"),
+            "unexpected error message: {message}"
+        );
+    }
+
     #[test]
     fn accumulates_add_and_update() {
         let mut acc = TurnDiffTracker::new();
