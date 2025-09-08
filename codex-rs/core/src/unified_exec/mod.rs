@@ -18,17 +18,16 @@ use tokio::time::Duration;
 use tokio::time::Instant;
 
 use crate::exec_command::ExecCommandSession;
+use crate::truncate::truncate_middle;
 
 mod errors;
 mod path;
-mod truncation;
 
 pub(crate) use errors::UnifiedExecError;
 
 use path::command_from_chunks;
 use path::join_input_chunks;
 use path::resolve_command_path;
-use truncation::truncate_middle;
 
 const DEFAULT_TIMEOUT_MS: u64 = 250;
 const MAX_TIMEOUT_MS: u64 = 60_000;
@@ -61,12 +60,40 @@ struct ManagedUnifiedExecSession {
     output_task: JoinHandle<()>,
 }
 
-type OutputBuffer = Arc<Mutex<VecDeque<Vec<u8>>>>;
+#[derive(Debug, Default)]
+struct OutputBufferState {
+    chunks: VecDeque<Vec<u8>>,
+    total_bytes: usize,
+}
+
+impl OutputBufferState {
+    fn push_chunk(&mut self, chunk: Vec<u8>) {
+        self.total_bytes = self.total_bytes.saturating_add(chunk.len());
+        self.chunks.push_back(chunk);
+
+        while self.total_bytes > UNIFIED_EXEC_OUTPUT_MAX_BYTES {
+            match self.chunks.pop_front() {
+                Some(removed) => {
+                    self.total_bytes = self.total_bytes.saturating_sub(removed.len());
+                }
+                None => break,
+            }
+        }
+    }
+
+    fn drain(&mut self) -> Vec<Vec<u8>> {
+        let drained: Vec<Vec<u8>> = self.chunks.drain(..).collect();
+        self.total_bytes = 0;
+        drained
+    }
+}
+
+type OutputBuffer = Arc<Mutex<OutputBufferState>>;
 type OutputHandles = (OutputBuffer, Arc<Notify>);
 
 impl ManagedUnifiedExecSession {
     fn new(session: ExecCommandSession) -> Self {
-        let output_buffer = Arc::new(Mutex::new(VecDeque::new()));
+        let output_buffer = Arc::new(Mutex::new(OutputBufferState::default()));
         let output_notify = Arc::new(Notify::new());
         let mut receiver = session.output_receiver();
         let buffer_clone = Arc::clone(&output_buffer);
@@ -74,7 +101,7 @@ impl ManagedUnifiedExecSession {
         let output_task = tokio::spawn(async move {
             while let Ok(chunk) = receiver.recv().await {
                 let mut guard = buffer_clone.lock().await;
-                guard.push_back(chunk);
+                guard.push_chunk(chunk);
                 drop(guard);
                 notify_clone.notify_waiters();
             }
@@ -183,11 +210,7 @@ impl UnifiedExecSessionManager {
         loop {
             let drained_chunks = {
                 let mut guard = output_buffer.lock().await;
-                let mut drained = Vec::new();
-                while let Some(chunk) = guard.pop_front() {
-                    drained.push(chunk);
-                }
-                drained
+                guard.drain()
             };
 
             if drained_chunks.is_empty() {
@@ -608,43 +631,5 @@ mod tests {
         assert!(!manager.sessions.lock().await.contains_key(&session_id));
 
         Ok(())
-    }
-
-    #[test]
-    fn truncate_middle_no_newlines_fallback() {
-        let s = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ*";
-        let max_bytes = 32;
-        let (out, original) = truncate_middle(s, max_bytes);
-        assert_eq!(out, "abcdef[TRUNCATED CONTENT]UVWXYZ*");
-        assert_eq!(original, Some((s.len() as u64).div_ceil(4)));
-    }
-
-    #[test]
-    fn truncate_middle_prefers_newline_boundaries() {
-        let mut s = String::new();
-        for i in 1..=20 {
-            s.push_str(&format!("{i:03}\n"));
-        }
-        assert_eq!(s.len(), 80);
-
-        let max_bytes = 64;
-        let (out, tokens) = truncate_middle(&s, max_bytes);
-        assert!(out.starts_with("001\n002\n003\n004\n"));
-        assert!(out.contains("[TRUNCATED CONTENT]"));
-        assert!(out.ends_with("017\n018\n019\n020\n"));
-        assert_eq!(tokens, Some(20));
-    }
-
-    #[test]
-    // Ensure truncation is resilient against multi-bytes chars split.
-    fn truncate_middle_handles_utf8_content() {
-        let s = "😀😀😀😀😀😀😀😀😀😀\nsecond line with ascii text\n";
-        let max_bytes = 32;
-        let (out, tokens) = truncate_middle(s, max_bytes);
-
-        assert!(out.contains("[TRUNCATED CONTENT]"));
-        assert!(out.chars().any(|c| c == '😀'));
-        assert!(!out.contains('\u{fffd}'));
-        assert_eq!(tokens, Some((s.len() as u64).div_ceil(4)));
     }
 }

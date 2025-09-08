@@ -10,12 +10,70 @@ pub(crate) fn parse_command_line(line: &str) -> Result<Vec<String>, UnifiedExecE
         return Err(UnifiedExecError::MissingCommandLine);
     }
 
-    match shlex::split(trimmed) {
+    match parse_command_line_impl(trimmed) {
         Some(parts) if !parts.is_empty() => Ok(parts),
         _ => Err(UnifiedExecError::InvalidCommandLine {
             command_line: trimmed.to_string(),
         }),
     }
+}
+
+#[cfg(not(windows))]
+fn parse_command_line_impl(trimmed: &str) -> Option<Vec<String>> {
+    shlex::split(trimmed)
+}
+
+#[cfg(windows)]
+fn parse_command_line_impl(trimmed: &str) -> Option<Vec<String>> {
+    windows_split_command_line(trimmed)
+}
+
+#[cfg(windows)]
+fn windows_split_command_line(input: &str) -> Option<Vec<String>> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut backslashes = 0usize;
+
+    for ch in input.chars() {
+        match ch {
+            '\\' => {
+                backslashes += 1;
+            }
+            '"' => {
+                current.extend(std::iter::repeat('\\').take(backslashes / 2));
+                if backslashes % 2 == 0 {
+                    in_quotes = !in_quotes;
+                } else {
+                    current.push('"');
+                }
+                backslashes = 0;
+            }
+            c if c.is_whitespace() && !in_quotes => {
+                current.extend(std::iter::repeat('\\').take(backslashes));
+                backslashes = 0;
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            other => {
+                current.extend(std::iter::repeat('\\').take(backslashes));
+                backslashes = 0;
+                current.push(other);
+            }
+        }
+    }
+
+    if in_quotes {
+        return None;
+    }
+
+    current.extend(std::iter::repeat('\\').take(backslashes));
+    if !current.is_empty() {
+        args.push(current);
+    }
+
+    if args.is_empty() { None } else { Some(args) }
 }
 
 pub(crate) fn command_from_chunks(chunks: &[String]) -> Result<Vec<String>, UnifiedExecError> {
@@ -116,4 +174,21 @@ fn is_executable(metadata: &std::fs::Metadata) -> bool {
 #[cfg(not(unix))]
 fn is_executable(metadata: &std::fs::Metadata) -> bool {
     metadata.is_file()
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::parse_command_line;
+
+    #[test]
+    fn parses_windows_command_with_spaces() {
+        let out = parse_command_line(r#""C:\Program Files\Git\bin\bash.exe" -i"#).unwrap();
+        assert_eq!(
+            out,
+            vec![
+                "C:\\Program Files\\Git\\bin\\bash.exe".to_string(),
+                "-i".to_string(),
+            ]
+        );
+    }
 }
