@@ -302,7 +302,7 @@ impl App {
     /// Thin wrapper around ConversationManager::fork_conversation.
     async fn perform_fork(
         &self,
-        conversation_history: Vec<codex_core::protocol::ResponseItem>,
+        conversation_history: Vec<codex_protocol::models::ResponseItem>,
         drop_count: usize,
         cfg: codex_core::config::Config,
     ) -> codex_core::error::Result<codex_core::NewConversation> {

@@ -204,8 +204,8 @@ impl Codex {
             error!("Failed to create session: {e:#}");
             CodexErr::InternalAgentDied
         })?;
-        session
-            .record_initial_history(&turn_context, conversation_history)
+        let _ = session
+            .apply_initial_history(&turn_context, conversation_history)
             .await;
         let conversation_id = session.conversation_id;
 

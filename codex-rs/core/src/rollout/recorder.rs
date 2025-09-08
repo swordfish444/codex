@@ -151,61 +151,37 @@ impl RolloutRecorder {
     /// Attempt to create a new [`RolloutRecorder`]. If the sessions directory
     /// cannot be created or the rollout file cannot be opened we return the
     /// error so the caller can decide whether to disable persistence.
-    pub async fn new(config: &Config, params: RolloutRecorderParams) -> std::io::Result<Self> {
-        let (file, meta) = match params {
-            RolloutRecorderParams::Create {
-                conversation_id,
+    pub async fn new(
+        config: &Config,
+        conversation_id: ConversationId,
+        instructions: Option<String>,
+    ) -> std::io::Result<Self> {
+        let LogFileInfo {
+            file,
+            conversation_id: session_id,
+            timestamp,
+            path,
+        } = create_log_file(config, conversation_id)?;
+
+        let timestamp_format: &[FormatItem] = format_description!(
+            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"
+        );
+        let timestamp = timestamp
+            .to_offset(time::UtcOffset::UTC)
+            .format(timestamp_format)
+            .map_err(|e| IoError::other(format!("failed to format timestamp: {e}")))?;
+
+        (
+            tokio::fs::File::from_std(file),
+            Some(SessionMeta {
+                timestamp,
+                id: session_id,
+                cwd: config.cwd.to_string_lossy().to_string(),
+                originator: config.responses_originator_header.clone(),
+                cli_version: env!("CARGO_PKG_VERSION").to_string(),
                 instructions,
-            } => {
-                let LogFileInfo {
-                    file,
-                    conversation_id: session_id,
-                    timestamp,
-                } = create_log_file(config, conversation_id)?;
-
-                let timestamp_format: &[FormatItem] = format_description!(
-                    "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"
-                );
-                let timestamp = timestamp
-                    .to_offset(time::UtcOffset::UTC)
-                    .format(timestamp_format)
-                    .map_err(|e| IoError::other(format!("failed to format timestamp: {e}")))?;
-
-                (
-                    tokio::fs::File::from_std(file),
-                    Some(SessionMeta {
-                        timestamp,
-                        id: session_id,
-                        cwd: config.cwd.to_string_lossy().to_string(),
-                        originator: config.responses_originator_header.clone(),
-                        cli_version: env!("CARGO_PKG_VERSION").to_string(),
-                        instructions,
-                    }),
-                )
-            }
-            RolloutRecorderParams::Resume { path } => (
-                tokio::fs::OpenOptions::new()
-                    .append(true)
-                    .open(path)
-                    .await?,
-                None,
-            ),
-        };
-
-        // Clone the cwd for the spawned task to collect git info asynchronously
-        let cwd = config.cwd.clone();
-
-        // A reasonably-sized bounded channel. If the buffer fills up the send
-        // future will yield, which is fine – we only need to ensure we do not
-        // perform *blocking* I/O on the caller's thread.
-        let (tx, rx) = mpsc::channel::<RolloutCmd>(256);
-
-        // Spawn a Tokio task that owns the file handle and performs async
-        // writes. Using `tokio::fs::File` keeps everything on the async I/O
-        // driver instead of blocking the runtime.
-        tokio::task::spawn(rollout_writer(file, rx, meta, cwd));
-
-        Ok(Self { tx, path })
+            }),
+        )
     }
 
     pub(crate) async fn record_items(&self, item: RolloutItem) -> std::io::Result<()> {
