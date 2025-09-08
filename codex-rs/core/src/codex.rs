@@ -105,7 +105,6 @@ use crate::protocol::TokenUsageInfo;
 use crate::protocol::TurnDiffEvent;
 use crate::protocol::WebSearchBeginEvent;
 use crate::rollout::RolloutRecorder;
-use crate::rollout::RolloutRecorderParams;
 use crate::safety::SafetyCheck;
 use crate::safety::assess_command_safety;
 use crate::safety::assess_safety_for_untrusted_command;
@@ -378,18 +377,9 @@ impl Session {
             return Err(anyhow::anyhow!("cwd is not absolute: {cwd:?}"));
         }
 
-        let (conversation_id, rollout_params) = match &initial_history {
-            InitialHistory::New | InitialHistory::Forked(_) => {
-                let conversation_id = ConversationId::default();
-                (
-                    conversation_id,
-                    RolloutRecorderParams::new(conversation_id, user_instructions.clone()),
-                )
-            }
-            InitialHistory::Resumed(resumed_history) => (
-                resumed_history.conversation_id,
-                RolloutRecorderParams::resume(resumed_history.rollout_path.clone()),
-            ),
+        let conversation_id = match &initial_history {
+            InitialHistory::New | InitialHistory::Forked(_) => ConversationId::default(),
+            InitialHistory::Resumed(resumed_history) => resumed_history.conversation_id,
         };
 
         // Error messages to dispatch after SessionConfigured is sent.
@@ -401,7 +391,7 @@ impl Session {
         // - spin up MCP connection manager
         // - perform default shell discovery
         // - load history metadata
-        let rollout_fut = RolloutRecorder::new(&config, rollout_params);
+        let rollout_fut = RolloutRecorder::new(&config, conversation_id, user_instructions.clone());
 
         let mcp_fut = McpConnectionManager::new(config.mcp_servers.clone());
         let default_shell_fut = shell::default_user_shell();
@@ -539,7 +529,7 @@ impl Session {
         match conversation_history {
             InitialHistory::New => self.record_initial_history_new(turn_context).await,
             InitialHistory::Forked(items) => {
-                self.record_conversation_items_internal(&items, false).await;
+                self.record_conversation_items_internal(&items, true).await;
                 items
                     .into_iter()
                     .flat_map(|ri| {
@@ -570,7 +560,7 @@ impl Session {
             Some(self.user_shell.clone()),
         )));
         for item in conversation_items {
-            self.record_conversation_items(item).await;
+            self.record_conversation_item(item).await;
         }
         vec![]
     }
@@ -583,7 +573,8 @@ impl Session {
         // Record transcript (without persisting again)
         let responses: Vec<ResponseItem> = items.as_slice().get_response_items();
         if !responses.is_empty() {
-            self.record_conversation_items_internal(&responses, false).await;
+            self.record_conversation_items_internal(&responses, true)
+                .await;
         }
 
         items.as_slice().get_events()
@@ -699,11 +690,19 @@ impl Session {
         self.record_conversation_items_internal(items, true).await;
     }
 
+    async fn record_conversation_item(&self, item: ResponseItem) {
+        let items = [item];
+        self.record_conversation_items_internal(&items, true).await;
+    }
+
     async fn record_conversation_items_internal(&self, items: &[ResponseItem], persist: bool) {
         debug!("Recording items for conversation: {items:?}");
         if persist {
-            self.record_state_snapshot(RolloutItem::ResponseItem(items.to_vec()))
-                .await;
+            // Record snapshot of these items into rollout
+            for item in items {
+                self.record_state_snapshot(RolloutItem::ResponseItem(item.clone()))
+                    .await;
+            }
         }
 
         self.state.lock_unchecked().history.record_items(items);
@@ -726,7 +725,7 @@ impl Session {
     /// Does not send events to the UI.
     async fn record_user_input(&self, sub_id: &str, response_item: ResponseItem) {
         // Record the message/tool input in conversation history/rollout state
-        self.record_conversation_items(response_item.clone()).await;
+        self.record_conversation_item(response_item.clone()).await;
 
         // Derive and record a UserMessage event alongside it in the rollout
         let user_events =
@@ -1178,7 +1177,7 @@ async fn submission_loop(
                 // Install the new persistent context for subsequent tasks/turns.
                 turn_context = Arc::new(new_turn_context);
                 if cwd.is_some() || approval_policy.is_some() || sandbox_policy.is_some() {
-                    sess.record_conversation_items(ResponseItem::from(EnvironmentContext::new(
+                    sess.record_conversation_item(ResponseItem::from(EnvironmentContext::new(
                         cwd,
                         approval_policy,
                         sandbox_policy,
@@ -1600,7 +1599,7 @@ async fn run_task(
                 // Only attempt to take the lock if there is something to record.
                 if !items_to_record_in_conversation_history.is_empty() {
                     for item in items_to_record_in_conversation_history.iter().cloned() {
-                        sess.record_conversation_items(item).await;
+                        sess.record_conversation_item(item).await;
                     }
                 }
 

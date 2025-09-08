@@ -34,7 +34,7 @@ use crate::git_info::collect_git_info;
 use crate::rollout::policy::is_persisted_event;
 use codex_protocol::models::ResponseItem;
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone, Default, Debug)]
 pub struct SessionMeta {
     pub id: ConversationId,
     pub timestamp: String,
@@ -44,7 +44,8 @@ pub struct SessionMeta {
     pub instructions: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+// SessionMetaWithGit is used in writes and reads; ensure it implements Debug.
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SessionMetaWithGit {
     #[serde(flatten)]
     meta: SessionMeta,
@@ -52,7 +53,7 @@ pub struct SessionMetaWithGit {
     git: Option<GitInfo>,
 }
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct SessionStateSnapshot {}
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -286,19 +287,20 @@ impl RolloutRecorder {
         let first_line = lines
             .next()
             .ok_or_else(|| IoError::other("empty session file"))?;
-        let conversation_id = match serde_json::from_str::<SessionMeta>(first_line) {
-            Ok(rollout_session_meta) => {
-                tracing::error!(
-                    "Parsed conversation ID from rollout file: {:?}",
-                    rollout_session_meta.id
-                );
-                Some(rollout_session_meta.id)
-            }
-            Err(e) => {
-                return Err(IoError::other(format!(
-                    "failed to parse first line of rollout file as SessionMeta: {e}"
-                )));
-            }
+        let conversation_id = if let Ok(TimestampedLine {
+            record: TaggedLine::SessionMeta { meta },
+            ..
+        }) = serde_json::from_str::<TimestampedLine>(first_line)
+        {
+            Some(meta.meta.id)
+        } else if let Ok(meta) = serde_json::from_str::<SessionMetaWithGit>(first_line) {
+            Some(meta.meta.id)
+        } else if let Ok(meta) = serde_json::from_str::<SessionMeta>(first_line) {
+            Some(meta.id)
+        } else {
+            return Err(IoError::other(
+                "failed to parse first line of rollout file as SessionMeta",
+            ));
         };
 
         let mut items: Vec<RolloutItem> = Vec::new();

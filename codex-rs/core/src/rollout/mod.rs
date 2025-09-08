@@ -8,7 +8,6 @@ pub mod recorder;
 
 pub use recorder::RolloutItem;
 pub use recorder::RolloutRecorder;
-pub use recorder::RolloutRecorderParams;
 pub use recorder::SessionMeta;
 pub use recorder::SessionStateSnapshot;
 
