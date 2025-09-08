@@ -63,7 +63,6 @@ use crate::exec_command::ExecSessionManager;
 use crate::exec_command::WRITE_STDIN_TOOL_NAME;
 use crate::exec_command::WriteStdinParams;
 use crate::exec_env::create_env;
-use crate::ishell::InteractiveShellSessionManager;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::mcp_tool_call::handle_mcp_tool_call;
 use crate::model_family::find_family_for_model;
@@ -109,6 +108,7 @@ use crate::safety::assess_command_safety;
 use crate::safety::assess_safety_for_untrusted_command;
 use crate::shell;
 use crate::turn_diff_tracker::TurnDiffTracker;
+use crate::unified_exec::UnifiedExecSessionManager;
 use crate::user_instructions::UserInstructions;
 use crate::user_notification::UserNotification;
 use crate::util::backoff;
@@ -275,7 +275,7 @@ pub(crate) struct Session {
     /// Manager for external MCP servers/tools.
     mcp_connection_manager: McpConnectionManager,
     session_manager: ExecSessionManager,
-    ishell_manager: InteractiveShellSessionManager,
+    unified_exec_manager: UnifiedExecSessionManager,
 
     /// External notifier command (will be passed as args to exec()). When
     /// `None` this feature is disabled.
@@ -466,7 +466,7 @@ impl Session {
             tx_event: tx_event.clone(),
             mcp_connection_manager,
             session_manager: ExecSessionManager::default(),
-            ishell_manager: InteractiveShellSessionManager::default(),
+            unified_exec_manager: UnifiedExecSessionManager::default(),
             notify,
             state: Mutex::new(state),
             rollout: Mutex::new(Some(rollout_recorder)),
@@ -1997,10 +1997,16 @@ async fn handle_response_item(
             let call_id = id
                 .clone()
                 .or_else(|| session_id.clone())
-                .unwrap_or_else(|| format!("ishell:{}", Uuid::new_v4()));
+                .unwrap_or_else(|| format!("unified_exec:{}", Uuid::new_v4()));
             Some(
-                handle_ishell_tool_call(sess, call_id, session_id.clone(), arguments, timeout_ms)
-                    .await,
+                handle_unified_exec_tool_call(
+                    sess,
+                    call_id,
+                    session_id.clone(),
+                    arguments,
+                    timeout_ms,
+                )
+                .await,
             )
         }
         ResponseItem::CustomToolCall {
@@ -2047,47 +2053,47 @@ async fn handle_response_item(
     Ok(output)
 }
 
-
-async fn handle_ishell_tool_call(
+async fn handle_unified_exec_tool_call(
     sess: &Session,
     call_id: String,
     session_id: Option<String>,
     arguments: Vec<String>,
     timeout_ms: Option<u64>,
 ) -> ResponseInputItem {
-
     let parsed_session_id = if let Some(session_id) = session_id {
         match session_id.parse::<i32>() {
             Ok(parsed) => Some(parsed),
-            Err(output) => return ResponseInputItem::FunctionCallOutput {
-                call_id: call_id.to_string(),
-                output: FunctionCallOutputPayload {
-                    content: format!("invalid session_id: {session_id} due to error {output}"),
-                    success: Some(false),
-                },
+            Err(output) => {
+                return ResponseInputItem::FunctionCallOutput {
+                    call_id: call_id.to_string(),
+                    output: FunctionCallOutputPayload {
+                        content: format!("invalid session_id: {session_id} due to error {output}"),
+                        success: Some(false),
+                    },
+                };
             }
         }
     } else {
         None
     };
 
-    let request = crate::ishell::InteractiveShellRequest {
+    let request = crate::unified_exec::UnifiedExecRequest {
         session_id: parsed_session_id,
         input_chunks: &arguments,
         timeout_ms,
     };
 
-    let result = sess.ishell_manager.handle_request(request).await;
+    let result = sess.unified_exec_manager.handle_request(request).await;
 
     let output_payload = match result {
         Ok(value) => {
             #[derive(Serialize)]
-            struct SerializedIshellResult<'a> {
+            struct SerializedUnifiedExecResult<'a> {
                 session_id: Option<i32>,
                 output: &'a str,
             }
 
-            match serde_json::to_string(&SerializedIshellResult {
+            match serde_json::to_string(&SerializedUnifiedExecResult {
                 session_id: value.session_id,
                 output: &value.output,
             }) {
@@ -2096,13 +2102,13 @@ async fn handle_ishell_tool_call(
                     success: Some(true),
                 },
                 Err(err) => FunctionCallOutputPayload {
-                    content: format!("failed to serialize interactive shell output: {err}"),
+                    content: format!("failed to serialize unified exec output: {err}"),
                     success: Some(false),
                 },
             }
         }
         Err(err) => FunctionCallOutputPayload {
-            content: err.to_string(),
+            content: format!("unified exec failed: {err}"),
             success: Some(false),
         },
     };
@@ -2163,8 +2169,14 @@ async fn handle_function_call(
                 }
             };
 
-            handle_ishell_tool_call(sess, call_id, args.session_id, args.input, args.timeout_ms)
-                .await
+            handle_unified_exec_tool_call(
+                sess,
+                call_id,
+                args.session_id,
+                args.input,
+                args.timeout_ms,
+            )
+            .await
         }
         "view_image" => {
             #[derive(serde::Deserialize)]
