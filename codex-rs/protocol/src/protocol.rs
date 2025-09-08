@@ -10,7 +10,15 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
+use crate::config_types::ReasoningEffort as ReasoningEffortConfig;
+use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use crate::custom_prompts::CustomPrompt;
+use crate::mcp_protocol::ConversationId;
+use crate::message_history::HistoryEntry;
+use crate::models::ResponseItem;
+use crate::num_format::format_with_separators;
+use crate::parse_command::ParsedCommand;
+use crate::plan_tool::UpdatePlanArgs;
 use mcp_types::CallToolResult;
 use mcp_types::Tool as McpTool;
 use serde::Deserialize;
@@ -18,14 +26,6 @@ use serde::Serialize;
 use serde_with::serde_as;
 use strum_macros::Display;
 use ts_rs::TS;
-use uuid::Uuid;
-
-use crate::config_types::ReasoningEffort as ReasoningEffortConfig;
-use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
-use crate::message_history::HistoryEntry;
-use crate::models::ResponseItem;
-use crate::parse_command::ParsedCommand;
-use crate::plan_tool::UpdatePlanArgs;
 
 /// Open/close tags for special user-input blocks. Used across crates to avoid
 /// duplicated hardcoded strings.
@@ -33,6 +33,7 @@ pub const USER_INSTRUCTIONS_OPEN_TAG: &str = "<user_instructions>";
 pub const USER_INSTRUCTIONS_CLOSE_TAG: &str = "</user_instructions>";
 pub const ENVIRONMENT_CONTEXT_OPEN_TAG: &str = "<environment_context>";
 pub const ENVIRONMENT_CONTEXT_CLOSE_TAG: &str = "</environment_context>";
+pub const USER_MESSAGE_BEGIN: &str = "## My request for Codex:";
 
 /// Submission Queue Entry - requests from user
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -410,7 +411,7 @@ pub struct Event {
 }
 
 /// Response event from the agent
-#[derive(Debug, Clone, Deserialize, Serialize, Display)]
+#[derive(Debug, Clone, Deserialize, Serialize, Display, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum EventMsg {
@@ -423,9 +424,9 @@ pub enum EventMsg {
     /// Agent has completed all actions
     TaskComplete(TaskCompleteEvent),
 
-    /// Token count event, sent periodically to report the number of tokens
-    /// used in the current session.
-    TokenCount(TokenUsage),
+    /// Usage update for the current session, including totals and last turn.
+    /// Optional means unknown — UIs should not display when `None`.
+    TokenCount(TokenCountEvent),
 
     /// Agent text output message
     AgentMessage(AgentMessageEvent),
@@ -509,28 +510,70 @@ pub enum EventMsg {
 
 // Individual event payload types matching each `EventMsg` variant.
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct ErrorEvent {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct TaskCompleteEvent {
     pub last_agent_message: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct TaskStartedEvent {
     pub model_context_window: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, TS)]
 pub struct TokenUsage {
     pub input_tokens: u64,
-    pub cached_input_tokens: Option<u64>,
+    pub cached_input_tokens: u64,
     pub output_tokens: u64,
-    pub reasoning_output_tokens: Option<u64>,
+    pub reasoning_output_tokens: u64,
     pub total_tokens: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+pub struct TokenUsageInfo {
+    pub total_token_usage: TokenUsage,
+    pub last_token_usage: TokenUsage,
+    pub model_context_window: Option<u64>,
+}
+
+impl TokenUsageInfo {
+    pub fn new_or_append(
+        info: &Option<TokenUsageInfo>,
+        last: &Option<TokenUsage>,
+        model_context_window: Option<u64>,
+    ) -> Option<Self> {
+        if info.is_none() && last.is_none() {
+            return None;
+        }
+
+        let mut info = match info {
+            Some(info) => info.clone(),
+            None => Self {
+                total_token_usage: TokenUsage::default(),
+                last_token_usage: TokenUsage::default(),
+                model_context_window,
+            },
+        };
+        if let Some(last) = last {
+            info.append_last_usage(last);
+        }
+        Some(info)
+    }
+
+    pub fn append_last_usage(&mut self, last: &TokenUsage) {
+        self.total_token_usage.add_assign(last);
+        self.last_token_usage = last.clone();
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+pub struct TokenCountEvent {
+    pub info: Option<TokenUsageInfo>,
 }
 
 // Includes prompts, tools and space to call compact.
@@ -542,7 +585,7 @@ impl TokenUsage {
     }
 
     pub fn cached_input(&self) -> u64 {
-        self.cached_input_tokens.unwrap_or(0)
+        self.cached_input_tokens
     }
 
     pub fn non_cached_input(&self) -> u64 {
@@ -560,7 +603,7 @@ impl TokenUsage {
     /// This will be off for the current turn and pending function calls.
     pub fn tokens_in_context_window(&self) -> u64 {
         self.total_tokens
-            .saturating_sub(self.reasoning_output_tokens.unwrap_or(0))
+            .saturating_sub(self.reasoning_output_tokens)
     }
 
     /// Estimate the remaining user-controllable percentage of the model's context window.
@@ -585,6 +628,15 @@ impl TokenUsage {
         let remaining = effective_window.saturating_sub(used);
         ((remaining as f32 / effective_window as f32) * 100.0).clamp(0.0, 100.0) as u8
     }
+
+    /// In-place element-wise sum of token counts.
+    pub fn add_assign(&mut self, other: &TokenUsage) {
+        self.input_tokens += other.input_tokens;
+        self.cached_input_tokens += other.cached_input_tokens;
+        self.output_tokens += other.output_tokens;
+        self.reasoning_output_tokens += other.reasoning_output_tokens;
+        self.total_tokens += other.total_tokens;
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -601,31 +653,39 @@ impl From<TokenUsage> for FinalOutput {
 impl fmt::Display for FinalOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let token_usage = &self.token_usage;
+
         write!(
             f,
             "Token usage: total={} input={}{} output={}{}",
-            token_usage.blended_total(),
-            token_usage.non_cached_input(),
+            format_with_separators(token_usage.blended_total()),
+            format_with_separators(token_usage.non_cached_input()),
             if token_usage.cached_input() > 0 {
-                format!(" (+ {} cached)", token_usage.cached_input())
+                format!(
+                    " (+ {} cached)",
+                    format_with_separators(token_usage.cached_input())
+                )
             } else {
                 String::new()
             },
-            token_usage.output_tokens,
-            token_usage
-                .reasoning_output_tokens
-                .map(|r| format!(" (reasoning {r})"))
-                .unwrap_or_default()
+            format_with_separators(token_usage.output_tokens),
+            if token_usage.reasoning_output_tokens > 0 {
+                format!(
+                    " (reasoning {})",
+                    format_with_separators(token_usage.reasoning_output_tokens)
+                )
+            } else {
+                String::new()
+            }
         )
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct AgentMessageEvent {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum InputMessageKind {
     /// Plain user text (default)
@@ -636,7 +696,7 @@ pub enum InputMessageKind {
     EnvironmentContext,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct UserMessageEvent {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -666,35 +726,35 @@ where
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct AgentMessageDeltaEvent {
     pub delta: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct AgentReasoningEvent {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct AgentReasoningRawContentEvent {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct AgentReasoningRawContentDeltaEvent {
     pub delta: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct AgentReasoningSectionBreakEvent {}
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct AgentReasoningDeltaEvent {
     pub delta: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct McpInvocation {
     /// Name of the MCP server as defined in the config.
     pub server: String,
@@ -704,18 +764,19 @@ pub struct McpInvocation {
     pub arguments: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct McpToolCallBeginEvent {
     /// Identifier so this can be paired with the McpToolCallEnd event.
     pub call_id: String,
     pub invocation: McpInvocation,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct McpToolCallEndEvent {
     /// Identifier for the corresponding McpToolCallBegin that finished.
     pub call_id: String,
     pub invocation: McpInvocation,
+    #[ts(type = "string")]
     pub duration: Duration,
     /// Result of the tool call. Note this could be an error.
     pub result: Result<CallToolResult, String>,
@@ -730,12 +791,12 @@ impl McpToolCallEndEvent {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct WebSearchBeginEvent {
     pub call_id: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct WebSearchEndEvent {
     pub call_id: String,
     pub query: String,
@@ -743,13 +804,13 @@ pub struct WebSearchEndEvent {
 
 /// Response payload for `Op::GetHistory` containing the current session's
 /// in-memory transcript.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct ConversationHistoryResponseEvent {
-    pub conversation_id: Uuid,
+    pub conversation_id: ConversationId,
     pub entries: Vec<ResponseItem>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct ExecCommandBeginEvent {
     /// Identifier so this can be paired with the ExecCommandEnd event.
     pub call_id: String,
@@ -760,7 +821,7 @@ pub struct ExecCommandBeginEvent {
     pub parsed_cmd: Vec<ParsedCommand>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct ExecCommandEndEvent {
     /// Identifier for the ExecCommandBegin that finished.
     pub call_id: String,
@@ -774,12 +835,13 @@ pub struct ExecCommandEndEvent {
     /// The command's exit code.
     pub exit_code: i32,
     /// The duration of the command execution.
+    #[ts(type = "string")]
     pub duration: Duration,
     /// Formatted output from the command, as seen by the model.
     pub formatted_output: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecOutputStream {
     Stdout,
@@ -787,7 +849,7 @@ pub enum ExecOutputStream {
 }
 
 #[serde_as]
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, TS)]
 pub struct ExecCommandOutputDeltaEvent {
     /// Identifier for the ExecCommandBegin that produced this chunk.
     pub call_id: String,
@@ -795,10 +857,11 @@ pub struct ExecCommandOutputDeltaEvent {
     pub stream: ExecOutputStream,
     /// Raw bytes from the stream (may not be valid UTF-8).
     #[serde_as(as = "serde_with::base64::Base64")]
+    #[ts(type = "string")]
     pub chunk: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct ExecApprovalRequestEvent {
     /// Identifier for the associated exec call, if available.
     pub call_id: String,
@@ -811,7 +874,7 @@ pub struct ExecApprovalRequestEvent {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct ApplyPatchApprovalRequestEvent {
     /// Responses API call id for the associated patch apply call, if available.
     pub call_id: String,
@@ -824,17 +887,17 @@ pub struct ApplyPatchApprovalRequestEvent {
     pub grant_root: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct BackgroundEventEvent {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct StreamErrorEvent {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct PatchApplyBeginEvent {
     /// Identifier so this can be paired with the PatchApplyEnd event.
     pub call_id: String,
@@ -844,7 +907,7 @@ pub struct PatchApplyBeginEvent {
     pub changes: HashMap<PathBuf, FileChange>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct PatchApplyEndEvent {
     /// Identifier for the PatchApplyBegin that finished.
     pub call_id: String,
@@ -856,12 +919,12 @@ pub struct PatchApplyEndEvent {
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct TurnDiffEvent {
     pub unified_diff: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct GetHistoryEntryResponseEvent {
     pub offset: usize,
     pub log_id: u64,
@@ -871,22 +934,22 @@ pub struct GetHistoryEntryResponseEvent {
 }
 
 /// Response payload for `Op::ListMcpTools`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct McpListToolsResponseEvent {
     /// Fully qualified tool name -> tool definition.
     pub tools: std::collections::HashMap<String, McpTool>,
 }
 
 /// Response payload for `Op::ListCustomPrompts`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct ListCustomPromptsResponseEvent {
     pub custom_prompts: Vec<CustomPrompt>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize, TS)]
 pub struct SessionConfiguredEvent {
-    /// Unique id for this session.
-    pub session_id: Uuid,
+    /// Name left as session_id instead of conversation_id for backwards compatibility.
+    pub session_id: ConversationId,
 
     /// Tell the client what model is being queried.
     pub model: String,
@@ -940,7 +1003,7 @@ pub enum FileChange {
     },
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct Chunk {
     /// 1-based line index of the first line in the original file
     pub orig_index: u32,
@@ -948,7 +1011,7 @@ pub struct Chunk {
     pub inserted_lines: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct TurnAbortedEvent {
     pub reason: TurnAbortReason,
 }
@@ -968,11 +1031,11 @@ mod tests {
     /// amount of nesting.
     #[test]
     fn serialize_event() {
-        let session_id: Uuid = uuid::uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+        let conversation_id = ConversationId(uuid::uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8"));
         let event = Event {
             id: "1234".to_string(),
             msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-                session_id,
+                session_id: conversation_id,
                 model: "codex-mini-latest".to_string(),
                 history_log_id: 0,
                 history_entry_count: 0,

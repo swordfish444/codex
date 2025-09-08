@@ -7,7 +7,7 @@
 
 mod apply_patch;
 pub mod auth;
-mod bash;
+pub mod bash;
 mod chat_completions;
 mod client;
 mod client_common;
@@ -62,6 +62,7 @@ pub mod terminal;
 mod tool_apply_patch;
 pub mod turn_diff_tracker;
 pub use rollout::RolloutRecorder;
+pub use rollout::SessionMeta;
 pub use rollout::list::ConversationItem;
 pub use rollout::list::ConversationsPage;
 pub use rollout::list::Cursor;
