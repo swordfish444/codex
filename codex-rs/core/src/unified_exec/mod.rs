@@ -29,7 +29,7 @@ use path::command_from_chunks;
 use path::join_input_chunks;
 use path::resolve_command_path;
 
-const DEFAULT_TIMEOUT_MS: u64 = 250;
+const DEFAULT_TIMEOUT_MS: u64 = 1_000;
 const MAX_TIMEOUT_MS: u64 = 60_000;
 const UNIFIED_EXEC_OUTPUT_MAX_BYTES: usize = 128 * 1024; // 128 KiB
 

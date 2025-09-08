@@ -1994,10 +1994,10 @@ async fn handle_response_item(
             arguments,
             timeout_ms,
         } => {
-            let call_id = id
-                .clone()
-                .or_else(|| session_id.clone())
-                .unwrap_or_else(|| format!("unified_exec:{}", Uuid::new_v4()));
+            let call_id = id.clone().unwrap_or_else(|| match &session_id {
+                Some(session_id) => format!("unified_exec:{session_id}:{}", Uuid::new_v4()),
+                None => format!("unified_exec:{}", Uuid::new_v4()),
+            });
             Some(
                 handle_unified_exec_tool_call(
                     sess,
