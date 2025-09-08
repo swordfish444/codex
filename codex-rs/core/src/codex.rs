@@ -723,6 +723,7 @@ impl Session {
                 user_explicitly_approved_this_action,
                 changes,
             }) => {
+                self.clear_last_undo_patch();
                 turn_diff_tracker.on_patch_begin(&changes);
 
                 EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
