@@ -41,7 +41,7 @@ fn windows_split_command_line(input: &str) -> Option<Vec<String>> {
                 backslashes += 1;
             }
             '"' => {
-                current.extend(std::iter::repeat('\\').take(backslashes / 2));
+                current.extend(std::iter::repeat_n('\\', backslashes / 2));
                 if backslashes % 2 == 0 {
                     in_quotes = !in_quotes;
                 } else {
@@ -50,14 +50,14 @@ fn windows_split_command_line(input: &str) -> Option<Vec<String>> {
                 backslashes = 0;
             }
             c if c.is_whitespace() && !in_quotes => {
-                current.extend(std::iter::repeat('\\').take(backslashes));
+                current.extend(std::iter::repeat_n('\\', backslashes));
                 backslashes = 0;
                 if !current.is_empty() {
                     args.push(std::mem::take(&mut current));
                 }
             }
             other => {
-                current.extend(std::iter::repeat('\\').take(backslashes));
+                current.extend(std::iter::repeat_n('\\', backslashes));
                 backslashes = 0;
                 current.push(other);
             }
@@ -68,7 +68,7 @@ fn windows_split_command_line(input: &str) -> Option<Vec<String>> {
         return None;
     }
 
-    current.extend(std::iter::repeat('\\').take(backslashes));
+    current.extend(std::iter::repeat_n('\\', backslashes));
     if !current.is_empty() {
         args.push(current);
     }
