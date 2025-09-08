@@ -1409,7 +1409,12 @@ async fn submission_loop(
                     id: sub_id.clone(),
                     msg: EventMsg::ConversationHistory(ConversationPathResponseEvent {
                         conversation_id: sess.conversation_id,
-                        entries: sess.state.lock_unchecked().history.contents(),
+                        path: sess
+                            .rollout
+                            .lock_unchecked()
+                            .as_ref()
+                            .map(|r| r.path().to_path_buf())
+                            .unwrap_or_default(),
                     }),
                 };
                 sess.send_event(event).await;

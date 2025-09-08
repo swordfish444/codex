@@ -138,6 +138,9 @@ impl RolloutRecorderParams {
 }
 
 impl RolloutRecorder {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
     #[allow(dead_code)]
     /// List conversations (rollout files) under the provided Codex home directory.
     pub async fn list_conversations(
@@ -312,10 +315,6 @@ impl RolloutRecorder {
             history: items,
             rollout_path: path.to_path_buf(),
         }))
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     pub async fn shutdown(&self) -> std::io::Result<()> {

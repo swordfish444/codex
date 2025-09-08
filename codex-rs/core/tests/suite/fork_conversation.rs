@@ -77,13 +77,43 @@ async fn fork_conversation_twice_drops_to_first_message() {
     let base_history =
         wait_for_event(&codex, |ev| matches!(ev, EventMsg::ConversationHistory(_))).await;
 
-    // Capture entries from the base history and compute expected prefixes after each fork.
-    let entries_after_three: Vec<ResponseItem> = match &base_history {
-        EventMsg::ConversationHistory(ConversationPathResponseEvent { entries, .. }) => {
-            entries.clone()
-        }
+    // Capture path/id from the base history and compute expected prefixes after each fork.
+    let (base_conv_id, base_path) = match &base_history {
+        EventMsg::ConversationHistory(ConversationPathResponseEvent {
+            conversation_id,
+            path,
+        }) => (*conversation_id, path.clone()),
         _ => panic!("expected ConversationHistory event"),
     };
+
+    // Read entries from rollout file.
+    async fn read_response_entries(path: &std::path::Path) -> Vec<ResponseItem> {
+        let text = tokio::fs::read_to_string(path).await.unwrap_or_default();
+        let mut out = Vec::new();
+        for line in text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(item) = serde_json::from_str::<ResponseItem>(line) {
+                out.push(item);
+            }
+        }
+        out
+    }
+    async fn read_response_entries_with_retry(
+        path: &std::path::Path,
+        min_len: usize,
+    ) -> Vec<ResponseItem> {
+        for _ in 0..50u32 {
+            let entries = read_response_entries(path).await;
+            if entries.len() >= min_len {
+                return entries;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
+        read_response_entries(path).await
+    }
+    let entries_after_three: Vec<ResponseItem> = read_response_entries(&base_path).await;
     // History layout for this test:
     // [0] user instructions,
     // [1] environment context,
@@ -114,7 +144,7 @@ async fn fork_conversation_twice_drops_to_first_message() {
         conversation: codex_fork1,
         ..
     } = conversation_manager
-        .fork_conversation(entries_after_three.clone(), 1, config_for_fork.clone())
+        .fork_conversation(base_path.clone(), base_conv_id, 1, config_for_fork.clone())
         .await
         .expect("fork 1");
 
@@ -123,20 +153,23 @@ async fn fork_conversation_twice_drops_to_first_message() {
         matches!(ev, EventMsg::ConversationHistory(_))
     })
     .await;
-    let entries_after_first_fork: Vec<ResponseItem> = match &fork1_history {
-        EventMsg::ConversationHistory(ConversationPathResponseEvent { entries, .. }) => {
-            assert_eq!(entries, &expected_after_first);
-            entries.clone()
-        }
+    let (fork1_id, fork1_path) = match &fork1_history {
+        EventMsg::ConversationHistory(ConversationPathResponseEvent {
+            conversation_id,
+            path,
+        }) => (*conversation_id, path.clone()),
         _ => panic!("expected ConversationHistory event after first fork"),
     };
+    let entries_after_first_fork: Vec<ResponseItem> =
+        read_response_entries_with_retry(&fork1_path, expected_after_first.len()).await;
+    assert_eq!(entries_after_first_fork, expected_after_first);
 
     // Fork again with n=1 → drops the (new) last user message, leaving only the first.
     let NewConversation {
         conversation: codex_fork2,
         ..
     } = conversation_manager
-        .fork_conversation(entries_after_first_fork.clone(), 1, config_for_fork.clone())
+        .fork_conversation(fork1_path.clone(), fork1_id, 1, config_for_fork.clone())
         .await
         .expect("fork 2");
 
@@ -145,10 +178,14 @@ async fn fork_conversation_twice_drops_to_first_message() {
         matches!(ev, EventMsg::ConversationHistory(_))
     })
     .await;
-    match &fork2_history {
-        EventMsg::ConversationHistory(ConversationPathResponseEvent { entries, .. }) => {
-            assert_eq!(entries, &expected_after_second);
-        }
+    let (_fork2_id, fork2_path) = match &fork2_history {
+        EventMsg::ConversationHistory(ConversationPathResponseEvent {
+            conversation_id,
+            path,
+        }) => (*conversation_id, path.clone()),
         _ => panic!("expected ConversationHistory event after second fork"),
     };
+    let entries_after_second_fork: Vec<ResponseItem> =
+        read_response_entries_with_retry(&fork2_path, expected_after_second.len()).await;
+    assert_eq!(entries_after_second_fork, expected_after_second);
 }

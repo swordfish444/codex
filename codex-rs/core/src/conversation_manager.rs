@@ -156,16 +156,19 @@ impl ConversationManager {
     /// caller's `config`). The new conversation will have a fresh id.
     pub async fn fork_conversation(
         &self,
-        conversation_history: Vec<ResponseItem>,
+        conversation_path: PathBuf,
+        conversation_id: ConversationId,
         num_messages_to_drop: usize,
         config: Config,
     ) -> CodexResult<NewConversation> {
         // Compute the prefix up to the cut point.
-        let items: Vec<RolloutItem> = conversation_history
-            .into_iter()
-            .map(RolloutItem::from)
-            .collect();
-        let history = truncate_after_dropping_last_messages(items, num_messages_to_drop);
+        let initial_history = RolloutRecorder::get_rollout_history(&conversation_path).await?;
+        let conversation_history = match initial_history {
+            InitialHistory::Resumed(items) => items,
+            InitialHistory::New => return Err(CodexErr::ConversationNotFound(conversation_id)),
+        };
+        let history =
+            truncate_after_dropping_last_messages(conversation_history, num_messages_to_drop);
 
         // Spawn a new conversation with the computed initial history.
         let auth_manager = self.auth_manager.clone();

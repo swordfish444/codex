@@ -801,7 +801,7 @@ pub struct WebSearchEndEvent {
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct ConversationPathResponseEvent {
     pub conversation_id: ConversationId,
-    pub entries: Vec<ResponseItem>,
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]

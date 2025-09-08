@@ -288,7 +288,7 @@ impl App {
         let cfg = self.chat_widget.config_ref().clone();
         // Perform the fork via a thin wrapper for clarity/testability.
         let result = self
-            .perform_fork(ev.entries.clone(), drop_count, cfg.clone())
+            .perform_fork(ev.path.clone(), ev.conversation_id, drop_count, cfg.clone())
             .await;
         // We aren't using the initial history UI replay in session configured because we have more accurate version of the history.
         match result {
@@ -302,12 +302,13 @@ impl App {
     /// Thin wrapper around ConversationManager::fork_conversation.
     async fn perform_fork(
         &self,
-        conversation_history: Vec<codex_protocol::models::ResponseItem>,
+        conversation_path: std::path::PathBuf,
+        conversation_id: codex_protocol::mcp_protocol::ConversationId,
         drop_count: usize,
         cfg: codex_core::config::Config,
     ) -> codex_core::error::Result<codex_core::NewConversation> {
         self.server
-            .fork_conversation(conversation_history, drop_count, cfg)
+            .fork_conversation(conversation_path, conversation_id, drop_count, cfg)
             .await
     }
 
