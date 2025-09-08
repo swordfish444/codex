@@ -336,7 +336,7 @@ mod snapshots {
         let zshrc = home.join(".zshrc");
 
         capture_script.push_str(
-            &format!("source {}; setopt posixbuiltins; export -p; {{ alias | sed 's/^/alias /'; }} 2>/dev/null || true", zshrc.display()),
+            &format!(". {}; setopt posixbuiltins; export -p; {{ alias | sed 's/^/alias /'; }} 2>/dev/null || true", zshrc.display()),
         );
         let output = tokio::process::Command::new(shell_path)
             .arg("-lc")
