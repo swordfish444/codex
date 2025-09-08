@@ -208,10 +208,15 @@ impl UnifiedExecSessionManager {
         let deadline = start + Duration::from_millis(timeout_ms);
 
         loop {
-            let drained_chunks = {
+            let drained_chunks;
+            let mut wait_for_output = None;
+            {
                 let mut guard = output_buffer.lock().await;
-                guard.drain()
-            };
+                drained_chunks = guard.drain();
+                if drained_chunks.is_empty() {
+                    wait_for_output = Some(output_notify.notified());
+                }
+            }
 
             if drained_chunks.is_empty() {
                 if Instant::now() >= deadline {
@@ -219,18 +224,21 @@ impl UnifiedExecSessionManager {
                 }
 
                 let remaining = deadline.saturating_duration_since(Instant::now());
+                let notified = wait_for_output.unwrap_or_else(|| output_notify.notified());
+                tokio::pin!(notified);
                 tokio::select! {
-                    _ = output_notify.notified() => {}
+                    _ = &mut notified => {}
                     _ = tokio::time::sleep(remaining) => break,
                 }
-            } else {
-                for chunk in drained_chunks {
-                    collected.extend_from_slice(&chunk);
-                }
+                continue;
+            }
 
-                if Instant::now() >= deadline {
-                    break;
-                }
+            for chunk in drained_chunks {
+                collected.extend_from_slice(&chunk);
+            }
+
+            if Instant::now() >= deadline {
+                break;
             }
         }
 
