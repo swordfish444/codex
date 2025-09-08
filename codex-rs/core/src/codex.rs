@@ -2089,12 +2089,12 @@ async fn handle_unified_exec_tool_call(
         Ok(value) => {
             #[derive(Serialize)]
             struct SerializedUnifiedExecResult<'a> {
-                session_id: Option<i32>,
+                session_id: Option<String>,
                 output: &'a str,
             }
 
             match serde_json::to_string(&SerializedUnifiedExecResult {
-                session_id: value.session_id,
+                session_id: value.session_id.map(|id| id.to_string()),
                 output: &value.output,
             }) {
                 Ok(serialized) => FunctionCallOutputPayload {
