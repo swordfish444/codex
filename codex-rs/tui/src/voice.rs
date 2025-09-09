@@ -1,7 +1,7 @@
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use codex_core::config::find_codex_home;
-use codex_core::user_agent::get_codex_user_agent;
+use codex_core::default_client::get_codex_user_agent;
 use codex_login::AuthMode;
 use codex_login::CodexAuth;
 use cpal::traits::DeviceTrait;
@@ -324,7 +324,11 @@ fn encode_wav_normalized(audio: &RecordedAudio) -> Result<Vec<u8>, String> {
 
 async fn resolve_auth() -> Result<(String, Option<String>), String> {
     let codex_home = find_codex_home().map_err(|e| format!("failed to find codex home: {e}"))?;
-    let auth_opt = CodexAuth::from_codex_home(&codex_home, AuthMode::ChatGPT)
+    let auth_opt = CodexAuth::from_codex_home(
+        &codex_home,
+        AuthMode::ChatGPT,
+        codex_core::default_client::DEFAULT_ORIGINATOR,
+    )
         .map_err(|e| format!("failed to read auth.json: {e}"))?;
     match auth_opt {
         Some(auth) => {
