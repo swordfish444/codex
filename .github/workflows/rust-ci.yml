@@ -178,12 +178,17 @@ jobs:
           find . -name Cargo.toml -mindepth 2 -maxdepth 2 -print0 \
             | xargs -0 -n1 -I{} bash -c 'cd "$(dirname "{}")" && cargo check --profile ${{ matrix.profile }}'
 
-      - name: cargo test
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+          version: 0.9.103
+
+      - name: tests
         id: test
-        # `cargo test` takes too long for release builds to run them on every PR
+        # Tests take too long for release builds to run them on every PR.
         if: ${{ matrix.profile != 'release' }}
         continue-on-error: true
-        run: cargo test --all-features --target ${{ matrix.target }} --profile ${{ matrix.profile }}
+        run: cargo nextest run --all-features --target ${{ matrix.target }}
         env:
           RUST_BACKTRACE: 1
 
