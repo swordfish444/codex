@@ -68,6 +68,11 @@ fn upgrade_event_payload_for_tests(mut payload: serde_json::Value) -> serde_json
                 "formatted_output".to_string(),
                 serde_json::Value::String(formatted),
             );
+        } else if ty == "patch_apply_begin" && !m.contains_key("cwd") {
+            m.insert(
+                "cwd".to_string(),
+                serde_json::Value::String("/tmp".to_string()),
+            );
         }
     }
     payload
@@ -234,6 +239,7 @@ fn make_chatwidget_manual() -> (
         running_commands: HashMap::new(),
         task_complete_pending: false,
         interrupts: InterruptManager::new(),
+        patch_history: PatchUndoHistory::new(),
         reasoning_buffer: String::new(),
         full_reasoning_buffer: String::new(),
         conversation_id: None,
@@ -1103,6 +1109,7 @@ fn apply_patch_events_emit_history_cells() {
         call_id: "c1".into(),
         auto_approved: true,
         changes: changes2,
+        cwd: PathBuf::from("/tmp"),
     };
     chat.handle_codex_event(Event {
         id: "s1".into(),
@@ -1169,6 +1176,7 @@ fn apply_patch_manual_approval_adjusts_header() {
             call_id: "c1".into(),
             auto_approved: false,
             changes: apply_changes,
+            cwd: PathBuf::from("/tmp"),
         }),
     });
 
@@ -1218,6 +1226,7 @@ fn apply_patch_manual_flow_snapshot() {
             call_id: "c1".into(),
             auto_approved: false,
             changes: apply_changes,
+            cwd: PathBuf::from("/tmp"),
         }),
     });
     let approved_lines = drain_insert_history(&mut rx)
@@ -1334,6 +1343,7 @@ fn apply_patch_full_flow_integration_like() {
             call_id: "call-1".into(),
             auto_approved: false,
             changes: changes2,
+            cwd: PathBuf::from("/tmp"),
         }),
     });
     chat.handle_codex_event(Event {

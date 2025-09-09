@@ -732,13 +732,21 @@ impl Session {
             Some(ApplyPatchCommandContext {
                 user_explicitly_approved_this_action,
                 changes,
+                patch,
+                cwd,
             }) => {
+                debug!(
+                    "applying patch ({} bytes) in {}",
+                    patch.len(),
+                    cwd.display()
+                );
                 turn_diff_tracker.on_patch_begin(&changes);
 
                 EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
                     call_id,
                     auto_approved: !user_explicitly_approved_this_action,
                     changes,
+                    cwd,
                 })
             }
             None => EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
@@ -992,6 +1000,8 @@ pub(crate) struct ExecCommandContext {
 pub(crate) struct ApplyPatchCommandContext {
     pub(crate) user_explicitly_approved_this_action: bool,
     pub(crate) changes: HashMap<PathBuf, FileChange>,
+    pub(crate) patch: String,
+    pub(crate) cwd: PathBuf,
 }
 
 /// A series of Turns in response to user input.
@@ -2512,6 +2522,8 @@ async fn handle_container_exec_with_params(
              }| ApplyPatchCommandContext {
                 user_explicitly_approved_this_action,
                 changes: convert_apply_patch_to_protocol(&action),
+                patch: action.patch.clone(),
+                cwd: action.cwd.clone(),
             },
         ),
     };

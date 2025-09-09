@@ -899,6 +899,8 @@ pub struct PatchApplyBeginEvent {
     pub auto_approved: bool,
     /// The changes to be applied.
     pub changes: HashMap<PathBuf, FileChange>,
+    /// The working directory the patch was applied from.
+    pub cwd: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
