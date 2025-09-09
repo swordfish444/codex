@@ -122,7 +122,6 @@ impl ChatComposer {
     ) -> Self {
         let use_shift_enter_hint = enhanced_keys_supported;
 
-        
         Self {
             textarea: TextArea::new(),
             textarea_state: RefCell::new(TextAreaState::default()),
@@ -875,9 +874,9 @@ impl ChatComposer {
             // -------------------------------------------------------------
             KeyEvent {
                 code: KeyCode::Up | KeyCode::Down,
-                kind,
+                kind: KeyEventKind::Press | KeyEventKind::Repeat,
                 ..
-            } if matches!(kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
+            } => {
                 if self
                     .history
                     .should_handle_navigation(self.textarea.text(), self.textarea.cursor())
