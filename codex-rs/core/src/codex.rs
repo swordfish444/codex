@@ -816,7 +816,7 @@ impl Session {
 
         if record_admin_command_event {
             maybe_post_admin_audit_events(
-                &self.config,
+                &self.config.admin_controls,
                 AdminAuditContext {
                     sandbox_policy,
                     approval_policy,

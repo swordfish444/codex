@@ -1,13 +1,14 @@
 use codex_common::CliConfigOverrides;
 use codex_core::CodexAuth;
+use codex_core::admin_controls::ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE;
 use codex_core::auth::CLIENT_ID;
 use codex_core::auth::OPENAI_API_KEY_ENV_VAR;
 use codex_core::auth::login_with_api_key;
 use codex_core::auth::logout;
+use codex_core::config::AdminAuditContext;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
-use codex_core::config::audit_admin_run_with_prompt;
-use codex_core::config::prompt_for_admin_danger_reason;
+use codex_core::config::audit_admin_run_without_prompt;
 use codex_login::ServerOptions;
 use codex_login::run_login_server;
 use codex_protocol::mcp_protocol::AuthMode;
@@ -144,22 +145,34 @@ async fn load_config_or_exit(cli_config_overrides: CliConfigOverrides) -> Config
         }
     };
 
-    let _admin_override_reason = match prompt_for_admin_danger_reason(&config) {
-        Ok(reason) => reason,
-        Err(err) => {
-            eprintln!("{err}");
-            std::process::exit(1);
-        }
-    };
-
-    let prompt_result = prompt_for_admin_danger_reason(&config);
-    match audit_admin_run_with_prompt(&config, prompt_result, false).await {
-        Ok(_) => config,
-        Err(err) => {
-            eprintln!("{err}");
-            std::process::exit(1);
-        }
+    if config
+        .admin_danger_prompt
+        .as_ref()
+        .is_some_and(|prompt| prompt.needs_prompt())
+    {
+        eprintln!("{ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE}");
+        std::process::exit(1);
     }
+
+    if let Err(err) = audit_admin_run_without_prompt(
+        &config.admin_controls,
+        AdminAuditContext {
+            sandbox_policy: &config.sandbox_policy,
+            approval_policy: &config.approval_policy,
+            cwd: &config.cwd,
+            command: None,
+            dangerously_bypass_requested: false,
+            dangerous_mode_justification: None,
+            record_command_event: false,
+        },
+    )
+    .await
+    {
+        eprintln!("{err}");
+        std::process::exit(1);
+    }
+
+    config
 }
 
 fn safe_format_key(key: &str) -> String {
