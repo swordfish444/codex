@@ -184,6 +184,9 @@ impl ChatWidget {
     }
 
     fn on_agent_message(&mut self, message: String) {
+        if !self.stream.is_write_cycle_active() {
+            return;
+        }
         let sink = AppEventHistorySink(self.app_event_tx.clone());
         let finished = self.stream.apply_final_answer(&message, &sink);
         self.handle_if_stream_finished(finished);
