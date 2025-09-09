@@ -1298,7 +1298,9 @@ impl ChatWidget {
             return;
         }
 
-        self.submit_op(Op::Shutdown);
+        self.submit_op(Op::Shutdown {
+            delete_rollout: false,
+        });
     }
 
     pub(crate) fn composer_is_empty(&self) -> bool {

@@ -271,7 +271,11 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         match shutdown {
             CodexStatus::Running => continue,
             CodexStatus::InitiateShutdown => {
-                conversation.submit(Op::Shutdown).await?;
+                conversation
+                    .submit(Op::Shutdown {
+                        delete_rollout: false,
+                    })
+                    .await?;
             }
             CodexStatus::Shutdown => {
                 break;

@@ -1345,21 +1345,36 @@ async fn submission_loop(
                     sess.set_task(task);
                 }
             }
-            Op::Shutdown => {
+            Op::Shutdown { delete_rollout } => {
                 info!("Shutting down Codex instance");
-
+                sess.interrupt_task();
                 // Gracefully flush and shutdown rollout recorder on session end so tests
                 // that inspect the rollout file do not race with the background writer.
                 let recorder_opt = sess.rollout.lock_unchecked().take();
-                if let Some(rec) = recorder_opt
-                    && let Err(e) = rec.shutdown().await
-                {
-                    warn!("failed to shutdown rollout recorder: {e}");
+                let shutdown_error: Option<String> = match recorder_opt {
+                    Some(recorder) => {
+                        match recorder.shutdown().await {
+                            Ok(()) => {
+                                if delete_rollout && let Err(e) = recorder.delete_rollout_file().await {
+                                    warn!("failed to delete rollout file: {e}");
+                                    Some(format!("Failed to delete rollout file: {e}"))
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(e) => {
+                                warn!("failed to shutdown rollout recorder: {e}");
+                                Some("Failed to shutdown rollout recorder".to_string())
+                            }
+                        }
+                    }
+                    None => None
+                };
+
+                if let Some(message) = shutdown_error {
                     let event = Event {
                         id: sub.id.clone(),
-                        msg: EventMsg::Error(ErrorEvent {
-                            message: "Failed to shutdown rollout recorder".to_string(),
-                        }),
+                        msg: EventMsg::Error(ErrorEvent { message }),
                     };
                     if let Err(e) = sess.tx_event.send(event).await {
                         warn!("failed to send error message: {e:?}");

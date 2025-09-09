@@ -163,7 +163,11 @@ pub enum Op {
     /// to generate a summary which will be returned as an AgentMessage event.
     Compact,
     /// Request to shut down codex instance.
-    Shutdown,
+    Shutdown {
+        /// Whether to delete the rollout file after the session shuts down.
+        #[serde(default)]
+        delete_rollout: bool,
+    },
 }
 
 /// Determines the conditions under which the user is consulted to approve

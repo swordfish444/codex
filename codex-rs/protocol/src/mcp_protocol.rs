@@ -91,6 +91,11 @@ pub enum ClientRequest {
         request_id: RequestId,
         params: ResumeConversationParams,
     },
+    DeleteConversation {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: DeleteConversationParams,
+    },
     SendUserMessage {
         #[serde(rename = "id")]
         request_id: RequestId,
@@ -213,6 +218,18 @@ pub struct ResumeConversationResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_messages: Option<Vec<EventMsg>>,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteConversationParams {
+    pub conversation_id: ConversationId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rollout_path: Option<PathBuf>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteConversationResponse {}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, TS)]
 #[serde(rename_all = "camelCase")]

@@ -3,6 +3,7 @@
 use std::fs::File;
 use std::fs::{self};
 use std::io::Error as IoError;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -71,6 +72,8 @@ pub struct SavedSession {
 /// ```
 #[derive(Clone)]
 pub struct RolloutRecorder {
+    /// The file path of the rollout jsonl.file.
+    path: PathBuf,
     tx: Sender<RolloutCmd>,
 }
 
@@ -119,7 +122,7 @@ impl RolloutRecorder {
     /// cannot be created or the rollout file cannot be opened we return the
     /// error so the caller can decide whether to disable persistence.
     pub async fn new(config: &Config, params: RolloutRecorderParams) -> std::io::Result<Self> {
-        let (file, meta) = match params {
+        let (file, path, meta) = match params {
             RolloutRecorderParams::Create {
                 conversation_id,
                 instructions,
@@ -128,6 +131,7 @@ impl RolloutRecorder {
                     file,
                     conversation_id: session_id,
                     timestamp,
+                    path,
                 } = create_log_file(config, conversation_id)?;
 
                 let timestamp_format: &[FormatItem] = format_description!(
@@ -140,6 +144,7 @@ impl RolloutRecorder {
 
                 (
                     tokio::fs::File::from_std(file),
+                    path,
                     Some(SessionMeta {
                         timestamp,
                         id: session_id,
@@ -147,13 +152,13 @@ impl RolloutRecorder {
                     }),
                 )
             }
-            RolloutRecorderParams::Resume { path } => (
-                tokio::fs::OpenOptions::new()
+            RolloutRecorderParams::Resume { path } => {
+                let file = tokio::fs::OpenOptions::new()
                     .append(true)
-                    .open(path)
-                    .await?,
-                None,
-            ),
+                    .open(&path)
+                    .await?;
+                (file, path, None)
+            }
         };
 
         // Clone the cwd for the spawned task to collect git info asynchronously
@@ -169,7 +174,19 @@ impl RolloutRecorder {
         // driver instead of blocking the runtime.
         tokio::task::spawn(rollout_writer(file, rx, meta, cwd));
 
-        Ok(Self { tx })
+        Ok(Self { path, tx })
+    }
+
+    pub async fn delete_rollout_file_at_path(path: &Path) -> std::io::Result<()> {
+        match tokio::fs::remove_file(path).await {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub async fn delete_rollout_file(&self) -> std::io::Result<()> {
+        Self::delete_rollout_file_at_path(&self.path).await
     }
 
     pub(crate) async fn record_items(&self, items: &[ResponseItem]) -> std::io::Result<()> {
@@ -294,6 +311,9 @@ struct LogFileInfo {
 
     /// Timestamp for the start of the session.
     timestamp: OffsetDateTime,
+
+    /// Path to the created rollout file.
+    path: PathBuf,
 }
 
 fn create_log_file(
@@ -330,6 +350,7 @@ fn create_log_file(
         file,
         conversation_id,
         timestamp,
+        path,
     })
 }
 

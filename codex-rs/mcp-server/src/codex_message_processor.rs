@@ -40,6 +40,8 @@ use codex_protocol::mcp_protocol::AuthStatusChangeNotification;
 use codex_protocol::mcp_protocol::ClientRequest;
 use codex_protocol::mcp_protocol::ConversationId;
 use codex_protocol::mcp_protocol::ConversationSummary;
+use codex_protocol::mcp_protocol::DeleteConversationParams;
+use codex_protocol::mcp_protocol::DeleteConversationResponse;
 use codex_protocol::mcp_protocol::EXEC_COMMAND_APPROVAL_METHOD;
 use codex_protocol::mcp_protocol::ExecArbitraryCommandResponse;
 use codex_protocol::mcp_protocol::ExecCommandApprovalParams;
@@ -141,6 +143,9 @@ impl CodexMessageProcessor {
             }
             ClientRequest::ResumeConversation { request_id, params } => {
                 self.handle_resume_conversation(request_id, params).await;
+            }
+            ClientRequest::DeleteConversation { request_id, params } => {
+                self.handle_delete_conversation(request_id, params).await;
             }
             ClientRequest::SendUserMessage { request_id, params } => {
                 self.send_user_message(request_id, params).await;
@@ -667,6 +672,84 @@ impl CodexMessageProcessor {
                 self.outgoing.send_error(request_id, error).await;
             }
         }
+    }
+
+    async fn handle_delete_conversation(
+        &self,
+        request_id: RequestId,
+        params: DeleteConversationParams,
+    ) {
+        let DeleteConversationParams {
+            conversation_id,
+            rollout_path,
+        } = params;
+
+        let conversation = match self
+            .conversation_manager
+            .get_conversation(conversation_id)
+            .await
+        {
+            Ok(conversation) => conversation,
+            Err(_) => {
+                if let Some(path) = rollout_path {
+                    if let Err(err) = RolloutRecorder::delete_rollout_file_at_path(&path).await {
+                        let error = JSONRPCErrorError {
+                            code: INTERNAL_ERROR_CODE,
+                            message: format!(
+                                "failed to delete rollout file {}: {err}",
+                                path.display()
+                            ),
+                            data: None,
+                        };
+                        self.outgoing.send_error(request_id, error).await;
+                        return;
+                    }
+
+                    self.outgoing
+                        .send_response(request_id, DeleteConversationResponse {})
+                        .await;
+                } else {
+                    let error = JSONRPCErrorError {
+                        code: INVALID_REQUEST_ERROR_CODE,
+                        message: format!(
+                            "conversation {conversation_id} not found and no rollout path provided"
+                        ),
+                        data: None,
+                    };
+                    self.outgoing.send_error(request_id, error).await;
+                }
+                return;
+            }
+        };
+        if let Err(err) = conversation
+            .submit(Op::Shutdown {
+                delete_rollout: true,
+            })
+            .await
+        {
+            let error = JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: format!(
+                    "error shutting down conversation {conversation_id}: {err}"
+                ),
+                data: None,
+            };
+            self.outgoing.send_error(request_id, error).await;
+            return;
+        }
+
+        self.conversation_manager
+            .remove_conversation(conversation_id)
+            .await;
+        {
+            let mut pending = self.pending_interrupts.lock().await;
+            pending.remove(&conversation_id);
+        }
+
+        self.outgoing
+            .send_response(request_id, DeleteConversationResponse {})
+            .await;
+
     }
 
     async fn send_user_message(&self, request_id: RequestId, params: SendUserMessageParams) {
