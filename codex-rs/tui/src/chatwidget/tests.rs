@@ -79,6 +79,29 @@ fn upgrade_event_payload_for_tests(mut payload: serde_json::Value) -> serde_json
 }
 
 #[test]
+fn patch_undo_history_is_bounded() {
+    fn make_diff(label: &str) -> Arc<[AppliedPatchDiff]> {
+        Arc::from(vec![AppliedPatchDiff {
+            diff: format!("diff --git a/{label} b/{label}"),
+            working_dir: PathBuf::from("/repo"),
+        }])
+    }
+
+    let mut history = PatchUndoHistory::new();
+    history.completed_turns.push(make_diff("first"));
+    history.prune_completed_turns();
+    assert_eq!(history.completed_turns.len(), 1);
+
+    history.completed_turns.push(make_diff("second"));
+    history.prune_completed_turns();
+    assert_eq!(history.completed_turns.len(), 1);
+    assert_eq!(
+        history.completed_turns[0][0].diff,
+        "diff --git a/second b/second"
+    );
+}
+
+#[test]
 fn final_answer_without_newline_is_flushed_immediately() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
 

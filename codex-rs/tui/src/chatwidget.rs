@@ -108,6 +108,8 @@ struct PatchInFlight {
     working_dir: PathBuf,
 }
 
+const MAX_COMPLETED_UNDO_TURNS: usize = 1;
+
 #[derive(Default)]
 struct PatchUndoHistory {
     trackers: HashMap<String, PatchInFlight>,
@@ -129,6 +131,7 @@ impl PatchUndoHistory {
         let completed = self.take_active_turn()?;
         let count = completed.len();
         self.completed_turns.push(completed);
+        self.prune_completed_turns();
         Some(count)
     }
 
@@ -179,6 +182,12 @@ impl PatchUndoHistory {
         }
     }
 
+    fn prune_completed_turns(&mut self) {
+        while self.completed_turns.len() > MAX_COMPLETED_UNDO_TURNS {
+            self.completed_turns.remove(0);
+        }
+    }
+
     fn begin_undo(&mut self) -> Option<Arc<[AppliedPatchDiff]>> {
         if self.undo_in_progress.is_some() {
             return None;
@@ -198,6 +207,7 @@ impl PatchUndoHistory {
             && !success
         {
             self.completed_turns.push(turn);
+            self.prune_completed_turns();
         }
     }
 
