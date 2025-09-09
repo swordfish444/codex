@@ -289,20 +289,11 @@ impl RolloutRecorder {
         &self,
         items: &[ResponseItem],
     ) -> std::io::Result<()> {
-        let mut filtered = Vec::new();
-        for item in items {
-            // Note that function calls may look a bit strange if they are
-            // "fully qualified MCP tool calls," so we could consider
-            // reformatting them in that case.
-            if is_persisted_response_item(item) {
-                filtered.push(item.clone());
-            }
-        }
-        if filtered.is_empty() {
+        if items.is_empty() {
             return Ok(());
         }
         self.tx
-            .send(RolloutCmd::AddResponseItems(filtered))
+            .send(RolloutCmd::AddResponseItems(items.to_vec()))
             .await
             .map_err(|e| IoError::other(format!("failed to queue rollout items: {e}")))
     }
