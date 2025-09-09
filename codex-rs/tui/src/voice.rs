@@ -329,7 +329,7 @@ async fn resolve_auth() -> Result<(String, Option<String>), String> {
         AuthMode::ChatGPT,
         codex_core::default_client::DEFAULT_ORIGINATOR,
     )
-        .map_err(|e| format!("failed to read auth.json: {e}"))?;
+    .map_err(|e| format!("failed to read auth.json: {e}"))?;
     match auth_opt {
         Some(auth) => {
             let token = auth

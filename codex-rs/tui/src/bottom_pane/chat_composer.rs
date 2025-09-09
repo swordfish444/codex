@@ -352,6 +352,14 @@ impl ChatComposer {
             return (InputResult::None, false);
         }
 
+        // Outside of recording, ignore all key releases globally except for Space,
+        // which is handled explicitly for hold-to-talk behavior below.
+        if matches!(key_event.kind, KeyEventKind::Release)
+            && !matches!(key_event.code, KeyCode::Char(' '))
+        {
+            return (InputResult::None, false);
+        }
+
         // If a space hold is pending and another non-space key is pressed, cancel the hold
         // and convert the element into a plain space.
         if self.space_hold_started_at.is_some() && !matches!(key_event.code, KeyCode::Char(' ')) {
@@ -1178,6 +1186,12 @@ impl ChatComposer {
 
     /// Handle generic Input events that modify the textarea content.
     fn handle_input_basic(&mut self, input: KeyEvent) -> (InputResult, bool) {
+        // Ignore key releases here to avoid treating them as additional input
+        // (e.g., appending the same character twice via paste-burst logic).
+        if !matches!(input.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+            return (InputResult::None, false);
+        }
+
         // If we have a buffered non-bracketed paste burst and enough time has
         // elapsed since the last char, flush it before handling a new input.
         let now = Instant::now();
