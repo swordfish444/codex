@@ -59,4 +59,18 @@ pub(crate) enum AppEvent {
 
     /// Forwarded conversation history snapshot from the current conversation.
     ConversationHistory(ConversationHistoryResponseEvent),
+
+    /// Result of a locally executed shell command triggered by a leading '!'.
+    /// Identified by `call_id` that was assigned when starting the command.
+    LocalExecResult {
+        call_id: String,
+        /// Full argv used for display (e.g., ["bash","-lc", "echo hi"]).
+        command: Vec<String>,
+        /// Parsed metadata used to render exploring-style summaries when applicable.
+        parsed_cmd: Vec<codex_protocol::parse_command::ParsedCommand>,
+        exit_code: i32,
+        stdout: String,
+        stderr: String,
+        duration: std::time::Duration,
+    },
 }

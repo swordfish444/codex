@@ -47,6 +47,8 @@ use ratatui::layout::Layout;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
+use std::time::Duration;
+use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
 
@@ -86,6 +88,8 @@ use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol_config_types::ReasoningEffort as ReasoningEffortConfig;
 use codex_file_search::FileMatch;
 use codex_protocol::mcp_protocol::ConversationId;
+use std::process::Stdio;
+use tokio::process::Command as TokioCommand;
 
 // Track information about an in-flight exec command.
 struct RunningCommand {
@@ -957,6 +961,18 @@ impl ChatWidget {
         let UserMessage { text, image_paths } = user_message;
         let mut items: Vec<InputItem> = Vec::new();
 
+        // Bang command passthrough: if the first non-whitespace char is '!', run locally via bash.
+        if text.trim_start().starts_with('!') {
+            let mut cmd = text.trim_start();
+            // Drop the leading '!'
+            cmd = &cmd[1..];
+            let cmd = cmd.trim_start().to_string();
+            if !cmd.is_empty() {
+                self.run_local_bash_command(cmd);
+            }
+            return;
+        }
+
         if !text.is_empty() {
             items.push(InputItem::Text { text: text.clone() });
         }
@@ -987,6 +1003,123 @@ impl ChatWidget {
         // Only show the text portion in conversation history.
         if !text.is_empty() {
             self.add_to_history(history_cell::new_user_prompt(text.clone()));
+        }
+    }
+
+    fn run_local_bash_command(&mut self, cmd_text: String) {
+        // Prepare a call id and parsed command for UI.
+        let call_id = {
+            let mut rng = rand::rng();
+            format!("local-{}", rng.random::<u64>())
+        };
+        let command: Vec<String> = vec!["bash".into(), "-lc".into(), cmd_text.clone()];
+        let parsed_cmd: Vec<ParsedCommand> = codex_core::parse_command::parse_command(&command)
+            .into_iter()
+            .map(Into::into)
+            .collect();
+
+        // Insert/append an active ExecCell to show the running command promptly.
+        if let Some(exec) = &self.active_exec_cell {
+            if let Some(new_exec) =
+                exec.with_added_call(call_id.clone(), command.clone(), parsed_cmd.clone())
+            {
+                self.active_exec_cell = Some(new_exec);
+            } else {
+                self.flush_active_exec_cell();
+                self.active_exec_cell = Some(history_cell::new_active_exec_command(
+                    call_id.clone(),
+                    command.clone(),
+                    parsed_cmd.clone(),
+                ));
+            }
+        } else {
+            self.active_exec_cell = Some(history_cell::new_active_exec_command(
+                call_id.clone(),
+                command.clone(),
+                parsed_cmd.clone(),
+            ));
+        }
+        self.request_redraw();
+
+        // Spawn the command asynchronously.
+        let tx = self.app_event_tx.clone();
+        let cwd = self.config.cwd.clone();
+        let command_for_event = command.clone();
+        let parsed_for_event = parsed_cmd.clone();
+        tokio::spawn(async move {
+            let start = Instant::now();
+            let output = TokioCommand::new("bash")
+                .arg("-lc")
+                .arg(cmd_text)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .current_dir(cwd)
+                .output()
+                .await;
+
+            match output {
+                Ok(out) => {
+                    let exit_code = out.status.code().unwrap_or(-1);
+                    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+                    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+                    let duration = start.elapsed();
+                    tx.send(crate::app_event::AppEvent::LocalExecResult {
+                        call_id,
+                        command: command_for_event,
+                        parsed_cmd: parsed_for_event,
+                        exit_code,
+                        stdout,
+                        stderr,
+                        duration,
+                    });
+                }
+                Err(e) => {
+                    let duration = start.elapsed();
+                    tx.send(crate::app_event::AppEvent::LocalExecResult {
+                        call_id,
+                        command: command_for_event,
+                        parsed_cmd: parsed_for_event,
+                        exit_code: 127,
+                        stdout: String::new(),
+                        stderr: format!("failed to run command: {e}"),
+                        duration,
+                    });
+                }
+            }
+        });
+    }
+
+    pub(crate) fn on_local_exec_result(
+        &mut self,
+        call_id: String,
+        command: Vec<String>,
+        parsed_cmd: Vec<ParsedCommand>,
+        exit_code: i32,
+        stdout: String,
+        stderr: String,
+        duration: Duration,
+    ) {
+        // Complete the matching active exec call if present; otherwise, insert a completed cell.
+        let output = CommandOutput {
+            exit_code,
+            stdout,
+            stderr,
+            formatted_output: String::new(),
+        };
+
+        if let Some(exec) = &mut self.active_exec_cell {
+            exec.complete_call(&call_id, output, duration);
+            // If the cell is fully complete and not an exploring group, flush it.
+            if exec.should_flush() {
+                self.flush_active_exec_cell();
+            }
+            self.request_redraw();
+        } else {
+            // No active cell (edge race): create a one-off completed cell.
+            let mut cell = history_cell::new_active_exec_command(call_id, command, parsed_cmd);
+            cell.complete_call("", output, duration);
+            self.add_boxed_history(Box::new(cell));
+            self.request_redraw();
         }
     }
 
