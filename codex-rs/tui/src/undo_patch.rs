@@ -61,10 +61,9 @@ mod tests {
         if status.success() {
             Ok(())
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("git {:?} failed with status {status}", args),
-            ))
+            Err(io::Error::other(format!(
+                "git {args:?} failed with status {status}"
+            )))
         }
     }
 
@@ -73,14 +72,11 @@ mod tests {
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "git {:?} failed: {}",
-                    args,
-                    String::from_utf8_lossy(&output.stderr)
-                ),
-            ))
+            Err(io::Error::other(format!(
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&output.stderr)
+            )))
         }
     }
 

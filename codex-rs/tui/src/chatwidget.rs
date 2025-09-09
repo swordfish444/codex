@@ -194,10 +194,10 @@ impl PatchUndoHistory {
     }
 
     fn finish_undo(&mut self, success: bool) {
-        if let Some(turn) = self.undo_in_progress.take() {
-            if !success {
-                self.completed_turns.push(turn);
-            }
+        if let Some(turn) = self.undo_in_progress.take()
+            && !success
+        {
+            self.completed_turns.push(turn);
         }
     }
 

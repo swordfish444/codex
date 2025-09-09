@@ -1186,32 +1186,30 @@ pub(crate) fn new_patch_undo_available(patch_count: usize) -> PlainHistoryCell {
 }
 
 pub(crate) fn new_patch_undo_unavailable() -> PlainHistoryCell {
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    lines.push("No applied patch to undo.".dim().into());
+    let lines = vec!["No applied patch to undo.".dim().into()];
     PlainHistoryCell { lines }
 }
 
 pub(crate) fn new_patch_undo_busy() -> PlainHistoryCell {
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    lines.push("Undo already running".magenta().bold().into());
-    lines.push(
+    let lines = vec![
+        "Undo already running".magenta().bold().into(),
         "Wait for the previous undo to finish before starting another."
             .dim()
             .into(),
-    );
+    ];
     PlainHistoryCell { lines }
 }
 
 pub(crate) fn new_patch_undo_in_progress() -> PlainHistoryCell {
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    lines.push("↺ Undoing latest patch…".magenta().bold().into());
+    let lines = vec!["↺ Undoing latest patch…".magenta().bold().into()];
     PlainHistoryCell { lines }
 }
 
 pub(crate) fn new_patch_undo_cancelled() -> PlainHistoryCell {
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    lines.push("↺ Undo cancelled".magenta().bold().into());
-    lines.push("Keeping the last turn's changes.".dim().into());
+    let lines = vec![
+        "↺ Undo cancelled".magenta().bold().into(),
+        "Keeping the last turn's changes.".dim().into(),
+    ];
     PlainHistoryCell { lines }
 }
 
