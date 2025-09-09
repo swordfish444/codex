@@ -1,4 +1,5 @@
 use codex_core::protocol::TokenUsageInfo;
+use codex_protocol::num_format::format_si_suffix;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -50,7 +51,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
-use uuid::Uuid;
 
 /// If the pasted content exceeds this number of characters, replace it with a
 /// placeholder in the UI.
@@ -101,6 +101,8 @@ pub(crate) struct ChatComposer {
     // When true, disables paste-burst logic and inserts characters immediately.
     disable_paste_burst: bool,
     custom_prompts: Vec<CustomPrompt>,
+    // Monotonically increasing identifier for textarea elements we insert.
+    next_element_id: u64,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -120,7 +122,8 @@ impl ChatComposer {
     ) -> Self {
         let use_shift_enter_hint = enhanced_keys_supported;
 
-        let mut this = Self {
+        
+        Self {
             textarea: TextArea::new(),
             textarea_state: RefCell::new(TextAreaState::default()),
             active_popup: ActivePopup::None,
@@ -147,8 +150,14 @@ impl ChatComposer {
             paste_burst: PasteBurst::default(),
             disable_paste_burst: false,
             custom_prompts: Vec::new(),
-        };
-        this
+            next_element_id: 0,
+        }
+    }
+
+    fn next_id(&mut self) -> String {
+        let id = self.next_element_id;
+        self.next_element_id = self.next_element_id.wrapping_add(1);
+        id.to_string()
     }
 
     pub fn desired_height(&self, width: u16) -> u16 {
@@ -407,10 +416,10 @@ impl ChatComposer {
                 }
 
                 // Otherwise, update the placeholder to show a spinner and proceed.
-                let id = self
-                    .recording_placeholder_id
-                    .take()
-                    .unwrap_or_else(|| Uuid::new_v4().to_string());
+                let id = match self.recording_placeholder_id.take() {
+                    Some(id) => id,
+                    None => self.next_id(),
+                };
                 // Initialize with first spinner frame immediately.
                 let _ = self.textarea.update_named_element_by_id(&id, "⠋");
                 // Spawn animated braille spinner until transcription finishes (or times out).
@@ -433,7 +442,7 @@ impl ChatComposer {
             Ok(vc) => {
                 self.voice = Some(vc);
                 // Insert visible placeholder for the meter (no label)
-                let id = Uuid::new_v4().to_string();
+                let id = self.next_id();
                 self.textarea.insert_named_element("", id.clone());
                 self.recording_placeholder_id = Some(id);
                 // Spawn metering animation
@@ -982,7 +991,7 @@ impl ChatComposer {
 
                 // Insert a named element that renders as a space so we can later
                 // remove it on timeout or convert it to a plain space on release.
-                let elem_id = Uuid::new_v4().to_string();
+                let elem_id = self.next_id();
                 self.textarea.insert_named_element(" ", elem_id.clone());
 
                 // Record pending hold metadata.
@@ -1635,8 +1644,11 @@ impl WidgetRef for ChatComposer {
                     let token_usage = &token_usage_info.total_token_usage;
                     hint.push("   ".into());
                     hint.push(
-                        Span::from(format!("{} tokens used", token_usage.blended_total()))
-                            .style(Style::default().add_modifier(Modifier::DIM)),
+                        Span::from(format!(
+                            "{} tokens used",
+                            format_si_suffix(token_usage.blended_total())
+                        ))
+                        .style(Style::default().add_modifier(Modifier::DIM)),
                     );
                     let last_token_usage = &token_usage_info.last_token_usage;
                     if let Some(context_window) = token_usage_info.model_context_window {
