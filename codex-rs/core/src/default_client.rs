@@ -27,8 +27,6 @@ pub fn create_client(originator: &str) -> reqwest::Client {
     match reqwest::Client::builder()
         // Set UA via dedicated helper to avoid header validation pitfalls
         .user_agent(ua)
-        // Avoid touching macOS SystemConfiguration proxies in sandboxed tests
-        .no_proxy()
         .default_headers(headers)
         .build()
     {
@@ -49,15 +47,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_client_sets_default_headers() {
-        if std::env::var("CODEX_SANDBOX").is_ok()
-            || std::env::var("CODEX_SANDBOX_NETWORK_DISABLED")
-                .ok()
-                .as_deref()
-                == Some("1")
-        {
-            // In sandboxed environments, binding a local port may be denied.
-            return;
-        }
         use wiremock::Mock;
         use wiremock::MockServer;
         use wiremock::ResponseTemplate;
