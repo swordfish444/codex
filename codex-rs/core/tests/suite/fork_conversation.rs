@@ -23,6 +23,10 @@ fn sse_completed(id: &str) -> String {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fork_conversation_twice_drops_to_first_message() {
+    if std::env::var(codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+        eprintln!("Skipping network-bound test in sandbox");
+        return;
+    }
     // Start a mock server that completes three turns.
     let server = MockServer::start().await;
     let sse = sse_completed("resp");

@@ -12,11 +12,16 @@ use time::format_description::FormatItem;
 use time::macros::format_description;
 use uuid::Uuid;
 
+use crate::rollout::Cursor;
+use crate::rollout::RolloutItem;
+use crate::rollout::RolloutRecorder;
+use crate::rollout::list::ConversationFilter;
 use crate::rollout::list::ConversationItem;
 use crate::rollout::list::ConversationsPage;
-use crate::rollout::list::Cursor;
 use crate::rollout::list::get_conversation;
 use crate::rollout::list::get_conversations;
+use crate::rollout::list::get_conversations_filtered;
+use pretty_assertions::assert_eq;
 
 fn write_session_file(
     root: &Path,
@@ -42,7 +47,10 @@ fn write_session_file(
 
     let meta = serde_json::json!({
         "timestamp": ts_str,
-        "id": uuid.to_string()
+        "id": uuid.to_string(),
+        "cwd": "/tmp",
+        "originator": "codex_cli_rs",
+        "cli_version": "test-version"
     });
     writeln!(file, "{meta}")?;
 
@@ -56,6 +64,127 @@ fn write_session_file(
     Ok((dt, uuid))
 }
 
+#[tokio::test]
+async fn test_get_conversations_filtered_by_id() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+
+    let u1 = Uuid::from_u128(101);
+    let u2 = Uuid::from_u128(202);
+
+    write_session_file(home, "2025-07-01T00-00-00", u1, 1).unwrap();
+    write_session_file(home, "2025-07-02T00-00-00", u2, 1).unwrap();
+
+    let target = u2.to_string();
+    let filter: ConversationFilter = std::sync::Arc::new(move |item: &ConversationItem| {
+        item.head
+            .get(0)
+            .and_then(|v| v.get("id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s == target)
+            .unwrap_or(false)
+    });
+
+    let page = get_conversations_filtered(home, 10, None, &[filter])
+        .await
+        .expect("filtered list ok");
+    assert_eq!(page.items.len(), 1);
+    let file_name = page.items[0]
+        .path
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    assert!(file_name.contains(&u2.to_string()));
+}
+
+#[tokio::test]
+async fn test_rollout_history_parses_tagged_events_and_responses() {
+    use std::io::Write as _;
+    use uuid::Uuid;
+
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("rollout-test.jsonl");
+    let mut f = File::create(&path).unwrap();
+
+    let session_id = Uuid::from_u128(555).to_string();
+    // Tagged session_meta line (new format)
+    writeln!(
+        f,
+        "{}",
+        serde_json::json!({
+            "timestamp": "2025-09-08T16:03:12Z",
+            "record_type": "session_meta",
+            "id": session_id,
+            "cwd": "/tmp",
+            "originator": "codex_cli_rs",
+            "cli_version": "test-version",
+            "instructions": null
+        })
+    )
+    .unwrap();
+
+    // Allowed event: AgentMessage
+    writeln!(
+        f,
+        "{}",
+        serde_json::json!({
+            "timestamp": "2025-09-08T16:03:13Z",
+            "record_type": "event",
+            "id": "sub1",
+            "msg": {"type": "agent_message", "message": "hi"}
+        })
+    )
+    .unwrap();
+
+    // Disallowed (delta) event: should be skipped by policy
+    writeln!(
+        f,
+        "{}",
+        serde_json::json!({
+            "timestamp": "2025-09-08T16:03:14Z",
+            "record_type": "event",
+            "id": "sub1",
+            "msg": {"type": "agent_message_delta", "delta": "x"}
+        })
+    )
+    .unwrap();
+
+    // Response item (assistant message)
+    writeln!(
+        f,
+        "{}",
+        serde_json::json!({
+            "timestamp": "2025-09-08T16:03:15Z",
+            "record_type": "response",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "hello"}]
+        })
+    )
+    .unwrap();
+
+    let hist = RolloutRecorder::get_rollout_history(&path)
+        .await
+        .expect("history ok");
+
+    let resumed = match hist {
+        crate::conversation_manager::InitialHistory::Resumed(r) => r,
+        _ => panic!("expected resumed history"),
+    };
+
+    // We expect exactly 2 items: one event (allowed) and one response
+    let kinds: Vec<&'static str> = resumed
+        .history
+        .iter()
+        .map(|it| match it {
+            RolloutItem::Event(_) => "event",
+            RolloutItem::ResponseItem(_) => "response",
+            RolloutItem::SessionMeta(_) => "meta",
+        })
+        .collect();
+    assert_eq!(kinds, vec!["event", "response"]);
+}
 #[tokio::test]
 async fn test_list_conversations_latest_first() {
     let temp = TempDir::new().unwrap();
@@ -94,19 +223,37 @@ async fn test_list_conversations_latest_first() {
         .join(format!("rollout-2025-01-01T12-00-00-{u1}.jsonl"));
 
     let head_3 = vec![
-        serde_json::json!({"timestamp": "2025-01-03T12-00-00", "id": u3.to_string()}),
+        serde_json::json!({
+            "timestamp": "2025-01-03T12-00-00",
+            "id": u3.to_string(),
+            "cwd": "/tmp",
+            "originator": "codex_cli_rs",
+            "cli_version": "test-version"
+        }),
         serde_json::json!({"record_type": "response", "index": 0}),
         serde_json::json!({"record_type": "response", "index": 1}),
         serde_json::json!({"record_type": "response", "index": 2}),
     ];
     let head_2 = vec![
-        serde_json::json!({"timestamp": "2025-01-02T12-00-00", "id": u2.to_string()}),
+        serde_json::json!({
+            "timestamp": "2025-01-02T12-00-00",
+            "id": u2.to_string(),
+            "cwd": "/tmp",
+            "originator": "codex_cli_rs",
+            "cli_version": "test-version"
+        }),
         serde_json::json!({"record_type": "response", "index": 0}),
         serde_json::json!({"record_type": "response", "index": 1}),
         serde_json::json!({"record_type": "response", "index": 2}),
     ];
     let head_1 = vec![
-        serde_json::json!({"timestamp": "2025-01-01T12-00-00", "id": u1.to_string()}),
+        serde_json::json!({
+            "timestamp": "2025-01-01T12-00-00",
+            "id": u1.to_string(),
+            "cwd": "/tmp",
+            "originator": "codex_cli_rs",
+            "cli_version": "test-version"
+        }),
         serde_json::json!({"record_type": "response", "index": 0}),
         serde_json::json!({"record_type": "response", "index": 1}),
         serde_json::json!({"record_type": "response", "index": 2}),
@@ -171,11 +318,23 @@ async fn test_pagination_cursor() {
         .join("04")
         .join(format!("rollout-2025-03-04T09-00-00-{u4}.jsonl"));
     let head_5 = vec![
-        serde_json::json!({"timestamp": "2025-03-05T09-00-00", "id": u5.to_string()}),
+        serde_json::json!({
+            "timestamp": "2025-03-05T09-00-00",
+            "id": u5.to_string(),
+            "cwd": "/tmp",
+            "originator": "codex_cli_rs",
+            "cli_version": "test-version"
+        }),
         serde_json::json!({"record_type": "response", "index": 0}),
     ];
     let head_4 = vec![
-        serde_json::json!({"timestamp": "2025-03-04T09-00-00", "id": u4.to_string()}),
+        serde_json::json!({
+            "timestamp": "2025-03-04T09-00-00",
+            "id": u4.to_string(),
+            "cwd": "/tmp",
+            "originator": "codex_cli_rs",
+            "cli_version": "test-version"
+        }),
         serde_json::json!({"record_type": "response", "index": 0}),
     ];
     let expected_cursor1: Cursor =
@@ -213,11 +372,23 @@ async fn test_pagination_cursor() {
         .join("02")
         .join(format!("rollout-2025-03-02T09-00-00-{u2}.jsonl"));
     let head_3 = vec![
-        serde_json::json!({"timestamp": "2025-03-03T09-00-00", "id": u3.to_string()}),
+        serde_json::json!({
+            "timestamp": "2025-03-03T09-00-00",
+            "id": u3.to_string(),
+            "cwd": "/tmp",
+            "originator": "codex_cli_rs",
+            "cli_version": "test-version"
+        }),
         serde_json::json!({"record_type": "response", "index": 0}),
     ];
     let head_2 = vec![
-        serde_json::json!({"timestamp": "2025-03-02T09-00-00", "id": u2.to_string()}),
+        serde_json::json!({
+            "timestamp": "2025-03-02T09-00-00",
+            "id": u2.to_string(),
+            "cwd": "/tmp",
+            "originator": "codex_cli_rs",
+            "cli_version": "test-version"
+        }),
         serde_json::json!({"record_type": "response", "index": 0}),
     ];
     let expected_cursor2: Cursor =
@@ -249,7 +420,13 @@ async fn test_pagination_cursor() {
         .join("01")
         .join(format!("rollout-2025-03-01T09-00-00-{u1}.jsonl"));
     let head_1 = vec![
-        serde_json::json!({"timestamp": "2025-03-01T09-00-00", "id": u1.to_string()}),
+        serde_json::json!({
+            "timestamp": "2025-03-01T09-00-00",
+            "id": u1.to_string(),
+            "cwd": "/tmp",
+            "originator": "codex_cli_rs",
+            "cli_version": "test-version"
+        }),
         serde_json::json!({"record_type": "response", "index": 0}),
     ];
     let expected_cursor3: Cursor =
@@ -288,7 +465,13 @@ async fn test_get_conversation_contents() {
         .join("01")
         .join(format!("rollout-2025-04-01T10-30-00-{uuid}.jsonl"));
     let expected_head = vec![
-        serde_json::json!({"timestamp": ts, "id": uuid.to_string()}),
+        serde_json::json!({
+            "timestamp": ts,
+            "id": uuid.to_string(),
+            "cwd": "/tmp",
+            "originator": "codex_cli_rs",
+            "cli_version": "test-version"
+        }),
         serde_json::json!({"record_type": "response", "index": 0}),
         serde_json::json!({"record_type": "response", "index": 1}),
     ];
@@ -305,7 +488,13 @@ async fn test_get_conversation_contents() {
     assert_eq!(page, expected_page);
 
     // Entire file contents equality
-    let meta = serde_json::json!({"timestamp": ts, "id": uuid.to_string()});
+    let meta = serde_json::json!({
+        "timestamp": ts,
+        "id": uuid.to_string(),
+        "cwd": "/tmp",
+        "originator": "codex_cli_rs",
+        "cli_version": "test-version"
+    });
     let rec0 = serde_json::json!({"record_type": "response", "index": 0});
     let rec1 = serde_json::json!({"record_type": "response", "index": 1});
     let expected_content = format!("{meta}\n{rec0}\n{rec1}\n");
@@ -341,7 +530,13 @@ async fn test_stable_ordering_same_second_pagination() {
         .join("01")
         .join(format!("rollout-2025-07-01T00-00-00-{u2}.jsonl"));
     let head = |u: Uuid| -> Vec<serde_json::Value> {
-        vec![serde_json::json!({"timestamp": ts, "id": u.to_string()})]
+        vec![serde_json::json!({
+            "timestamp": ts,
+            "id": u.to_string(),
+            "cwd": "/tmp",
+            "originator": "codex_cli_rs",
+            "cli_version": "test-version"
+        })]
     };
     let expected_cursor1: Cursor = serde_json::from_str(&format!("\"{ts}|{u2}\"")).unwrap();
     let expected_page1 = ConversationsPage {

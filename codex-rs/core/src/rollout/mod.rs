@@ -2,10 +2,13 @@
 
 pub(crate) const SESSIONS_SUBDIR: &str = "sessions";
 
+pub mod format;
 pub mod list;
 pub(crate) mod policy;
 pub mod recorder;
 
+pub use format::Cursor;
+pub use recorder::RolloutItem;
 pub use recorder::RolloutRecorder;
 pub use recorder::RolloutRecorderParams;
 pub use recorder::SessionMeta;

@@ -223,6 +223,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_current_shell_detects_zsh() {
+        if std::env::var("CODEX_SANDBOX").is_ok() {
+            // In sandboxed environments, querying the default shell via libc may fail.
+            return;
+        }
         let shell = Command::new("sh")
             .arg("-c")
             .arg("echo $SHELL")

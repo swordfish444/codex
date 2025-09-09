@@ -42,6 +42,10 @@ fn assert_tool_names(body: &serde_json::Value, expected_names: &[&str]) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn codex_mini_latest_tools() {
+    if std::env::var(codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+        eprintln!("Skipping network-bound test in sandbox");
+        return;
+    }
     use pretty_assertions::assert_eq;
 
     let server = MockServer::start().await;
@@ -126,6 +130,10 @@ async fn codex_mini_latest_tools() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn prompt_tools_are_consistent_across_requests() {
+    if std::env::var(codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+        eprintln!("Skipping network-bound test in sandbox");
+        return;
+    }
     use pretty_assertions::assert_eq;
 
     let server = MockServer::start().await;
@@ -209,6 +217,10 @@ async fn prompt_tools_are_consistent_across_requests() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn prefixes_context_and_instructions_once_and_consistently_across_requests() {
+    if std::env::var(codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+        eprintln!("Skipping network-bound test in sandbox");
+        return;
+    }
     use pretty_assertions::assert_eq;
 
     let server = MockServer::start().await;
@@ -327,6 +339,10 @@ async fn prefixes_context_and_instructions_once_and_consistently_across_requests
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() {
+    if std::env::var(codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+        eprintln!("Skipping network-bound test in sandbox");
+        return;
+    }
     use pretty_assertions::assert_eq;
 
     let server = MockServer::start().await;
@@ -448,6 +464,10 @@ async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn per_turn_overrides_keep_cached_prefix_and_key_constant() {
+    if std::env::var(codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+        eprintln!("Skipping network-bound test in sandbox");
+        return;
+    }
     use pretty_assertions::assert_eq;
 
     let server = MockServer::start().await;

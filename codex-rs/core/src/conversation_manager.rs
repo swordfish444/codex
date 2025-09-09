@@ -10,6 +10,7 @@ use crate::error::Result as CodexResult;
 use crate::protocol::Event;
 use crate::protocol::EventMsg;
 use crate::protocol::SessionConfiguredEvent;
+use crate::rollout::RolloutItem;
 use crate::rollout::RolloutRecorder;
 use codex_protocol::mcp_protocol::ConversationId;
 use codex_protocol::models::ResponseItem;
@@ -21,7 +22,7 @@ use tokio::sync::RwLock;
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResumedHistory {
     pub conversation_id: ConversationId,
-    pub history: Vec<ResponseItem>,
+    pub history: Vec<RolloutItem>,
     pub rollout_path: PathBuf,
 }
 
@@ -29,7 +30,7 @@ pub struct ResumedHistory {
 pub enum InitialHistory {
     New,
     Resumed(ResumedHistory),
-    Forked(Vec<ResponseItem>),
+    Forked(Vec<RolloutItem>),
 }
 
 /// Represents a newly created Codex conversation, including the first event
@@ -178,7 +179,11 @@ impl ConversationManager {
 /// and all items that follow them.
 fn truncate_after_dropping_last_messages(items: Vec<ResponseItem>, n: usize) -> InitialHistory {
     if n == 0 {
-        return InitialHistory::Forked(items);
+        let rollout_items = items
+            .into_iter()
+            .map(crate::rollout::RolloutItem::ResponseItem)
+            .collect();
+        return InitialHistory::Forked(rollout_items);
     }
 
     // Walk backwards counting only `user` Message items, find cut index.
@@ -200,7 +205,13 @@ fn truncate_after_dropping_last_messages(items: Vec<ResponseItem>, n: usize) -> 
         // No prefix remains after dropping; start a new conversation.
         InitialHistory::New
     } else {
-        InitialHistory::Forked(items.into_iter().take(cut_index).collect())
+        InitialHistory::Forked(
+            items
+                .into_iter()
+                .take(cut_index)
+                .map(crate::rollout::RolloutItem::ResponseItem)
+                .collect(),
+        )
     }
 }
 
@@ -258,7 +269,11 @@ mod tests {
         let truncated = truncate_after_dropping_last_messages(items.clone(), 1);
         assert_eq!(
             truncated,
-            InitialHistory::Forked(vec![items[0].clone(), items[1].clone(), items[2].clone(),])
+            InitialHistory::Forked(vec![
+                crate::rollout::RolloutItem::ResponseItem(items[0].clone()),
+                crate::rollout::RolloutItem::ResponseItem(items[1].clone()),
+                crate::rollout::RolloutItem::ResponseItem(items[2].clone()),
+            ])
         );
 
         let truncated2 = truncate_after_dropping_last_messages(items, 2);

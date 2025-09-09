@@ -4,12 +4,12 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use time::OffsetDateTime;
-use time::PrimitiveDateTime;
-use time::format_description::FormatItem;
-use time::macros::format_description;
 use uuid::Uuid;
 
 use super::SESSIONS_SUBDIR;
+use super::format::Cursor;
+use super::format::parse_timestamp_uuid_from_filename;
+use std::sync::Arc;
 
 /// Returned page of conversation summaries.
 #[derive(Debug, Default, PartialEq)]
@@ -33,47 +33,13 @@ pub struct ConversationItem {
     pub head: Vec<serde_json::Value>,
 }
 
+/// A filter applied to a discovered conversation. All filters must pass for
+/// the item to be included in results.
+pub type ConversationFilter = Arc<dyn Fn(&ConversationItem) -> bool + Send + Sync>;
+
 /// Hard cap to bound worst‑case work per request.
 const MAX_SCAN_FILES: usize = 10_000;
 const HEAD_RECORD_LIMIT: usize = 10;
-
-/// Pagination cursor identifying a file by timestamp and UUID.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Cursor {
-    ts: OffsetDateTime,
-    id: Uuid,
-}
-
-impl Cursor {
-    fn new(ts: OffsetDateTime, id: Uuid) -> Self {
-        Self { ts, id }
-    }
-}
-
-impl serde::Serialize for Cursor {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let ts_str = self
-            .ts
-            .format(&format_description!(
-                "[year]-[month]-[day]T[hour]-[minute]-[second]"
-            ))
-            .map_err(|e| serde::ser::Error::custom(format!("format error: {e}")))?;
-        serializer.serialize_str(&format!("{ts_str}|{}", self.id))
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for Cursor {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        parse_cursor(&s).ok_or_else(|| serde::de::Error::custom("invalid cursor"))
-    }
-}
 
 /// Retrieve recorded conversation file paths with token pagination. The returned `next_cursor`
 /// can be supplied on the next call to resume after the last returned item, resilient to
@@ -83,22 +49,26 @@ pub(crate) async fn get_conversations(
     page_size: usize,
     cursor: Option<&Cursor>,
 ) -> io::Result<ConversationsPage> {
+    get_conversations_filtered(codex_home, page_size, cursor, &[]).await
+}
+
+/// Retrieve recorded conversations with filters. All provided filters must
+/// return `true` for an item to be included.
+pub(crate) async fn get_conversations_filtered(
+    codex_home: &Path,
+    page_size: usize,
+    cursor: Option<&Cursor>,
+    filters: &[ConversationFilter],
+) -> io::Result<ConversationsPage> {
     let mut root = codex_home.to_path_buf();
     root.push(SESSIONS_SUBDIR);
 
     if !root.exists() {
-        return Ok(ConversationsPage {
-            items: Vec::new(),
-            next_cursor: None,
-            num_scanned_files: 0,
-            reached_scan_cap: false,
-        });
+        return Ok(empty_page());
     }
 
     let anchor = cursor.cloned();
-
-    let result = traverse_directories_for_paths(root.clone(), page_size, anchor).await?;
-    Ok(result)
+    traverse_directories_for_paths_filtered(root.clone(), page_size, anchor, filters).await
 }
 
 /// Load the full contents of a single conversation session file at `path`.
@@ -112,10 +82,11 @@ pub(crate) async fn get_conversation(path: &Path) -> io::Result<String> {
 ///
 /// Directory layout: `~/.codex/sessions/YYYY/MM/DD/rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl`
 /// Returned newest (latest) first.
-async fn traverse_directories_for_paths(
+async fn traverse_directories_for_paths_filtered(
     root: PathBuf,
     page_size: usize,
     anchor: Option<Cursor>,
+    filters: &[ConversationFilter],
 ) -> io::Result<ConversationsPage> {
     let mut items: Vec<ConversationItem> = Vec::with_capacity(page_size);
     let mut scanned_files = 0usize;
@@ -170,7 +141,12 @@ async fn traverse_directories_for_paths(
                     let head = read_first_jsonl_records(&path, HEAD_RECORD_LIMIT)
                         .await
                         .unwrap_or_default();
-                    items.push(ConversationItem { path, head });
+                    let item = ConversationItem { path, head };
+                    // Apply all filters
+                    let include = filters.iter().all(|f| f(&item));
+                    if include {
+                        items.push(item);
+                    }
                 }
             }
         }
@@ -183,23 +159,6 @@ async fn traverse_directories_for_paths(
         num_scanned_files: scanned_files,
         reached_scan_cap: scanned_files >= MAX_SCAN_FILES,
     })
-}
-
-/// Pagination cursor token format: "<file_ts>|<uuid>" where `file_ts` matches the
-/// filename timestamp portion (YYYY-MM-DDThh-mm-ss) used in rollout filenames.
-/// The cursor orders files by timestamp desc, then UUID desc.
-fn parse_cursor(token: &str) -> Option<Cursor> {
-    let (file_ts, uuid_str) = token.split_once('|')?;
-
-    let Ok(uuid) = Uuid::parse_str(uuid_str) else {
-        return None;
-    };
-
-    let format: &[FormatItem] =
-        format_description!("[year]-[month]-[day]T[hour]-[minute]-[second]");
-    let ts = PrimitiveDateTime::parse(file_ts, format).ok()?.assume_utc();
-
-    Some(Cursor::new(ts, uuid))
 }
 
 fn build_next_cursor(items: &[ConversationItem]) -> Option<Cursor> {
@@ -256,21 +215,13 @@ where
     Ok(collected)
 }
 
-fn parse_timestamp_uuid_from_filename(name: &str) -> Option<(OffsetDateTime, Uuid)> {
-    // Expected: rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl
-    let core = name.strip_prefix("rollout-")?.strip_suffix(".jsonl")?;
-
-    // Scan from the right for a '-' such that the suffix parses as a UUID.
-    let (sep_idx, uuid) = core
-        .match_indices('-')
-        .rev()
-        .find_map(|(i, _)| Uuid::parse_str(&core[i + 1..]).ok().map(|u| (i, u)))?;
-
-    let ts_str = &core[..sep_idx];
-    let format: &[FormatItem] =
-        format_description!("[year]-[month]-[day]T[hour]-[minute]-[second]");
-    let ts = PrimitiveDateTime::parse(ts_str, format).ok()?.assume_utc();
-    Some((ts, uuid))
+fn empty_page() -> ConversationsPage {
+    ConversationsPage {
+        items: Vec::new(),
+        next_cursor: None,
+        num_scanned_files: 0,
+        reached_scan_cap: false,
+    }
 }
 
 async fn read_first_jsonl_records(
