@@ -78,7 +78,7 @@ async fn test_get_conversations_filtered_by_id() {
     let target = u2.to_string();
     let filter: ConversationFilter = std::sync::Arc::new(move |item: &ConversationItem| {
         item.head
-            .get(0)
+            .first()
             .and_then(|v| v.get("id"))
             .and_then(|v| v.as_str())
             .map(|s| s == target)

@@ -613,10 +613,10 @@ impl Session {
             let guard = self.rollout.lock_unchecked();
             guard.as_ref().cloned()
         };
-        if let Some(rec) = recorder {
-            if let Err(e) = rec.record_events(&[event.clone()]).await {
-                error!("failed to record rollout event: {e:#}");
-            }
+        if let Some(rec) = recorder
+            && let Err(e) = rec.record_events(std::slice::from_ref(&event)).await
+        {
+            error!("failed to record rollout event: {e:#}");
         }
         if let Err(e) = self.tx_event.send(event).await {
             error!("failed to send tool call event: {e}");
