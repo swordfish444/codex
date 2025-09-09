@@ -1548,6 +1548,53 @@ fn multiple_agent_messages_in_single_turn_emit_multiple_headers() {
 }
 
 #[test]
+fn final_message_not_duplicated_when_task_complete_precedes_final_message() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
+
+    chat.handle_codex_event(Event {
+        id: "s1".into(),
+        msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
+            delta: "Hello".into(),
+        }),
+    });
+    chat.handle_codex_event(Event {
+        id: "s1".into(),
+        msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
+            delta: " world".into(),
+        }),
+    });
+
+    chat.handle_codex_event(Event {
+        id: "s1".into(),
+        msg: EventMsg::TaskComplete(TaskCompleteEvent {
+            last_agent_message: Some("Hello world".into()),
+        }),
+    });
+
+    let mut cells = drain_insert_history(&mut rx);
+
+    chat.handle_codex_event(Event {
+        id: "s1".into(),
+        msg: EventMsg::AgentMessage(AgentMessageEvent {
+            message: "Hello world".into(),
+        }),
+    });
+
+    cells.extend(drain_insert_history(&mut rx));
+
+    let matching_cells = cells
+        .iter()
+        .filter(|lines| lines_to_single_string(lines).contains("Hello world"))
+        .count();
+
+    assert_eq!(
+        matching_cells, 1,
+        "expected the final agent message to be rendered once when TaskComplete arrives before AgentMessage, got transcript: {:?}",
+        cells
+    );
+}
+
+#[test]
 fn final_reasoning_then_message_without_deltas_are_rendered() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
 
