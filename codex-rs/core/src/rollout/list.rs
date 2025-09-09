@@ -247,3 +247,16 @@ async fn read_first_jsonl_records(
     }
     Ok(head)
 }
+
+/// Returns a filter that requires the first JSONL record to be a tagged
+/// session meta line: { "record_type": "session_meta", ... }.
+pub(crate) fn requires_tagged_session_meta_filter() -> ConversationFilter {
+    Arc::new(|item: &ConversationItem| {
+        item.head
+            .get(0)
+            .and_then(|v| v.get("record_type"))
+            .and_then(|v| v.as_str())
+            .map(|s| s == "session_meta")
+            .unwrap_or(false)
+    })
+}

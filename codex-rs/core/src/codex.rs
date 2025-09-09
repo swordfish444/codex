@@ -752,6 +752,27 @@ impl Session {
             if let Err(e) = rec.record_response_items(items).await {
                 error!("failed to record rollout items: {e:#}");
             }
+
+            // Also persist user input as EventMsg::UserMessage so resuming can
+            // reconstruct an event stream without relying on mapping.
+            // Only keep user messages; avoid duplicating assistant events which
+            // are recorded when emitted during streaming.
+            let derived_user_events: Vec<crate::protocol::Event> = items
+                .iter()
+                .flat_map(|it| {
+                    map_response_item_to_event_messages(it, self.show_raw_agent_reasoning)
+                })
+                .filter(|ev| matches!(ev, EventMsg::UserMessage(_)))
+                .map(|msg| crate::protocol::Event {
+                    id: String::new(),
+                    msg,
+                })
+                .collect();
+            if !derived_user_events.is_empty() {
+                if let Err(e) = rec.record_events(&derived_user_events).await {
+                    error!("failed to record derived user events: {e:#}");
+                }
+            }
         }
     }
 

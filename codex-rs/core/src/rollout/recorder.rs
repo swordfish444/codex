@@ -211,7 +211,10 @@ impl RolloutRecorder {
         page_size: usize,
         cursor: Option<&Cursor>,
     ) -> std::io::Result<ConversationsPage> {
-        get_conversations(codex_home, page_size, cursor).await
+        // Apply a default filter to require files to start with a tagged
+        // session_meta record. This skips legacy/invalid files from listings.
+        let filters = vec![super::list::requires_tagged_session_meta_filter()];
+        get_conversations_filtered(codex_home, page_size, cursor, &filters).await
     }
 
     #[allow(dead_code)]
