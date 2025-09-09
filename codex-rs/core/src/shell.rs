@@ -167,8 +167,17 @@ async fn detect_default_user_shell(session_id: Uuid, codex_home: &Path) -> Shell
                 .into_owned();
             let home_path = CStr::from_ptr((*pw).pw_dir).to_string_lossy().into_owned();
 
+            let rc_path = if shell_path.ends_with("/zsh") {
+                format!("{home_path}/.zshrc")
+            } else if shell_path.ends_with("/bash") {
+                format!("{home_path}/.bashrc")
+            } else {
+                return Shell::Unknown;
+            };
+
             let snapshot_path = snapshots::ensure_posix_snapshot(
                 &shell_path,
+                &rc_path,
                 Path::new(&home_path),
                 codex_home,
                 session_id,
@@ -179,14 +188,6 @@ async fn detect_default_user_shell(session_id: Uuid, codex_home: &Path) -> Shell
             }
             let shell_snapshot =
                 snapshot_path.map(|snapshot| Arc::new(ShellSnapshot::new(snapshot)));
-
-            let rc_path = if shell_path.ends_with("/zsh") {
-                format!("{home_path}/.zshrc")
-            } else if shell_path.ends_with("/bash") {
-                format!("{home_path}/.bashrc")
-            } else {
-                return Shell::Unknown;
-            };
 
             return Shell::Posix(PosixShell {
                 shell_path,
@@ -276,6 +277,7 @@ mod snapshots {
 
     pub(crate) async fn ensure_posix_snapshot(
         shell_path: &str,
+        rc_path: &str,
         home: &Path,
         codex_home: &Path,
         session_id: Uuid,
@@ -310,7 +312,7 @@ mod snapshots {
             return Some(snapshot_path);
         }
 
-        match regenerate_posix_snapshot(shell_path, home, &snapshot_path).await {
+        match regenerate_posix_snapshot(shell_path, rc_path, home, &snapshot_path).await {
             Ok(()) => Some(snapshot_path),
             Err(err) => {
                 tracing::warn!("failed to generate posix snapshot: {err}");
@@ -321,6 +323,7 @@ mod snapshots {
 
     async fn regenerate_posix_snapshot(
         shell_path: &str,
+        rc_path: &str,
         home: &Path,
         snapshot_path: &Path,
     ) -> std::io::Result<()> {
@@ -333,7 +336,7 @@ mod snapshots {
             capture_script.push_str(&format!("{profile_sources}; "));
         }
 
-        let zshrc = home.join(".zshrc");
+        let zshrc = home.join(rc_path);
 
         capture_script.push_str(
             &format!(". {}; setopt posixbuiltins; export -p; {{ alias | sed 's/^/alias /'; }} 2>/dev/null || true", zshrc.display()),
@@ -519,10 +522,15 @@ mod macos_tests {
         .unwrap();
 
         let session_id = Uuid::new_v4();
-        let snapshot_path =
-            ensure_posix_snapshot(shell_path, temp_home.path(), codex_home.path(), session_id)
-                .await
-                .expect("snapshot path");
+        let snapshot_path = ensure_posix_snapshot(
+            shell_path,
+            ".zshrc",
+            temp_home.path(),
+            codex_home.path(),
+            session_id,
+        )
+        .await
+        .expect("snapshot path");
 
         let filename = snapshot_path
             .file_name()
@@ -532,10 +540,15 @@ mod macos_tests {
         assert!(filename.contains(&session_id.to_string()));
         assert!(snapshot_path.exists());
 
-        let snapshot_path_second =
-            ensure_posix_snapshot(shell_path, temp_home.path(), codex_home.path(), session_id)
-                .await
-                .expect("snapshot path");
+        let snapshot_path_second = ensure_posix_snapshot(
+            shell_path,
+            ".zshrc",
+            temp_home.path(),
+            codex_home.path(),
+            session_id,
+        )
+        .await
+        .expect("snapshot path");
         assert_eq!(snapshot_path, snapshot_path_second);
 
         let contents = std::fs::read_to_string(&snapshot_path).unwrap();
