@@ -54,7 +54,8 @@ const ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE: &str = "Running Codex with --dan
 const ADMIN_DANGEROUS_SANDBOX_DISABLED_PROMPT_LINES: &[&str] = &[
     "Running Codex with --dangerously-bypass-approvals-and-sandbox or",
     "--sandbox danger-full-access has been disabled by your administrator.",
-    "\nPlease contact your system administrator or try: codex --full-auto",
+    "\nPlease contact your system administrator or try with sandboxed mode:",
+    "codex --full-auto",
 ];
 
 #[cfg(target_os = "macos")]
