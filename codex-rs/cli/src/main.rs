@@ -40,6 +40,18 @@ struct MultitoolCli {
     #[clap(flatten)]
     interactive: TuiCli,
 
+    /// Reasoning effort for the model (maps to model_reasoning_effort).
+    #[arg(long = "reasoning", value_parser = ["minimal", "low", "medium", "high"]) ]
+    reasoning: Option<String>,
+
+    /// Reasoning summary verbosity (maps to model_reasoning_summary).
+    #[arg(long = "reasoning-summary", value_parser = ["auto", "concise", "detailed", "none"]) ]
+    reasoning_summary: Option<String>,
+
+    /// Text verbosity for GPT‑5 models (maps to model_verbosity).
+    #[arg(long = "verbosity", value_parser = ["low", "medium", "high"]) ]
+    verbosity: Option<String>,
+
     #[clap(subcommand)]
     subcommand: Option<Subcommand>,
 }
@@ -143,7 +155,25 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
-    let cli = MultitoolCli::parse();
+    let mut cli = MultitoolCli::parse();
+
+    // Synthesize -c overrides from root-level reasoning flags so they flow to
+    // both interactive and subcommand CLIs via prepend_config_flags.
+    if let Some(ref v) = cli.reasoning {
+        cli.config_overrides
+            .raw_overrides
+            .push(format!("model_reasoning_effort=\"{v}\""));
+    }
+    if let Some(ref v) = cli.reasoning_summary {
+        cli.config_overrides
+            .raw_overrides
+            .push(format!("model_reasoning_summary=\"{v}\""));
+    }
+    if let Some(ref v) = cli.verbosity {
+        cli.config_overrides
+            .raw_overrides
+            .push(format!("model_verbosity=\"{v}\""));
+    }
 
     match cli.subcommand {
         None => {
