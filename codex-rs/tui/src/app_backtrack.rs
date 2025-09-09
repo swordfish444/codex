@@ -1,26 +1,28 @@
 use crate::app::App;
 use crate::backtrack_helpers;
-use crate::transcript_app::TranscriptApp;
+use crate::pager_overlay::Overlay;
 use crate::tui;
 use crate::tui::TuiEvent;
 use codex_core::protocol::ConversationHistoryResponseEvent;
+use codex_protocol::mcp_protocol::ConversationId;
 use color_eyre::eyre::Result;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
+
 /// Aggregates all backtrack-related state used by the App.
 #[derive(Default)]
 pub(crate) struct BacktrackState {
     /// True when Esc has primed backtrack mode in the main view.
     pub(crate) primed: bool,
     /// Session id of the base conversation to fork from.
-    pub(crate) base_id: Option<uuid::Uuid>,
+    pub(crate) base_id: Option<ConversationId>,
     /// Current step count (Nth last user message).
     pub(crate) count: usize,
     /// True when the transcript overlay is showing a backtrack preview.
     pub(crate) overlay_preview_active: bool,
     /// Pending fork request: (base_id, drop_count, prefill).
-    pub(crate) pending: Option<(uuid::Uuid, usize, String)>,
+    pub(crate) pending: Option<(ConversationId, usize, String)>,
 }
 
 impl App {
@@ -79,7 +81,7 @@ impl App {
         if self.chat_widget.composer_is_empty() {
             if !self.backtrack.primed {
                 self.prime_backtrack();
-            } else if self.transcript_overlay.is_none() {
+            } else if self.overlay.is_none() {
                 self.open_backtrack_preview(tui);
             } else if self.backtrack.overlay_preview_active {
                 self.step_backtrack_and_highlight(tui);
@@ -91,7 +93,7 @@ impl App {
     pub(crate) fn request_backtrack(
         &mut self,
         prefill: String,
-        base_id: uuid::Uuid,
+        base_id: ConversationId,
         drop_last_messages: usize,
     ) {
         self.backtrack.pending = Some((base_id, drop_last_messages, prefill));
@@ -103,7 +105,7 @@ impl App {
     /// Open transcript overlay (enters alternate screen and shows full transcript).
     pub(crate) fn open_transcript_overlay(&mut self, tui: &mut tui::Tui) {
         let _ = tui.enter_alt_screen();
-        self.transcript_overlay = Some(TranscriptApp::new(self.transcript_lines.clone()));
+        self.overlay = Some(Overlay::new_transcript(self.transcript_lines.clone()));
         tui.frame_requester().schedule_frame();
     }
 
@@ -115,7 +117,7 @@ impl App {
             let lines = std::mem::take(&mut self.deferred_history_lines);
             tui.insert_history_lines(lines);
         }
-        self.transcript_overlay = None;
+        self.overlay = None;
         self.backtrack.overlay_preview_active = false;
         if was_backtrack {
             // Ensure backtrack state is fully reset when overlay closes (e.g. via 'q').
@@ -135,7 +137,7 @@ impl App {
     fn prime_backtrack(&mut self) {
         self.backtrack.primed = true;
         self.backtrack.count = 0;
-        self.backtrack.base_id = self.chat_widget.session_id();
+        self.backtrack.base_id = self.chat_widget.conversation_id();
         self.chat_widget.show_esc_backtrack_hint();
     }
 
@@ -151,7 +153,7 @@ impl App {
     /// When overlay is already open, begin preview mode and select latest user message.
     fn begin_overlay_backtrack_preview(&mut self, tui: &mut tui::Tui) {
         self.backtrack.primed = true;
-        self.backtrack.base_id = self.chat_widget.session_id();
+        self.backtrack.base_id = self.chat_widget.conversation_id();
         self.backtrack.overlay_preview_active = true;
         let sel = self.compute_backtrack_selection(tui, 1);
         self.apply_backtrack_selection(sel);
@@ -193,23 +195,23 @@ impl App {
     ) {
         let (nth, offset, hl) = selection;
         self.backtrack.count = nth;
-        if let Some(overlay) = &mut self.transcript_overlay {
+        if let Some(Overlay::Transcript(t)) = &mut self.overlay {
             if let Some(off) = offset {
-                overlay.scroll_offset = off;
+                t.set_scroll_offset(off);
             }
-            overlay.set_highlight_range(hl);
+            t.set_highlight_range(hl);
         }
     }
 
     /// Forward any event to the overlay and close it if done.
     fn overlay_forward_event(&mut self, tui: &mut tui::Tui, event: TuiEvent) -> Result<()> {
-        if let Some(overlay) = &mut self.transcript_overlay {
+        if let Some(overlay) = &mut self.overlay {
             overlay.handle_event(tui, event)?;
-            if overlay.is_done {
+            if overlay.is_done() {
                 self.close_transcript_overlay(tui);
+                tui.frame_requester().schedule_frame();
             }
         }
-        tui.frame_requester().schedule_frame();
         Ok(())
     }
 
@@ -319,14 +321,16 @@ impl App {
     ) {
         let conv = new_conv.conversation;
         let session_configured = new_conv.session_configured;
-        self.chat_widget = crate::chatwidget::ChatWidget::new_from_existing(
-            cfg,
-            conv,
-            session_configured,
-            tui.frame_requester(),
-            self.app_event_tx.clone(),
-            self.enhanced_keys_supported,
-        );
+        let init = crate::chatwidget::ChatWidgetInit {
+            config: cfg,
+            frame_requester: tui.frame_requester(),
+            app_event_tx: self.app_event_tx.clone(),
+            initial_prompt: None,
+            initial_images: Vec::new(),
+            enhanced_keys_supported: self.enhanced_keys_supported,
+        };
+        self.chat_widget =
+            crate::chatwidget::ChatWidget::new_from_existing(init, conv, session_configured);
         // Trim transcript up to the selected user message and re-render it.
         self.trim_transcript_for_backtrack(drop_count);
         self.render_transcript_once(tui);

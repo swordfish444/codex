@@ -19,7 +19,7 @@ pub(crate) trait BottomPaneView {
 
     /// Handle Ctrl-C while this view is active.
     fn on_ctrl_c(&mut self, _pane: &mut BottomPane) -> CancellationEvent {
-        CancellationEvent::Ignored
+        CancellationEvent::NotHandled
     }
 
     /// Return the desired height of the view.
@@ -27,16 +27,6 @@ pub(crate) trait BottomPaneView {
 
     /// Render the view: this will be displayed in place of the composer.
     fn render(&self, area: Rect, buf: &mut Buffer);
-
-    /// Update the status indicator animated header. Default no-op.
-    fn update_status_header(&mut self, _header: String) {
-        // no-op
-    }
-
-    /// Called when task completes to check if the view should be hidden.
-    fn should_hide_when_task_is_done(&mut self) -> bool {
-        false
-    }
 
     /// Try to handle approval request; return the original value if not
     /// consumed.
@@ -46,8 +36,4 @@ pub(crate) trait BottomPaneView {
     ) -> Option<ApprovalRequest> {
         Some(request)
     }
-
-    /// Optional hook for views that expose a live status line. Views that do not
-    /// support this can ignore the call.
-    fn update_status_text(&mut self, _text: String) {}
 }

@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::io::Read;
 use std::sync::Arc;
-use std::sync::LazyLock;
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicU32;
 
@@ -21,8 +20,6 @@ use crate::exec_command::exec_command_params::WriteStdinParams;
 use crate::exec_command::exec_command_session::ExecCommandSession;
 use crate::exec_command::session_id::SessionId;
 use codex_protocol::models::FunctionCallOutputPayload;
-
-pub static SESSION_MANAGER: LazyLock<SessionManager> = LazyLock::new(SessionManager::default);
 
 #[derive(Debug, Default)]
 pub struct SessionManager {
@@ -362,10 +359,7 @@ fn truncate_middle(s: &str, max_bytes: usize) -> (String, Option<u64>) {
     let est_tokens = (s.len() as u64).div_ceil(4);
     if max_bytes == 0 {
         // Cannot keep any content; still return a full marker (never truncated).
-        return (
-            format!("…{} tokens truncated…", est_tokens),
-            Some(est_tokens),
-        );
+        return (format!("…{est_tokens} tokens truncated…"), Some(est_tokens));
     }
 
     // Helper to truncate a string to a given byte length on a char boundary.
@@ -409,16 +403,13 @@ fn truncate_middle(s: &str, max_bytes: usize) -> (String, Option<u64>) {
     // Refine marker length and budgets until stable. Marker is never truncated.
     let mut guess_tokens = est_tokens; // worst-case: everything truncated
     for _ in 0..4 {
-        let marker = format!("…{} tokens truncated…", guess_tokens);
+        let marker = format!("…{guess_tokens} tokens truncated…");
         let marker_len = marker.len();
         let keep_budget = max_bytes.saturating_sub(marker_len);
         if keep_budget == 0 {
             // No room for any content within the cap; return a full, untruncated marker
             // that reflects the entire truncated content.
-            return (
-                format!("…{} tokens truncated…", est_tokens),
-                Some(est_tokens),
-            );
+            return (format!("…{est_tokens} tokens truncated…"), Some(est_tokens));
         }
 
         let left_budget = keep_budget / 2;
@@ -444,14 +435,11 @@ fn truncate_middle(s: &str, max_bytes: usize) -> (String, Option<u64>) {
     }
 
     // Fallback: use last guess to build output.
-    let marker = format!("…{} tokens truncated…", guess_tokens);
+    let marker = format!("…{guess_tokens} tokens truncated…");
     let marker_len = marker.len();
     let keep_budget = max_bytes.saturating_sub(marker_len);
     if keep_budget == 0 {
-        return (
-            format!("…{} tokens truncated…", est_tokens),
-            Some(est_tokens),
-        );
+        return (format!("…{est_tokens} tokens truncated…"), Some(est_tokens));
     }
     let left_budget = keep_budget / 2;
     let right_budget = keep_budget - left_budget;
