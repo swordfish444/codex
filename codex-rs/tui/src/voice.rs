@@ -324,12 +324,8 @@ fn encode_wav_normalized(audio: &RecordedAudio) -> Result<Vec<u8>, String> {
 
 async fn resolve_auth() -> Result<(String, Option<String>), String> {
     let codex_home = find_codex_home().map_err(|e| format!("failed to find codex home: {e}"))?;
-    let auth_opt = CodexAuth::from_codex_home(
-        &codex_home,
-        AuthMode::ChatGPT,
-        codex_core::default_client::DEFAULT_ORIGINATOR,
-    )
-    .map_err(|e| format!("failed to read auth.json: {e}"))?;
+    let auth_opt = CodexAuth::from_codex_home(&codex_home, AuthMode::ChatGPT)
+        .map_err(|e| format!("failed to read auth.json: {e}"))?;
     match auth_opt {
         Some(auth) => {
             let token = auth
@@ -363,7 +359,7 @@ async fn transcribe_bytes(wav_bytes: Vec<u8>) -> Result<String, String> {
         .post("https://api.openai.com/v1/audio/transcriptions")
         .bearer_auth(bearer_token)
         .multipart(form)
-        .header("User-Agent", get_codex_user_agent(None));
+        .header("User-Agent", get_codex_user_agent());
 
     if let Some(acc) = chatgpt_account_id {
         req = req.header("chatgpt-account-id", acc);
