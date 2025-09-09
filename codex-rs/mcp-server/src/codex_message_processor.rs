@@ -729,9 +729,7 @@ impl CodexMessageProcessor {
         {
             let error = JSONRPCErrorError {
                 code: INTERNAL_ERROR_CODE,
-                message: format!(
-                    "error shutting down conversation {conversation_id}: {err}"
-                ),
+                message: format!("error shutting down conversation {conversation_id}: {err}"),
                 data: None,
             };
             self.outgoing.send_error(request_id, error).await;
@@ -749,7 +747,6 @@ impl CodexMessageProcessor {
         self.outgoing
             .send_response(request_id, DeleteConversationResponse {})
             .await;
-
     }
 
     async fn send_user_message(&self, request_id: RequestId, params: SendUserMessageParams) {

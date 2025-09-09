@@ -1352,23 +1352,21 @@ async fn submission_loop(
                 // that inspect the rollout file do not race with the background writer.
                 let recorder_opt = sess.rollout.lock_unchecked().take();
                 let shutdown_error: Option<String> = match recorder_opt {
-                    Some(recorder) => {
-                        match recorder.shutdown().await {
-                            Ok(()) => {
-                                if delete_rollout && let Err(e) = recorder.delete_rollout_file().await {
-                                    warn!("failed to delete rollout file: {e}");
-                                    Some(format!("Failed to delete rollout file: {e}"))
-                                } else {
-                                    None
-                                }
-                            }
-                            Err(e) => {
-                                warn!("failed to shutdown rollout recorder: {e}");
-                                Some("Failed to shutdown rollout recorder".to_string())
+                    Some(recorder) => match recorder.shutdown().await {
+                        Ok(()) => {
+                            if delete_rollout && let Err(e) = recorder.delete_rollout_file().await {
+                                warn!("failed to delete rollout file: {e}");
+                                Some(format!("Failed to delete rollout file: {e}"))
+                            } else {
+                                None
                             }
                         }
-                    }
-                    None => None
+                        Err(e) => {
+                            warn!("failed to shutdown rollout recorder: {e}");
+                            Some("Failed to shutdown rollout recorder".to_string())
+                        }
+                    },
+                    None => None,
                 };
 
                 if let Some(message) = shutdown_error {
