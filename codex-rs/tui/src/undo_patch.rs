@@ -35,7 +35,10 @@ async fn run_git_apply(diff: &str, cwd: &Path, args: &[&str]) -> io::Result<Undo
 }
 
 pub(crate) async fn undo_patch(diff: &str, cwd: &Path) -> io::Result<UndoPatchResult> {
-    const UNDO_ARGS: [&[&str]; 2] = [&["apply", "-R"], &["apply", "--3way", "-R"]];
+    const UNDO_ARGS: [&[&str]; 2] = [
+        &["apply", "--unsafe-paths", "-R"],
+        &["apply", "--unsafe-paths", "--3way", "-R"],
+    ];
 
     let mut last_result = UndoPatchResult::default();
     for args in UNDO_ARGS {

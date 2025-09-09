@@ -1152,6 +1152,7 @@ fn apply_patch_events_emit_history_cells() {
         stdout: "ok\n".into(),
         stderr: String::new(),
         success: true,
+        diff: Some("diff --git a/foo.txt b/foo.txt\n".to_string()),
     };
     chat.handle_codex_event(Event {
         id: "s1".into(),
@@ -1376,6 +1377,7 @@ fn apply_patch_full_flow_integration_like() {
             stdout: String::from("ok"),
             stderr: String::new(),
             success: true,
+            diff: Some("diff --git a/pkg.rs b/pkg.rs\n".to_string()),
         }),
     });
 }

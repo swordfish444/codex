@@ -37,7 +37,6 @@ use codex_core::protocol::TurnDiffEvent;
 use codex_core::protocol::UserMessageEvent;
 use codex_core::protocol::WebSearchBeginEvent;
 use codex_core::protocol::WebSearchEndEvent;
-use codex_core::turn_diff_tracker::TurnDiffTracker;
 use codex_protocol::parse_command::ParsedCommand;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -103,16 +102,11 @@ struct AppliedPatchDiff {
     working_dir: PathBuf,
 }
 
-struct PatchInFlight {
-    tracker: TurnDiffTracker,
-    working_dir: PathBuf,
-}
-
 const MAX_COMPLETED_UNDO_TURNS: usize = 1;
 
 #[derive(Default)]
 struct PatchUndoHistory {
-    trackers: HashMap<String, PatchInFlight>,
+    working_dirs: HashMap<String, PathBuf>,
     active_turn: Vec<AppliedPatchDiff>,
     completed_turns: Vec<Arc<[AppliedPatchDiff]>>,
     undo_in_progress: Option<Arc<[AppliedPatchDiff]>>,
@@ -124,6 +118,7 @@ impl PatchUndoHistory {
     }
 
     fn start_turn(&mut self) {
+        self.working_dirs.clear();
         self.active_turn.clear();
     }
 
@@ -143,28 +138,16 @@ impl PatchUndoHistory {
     fn start_patch(
         &mut self,
         call_id: String,
-        changes: HashMap<PathBuf, FileChange>,
+        changes: &HashMap<PathBuf, FileChange>,
         patch_cwd: PathBuf,
         default_cwd: &Path,
     ) {
-        let mut tracker = TurnDiffTracker::new();
-        tracker.on_patch_begin(&changes);
-        let working_dir = working_dir_for_patch(&changes, &patch_cwd, default_cwd);
-        self.trackers.insert(
-            call_id,
-            PatchInFlight {
-                tracker,
-                working_dir,
-            },
-        );
+        let working_dir = working_dir_for_patch(changes, &patch_cwd, default_cwd);
+        self.working_dirs.insert(call_id, working_dir);
     }
 
-    fn complete_patch(&mut self, call_id: &str, success: bool) {
-        let Some(PatchInFlight {
-            mut tracker,
-            working_dir,
-        }) = self.trackers.remove(call_id)
-        else {
+    fn complete_patch(&mut self, call_id: &str, success: bool, diff: Option<String>) {
+        let Some(working_dir) = self.working_dirs.remove(call_id) else {
             return;
         };
 
@@ -172,14 +155,16 @@ impl PatchUndoHistory {
             return;
         }
 
-        if let Ok(Some(diff)) = tracker.get_unified_diff() {
-            if diff.trim().is_empty() {
-                return;
-            }
+        let Some(diff) = diff else {
+            return;
+        };
 
-            self.active_turn
-                .push(AppliedPatchDiff { diff, working_dir });
+        if diff.trim().is_empty() {
+            return;
         }
+
+        self.active_turn
+            .push(AppliedPatchDiff { diff, working_dir });
     }
 
     fn prune_completed_turns(&mut self) {
@@ -512,7 +497,7 @@ impl ChatWidget {
 
         let history_changes = changes.clone();
         self.patch_history
-            .start_patch(call_id, changes, cwd, &self.config.cwd);
+            .start_patch(call_id, &changes, cwd, &self.config.cwd);
         self.add_to_history(history_cell::new_patch_event(
             PatchEventType::ApplyBegin { auto_approved },
             history_changes,
@@ -678,7 +663,7 @@ impl ChatWidget {
         event: codex_core::protocol::PatchApplyEndEvent,
     ) {
         self.patch_history
-            .complete_patch(&event.call_id, event.success);
+            .complete_patch(&event.call_id, event.success, event.diff.clone());
         if !event.success {
             self.add_to_history(history_cell::new_patch_apply_failure(event.stderr));
         }

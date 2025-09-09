@@ -913,6 +913,9 @@ pub struct PatchApplyEndEvent {
     pub stderr: String,
     /// Whether the patch was applied successfully.
     pub success: bool,
+    /// Unified diff describing the patch the tool applied, if available.
+    #[serde(default)]
+    pub diff: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
