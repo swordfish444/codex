@@ -157,10 +157,6 @@ impl ConversationManager {
         config: Config,
     ) -> CodexResult<NewConversation> {
         // Compute the prefix up to the cut point.
-        warn!(
-            "eventmsgs in fork_conversation: {:?}",
-            conversation_history.get_event_msgs()
-        );
         let history =
             truncate_after_dropping_last_messages(conversation_history, num_messages_to_drop);
 
@@ -199,7 +195,6 @@ fn truncate_after_dropping_last_messages(history: InitialHistory, n: usize) -> I
     // Compute event prefix by cutting at the matching user event (if present).
     let event_msgs_prefix: Vec<EventMsg> =
         event_msgs_prefix_until_target(&history, target_message.as_deref());
-    warn!("event_msgs_prefix: {:?}", event_msgs_prefix);
 
     // Keep only response items strictly before the cut response index.
     let response_prefix: Vec<ResponseItem> = response_items[..cut_resp_index].to_vec();
@@ -214,16 +209,13 @@ fn event_msgs_prefix_until_target(
     history: &InitialHistory,
     target_message: Option<&str>,
 ) -> Vec<EventMsg> {
-    warn!("target_message: {:?}", target_message);
     match history.get_event_msgs() {
         Some(all_events) => {
             if let Some(target) = target_message {
                 if let Some(idx) = find_matching_user_event_index_in_event_msgs(&all_events, target)
                 {
-                    warn!("found matching user event index: {}", idx);
                     all_events[..idx].to_vec()
                 } else {
-                    warn!("no matching user event index found");
                     Vec::new()
                 }
             } else {

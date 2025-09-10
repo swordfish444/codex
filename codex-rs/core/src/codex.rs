@@ -1393,7 +1393,6 @@ async fn submission_loop(
                     let state = sess.state.lock_unchecked();
                     let rolled_response_items: Vec<RolloutItem> = (&state.response_items).into();
                     let rolled_event_msgs: Vec<RolloutItem> = (&state.event_msgs).into();
-                    warn!("rolled_event_msgs: {:?}", rolled_event_msgs);
                     [rolled_response_items, rolled_event_msgs].concat()
                 };
                 let event = Event {
