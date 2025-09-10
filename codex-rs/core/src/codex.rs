@@ -565,6 +565,11 @@ impl Session {
 
     /// Persist the event to rollout and send it to clients.
     pub(crate) async fn send_event(&self, event: Event) {
+        // Persist the event into event_msgs in memory
+        self.state
+            .lock_unchecked()
+            .event_msgs
+            .record_items(std::slice::from_ref(&event.msg));
         // Persist the event into rollout (recorder filters as needed)
         let rollout_items = vec![RolloutItem::EventMsg(event.msg.clone())];
         self.persist_rollout_items(&rollout_items).await;
@@ -1384,8 +1389,9 @@ async fn submission_loop(
                 let sub_id = sub.id.clone();
                 let entries = {
                     let state = sess.state.lock_unchecked();
-                    let rolled: Vec<RolloutItem> = (&state.response_items).into();
-                    rolled
+                    let rolled_response_items: Vec<RolloutItem> = (&state.response_items).into();
+                    let rolled_event_msgs: Vec<RolloutItem> = (&state.event_msgs).into();
+                    [rolled_response_items, rolled_event_msgs].concat()
                 };
                 let event = Event {
                     id: sub_id.clone(),

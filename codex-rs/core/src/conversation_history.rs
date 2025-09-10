@@ -75,8 +75,19 @@ impl EventMsgsHistory {
         I::Item: std::ops::Deref<Target = EventMsg>,
     {
         for item in items {
-            self.items.push(item.clone());
+            if self.should_record_item(&item) {
+                self.items.push(item.clone());
+            }
         }
+    }
+    fn should_record_item(&self, item: &EventMsg) -> bool {
+        !matches!(
+            item,
+            EventMsg::AgentMessageDelta(_)
+                | EventMsg::AgentReasoningDelta(_)
+                | EventMsg::AgentReasoningRawContentDelta(_)
+                | EventMsg::ExecCommandOutputDelta(_)
+        )
     }
 }
 

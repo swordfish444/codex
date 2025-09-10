@@ -3,6 +3,7 @@ use crate::backtrack_helpers;
 use crate::pager_overlay::Overlay;
 use crate::tui;
 use crate::tui::TuiEvent;
+use codex_core::InitialHistory;
 use codex_core::protocol::ConversationHistoryResponseEvent;
 use codex_protocol::mcp_protocol::ConversationId;
 use color_eyre::eyre::Result;
@@ -301,7 +302,7 @@ impl App {
     /// Thin wrapper around ConversationManager::fork_conversation.
     async fn perform_fork(
         &self,
-        entries: Vec<codex_protocol::models::ResponseItem>,
+        entries: InitialHistory,
         drop_count: usize,
         cfg: codex_core::config::Config,
     ) -> codex_core::error::Result<codex_core::NewConversation> {

@@ -77,12 +77,13 @@ async fn fork_conversation_twice_drops_to_first_message() {
         wait_for_event(&codex, |ev| matches!(ev, EventMsg::ConversationHistory(_))).await;
 
     // Capture entries from the base history and compute expected prefixes after each fork.
-    let entries_after_three = match &base_history {
+    let history_after_three = match &base_history {
         EventMsg::ConversationHistory(ConversationHistoryResponseEvent { history, .. }) => {
-            entries.clone()
+            history.clone()
         }
         _ => panic!("expected ConversationHistory event"),
     };
+    let entries_after_three = history_after_three.get_rollout_items();
     // History layout for this test:
     // [0] user instructions,
     // [1] environment context,
@@ -113,7 +114,7 @@ async fn fork_conversation_twice_drops_to_first_message() {
         conversation: codex_fork1,
         ..
     } = conversation_manager
-        .fork_conversation(entries_after_three.clone(), 1, config_for_fork.clone())
+        .fork_conversation(history_after_three.clone(), 1, config_for_fork.clone())
         .await
         .expect("fork 1");
 
@@ -122,13 +123,14 @@ async fn fork_conversation_twice_drops_to_first_message() {
         matches!(ev, EventMsg::ConversationHistory(_))
     })
     .await;
-    let entries_after_first_fork = match &fork1_history {
+    let history_after_first_fork = match &fork1_history {
         EventMsg::ConversationHistory(ConversationHistoryResponseEvent { history, .. }) => {
-            assert!(matches!(
-                fork1_history,
-                EventMsg::ConversationHistory(ConversationHistoryResponseEvent { ref history, .. }) if *entries == expected_after_first
-            ));
-            entries.clone()
+            let got = history.get_rollout_items();
+            assert_eq!(
+                serde_json::to_value(&got).unwrap(),
+                serde_json::to_value(&expected_after_first).unwrap()
+            );
+            history.clone()
         }
         _ => panic!("expected ConversationHistory event after first fork"),
     };
@@ -138,7 +140,7 @@ async fn fork_conversation_twice_drops_to_first_message() {
         conversation: codex_fork2,
         ..
     } = conversation_manager
-        .fork_conversation(entries_after_first_fork.clone(), 1, config_for_fork.clone())
+        .fork_conversation(history_after_first_fork.clone(), 1, config_for_fork.clone())
         .await
         .expect("fork 2");
 
@@ -147,8 +149,14 @@ async fn fork_conversation_twice_drops_to_first_message() {
         matches!(ev, EventMsg::ConversationHistory(_))
     })
     .await;
-    assert!(matches!(
-        fork2_history,
-        EventMsg::ConversationHistory(ConversationHistoryResponseEvent { ref history, .. }) if *entries == expected_after_second
-    ));
+    match &fork2_history {
+        EventMsg::ConversationHistory(ConversationHistoryResponseEvent { history, .. }) => {
+            let got = history.get_rollout_items();
+            assert_eq!(
+                serde_json::to_value(&got).unwrap(),
+                serde_json::to_value(&expected_after_second).unwrap()
+            );
+        }
+        _ => panic!("expected ConversationHistory event after second fork"),
+    }
 }
