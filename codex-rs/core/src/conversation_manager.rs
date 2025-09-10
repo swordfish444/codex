@@ -172,45 +172,55 @@ impl ConversationManager {
 /// Return a prefix of `items` obtained by dropping the last `n` user messages
 /// and all items that follow them.
 fn truncate_after_dropping_last_messages(history: InitialHistory, n: usize) -> InitialHistory {
-    // Determine the cut point among response items (counting only ResponseItem::Message with role=="user").
-    let response_items: Vec<ResponseItem> = history.get_response_items();
     if n == 0 {
         return history;
     }
 
-    let Some(cut_resp_index) = find_cut_response_index(&response_items, n) else {
-        return InitialHistory::New;
-    };
-
-    if cut_resp_index == 0 {
-        return InitialHistory::New;
-    }
-
     // Compute event prefix by dropping the last `n` user events (counted from the end).
     let event_msgs_prefix: Vec<EventMsg> =
-        event_msgs_prefix_after_dropping_last_user_events(&history, n);
+        build_event_prefix_excluding_last_n_user_turns(&history, n);
 
-    // Keep only response items strictly before the cut response index.
-    let response_prefix: Vec<ResponseItem> = response_items[..cut_resp_index].to_vec();
+    // Keep only response items strictly before the cut (drop last `n` user messages).
+    let response_prefix: Vec<ResponseItem> =
+        build_response_prefix_excluding_last_n_user_turns(&history, n);
 
     let rolled = build_truncated_rollout(&event_msgs_prefix, &response_prefix);
-    InitialHistory::Forked(rolled)
+    if rolled.is_empty() {
+        InitialHistory::New
+    } else {
+        InitialHistory::Forked(rolled)
+    }
 }
 
 /// Build the event messages prefix from `history` by dropping the last `n` user
-/// events (counted from the end) and taking everything before that cut.
-fn event_msgs_prefix_after_dropping_last_user_events(
+/// turns (counted from the end) and taking everything before that cut.
+fn build_event_prefix_excluding_last_n_user_turns(
     history: &InitialHistory,
     n: usize,
 ) -> Vec<EventMsg> {
     match history.get_event_msgs() {
         Some(all_events) => {
-            if let Some(idx) = find_cut_event_index(&all_events, n) {
-                all_events[..idx].to_vec()
-            } else {
-                Vec::new()
-            }
+            take_prefix_before_index(&all_events, find_cut_event_index(&all_events, n))
         }
+        None => Vec::new(),
+    }
+}
+
+/// Build the response items prefix from `history` by dropping the last `n` user
+/// turns (counted from the end) and taking everything before that cut.
+fn build_response_prefix_excluding_last_n_user_turns(
+    history: &InitialHistory,
+    n: usize,
+) -> Vec<ResponseItem> {
+    let all_items: Vec<ResponseItem> = history.get_response_items();
+    take_prefix_before_index(&all_items, find_cut_response_index(&all_items, n))
+}
+
+/// Return a cloned prefix of `items` up to (but not including) `idx`.
+/// If `idx` is `None`, returns an empty vector.
+fn take_prefix_before_index<T: Clone>(items: &[T], idx: Option<usize>) -> Vec<T> {
+    match idx {
+        Some(i) => items[..i].to_vec(),
         None => Vec::new(),
     }
 }
