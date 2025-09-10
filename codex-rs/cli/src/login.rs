@@ -15,8 +15,8 @@ use codex_protocol::mcp_protocol::AuthMode;
 use std::env;
 use std::path::PathBuf;
 
-pub async fn login_with_chatgpt(codex_home: PathBuf, originator: String) -> std::io::Result<()> {
-    let opts = ServerOptions::new(codex_home, CLIENT_ID.to_string(), originator);
+pub async fn login_with_chatgpt(codex_home: PathBuf) -> std::io::Result<()> {
+    let opts = ServerOptions::new(codex_home, CLIENT_ID.to_string());
     let server = run_login_server(opts)?;
 
     eprintln!(
@@ -30,12 +30,7 @@ pub async fn login_with_chatgpt(codex_home: PathBuf, originator: String) -> std:
 pub async fn run_login_with_chatgpt(cli_config_overrides: CliConfigOverrides) -> ! {
     let config = load_config_or_exit(cli_config_overrides).await;
 
-    match login_with_chatgpt(
-        config.codex_home,
-        config.responses_originator_header.clone(),
-    )
-    .await
-    {
+    match login_with_chatgpt(config.codex_home).await {
         Ok(_) => {
             eprintln!("Successfully logged in");
             std::process::exit(0);
@@ -68,11 +63,7 @@ pub async fn run_login_with_api_key(
 pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
     let config = load_config_or_exit(cli_config_overrides).await;
 
-    match CodexAuth::from_codex_home(
-        &config.codex_home,
-        config.preferred_auth_method,
-        &config.responses_originator_header,
-    ) {
+    match CodexAuth::from_codex_home(&config.codex_home, config.preferred_auth_method) {
         Ok(Some(auth)) => match auth.mode {
             AuthMode::ApiKey => match auth.get_token().await {
                 Ok(api_key) => {
