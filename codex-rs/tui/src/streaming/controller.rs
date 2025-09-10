@@ -115,11 +115,64 @@ impl StreamController {
             let mut out_lines: Lines = Vec::new();
             {
                 let state = &mut self.state;
-                if !remaining.is_empty() {
-                    state.enqueue(remaining);
+                // Drain queued lines.
+                let mut step = state.drain_all();
+                if let Some(first) = step.history.first() {
+                    let mut s = String::new();
+                    for sp in &first.spans {
+                        s.push_str(&sp.content);
+                    }
+                    let key = s.trim_end().to_string();
+                    if state.last_emitted_line_text.as_deref() == Some(&key) {
+                        step.history.remove(0);
+                    }
                 }
-                let step = state.drain_all();
                 out_lines.extend(step.history);
+
+                // At the seam between drained and remaining, avoid a single duplicate.
+                let mut remaining = remaining;
+                if let (Some(last_out), Some(first_rem)) = (out_lines.last(), remaining.first()) {
+                    let mut a = String::new();
+                    for sp in &last_out.spans {
+                        a.push_str(&sp.content);
+                    }
+                    let mut b = String::new();
+                    for sp in &first_rem.spans {
+                        b.push_str(&sp.content);
+                    }
+                    if a.trim_end() == b.trim_end() {
+                        remaining.remove(0);
+                    }
+                } else if out_lines.is_empty() {
+                    // No drained lines; compare remaining against last emitted.
+                    if let Some(first_rem) = remaining.first() {
+                        let mut b = String::new();
+                        for sp in &first_rem.spans {
+                            b.push_str(&sp.content);
+                        }
+                        if state
+                            .last_emitted_line_text
+                            .as_deref()
+                            .map(|t| t == b.trim_end())
+                            .unwrap_or(false)
+                        {
+                            remaining.remove(0);
+                        }
+                    }
+                }
+                out_lines.extend(remaining);
+
+                // Update last emitted tracker for the stream.
+                if let Some(last) = out_lines.last() {
+                    let mut s = String::new();
+                    for sp in &last.spans {
+                        s.push_str(&sp.content);
+                    }
+                    let key = s.trim_end().to_string();
+                    if !key.is_empty() {
+                        state.last_emitted_line_text = Some(key);
+                    }
+                }
             }
             if !out_lines.is_empty() {
                 // Insert as a HistoryCell so display drops the header while transcript keeps it.
@@ -128,6 +181,10 @@ impl StreamController {
                     self.header.maybe_emit_header(),
                 )));
             }
+
+            // Ensure commit animation (status ticker) is stopped when we flush immediately
+            // at the end of a stream so the timer does not bleed into the UI.
+            sink.stop_commit_animation();
 
             // Cleanup
             self.state.clear();
@@ -156,12 +213,37 @@ impl StreamController {
         if !self.active {
             return false;
         }
-        let step = { self.state.step() };
+        let mut step = { self.state.step() };
         if !step.history.is_empty() {
-            sink.insert_history_cell(Box::new(history_cell::AgentMessageCell::new(
-                step.history,
-                self.header.maybe_emit_header(),
-            )));
+            // Drop a single duplicate at the seam with the previous tick.
+            if let Some(first) = step.history.first() {
+                let mut s = String::new();
+                for sp in &first.spans {
+                    s.push_str(&sp.content);
+                }
+                let key = s.trim_end().to_string();
+                if self.state.last_emitted_line_text.as_deref() == Some(&key) {
+                    step.history.remove(0);
+                }
+            }
+            // Set to last non-empty line's text if present.
+            for l in step.history.iter().rev() {
+                let mut s = String::new();
+                for sp in &l.spans {
+                    s.push_str(&sp.content);
+                }
+                let key = s.trim_end().to_string();
+                if !key.is_empty() {
+                    self.state.last_emitted_line_text = Some(key);
+                    break;
+                }
+            }
+            if !step.history.is_empty() {
+                sink.insert_history_cell(Box::new(history_cell::AgentMessageCell::new(
+                    step.history,
+                    self.header.maybe_emit_header(),
+                )));
+            }
         }
 
         let is_idle = self.state.is_idle();

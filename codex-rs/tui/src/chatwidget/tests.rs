@@ -442,6 +442,179 @@ fn open_fixture(name: &str) -> File {
 }
 
 #[test]
+fn streaming_then_final_message_does_not_duplicate_bullet_line() {
+    // This reproduces a user report where a specific bullet line was shown twice.
+    // We simulate streaming deltas for a markdown list, then send the final
+    // assistant message. The expected behavior is that each logical line appears once.
+
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
+
+    // The full assistant message (single final message in the fixture)
+    let full = concat!(
+        "1. **Summary**\n",
+        "   - Updated the chat composer footer to highlight the remaining context percentage in yellow whenever the available context drops below 20%.\n",
+        "   - Left the indicator dimmed when the remaining context is at normal levels to maintain the existing appearance in non-critical situations.\n\n",
+        "2. **Testing**\n",
+        "   - `cargo test -p codex-tui`\n\n",
+        "3. **Next steps**\n",
+        "   - Let me know if you would like me to run `just fix -p codex-tui` to apply the project-specific lint fixes.\n\n",
+        "**Quick recap:** The context-left indicator now stands out in yellow when less than 20% of the context window remains, helping users notice the low-context condition.\n",
+    );
+
+    // Stream the content in realistic chunks; notably split the second bullet
+    // so that it crosses delta boundaries (mirrors typical network trickle).
+    let deltas = [
+        "1. **Summary**\n",
+        "   - Updated the chat composer footer to highlight the remaining context percentage in yellow whenever the available context drops below 20%.\n",
+        "   - Left the indicator ",
+        "dimmed when the remaining context is at normal levels to maintain the existing appearance in non-critical situations.\n\n",
+        "2. **Testing**\n",
+        "   - `cargo test -p codex-tui`\n\n",
+        "3. **Next steps**\n",
+        "   - Let me know if you would like me to run `just fix -p codex-tui` to apply the project-specific lint fixes.\n\n",
+        "**Quick recap:** The context-left indicator now stands out in yellow when less than 20% of the context window remains, helping users notice the low-context condition.\n",
+    ];
+
+    // Drive streaming with commit ticks.
+    let mut transcript = String::new();
+    for d in deltas {
+        chat.handle_codex_event(Event {
+            id: "s".into(),
+            msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta: d.into() }),
+        });
+        // Allow at most one line to be committed per tick.
+        chat.on_commit_tick();
+        // Drain and accumulate history lines during streaming.
+        for lines in drain_insert_history(&mut rx) {
+            transcript.push_str(&lines_to_single_string(&lines));
+        }
+    }
+
+    // Send the final message, which should flush any tail without duplication.
+    chat.handle_codex_event(Event {
+        id: "s".into(),
+        msg: EventMsg::AgentMessage(AgentMessageEvent {
+            message: full.to_string(),
+        }),
+    });
+
+    // Collect the entire transcript emitted into history.
+    let cells = drain_insert_history(&mut rx);
+    for lines in cells {
+        transcript.push_str(&lines_to_single_string(&lines));
+    }
+
+    // Count occurrences of the specific bullet (case-sensitive prefix makes the check robust).
+    let needle = "Left the indicator dimmed";
+    let count = transcript.matches(needle).count();
+    // Assert once; this is red if current behavior duplicates the line.
+    assert_eq!(
+        count, 1,
+        "expected bullet line to appear once (got {count}) in:\n{transcript}"
+    );
+}
+
+#[test]
+fn streaming_preserves_legit_duplicate_lines() {
+    // Two identical bullet lines are legitimate and must both appear.
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
+
+    let deltas = ["- duplicate\n", "- duplicate\n"];
+
+    for d in deltas {
+        chat.handle_codex_event(Event {
+            id: "dup".into(),
+            msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta: d.into() }),
+        });
+        chat.on_commit_tick();
+        // drain incremental
+        let _ = drain_insert_history(&mut rx);
+    }
+
+    // Finalize with empty final message (no new content) to close the stream.
+    chat.handle_codex_event(Event {
+        id: "dup".into(),
+        msg: EventMsg::AgentMessage(AgentMessageEvent {
+            message: "".to_string(),
+        }),
+    });
+
+    let cells = drain_insert_history(&mut rx);
+    let mut transcript = String::new();
+    for lines in cells {
+        transcript.push_str(&lines_to_single_string(&lines));
+    }
+
+    let needle = "- duplicate";
+    let count = transcript.matches(needle).count();
+    assert_eq!(
+        count, 2,
+        "expected both duplicate lines to be present: {transcript}"
+    );
+}
+
+#[test]
+fn double_line_repro_fixture_renders_line_once() {
+    use codex_core::protocol::AgentMessageEvent;
+    use codex_core::protocol::Event;
+    use codex_core::protocol::EventMsg;
+    use pretty_assertions::assert_eq;
+
+    // Build a chat widget and channels without spawning the agent.
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
+
+    // Load the user-provided network log JSON and extract the final assistant text.
+    let file = open_fixture("double-line-repro.json");
+    let v: serde_json::Value = serde_json::from_reader(file).expect("parse JSON");
+    let outputs = v
+        .get("response")
+        .and_then(|r| r.get("output"))
+        .and_then(|o| o.as_array())
+        .expect("response.output array present");
+    let mut assistant_text = String::new();
+    for item in outputs {
+        if item.get("type").and_then(|t| t.as_str()) == Some("message") {
+            if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
+                for c in content {
+                    if c.get("type").and_then(|t| t.as_str()) == Some("output_text") {
+                        if let Some(text) = c.get("text").and_then(|t| t.as_str()) {
+                            assistant_text.push_str(text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        !assistant_text.is_empty(),
+        "expected assistant text extracted from fixture"
+    );
+
+    // Inject as a final assistant message (no streaming deltas) to mirror the log.
+    chat.handle_codex_event(Event {
+        id: "sub-repro".into(),
+        msg: EventMsg::AgentMessage(AgentMessageEvent {
+            message: assistant_text.clone(),
+        }),
+    });
+
+    // Drain history insertions and build a single plain-text blob for searching.
+    let cells = drain_insert_history(&mut rx);
+    let mut blob = String::new();
+    for lines in cells {
+        blob.push_str(&lines_to_single_string(&lines));
+    }
+
+    // The specific line reported as duplicated should appear exactly once.
+    let needle = "Left the indicator dimmed";
+    let count = blob.matches(needle).count();
+    assert_eq!(
+        count, 1,
+        "expected line to appear once, found {count} in output:\n{blob}"
+    );
+}
+
+#[test]
 fn empty_enter_during_task_does_not_queue() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual();
 

@@ -65,21 +65,6 @@ impl MarkdownStreamCollector {
         {
             complete_line_count -= 1;
         }
-        // Heuristic: if the buffer ends with a double newline and the last non-blank
-        // rendered line looks like a list bullet with inline content (e.g., "- item"),
-        // defer committing that line. Subsequent context (e.g., another list item)
-        // can cause the renderer to split the bullet marker and text into separate
-        // logical lines ("- " then "item"), which would otherwise duplicate content.
-        if self.buffer.ends_with("\n\n") && complete_line_count > 0 {
-            let last = &rendered[complete_line_count - 1];
-            let mut text = String::new();
-            for s in &last.spans {
-                text.push_str(&s.content);
-            }
-            if text.starts_with("- ") && text.trim() != "-" {
-                complete_line_count = complete_line_count.saturating_sub(1);
-            }
-        }
         if !self.buffer.ends_with('\n') {
             complete_line_count = complete_line_count.saturating_sub(1);
             // If we're inside an unclosed fenced code block, also drop the
@@ -143,6 +128,9 @@ impl MarkdownStreamCollector {
                 s.push_str(&sp.content);
             }
             if is_short_plain_word(&s) {
+                // Advance commit pointer for the safe portion, but withhold the
+                // single ambiguous short token to avoid duplication on finalize.
+                self.committed_line_count = complete_line_count.saturating_sub(1);
                 return Vec::new();
             }
         }

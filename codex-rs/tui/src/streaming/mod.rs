@@ -6,6 +6,7 @@ pub(crate) struct StreamState {
     pub(crate) collector: MarkdownStreamCollector,
     pub(crate) streamer: AnimatedLineStreamer,
     pub(crate) has_seen_delta: bool,
+    pub(crate) last_emitted_line_text: Option<String>,
 }
 
 impl StreamState {
@@ -14,12 +15,14 @@ impl StreamState {
             collector: MarkdownStreamCollector::new(),
             streamer: AnimatedLineStreamer::new(),
             has_seen_delta: false,
+            last_emitted_line_text: None,
         }
     }
     pub(crate) fn clear(&mut self) {
         self.collector.clear();
         self.streamer.clear();
         self.has_seen_delta = false;
+        self.last_emitted_line_text = None;
     }
     pub(crate) fn step(&mut self) -> crate::markdown_stream::StepResult {
         self.streamer.step()
