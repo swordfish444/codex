@@ -138,6 +138,7 @@ impl McpProcess {
                 name: "elicitation test".into(),
                 title: Some("Elicitation Test".into()),
                 version: "0.0.0".into(),
+                user_agent: None,
             },
             protocol_version: mcp_types::MCP_SCHEMA_VERSION.into(),
         };
