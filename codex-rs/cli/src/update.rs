@@ -41,14 +41,12 @@ pub async fn run_update_command() -> ! {
         std::process::exit(1);
     };
 
-    match method {
-        InstallMethod::Npm => {
-            run_external_command("npm", &["install", "-g", "@openai/codex@latest"]).await;
-        }
-        InstallMethod::Brew => {
-            run_external_command("brew", &["upgrade", "codex"]).await;
-        }
-    }
+    let (program, args) = match method {
+        InstallMethod::Npm => ("npm", ["install", "-g", "@openai/codex@latest"]),
+        InstallMethod::Brew => ("brew", ["upgrade", "codex"]),
+    };
+
+    run_external_command(program, &args).await;
 }
 
 fn detect_install_method(env: &InstallEnvironment) -> Option<InstallMethod> {
@@ -56,12 +54,13 @@ fn detect_install_method(env: &InstallEnvironment) -> Option<InstallMethod> {
         return Some(InstallMethod::Npm);
     }
 
-    if env.is_macos {
-        if let Some(exe) = &env.current_exe {
-            if is_homebrew_executable(exe) {
-                return Some(InstallMethod::Brew);
-            }
-        }
+    if env.is_macos
+        && env
+            .current_exe
+            .as_deref()
+            .is_some_and(is_homebrew_executable)
+    {
+        return Some(InstallMethod::Brew);
     }
 
     None
@@ -71,7 +70,6 @@ fn is_homebrew_executable(exe: &Path) -> bool {
     const HOMEBREW_PREFIXES: &[&str] = &["/opt/homebrew", "/usr/local"];
     HOMEBREW_PREFIXES
         .iter()
-        .map(Path::new)
         .any(|prefix| exe.starts_with(prefix))
 }
 
@@ -108,6 +106,7 @@ fn format_command(program: &str, args: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn detects_npm_when_env_var_is_present() {
