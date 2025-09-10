@@ -1,3 +1,4 @@
+use crate::rollout::policy::should_persist_event_msg;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
@@ -80,14 +81,9 @@ impl EventMsgsHistory {
             }
         }
     }
+
     fn should_record_item(&self, item: &EventMsg) -> bool {
-        !matches!(
-            item,
-            EventMsg::AgentMessageDelta(_)
-                | EventMsg::AgentReasoningDelta(_)
-                | EventMsg::AgentReasoningRawContentDelta(_)
-                | EventMsg::ExecCommandOutputDelta(_)
-        )
+        should_persist_event_msg(item)
     }
 }
 

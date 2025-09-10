@@ -724,6 +724,7 @@ impl Session {
         let msgs =
             map_response_item_to_event_messages(&response_item, self.show_raw_agent_reasoning);
         let user_msgs: Vec<RolloutItem> = msgs
+            .clone()
             .into_iter()
             .filter_map(|m| match m {
                 EventMsg::UserMessage(ev) => Some(RolloutItem::EventMsg(EventMsg::UserMessage(ev))),
@@ -733,6 +734,7 @@ impl Session {
         if !user_msgs.is_empty() {
             self.persist_rollout_items(&user_msgs).await;
         }
+        self.state.lock_unchecked().event_msgs.record_items(&msgs);
     }
 
     async fn on_exec_command_begin(
@@ -1391,6 +1393,7 @@ async fn submission_loop(
                     let state = sess.state.lock_unchecked();
                     let rolled_response_items: Vec<RolloutItem> = (&state.response_items).into();
                     let rolled_event_msgs: Vec<RolloutItem> = (&state.event_msgs).into();
+                    warn!("rolled_event_msgs: {:?}", rolled_event_msgs);
                     [rolled_response_items, rolled_event_msgs].concat()
                 };
                 let event = Event {
