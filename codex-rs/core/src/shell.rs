@@ -13,6 +13,14 @@ pub struct ShellSnapshot {
     pub(crate) path: PathBuf,
 }
 
+// Usage of fully qualified names for the Receiver for clarity.
+type ShellSnapshotRx = tokio::sync::watch::Receiver<Option<Arc<ShellSnapshot>>>;
+
+pub fn default_shell_snapshot_rx() -> ShellSnapshotRx {
+    let (_tx, rx) = tokio::sync::watch::channel(None);
+    rx
+}
+
 impl ShellSnapshot {
     pub fn new(path: PathBuf) -> Self {
         Self { path }
@@ -25,13 +33,26 @@ impl Drop for ShellSnapshot {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PosixShell {
     pub(crate) shell_path: String,
     pub(crate) rc_path: String,
-    #[serde(skip_serializing, skip_deserializing)]
-    pub(crate) shell_snapshot: Option<Arc<ShellSnapshot>>,
+    #[serde(
+        skip_serializing,
+        skip_deserializing,
+        default = "default_shell_snapshot_rx"
+    )]
+    pub(crate) shell_snapshot: ShellSnapshotRx,
 }
+
+impl PartialEq for PosixShell {
+    fn eq(&self, other: &Self) -> bool {
+        self.shell_path == other.shell_path && self.rc_path == other.rc_path
+        // deliberately ignore `shell_snapshot` as the RX does not implement PartialEq.
+    }
+}
+// Rely on the default implementation.
+impl Eq for PosixShell {}
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct PowerShellConfig {
@@ -55,7 +76,8 @@ impl Shell {
 
                 let mut source_path = Path::new(&shell.rc_path);
 
-                let session_cmd = if let Some(shell_snapshot) = &shell.shell_snapshot
+                let shell_snapshot = shell.shell_snapshot.borrow().clone();
+                let session_cmd = if let Some(shell_snapshot) = shell_snapshot.as_ref()
                     && shell_snapshot.path.exists()
                 {
                     source_path = shell_snapshot.path.as_path();
@@ -132,7 +154,7 @@ impl Shell {
 
     pub fn get_snapshot(&self) -> Option<Arc<ShellSnapshot>> {
         match self {
-            Shell::Posix(shell) => shell.shell_snapshot.clone(),
+            Shell::Posix(shell) => shell.shell_snapshot.borrow().clone(),
             _ => None,
         }
     }
@@ -175,24 +197,37 @@ async fn detect_default_user_shell(session_id: Uuid, codex_home: &Path) -> Shell
                 return Shell::Unknown;
             };
 
-            let snapshot_path = snapshots::ensure_posix_snapshot(
-                &shell_path,
-                &rc_path,
-                Path::new(&home_path),
-                codex_home,
-                session_id,
-            )
-            .await;
-            if snapshot_path.is_none() {
-                trace!("failed to prepare posix snapshot; using live profile");
+            let (tx, rx) = tokio::sync::watch::channel(None);
+
+            {
+                let shell_path = shell_path.clone();
+                let rc_path = rc_path.clone();
+                let home_path = home_path.clone();
+                let codex_home = codex_home.to_path_buf();
+                tokio::spawn(async move {
+                    let snapshot_path = snapshots::ensure_posix_snapshot(
+                        &shell_path,
+                        &rc_path,
+                        Path::new(&home_path),
+                        codex_home.as_path(),
+                        session_id,
+                    )
+                    .await;
+                    if snapshot_path.is_none() {
+                        trace!("failed to prepare posix snapshot; using live profile");
+                    }
+                    let shell_snapshot =
+                        snapshot_path.map(|snapshot| Arc::new(ShellSnapshot::new(snapshot)));
+                    if tx.send(shell_snapshot).is_err() {
+                        trace!("failed to send posix snapshot; using live profile");
+                    }
+                });
             }
-            let shell_snapshot =
-                snapshot_path.map(|snapshot| Arc::new(ShellSnapshot::new(snapshot)));
 
             return Shell::Posix(PosixShell {
                 shell_path,
                 rc_path,
-                shell_snapshot,
+                shell_snapshot: rx,
             });
         }
     }
@@ -386,7 +421,7 @@ pub(crate) fn delete_shell_snapshot(path: &Path) {
 
 #[cfg(test)]
 #[cfg(unix)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     use std::path::PathBuf;
@@ -396,7 +431,7 @@ mod tests {
         let shell = Shell::Posix(PosixShell {
             shell_path: "/bin/zsh".to_string(),
             rc_path: "/does/not/exist/.zshrc".to_string(),
-            shell_snapshot: None,
+            shell_snapshot: default_shell_snapshot_rx(),
         });
         let actual_cmd = shell.format_default_shell_invocation(vec!["myecho".to_string()]);
         assert_eq!(
@@ -457,7 +492,7 @@ mod tests {
             let shell = Shell::Posix(PosixShell {
                 shell_path: shell_path.to_string(),
                 rc_path: bashrc_path.to_str().unwrap().to_string(),
-                shell_snapshot: None,
+                shell_snapshot: default_shell_snapshot_rx(),
             });
 
             let actual_cmd = shell
@@ -565,6 +600,9 @@ mod macos_tests {
         let snapshot_path = temp_dir.path().join("snapshot.zsh");
         std::fs::write(&snapshot_path, "export SNAPSHOT_READY=1").unwrap();
 
+        let (_tx, rx) =
+            tokio::sync::watch::channel(Some(Arc::new(ShellSnapshot::new(snapshot_path.clone()))));
+
         let shell = Shell::Posix(PosixShell {
             shell_path: "/bin/zsh".to_string(),
             rc_path: {
@@ -572,7 +610,7 @@ mod macos_tests {
                 std::fs::write(&path, "# test zshrc").unwrap();
                 path.to_string_lossy().to_string()
             },
-            shell_snapshot: Some(Arc::new(ShellSnapshot::new(snapshot_path.clone()))),
+            shell_snapshot: rx,
         });
 
         let invocation = shell.format_default_shell_invocation(vec!["echo".to_string()]);
@@ -651,7 +689,7 @@ mod macos_tests {
             let shell = Shell::Posix(PosixShell {
                 shell_path: shell_path.to_string(),
                 rc_path: zshrc_path.to_str().unwrap().to_string(),
-                shell_snapshot: None,
+                shell_snapshot: default_shell_snapshot_rx(),
             });
 
             let actual_cmd = shell
