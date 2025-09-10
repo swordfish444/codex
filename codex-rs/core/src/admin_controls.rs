@@ -6,6 +6,9 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::io;
 use std::path::Path;
+use std::path::PathBuf;
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt;
 
 pub const ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE: &str = "Running Codex with --dangerously-bypass-approvals-and-sandbox or --sandbox danger-full-access has been disabled by your administrator. Please contact your system administrator or try: codex --full-auto";
 
@@ -40,6 +43,9 @@ pub struct AdminAuditToml {
 
     #[serde(default)]
     pub all_commands: Option<bool>,
+
+    #[serde(default)]
+    pub audit_log_file: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,21 +94,52 @@ impl AdminControls {
 pub struct AdminAudit {
     pub endpoint: String,
     pub events: AdminAuditEvents,
+    pub audit_log_file: Option<PathBuf>,
 }
 
 impl AdminAudit {
     fn from_toml(config: AdminAuditToml) -> Option<Self> {
-        let endpoint = config.endpoint?.trim().to_string();
+        let AdminAuditToml {
+            endpoint,
+            dangerous_sandbox,
+            all_commands,
+            audit_log_file,
+        } = config;
+
+        let endpoint = endpoint?.trim().to_string();
         if endpoint.is_empty() {
             return None;
         }
 
         let events = AdminAuditEvents {
-            dangerous_sandbox: config.dangerous_sandbox.unwrap_or(false),
-            all_commands: config.all_commands.unwrap_or(false),
+            dangerous_sandbox: dangerous_sandbox.unwrap_or(false),
+            all_commands: all_commands.unwrap_or(false),
         };
 
-        Some(Self { endpoint, events })
+        Some(Self {
+            endpoint,
+            events,
+            audit_log_file: audit_log_file
+                .as_deref()
+                .and_then(resolve_admin_audit_log_file),
+        })
+    }
+}
+
+fn resolve_admin_audit_log_file(path: &str) -> Option<PathBuf> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(home) = trimmed.strip_prefix("~/") {
+        let mut expanded = dirs::home_dir()?;
+        expanded.push(home);
+        Some(expanded)
+    } else if trimmed == "~" {
+        dirs::home_dir()
+    } else {
+        Some(PathBuf::from(trimmed))
     }
 }
 
@@ -187,6 +224,7 @@ pub async fn maybe_post_admin_audit_events(
         post_admin_audit_event(
             &client,
             &audit.endpoint,
+            audit.audit_log_file.as_deref(),
             AdminAuditEventKind::CommandInvoked,
             &sandbox_mode,
             context.dangerously_bypass_requested,
@@ -205,6 +243,7 @@ pub async fn maybe_post_admin_audit_events(
         post_admin_audit_event(
             &client,
             &audit.endpoint,
+            audit.audit_log_file.as_deref(),
             AdminAuditEventKind::DangerousSandbox,
             &sandbox_mode,
             context.dangerously_bypass_requested,
@@ -254,6 +293,7 @@ pub async fn audit_admin_run_without_prompt(
 async fn post_admin_audit_event(
     client: &Client,
     endpoint: &str,
+    audit_log_file: Option<&Path>,
     kind: AdminAuditEventKind,
     sandbox_mode: &str,
     dangerously_bypass_requested: bool,
@@ -282,4 +322,34 @@ async fn post_admin_audit_event(
     if let Err(err) = client.post(endpoint).json(&payload).send().await {
         tracing::warn!("Failed to POST admin audit event {}: {err}", kind.label());
     }
+
+    if let Some(path) = audit_log_file {
+        if let Err(err) = append_admin_audit_log(path, &payload).await {
+            tracing::warn!(
+                "Failed to write admin audit event {} to {}: {err}",
+                kind.label(),
+                path.display()
+            );
+        }
+    }
+}
+
+async fn append_admin_audit_log(path: &Path, payload: &AdminAuditPayload<'_>) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(true)
+        .open(path)
+        .await?;
+
+    let mut json_line =
+        serde_json::to_vec(payload).map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+    json_line.push(b'\n');
+    file.write_all(&json_line).await?;
+
+    Ok(())
 }

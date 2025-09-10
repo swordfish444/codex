@@ -1,8 +1,6 @@
 use crate::admin_controls::ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE;
-use crate::admin_controls::AdminAuditContext;
 use crate::admin_controls::AdminControls;
 use crate::admin_controls::AdminDangerPrompt;
-use crate::config_loader::load_config_as_toml;
 use crate::config_profile::ConfigProfile;
 use crate::config_types::History;
 use crate::config_types::McpServerConfig;
@@ -28,7 +26,6 @@ use codex_protocol::mcp_protocol::AuthMode;
 use codex_protocol::mcp_protocol::Tools;
 use codex_protocol::mcp_protocol::UserSavedConfig;
 use dirs::home_dir;
-use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io;
@@ -213,7 +210,7 @@ impl Config {
         let codex_home = find_codex_home()?;
 
         // Step 1: parse `config.toml` into a generic JSON value.
-        let mut root_value = load_config_as_toml(&codex_home)?;
+        let mut root_value = crate::config_loader::load_config_as_toml(&codex_home)?;
 
         // Step 2: apply the `-c` overrides.
         for (path, value) in cli_overrides.into_iter() {
@@ -236,7 +233,7 @@ pub fn load_config_as_toml_with_cli_overrides(
     codex_home: &Path,
     cli_overrides: Vec<(String, TomlValue)>,
 ) -> std::io::Result<ConfigToml> {
-    let mut root_value = load_config_as_toml(codex_home)?;
+    let mut root_value = crate::config_loader::load_config_as_toml(codex_home)?;
 
     for (path, value) in cli_overrides.into_iter() {
         apply_toml_override(&mut root_value, &path, value);
