@@ -803,7 +803,7 @@ pub struct WebSearchEndEvent {
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct ConversationHistoryResponseEvent {
     pub conversation_id: ConversationId,
-    pub entries: Vec<ResponseItem>,
+    pub history: InitialHistory,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
