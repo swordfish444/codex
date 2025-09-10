@@ -1,13 +1,15 @@
 use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::RolloutItem;
 
 /// Transcript of conversation history
 #[derive(Debug, Clone, Default)]
-pub(crate) struct ConversationHistory {
+pub(crate) struct ResponseItemsHistory {
     /// The oldest items are at the beginning of the vector.
     items: Vec<ResponseItem>,
 }
 
-impl ConversationHistory {
+impl ResponseItemsHistory {
     pub(crate) fn new() -> Self {
         Self { items: Vec::new() }
     }
@@ -61,6 +63,45 @@ impl ConversationHistory {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct EventMsgsHistory {
+    items: Vec<EventMsg>,
+}
+
+impl EventMsgsHistory {
+    pub(crate) fn record_items<I>(&mut self, items: I)
+    where
+        I: IntoIterator,
+        I::Item: std::ops::Deref<Target = EventMsg>,
+    {
+        for item in items {
+            self.items.push(item.clone());
+        }
+    }
+}
+
+impl From<&ResponseItemsHistory> for Vec<RolloutItem> {
+    fn from(history: &ResponseItemsHistory) -> Self {
+        history
+            .items
+            .iter()
+            .cloned()
+            .map(RolloutItem::ResponseItem)
+            .collect()
+    }
+}
+
+impl From<&EventMsgsHistory> for Vec<RolloutItem> {
+    fn from(history: &EventMsgsHistory) -> Self {
+        history
+            .items
+            .iter()
+            .cloned()
+            .map(RolloutItem::EventMsg)
+            .collect()
+    }
+}
+
 /// Anything that is not a system message or "reasoning" message is considered
 /// an API message.
 fn is_api_message(message: &ResponseItem) -> bool {
@@ -103,7 +144,7 @@ mod tests {
 
     #[test]
     fn filters_non_api_messages() {
-        let mut h = ConversationHistory::default();
+        let mut h = ResponseItemsHistory::default();
         // System message is not an API message; Other is ignored.
         let system = ResponseItem::Message {
             id: None,

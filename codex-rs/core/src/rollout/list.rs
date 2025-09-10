@@ -10,7 +10,7 @@ use time::macros::format_description;
 use uuid::Uuid;
 
 use super::SESSIONS_SUBDIR;
-use crate::protocol::EventMsg;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::RolloutLine;
 

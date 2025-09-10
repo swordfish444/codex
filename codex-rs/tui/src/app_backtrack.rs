@@ -288,7 +288,7 @@ impl App {
         let cfg = self.chat_widget.config_ref().clone();
         // Perform the fork via a thin wrapper for clarity/testability.
         let result = self
-            .perform_fork(ev.entries.clone(), drop_count, cfg.clone())
+            .perform_fork(ev.history.clone(), drop_count, cfg.clone())
             .await;
         match result {
             Ok(new_conv) => {

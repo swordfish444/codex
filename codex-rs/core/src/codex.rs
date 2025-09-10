@@ -9,6 +9,7 @@ use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use crate::AuthManager;
+use crate::conversation_history::EventMsgsHistory;
 use crate::event_mapping::map_response_item_to_event_messages;
 use async_channel::Receiver;
 use async_channel::Sender;
@@ -44,7 +45,7 @@ use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::config::Config;
 use crate::config_types::ShellEnvironmentPolicy;
-use crate::conversation_history::ConversationHistory;
+use crate::conversation_history::ResponseItemsHistory;
 use crate::environment_context::EnvironmentContext;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
@@ -263,7 +264,8 @@ struct State {
     current_task: Option<AgentTask>,
     pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
     pending_input: Vec<ResponseInputItem>,
-    history: ConversationHistory,
+    response_items: ResponseItemsHistory,
+    event_msgs: EventMsgsHistory,
     token_info: Option<TokenUsageInfo>,
 }
 
@@ -417,7 +419,7 @@ impl Session {
         let rollout_path = rollout_recorder.rollout_path.clone();
         // Create the mutable state for the Session.
         let state = State {
-            history: ConversationHistory::new(),
+            response_items: ResponseItemsHistory::new(),
             ..Default::default()
         };
 
@@ -666,7 +668,7 @@ impl Session {
     fn record_into_history(&self, items: &[ResponseItem]) {
         self.state
             .lock_unchecked()
-            .history
+            .response_items
             .record_items(items.iter());
     }
 
@@ -908,7 +910,7 @@ impl Session {
     /// Build the full turn input by concatenating the current conversation
     /// history with additional items for this turn.
     pub fn turn_input_with_history(&self, extra: Vec<ResponseItem>) -> Vec<ResponseItem> {
-        [self.state.lock_unchecked().history.contents(), extra].concat()
+        [self.state.lock_unchecked().response_items.contents(), extra].concat()
     }
 
     /// Returns the input if there was no task running to inject into
@@ -1380,12 +1382,16 @@ async fn submission_loop(
             }
             Op::GetHistory => {
                 let sub_id = sub.id.clone();
-
+                let entries = {
+                    let state = sess.state.lock_unchecked();
+                    let rolled: Vec<RolloutItem> = (&state.response_items).into();
+                    rolled
+                };
                 let event = Event {
                     id: sub_id.clone(),
                     msg: EventMsg::ConversationHistory(ConversationHistoryResponseEvent {
                         conversation_id: sess.conversation_id,
-                        entries: sess.state.lock_unchecked().history.contents(),
+                        history: InitialHistory::Forked(entries),
                     }),
                 };
                 sess.send_event(event).await;
@@ -1928,7 +1934,7 @@ async fn run_compact_task(
 
     {
         let mut state = sess.state.lock_unchecked();
-        state.history.keep_last_messages(1);
+        state.response_items.keep_last_messages(1);
     }
 
     let event = Event {
@@ -2882,7 +2888,9 @@ async fn drain_to_completed(
             Ok(ResponseEvent::OutputItemDone(item)) => {
                 // Record only to in-memory conversation history; avoid state snapshot.
                 let mut state = sess.state.lock_unchecked();
-                state.history.record_items(std::slice::from_ref(&item));
+                state
+                    .response_items
+                    .record_items(std::slice::from_ref(&item));
             }
             Ok(ResponseEvent::Completed {
                 response_id: _,

@@ -45,6 +45,7 @@ mod event_mapping;
 pub use codex_protocol::protocol::InitialHistory;
 pub use conversation_manager::ConversationManager;
 pub use conversation_manager::NewConversation;
+pub use protocol::InitialHistory;
 // Re-export common auth types for workspace consumers
 pub use auth::AuthManager;
 pub use auth::CodexAuth;

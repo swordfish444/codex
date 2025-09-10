@@ -78,7 +78,7 @@ async fn fork_conversation_twice_drops_to_first_message() {
 
     // Capture entries from the base history and compute expected prefixes after each fork.
     let entries_after_three = match &base_history {
-        EventMsg::ConversationHistory(ConversationHistoryResponseEvent { entries, .. }) => {
+        EventMsg::ConversationHistory(ConversationHistoryResponseEvent { history, .. }) => {
             entries.clone()
         }
         _ => panic!("expected ConversationHistory event"),
@@ -123,10 +123,10 @@ async fn fork_conversation_twice_drops_to_first_message() {
     })
     .await;
     let entries_after_first_fork = match &fork1_history {
-        EventMsg::ConversationHistory(ConversationHistoryResponseEvent { entries, .. }) => {
+        EventMsg::ConversationHistory(ConversationHistoryResponseEvent { history, .. }) => {
             assert!(matches!(
                 fork1_history,
-                EventMsg::ConversationHistory(ConversationHistoryResponseEvent { ref entries, .. }) if *entries == expected_after_first
+                EventMsg::ConversationHistory(ConversationHistoryResponseEvent { ref history, .. }) if *entries == expected_after_first
             ));
             entries.clone()
         }
@@ -149,6 +149,6 @@ async fn fork_conversation_twice_drops_to_first_message() {
     .await;
     assert!(matches!(
         fork2_history,
-        EventMsg::ConversationHistory(ConversationHistoryResponseEvent { ref entries, .. }) if *entries == expected_after_second
+        EventMsg::ConversationHistory(ConversationHistoryResponseEvent { ref history, .. }) if *entries == expected_after_second
     ));
 }
