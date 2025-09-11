@@ -451,6 +451,7 @@ impl Session {
             config.model_family.slug.as_str(),
             auth_manager.auth().and_then(|a| a.get_account_id()),
             auth_manager.preferred_auth_method(),
+            config.otel.log_user_prompt,
             terminal::user_agent(),
         );
 
@@ -1231,10 +1232,10 @@ async fn submission_loop(
                     updated_config.model_context_window = Some(model_info.context_window);
                 }
 
-                let trace_manager = prev
-                    .client
-                    .get_trace_manager()
-                    .with_model(updated_config.model.as_str(), updated_config.model_family.slug.as_str());
+                let trace_manager = prev.client.get_trace_manager().with_model(
+                    updated_config.model.as_str(),
+                    updated_config.model_family.slug.as_str(),
+                );
 
                 let client = ModelClient::new(
                     Arc::new(updated_config),
@@ -1290,6 +1291,7 @@ async fn submission_loop(
                 }
             }
             Op::UserInput { items } => {
+                let _ = turn_context.client.get_trace_manager().user_prompt(&items);
                 // attempt to inject input into current task
                 if let Err(items) = sess.inject_input(items).await {
                     // no current task, spawn a new one
@@ -1307,6 +1309,7 @@ async fn submission_loop(
                 effort,
                 summary,
             } => {
+                let _ = turn_context.client.get_trace_manager().user_prompt(&items);
                 // attempt to inject input into current task
                 if let Err(items) = sess.inject_input(items).await {
                     // Derive a fresh TurnContext for this turn using the provided overrides.
@@ -1325,10 +1328,10 @@ async fn submission_loop(
                         per_turn_config.model_context_window = Some(model_info.context_window);
                     }
 
-                    let trace_manager = turn_context
-                        .client
-                        .get_trace_manager()
-                        .with_model(per_turn_config.model.as_str(), per_turn_config.model_family.slug.as_str());
+                    let trace_manager = turn_context.client.get_trace_manager().with_model(
+                        per_turn_config.model.as_str(),
+                        per_turn_config.model_family.slug.as_str(),
+                    );
 
                     // Build a new client with per‑turn reasoning settings.
                     // Reuse the same provider and session id; auth defaults to env/API key.
