@@ -63,10 +63,9 @@ fn join_config_result(
             } else {
                 tracing::error!("Configuration loader for {label} panicked");
             }
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Failed to load {label} configuration"),
-            ))
+            Err(io::Error::other(format!(
+                "Failed to load {label} configuration"
+            )))
         }
     }
 }
@@ -96,17 +95,17 @@ fn read_config_from_path(path: &Path, log_missing_as_info: bool) -> io::Result<O
 }
 
 fn merge_toml_values(base: &mut TomlValue, overlay: &TomlValue) {
-    if let TomlValue::Table(overlay_table) = overlay {
-        if let TomlValue::Table(base_table) = base {
-            for (key, value) in overlay_table {
-                if let Some(existing) = base_table.get_mut(key) {
-                    merge_toml_values(existing, value);
-                } else {
-                    base_table.insert(key.clone(), value.clone());
-                }
+    if let TomlValue::Table(overlay_table) = overlay
+        && let TomlValue::Table(base_table) = base
+    {
+        for (key, value) in overlay_table {
+            if let Some(existing) = base_table.get_mut(key) {
+                merge_toml_values(existing, value);
+            } else {
+                base_table.insert(key.clone(), value.clone());
             }
-            return;
         }
+        return;
     }
 
     *base = overlay.clone();

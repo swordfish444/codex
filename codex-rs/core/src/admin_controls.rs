@@ -48,22 +48,12 @@ pub struct AdminAuditToml {
     pub audit_log_file: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AdminControls {
     pub disallow_dangerous_sandbox: bool,
     pub disallow_dangerously_bypass_approvals_and_sandbox: bool,
     pub allow_danger_with_reason: bool,
     pub audit: Option<AdminAudit>,
-}
-impl Default for AdminControls {
-    fn default() -> Self {
-        Self {
-            disallow_dangerous_sandbox: false,
-            disallow_dangerously_bypass_approvals_and_sandbox: false,
-            allow_danger_with_reason: false,
-            audit: None,
-        }
-    }
 }
 
 impl AdminControls {
@@ -202,6 +192,16 @@ struct AdminAuditPayload<'a> {
     command: Option<&'a [String]>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct AdminAuditEventDetails<'a> {
+    sandbox_mode: &'a str,
+    dangerously_bypass_requested: bool,
+    justification: Option<&'a str>,
+    approval_policy: &'a str,
+    cwd: &'a str,
+    command: Option<&'a [String]>,
+}
+
 pub async fn maybe_post_admin_audit_events(
     admin_controls: &AdminControls,
     context: AdminAuditContext<'_>,
@@ -220,18 +220,22 @@ pub async fn maybe_post_admin_audit_events(
     let command_args = context.command;
     let client = Client::new();
 
+    let event_details = AdminAuditEventDetails {
+        sandbox_mode: &sandbox_mode,
+        dangerously_bypass_requested: context.dangerously_bypass_requested,
+        justification: context.dangerous_mode_justification,
+        approval_policy: &approval_policy_display,
+        cwd: &cwd_display,
+        command: command_args,
+    };
+
     if audit.events.all_commands && context.record_command_event {
         post_admin_audit_event(
             &client,
             &audit.endpoint,
             audit.audit_log_file.as_deref(),
             AdminAuditEventKind::CommandInvoked,
-            &sandbox_mode,
-            context.dangerously_bypass_requested,
-            context.dangerous_mode_justification,
-            &approval_policy_display,
-            &cwd_display,
-            command_args,
+            event_details,
         )
         .await;
     }
@@ -245,12 +249,7 @@ pub async fn maybe_post_admin_audit_events(
             &audit.endpoint,
             audit.audit_log_file.as_deref(),
             AdminAuditEventKind::DangerousSandbox,
-            &sandbox_mode,
-            context.dangerously_bypass_requested,
-            context.dangerous_mode_justification,
-            &approval_policy_display,
-            &cwd_display,
-            command_args,
+            event_details,
         )
         .await;
     }
@@ -295,12 +294,7 @@ async fn post_admin_audit_event(
     endpoint: &str,
     audit_log_file: Option<&Path>,
     kind: AdminAuditEventKind,
-    sandbox_mode: &str,
-    dangerously_bypass_requested: bool,
-    justification: Option<&str>,
-    approval_policy: &str,
-    cwd: &str,
-    command: Option<&[String]>,
+    details: AdminAuditEventDetails<'_>,
 ) {
     let username = whoami::username();
     let timestamp_string;
@@ -308,14 +302,14 @@ async fn post_admin_audit_event(
         timestamp_string = Utc::now().to_rfc3339();
         AdminAuditPayload {
             event: kind.label(),
-            sandbox_mode,
+            sandbox_mode: details.sandbox_mode,
             username,
-            dangerously_bypass_requested,
+            dangerously_bypass_requested: details.dangerously_bypass_requested,
             timestamp: &timestamp_string,
-            justification,
-            approval_policy,
-            cwd,
-            command,
+            justification: details.justification,
+            approval_policy: details.approval_policy,
+            cwd: details.cwd,
+            command: details.command,
         }
     };
 
@@ -323,14 +317,14 @@ async fn post_admin_audit_event(
         tracing::warn!("Failed to POST admin audit event {}: {err}", kind.label());
     }
 
-    if let Some(path) = audit_log_file {
-        if let Err(err) = append_admin_audit_log(path, &payload).await {
-            tracing::warn!(
-                "Failed to write admin audit event {} to {}: {err}",
-                kind.label(),
-                path.display()
-            );
-        }
+    if let Some(path) = audit_log_file
+        && let Err(err) = append_admin_audit_log(path, &payload).await
+    {
+        tracing::warn!(
+            "Failed to write admin audit event {} to {}: {err}",
+            kind.label(),
+            path.display()
+        );
     }
 }
 
@@ -346,8 +340,7 @@ async fn append_admin_audit_log(path: &Path, payload: &AdminAuditPayload<'_>) ->
         .open(path)
         .await?;
 
-    let mut json_line =
-        serde_json::to_vec(payload).map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+    let mut json_line = serde_json::to_vec(payload).map_err(io::Error::other)?;
     json_line.push(b'\n');
     file.write_all(&json_line).await?;
 
