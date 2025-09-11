@@ -2,10 +2,10 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::WidgetRef;
 
+use super::list_selection_view::GenericDisplayRow;
+use super::list_selection_view::ScrollState;
+use super::list_selection_view::render_rows;
 use super::popup_consts::MAX_POPUP_ROWS;
-use crate::selection_menu::GenericDisplayRow;
-use crate::selection_menu::ScrollState;
-use crate::selection_menu::render_rows;
 use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
 use codex_common::fuzzy_match::fuzzy_match;

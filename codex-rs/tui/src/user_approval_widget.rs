@@ -26,12 +26,12 @@ use ratatui::widgets::Wrap;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::bottom_pane::list_selection_view::GenericDisplayRow;
+use crate::bottom_pane::list_selection_view::ScrollState;
+use crate::bottom_pane::list_selection_view::render_rows;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::history_cell;
 use crate::render::line_utils::prefix_lines;
-use crate::selection_menu::GenericDisplayRow;
-use crate::selection_menu::ScrollState;
-use crate::selection_menu::render_rows;
 use crate::text_formatting::truncate_text;
 
 /// Request coming from the agent that needs user approval.
