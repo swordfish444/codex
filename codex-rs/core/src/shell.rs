@@ -13,11 +13,42 @@ pub struct ShellSnapshot {
     pub(crate) path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShellSnapshotState {
+    Pending,
+    Ready(Arc<ShellSnapshot>),
+    Unavailable,
+}
+
+impl ShellSnapshotState {
+    pub fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending)
+    }
+
+    pub fn is_unavailable(&self) -> bool {
+        matches!(self, Self::Unavailable)
+    }
+
+    pub fn snapshot(&self) -> Option<&Arc<ShellSnapshot>> {
+        match self {
+            Self::Ready(snapshot) => Some(snapshot),
+            Self::Pending | Self::Unavailable => None,
+        }
+    }
+
+    pub fn into_snapshot(self) -> Option<Arc<ShellSnapshot>> {
+        match self {
+            Self::Ready(snapshot) => Some(snapshot),
+            Self::Pending | Self::Unavailable => None,
+        }
+    }
+}
+
 // Usage of fully qualified names for the Receiver for clarity.
-type ShellSnapshotRx = tokio::sync::watch::Receiver<Option<Arc<ShellSnapshot>>>;
+type ShellSnapshotRx = tokio::sync::watch::Receiver<ShellSnapshotState>;
 
 pub fn default_shell_snapshot_rx() -> ShellSnapshotRx {
-    let (_tx, rx) = tokio::sync::watch::channel(None);
+    let (_tx, rx) = tokio::sync::watch::channel(ShellSnapshotState::Unavailable);
     rx
 }
 
@@ -68,22 +99,19 @@ pub enum Shell {
 }
 
 impl Shell {
-    pub fn format_default_shell_invocation(&self, command: Vec<String>) -> Option<Vec<String>> {
+    pub fn format_default_shell_invocation(&self, command: &[String]) -> Option<Vec<String>> {
         match self {
             Shell::Posix(shell) => {
-                let joined = strip_bash_lc(&command)
+                let joined = strip_bash_lc(command)
                     .or_else(|| shlex::try_join(command.iter().map(|s| s.as_str())).ok())?;
 
-                let mut source_path = Path::new(&shell.rc_path);
-
-                let shell_snapshot = shell.shell_snapshot.borrow().clone();
-                let session_cmd = if let Some(shell_snapshot) = shell_snapshot.as_ref()
-                    && shell_snapshot.path.exists()
+                let snapshot_state = shell.shell_snapshot.borrow();
+                let (source_path, session_cmd) = if let Some(snapshot) = snapshot_state.snapshot()
+                    && snapshot.path.exists()
                 {
-                    source_path = shell_snapshot.path.as_path();
-                    "-c".to_string()
+                    (snapshot.path.clone(), "-c".to_string())
                 } else {
-                    "-lc".to_string()
+                    (PathBuf::from(&shell.rc_path), "-lc".to_string())
                 };
 
                 let source_path_str = source_path.to_string_lossy().to_string();
@@ -95,7 +123,7 @@ impl Shell {
             }
             Shell::PowerShell(ps) => {
                 // If model generated a bash command, prefer a detected bash fallback
-                if let Some(script) = strip_bash_lc(&command) {
+                if let Some(script) = strip_bash_lc(command) {
                     return match &ps.bash_exe_fallback {
                         Some(bash) => Some(vec![
                             bash.to_string_lossy().to_string(),
@@ -121,7 +149,7 @@ impl Shell {
                 if first != Some(ps.exe.as_str()) {
                     // TODO (CODEX_2900): Handle escaping newlines.
                     if command.iter().any(|a| a.contains('\n') || a.contains('\r')) {
-                        return Some(command);
+                        return Some(command.to_vec());
                     }
 
                     let joined = shlex::try_join(command.iter().map(|s| s.as_str())).ok();
@@ -136,7 +164,7 @@ impl Shell {
                 }
 
                 // Model generated a PowerShell command. Run it.
-                Some(command)
+                Some(command.to_vec())
             }
             Shell::Unknown => None,
         }
@@ -154,14 +182,14 @@ impl Shell {
 
     pub fn get_snapshot(&self) -> Option<Arc<ShellSnapshot>> {
         match self {
-            Shell::Posix(shell) => shell.shell_snapshot.borrow().clone(),
+            Shell::Posix(shell) => shell.shell_snapshot.borrow().snapshot().cloned(),
             _ => None,
         }
     }
 }
 
-fn strip_bash_lc(command: &Vec<String>) -> Option<String> {
-    match command.as_slice() {
+fn strip_bash_lc(command: &[String]) -> Option<String> {
+    match command {
         // exactly three items
         [first, second, third]
             // first two must be "bash", "-lc"
@@ -197,7 +225,7 @@ async fn detect_default_user_shell(session_id: Uuid, codex_home: &Path) -> Shell
                 return Shell::Unknown;
             };
 
-            let (tx, rx) = tokio::sync::watch::channel(None);
+            let (tx, rx) = tokio::sync::watch::channel(ShellSnapshotState::Pending);
 
             {
                 let shell_path = shell_path.clone();
@@ -216,9 +244,12 @@ async fn detect_default_user_shell(session_id: Uuid, codex_home: &Path) -> Shell
                     if snapshot_path.is_none() {
                         trace!("failed to prepare posix snapshot; using live profile");
                     }
-                    let shell_snapshot =
-                        snapshot_path.map(|snapshot| Arc::new(ShellSnapshot::new(snapshot)));
-                    if tx.send(shell_snapshot).is_err() {
+                    let snapshot_state = snapshot_path
+                        .map(|snapshot| {
+                            ShellSnapshotState::Ready(Arc::new(ShellSnapshot::new(snapshot)))
+                        })
+                        .unwrap_or(ShellSnapshotState::Unavailable);
+                    if tx.send(snapshot_state).is_err() {
                         trace!("failed to send posix snapshot; using live profile");
                     }
                 });
@@ -433,7 +464,8 @@ pub(crate) mod tests {
             rc_path: "/does/not/exist/.zshrc".to_string(),
             shell_snapshot: default_shell_snapshot_rx(),
         });
-        let actual_cmd = shell.format_default_shell_invocation(vec!["myecho".to_string()]);
+        let command = vec!["myecho".to_string()];
+        let actual_cmd = shell.format_default_shell_invocation(&command);
         assert_eq!(
             actual_cmd,
             Some(vec![
@@ -495,8 +527,8 @@ pub(crate) mod tests {
                 shell_snapshot: default_shell_snapshot_rx(),
             });
 
-            let actual_cmd = shell
-                .format_default_shell_invocation(input.iter().map(|s| s.to_string()).collect());
+            let input = input.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            let actual_cmd = shell.format_default_shell_invocation(&input);
             let expected_cmd = expected_cmd
                 .iter()
                 .map(|s| {
@@ -600,8 +632,9 @@ mod macos_tests {
         let snapshot_path = temp_dir.path().join("snapshot.zsh");
         std::fs::write(&snapshot_path, "export SNAPSHOT_READY=1").unwrap();
 
-        let (_tx, rx) =
-            tokio::sync::watch::channel(Some(Arc::new(ShellSnapshot::new(snapshot_path.clone()))));
+        let (_tx, rx) = tokio::sync::watch::channel(ShellSnapshotState::Ready(Arc::new(
+            ShellSnapshot::new(snapshot_path.clone()),
+        )));
 
         let shell = Shell::Posix(PosixShell {
             shell_path: "/bin/zsh".to_string(),
@@ -613,7 +646,8 @@ mod macos_tests {
             shell_snapshot: rx,
         });
 
-        let invocation = shell.format_default_shell_invocation(vec!["echo".to_string()]);
+        let command = vec!["echo".to_string()];
+        let invocation = shell.format_default_shell_invocation(&command);
         let expected_command = vec!["/bin/zsh".to_string(), "-c".to_string(), {
             let snapshot_path = snapshot_path.to_string_lossy();
             format!("[ -f {snapshot_path} ] && . {snapshot_path}; (echo)")
@@ -692,8 +726,8 @@ mod macos_tests {
                 shell_snapshot: default_shell_snapshot_rx(),
             });
 
-            let actual_cmd = shell
-                .format_default_shell_invocation(input.iter().map(|s| s.to_string()).collect());
+            let input = input.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            let actual_cmd = shell.format_default_shell_invocation(&input);
             let expected_cmd = expected_cmd
                 .iter()
                 .map(|s| {
@@ -819,8 +853,8 @@ mod tests_windows {
         ];
 
         for (shell, input, expected_cmd) in cases {
-            let actual_cmd = shell
-                .format_default_shell_invocation(input.iter().map(|s| s.to_string()).collect());
+            let input = input.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            let actual_cmd = shell.format_default_shell_invocation(&input);
             assert_eq!(
                 actual_cmd,
                 Some(expected_cmd.iter().map(|s| s.to_string()).collect())
