@@ -483,7 +483,7 @@ impl ChatComposer {
             } => {
                 // Hide popup without modifying text, remember token to avoid immediate reopen.
                 if let Some(tok) = Self::current_at_token(&self.textarea) {
-                    self.dismissed_file_popup_token = Some(tok.to_string());
+                    self.dismissed_file_popup_token = Some(tok);
                 }
                 self.active_popup = ActivePopup::None;
                 (InputResult::None, true)
@@ -542,7 +542,7 @@ impl ChatComposer {
                             Some(ext) if ext == "jpg" || ext == "jpeg" => "JPEG",
                             _ => "IMG",
                         };
-                        self.attach_image(path_buf.clone(), w, h, format_label);
+                        self.attach_image(path_buf, w, h, format_label);
                         // Add a trailing space to keep typing fluid.
                         self.textarea.insert_str(" ");
                     } else {

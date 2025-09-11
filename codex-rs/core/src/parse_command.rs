@@ -868,7 +868,7 @@ pub fn parse_command_impl(command: &[String]) -> Vec<ParsedCommand> {
     let parts = if contains_connectors(&normalized) {
         split_on_connectors(&normalized)
     } else {
-        vec![normalized.clone()]
+        vec![normalized]
     };
 
     // Preserve left-to-right execution order for all commands, including bash -c/-lc
@@ -1202,7 +1202,7 @@ fn parse_bash_lc_commands(original: &[String]) -> Option<Vec<ParsedCommand>> {
                                 }
                             } else {
                                 ParsedCommand::Read {
-                                    cmd: cmd.clone(),
+                                    cmd: cmd,
                                     name,
                                 }
                             }
@@ -1216,7 +1216,7 @@ fn parse_bash_lc_commands(original: &[String]) -> Option<Vec<ParsedCommand>> {
                     ParsedCommand::ListFiles { path, cmd, .. } => {
                         if had_connectors {
                             ParsedCommand::ListFiles {
-                                cmd: cmd.clone(),
+                                cmd: cmd,
                                 path,
                             }
                         } else {
@@ -1231,7 +1231,7 @@ fn parse_bash_lc_commands(original: &[String]) -> Option<Vec<ParsedCommand>> {
                     } => {
                         if had_connectors {
                             ParsedCommand::Search {
-                                cmd: cmd.clone(),
+                                cmd: cmd,
                                 query,
                                 path,
                             }

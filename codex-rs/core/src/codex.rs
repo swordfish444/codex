@@ -208,7 +208,7 @@ impl Codex {
 
         // This task will run until Op::Shutdown is received.
         tokio::spawn(submission_loop(
-            session.clone(),
+            session,
             turn_context,
             config,
             rx_sub,
@@ -1064,7 +1064,7 @@ impl AgentTask {
                 id: self.sub_id,
                 msg: EventMsg::TurnAborted(TurnAbortedEvent { reason }),
             };
-            let sess = self.sess.clone();
+            let sess = self.sess;
             tokio::spawn(async move {
                 sess.send_event(event).await;
             });
@@ -1727,7 +1727,7 @@ async fn try_run_turn(
                 }
             })
             .map(|call_id| ResponseItem::CustomToolCallOutput {
-                call_id: call_id.clone(),
+                call_id: call_id,
                 output: "aborted".to_string(),
             })
             .collect::<Vec<_>>()
