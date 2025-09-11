@@ -80,13 +80,6 @@ pub struct StdoutStream {
     pub tx_event: Sender<Event>,
 }
 
-#[tracing::instrument(
-    skip_all,
-    fields(
-        sandbox_type = %sandbox_type,
-        sandbox_policy = %sandbox_policy,
-    ),
-)]
 pub async fn process_exec_tool_call(
     params: ExecParams,
     sandbox_type: SandboxType,
@@ -267,12 +260,6 @@ pub struct ExecToolCallOutput {
     pub timed_out: bool,
 }
 
-#[tracing::instrument(
-    skip_all,
-    fields(
-        sandbox_policy = %sandbox_policy,
-    ),
-)]
 async fn exec(
     params: ExecParams,
     sandbox_policy: &SandboxPolicy,
