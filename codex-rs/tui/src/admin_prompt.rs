@@ -1,4 +1,3 @@
-use codex_core::admin_controls::ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE;
 use codex_core::config::Config;
 use std::io::IsTerminal;
 use std::io::Write;
@@ -14,8 +13,7 @@ pub fn prompt_for_admin_danger_reason(config: &Config) -> std::io::Result<Option
     }
 
     if !io::stdin().is_terminal() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             "Administrator requires a justification for dangerous sandbox usage, but stdin is not interactive.",
         ));
     }

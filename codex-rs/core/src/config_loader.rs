@@ -1,4 +1,6 @@
+#[cfg(target_os = "macos")]
 use base64::Engine;
+#[cfg(target_os = "macos")]
 use base64::prelude::BASE64_STANDARD;
 use dirs::home_dir;
 use std::io;
