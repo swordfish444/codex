@@ -15,9 +15,9 @@ use super::BottomPane;
 use super::CancellationEvent;
 use super::bottom_pane_view::BottomPaneView;
 use super::popup_consts::MAX_POPUP_ROWS;
-use super::scroll_state::ScrollState;
-use super::selection_popup_common::GenericDisplayRow;
-use super::selection_popup_common::render_rows;
+use crate::selection_menu::GenericDisplayRow;
+use crate::selection_menu::ScrollState;
+use crate::selection_menu::render_rows;
 
 /// One selectable item in the generic selection list.
 pub(crate) type SelectionAction = Box<dyn Fn(&AppEventSender) + Send + Sync>;

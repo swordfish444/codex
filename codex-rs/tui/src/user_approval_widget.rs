@@ -18,9 +18,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::*;
 use ratatui::text::Line;
-use ratatui::widgets::Block;
-use ratatui::widgets::BorderType;
-use ratatui::widgets::Borders;
+use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
@@ -30,6 +28,10 @@ use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::history_cell;
+use crate::render::line_utils::prefix_lines;
+use crate::selection_menu::GenericDisplayRow;
+use crate::selection_menu::ScrollState;
+use crate::selection_menu::render_rows;
 use crate::text_formatting::truncate_text;
 
 /// Request coming from the agent that needs user approval.
@@ -50,7 +52,7 @@ pub(crate) enum ApprovalRequest {
 ///
 /// The `key` is matched case-insensitively.
 struct SelectOption {
-    label: Line<'static>,
+    label: &'static str,
     description: &'static str,
     key: KeyCode,
     decision: ReviewDecision,
@@ -59,19 +61,19 @@ struct SelectOption {
 static COMMAND_SELECT_OPTIONS: LazyLock<Vec<SelectOption>> = LazyLock::new(|| {
     vec![
         SelectOption {
-            label: Line::from(vec!["Y".underlined(), "es".into()]),
+            label: "Yes",
             description: "Approve and run the command",
             key: KeyCode::Char('y'),
             decision: ReviewDecision::Approved,
         },
         SelectOption {
-            label: Line::from(vec!["A".underlined(), "lways".into()]),
+            label: "Always",
             description: "Approve the command for the remainder of this session",
             key: KeyCode::Char('a'),
             decision: ReviewDecision::ApprovedForSession,
         },
         SelectOption {
-            label: Line::from(vec!["N".underlined(), "o, provide feedback".into()]),
+            label: "No, provide feedback",
             description: "Do not run the command; provide feedback",
             key: KeyCode::Char('n'),
             decision: ReviewDecision::Abort,
@@ -82,13 +84,13 @@ static COMMAND_SELECT_OPTIONS: LazyLock<Vec<SelectOption>> = LazyLock::new(|| {
 static PATCH_SELECT_OPTIONS: LazyLock<Vec<SelectOption>> = LazyLock::new(|| {
     vec![
         SelectOption {
-            label: Line::from(vec!["Y".underlined(), "es".into()]),
+            label: "Yes",
             description: "Approve and apply the changes",
             key: KeyCode::Char('y'),
             decision: ReviewDecision::Approved,
         },
         SelectOption {
-            label: Line::from(vec!["N".underlined(), "o, provide feedback".into()]),
+            label: "No, provide feedback",
             description: "Do not apply the changes; provide feedback",
             key: KeyCode::Char('n'),
             decision: ReviewDecision::Abort,
@@ -102,9 +104,7 @@ pub(crate) struct UserApprovalWidget {
     app_event_tx: AppEventSender,
     confirmation_prompt: Paragraph<'static>,
     select_options: &'static Vec<SelectOption>,
-
-    /// Currently selected index in *select* mode.
-    selected_option: usize,
+    scroll_state: ScrollState,
 
     /// Set to `true` once a decision has been sent – the parent view can then
     /// remove this widget from its queue.
@@ -115,17 +115,21 @@ impl UserApprovalWidget {
     pub(crate) fn new(approval_request: ApprovalRequest, app_event_tx: AppEventSender) -> Self {
         let confirmation_prompt = match &approval_request {
             ApprovalRequest::Exec { reason, .. } => {
-                let mut contents: Vec<Line> = vec![];
+                let mut contents: Vec<Line<'static>> = vec![];
                 if let Some(reason) = reason {
                     contents.push(Line::from(reason.clone().italic()));
                     contents.push(Line::from(""));
                 }
-                Paragraph::new(contents).wrap(Wrap { trim: false })
+                if contents.is_empty() {
+                    contents.push(Line::from(""));
+                }
+                let prefixed = prefix_lines(contents, "▌ ".dim(), "▌ ".dim());
+                Paragraph::new(prefixed).wrap(Wrap { trim: false })
             }
             ApprovalRequest::ApplyPatch {
                 reason, grant_root, ..
             } => {
-                let mut contents: Vec<Line> = vec![];
+                let mut contents: Vec<Line<'static>> = vec![];
 
                 if let Some(r) = reason {
                     contents.push(Line::from(r.clone().italic()));
@@ -140,19 +144,31 @@ impl UserApprovalWidget {
                     contents.push(Line::from(""));
                 }
 
-                Paragraph::new(contents).wrap(Wrap { trim: false })
+                if contents.is_empty() {
+                    contents.push(Line::from(""));
+                }
+
+                let prefixed = prefix_lines(contents, "▌ ".dim(), "▌ ".dim());
+                Paragraph::new(prefixed).wrap(Wrap { trim: false })
             }
         };
 
+        let select_options = match &approval_request {
+            ApprovalRequest::Exec { .. } => &COMMAND_SELECT_OPTIONS,
+            ApprovalRequest::ApplyPatch { .. } => &PATCH_SELECT_OPTIONS,
+        };
+
+        let mut scroll_state = ScrollState::new();
+        let len = select_options.len();
+        scroll_state.clamp_selection(len);
+        scroll_state.ensure_visible(len, len);
+
         Self {
-            select_options: match &approval_request {
-                ApprovalRequest::Exec { .. } => &COMMAND_SELECT_OPTIONS,
-                ApprovalRequest::ApplyPatch { .. } => &PATCH_SELECT_OPTIONS,
-            },
+            select_options,
             approval_request,
             app_event_tx,
             confirmation_prompt,
-            selected_option: 0,
+            scroll_state,
             done: false,
         }
     }
@@ -183,6 +199,24 @@ impl UserApprovalWidget {
         }
     }
 
+    fn selected_option(&self) -> Option<&SelectOption> {
+        self.scroll_state
+            .selected_idx
+            .and_then(|idx| self.select_options.get(idx))
+    }
+
+    fn format_option_label(option: &SelectOption) -> String {
+        match option.key {
+            KeyCode::Char(c) => format!("[{}] {}", c.to_ascii_uppercase(), option.label),
+            KeyCode::Enter => format!("[Enter] {}", option.label),
+            KeyCode::Esc => format!("[Esc] {}", option.label),
+            KeyCode::Tab => format!("[Tab] {}", option.label),
+            KeyCode::BackTab => format!("[Shift-Tab] {}", option.label),
+            KeyCode::F(n) => format!("[F{n}] {}", option.label),
+            _ => option.label.to_string(),
+        }
+    }
+
     /// Handle Ctrl-C pressed by the user while the modal is visible.
     /// Behaves like pressing Escape: abort the request and close the modal.
     pub(crate) fn on_ctrl_c(&mut self) {
@@ -190,28 +224,38 @@ impl UserApprovalWidget {
     }
 
     fn handle_select_key(&mut self, key_event: KeyEvent) {
+        let len = self.select_options.len();
+        if len == 0 {
+            return;
+        }
+
         match key_event.code {
-            KeyCode::Left => {
-                self.selected_option = (self.selected_option + self.select_options.len() - 1)
-                    % self.select_options.len();
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::Left | KeyCode::Char('h') => {
+                self.scroll_state.move_up_wrap(len);
+                self.scroll_state.ensure_visible(len, len);
             }
-            KeyCode::Right => {
-                self.selected_option = (self.selected_option + 1) % self.select_options.len();
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Right | KeyCode::Char('l') => {
+                self.scroll_state.move_down_wrap(len);
+                self.scroll_state.ensure_visible(len, len);
             }
             KeyCode::Enter => {
-                let opt = &self.select_options[self.selected_option];
-                self.send_decision(opt.decision);
+                if let Some(opt) = self.selected_option() {
+                    self.send_decision(opt.decision);
+                }
             }
             KeyCode::Esc => {
                 self.send_decision(ReviewDecision::Abort);
             }
             other => {
                 let normalized = Self::normalize_keycode(other);
-                if let Some(opt) = self
+                if let Some((idx, opt)) = self
                     .select_options
                     .iter()
-                    .find(|opt| Self::normalize_keycode(opt.key) == normalized)
+                    .enumerate()
+                    .find(|(_, opt)| Self::normalize_keycode(opt.key) == normalized)
                 {
+                    self.scroll_state.selected_idx = Some(idx);
+                    self.scroll_state.ensure_visible(len, len);
                     self.send_decision(opt.decision);
                 }
             }
@@ -318,11 +362,11 @@ impl UserApprovalWidget {
     }
 
     pub(crate) fn desired_height(&self, width: u16) -> u16 {
-        // Reserve space for:
-        // - 1 title line ("Allow command?" or "Apply changes?")
-        // - 1 buttons line (options rendered horizontally on a single row)
-        // - 1 description line (context for the currently selected option)
-        self.get_confirmation_prompt_height(width) + 3
+        let prompt_height = self.get_confirmation_prompt_height(width);
+        let option_rows = self.select_options.len().max(1) as u16;
+        prompt_height
+            .saturating_add(1) // title line
+            .saturating_add(option_rows)
     }
 }
 
@@ -334,57 +378,39 @@ impl WidgetRef for &UserApprovalWidget {
             .constraints([Constraint::Length(prompt_height), Constraint::Min(0)])
             .areas(area);
 
-        let lines: Vec<Line> = self
-            .select_options
-            .iter()
-            .enumerate()
-            .map(|(idx, opt)| {
-                let style = if idx == self.selected_option {
-                    Style::new().bg(Color::Cyan).fg(Color::Black)
-                } else {
-                    Style::new().add_modifier(Modifier::DIM)
-                };
-                opt.label.clone().alignment(Alignment::Center).style(style)
-            })
-            .collect();
-
-        let [title_area, button_area, description_area] = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(0),
-        ])
-        .areas(response_chunk.inner(Margin::new(1, 0)));
+        let [title_area, options_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(response_chunk);
         let title = match &self.approval_request {
             ApprovalRequest::Exec { .. } => "Allow command?",
             ApprovalRequest::ApplyPatch { .. } => "Apply changes?",
         };
-        Line::from(title).render(title_area, buf);
+        let title_line = Line::from(vec!["▌ ".dim(), title.to_string().bold()]);
+        Paragraph::new(title_line).render(title_area, buf);
 
         self.confirmation_prompt.clone().render(prompt_chunk, buf);
-        let areas = Layout::horizontal(
-            lines
-                .iter()
-                .map(|l| Constraint::Length(l.width() as u16 + 2)),
-        )
-        .spacing(1)
-        .split(button_area);
-        for (idx, area) in areas.iter().enumerate() {
-            let line = &lines[idx];
-            line.render(*area, buf);
-        }
 
-        Line::from(self.select_options[self.selected_option].description)
-            .style(Style::new().italic().add_modifier(Modifier::DIM))
-            .render(description_area.inner(Margin::new(1, 0)), buf);
+        let rows: Vec<GenericDisplayRow> = self
+            .select_options
+            .iter()
+            .map(|opt| GenericDisplayRow {
+                name: UserApprovalWidget::format_option_label(opt),
+                match_indices: None,
+                is_current: false,
+                description: Some(opt.description.to_string()),
+            })
+            .collect();
 
-        Block::bordered()
-            .border_type(BorderType::QuadrantOutside)
-            .border_style(Style::default().fg(Color::Cyan))
-            .borders(Borders::LEFT)
-            .render_ref(
-                Rect::new(0, response_chunk.y, 1, response_chunk.height),
+        if options_area.height > 0 {
+            render_rows(
+                options_area,
                 buf,
+                &rows,
+                &self.scroll_state,
+                self.select_options.len(),
+                false,
+                "no options",
             );
+        }
     }
 }
 

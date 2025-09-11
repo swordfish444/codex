@@ -3,9 +3,9 @@ use ratatui::layout::Rect;
 use ratatui::widgets::WidgetRef;
 
 use super::popup_consts::MAX_POPUP_ROWS;
-use super::scroll_state::ScrollState;
-use super::selection_popup_common::GenericDisplayRow;
-use super::selection_popup_common::render_rows;
+use crate::selection_menu::GenericDisplayRow;
+use crate::selection_menu::ScrollState;
+use crate::selection_menu::render_rows;
 use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
 use codex_common::fuzzy_match::fuzzy_match;
