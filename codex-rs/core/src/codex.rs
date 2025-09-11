@@ -2964,8 +2964,7 @@ mod tests {
     }
 
     fn zsh_shell(shell_snapshot: Option<Arc<ShellSnapshot>>) -> shell::Shell {
-        let (_tx, rx) =
-            tokio::sync::watch::channel(shell_snapshot);
+        let (_tx, rx) = tokio::sync::watch::channel(shell_snapshot);
         shell::Shell::Posix(shell::PosixShell {
             shell_path: "/bin/zsh".to_string(),
             rc_path: "/Users/example/.zshrc".to_string(),
