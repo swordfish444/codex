@@ -207,12 +207,7 @@ impl Codex {
         let conversation_id = session.conversation_id;
 
         // This task will run until Op::Shutdown is received.
-        tokio::spawn(submission_loop(
-            session,
-            turn_context,
-            config,
-            rx_sub,
-        ));
+        tokio::spawn(submission_loop(session, turn_context, config, rx_sub));
         let codex = Codex {
             next_id: AtomicU64::new(0),
             tx_sub,

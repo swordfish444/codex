@@ -135,8 +135,7 @@ impl CodexAuth {
     }
 
     pub fn get_account_id(&self) -> Option<String> {
-        self.get_current_token_data()
-            .and_then(|t| t.account_id)
+        self.get_current_token_data().and_then(|t| t.account_id)
     }
 
     pub fn get_plan_type(&self) -> Option<String> {

@@ -1201,10 +1201,7 @@ fn parse_bash_lc_commands(original: &[String]) -> Option<Vec<ParsedCommand>> {
                                     name,
                                 }
                             } else {
-                                ParsedCommand::Read {
-                                    cmd,
-                                    name,
-                                }
+                                ParsedCommand::Read { cmd, name }
                             }
                         } else {
                             ParsedCommand::Read {
@@ -1215,10 +1212,7 @@ fn parse_bash_lc_commands(original: &[String]) -> Option<Vec<ParsedCommand>> {
                     }
                     ParsedCommand::ListFiles { path, cmd, .. } => {
                         if had_connectors {
-                            ParsedCommand::ListFiles {
-                                cmd,
-                                path,
-                            }
+                            ParsedCommand::ListFiles { cmd, path }
                         } else {
                             ParsedCommand::ListFiles {
                                 cmd: shlex_join(&script_tokens),
@@ -1230,11 +1224,7 @@ fn parse_bash_lc_commands(original: &[String]) -> Option<Vec<ParsedCommand>> {
                         query, path, cmd, ..
                     } => {
                         if had_connectors {
-                            ParsedCommand::Search {
-                                cmd,
-                                query,
-                                path,
-                            }
+                            ParsedCommand::Search { cmd, query, path }
                         } else {
                             ParsedCommand::Search {
                                 cmd: shlex_join(&script_tokens),
