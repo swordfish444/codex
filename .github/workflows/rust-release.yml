@@ -219,3 +219,9 @@ jobs:
         with:
           tag: ${{ github.ref_name }}
           config: .github/dotslash-config.json
+
+      - name: Update latest-alpha-cli branch
+        run: |
+          set -euo pipefail
+          git branch -f latest-alpha-cli "${GITHUB_REF_NAME}"
+          git push origin latest-alpha-cli --force
