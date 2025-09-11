@@ -328,7 +328,7 @@ mod tests {
                 .iter()
                 .map(|s| {
                     s.replace("BASHRC_PATH", bashrc_path.to_str().unwrap())
-                        .to_string()
+                        
                 })
                 .collect();
 
@@ -437,7 +437,7 @@ mod macos_tests {
                 .iter()
                 .map(|s| {
                     s.replace("ZSHRC_PATH", zshrc_path.to_str().unwrap())
-                        .to_string()
+                        
                 })
                 .collect();
 
