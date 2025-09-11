@@ -448,6 +448,7 @@ async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() {
     // not change.
     let expected_env_text_2 = format!(
         r#"<environment_context>
+  <cwd>{}</cwd>
   <approval_policy>never</approval_policy>
   <sandbox_mode>workspace-write</sandbox_mode>
   <network_access>enabled</network_access>
@@ -455,6 +456,7 @@ async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() {
     <root>{}</root>
   </writable_roots>
 </environment_context>"#,
+        cwd.path().to_string_lossy(),
         writable.path().to_string_lossy()
     );
     let expected_env_msg_2 = serde_json::json!({
@@ -572,8 +574,12 @@ async fn per_turn_overrides_keep_cached_prefix_and_key_constant() {
   <approval_policy>never</approval_policy>
   <sandbox_mode>workspace-write</sandbox_mode>
   <network_access>enabled</network_access>
+  <writable_roots>
+    <root>{}</root>
+  </writable_roots>
 </environment_context>"#,
-        new_cwd.path().to_string_lossy()
+        new_cwd.path().to_string_lossy(),
+        writable.path().to_string_lossy()
     );
     let expected_env_msg_2 = serde_json::json!({
         "type": "message",
