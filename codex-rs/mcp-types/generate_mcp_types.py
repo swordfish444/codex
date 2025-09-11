@@ -5,14 +5,21 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 
 from dataclasses import (
     dataclass,
 )
+from difflib import unified_diff
 from pathlib import Path
+from shutil import copy2
 
 # Helper first so it is defined when other functions call it.
 from typing import Any, Literal
+
+
+def eprint(*args: Any, **kwargs: Any) -> None:
+    print(*args, file=sys.stderr, **kwargs)
 
 SCHEMA_VERSION = "2025-06-18"
 JSONRPC_VERSION = "2.0"
@@ -43,16 +50,31 @@ def main() -> int:
     default_schema_file = (
         Path(__file__).resolve().parent / "schema" / SCHEMA_VERSION / "schema.json"
     )
+    default_lib_rs = Path(__file__).resolve().parent / "src/lib.rs"
     parser.add_argument(
         "schema_file",
         nargs="?",
         default=default_schema_file,
         help="schema.json file to process",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Regenerate lib.rs in a sandbox and ensure the checked-in file matches",
+    )
     args = parser.parse_args()
-    schema_file = args.schema_file
+    schema_file = Path(args.schema_file)
+    crate_dir = Path(__file__).resolve().parent
 
-    lib_rs = Path(__file__).resolve().parent / "src/lib.rs"
+    if args.check:
+        return run_check(schema_file, crate_dir, default_lib_rs)
+
+    generate_lib_rs(schema_file, default_lib_rs, fmt=True)
+    return 0
+
+
+def generate_lib_rs(schema_file: Path, lib_rs: Path, fmt: bool) -> None:
+    lib_rs.parent.mkdir(parents=True, exist_ok=True)
 
     global DEFINITIONS  # Allow helper functions to access the schema.
 
@@ -185,13 +207,72 @@ fn default_jsonrpc() -> String {{ JSONRPC_VERSION.to_owned() }}
         for chunk in out:
             f.write(chunk)
 
-    subprocess.check_call(
-        ["cargo", "fmt", "--", "--config", "imports_granularity=Item"],
-        cwd=lib_rs.parent.parent,
-        stderr=subprocess.DEVNULL,
-    )
+    if fmt:
+        subprocess.check_call(
+            ["cargo", "fmt", "--", "--config", "imports_granularity=Item"],
+            cwd=lib_rs.parent.parent,
+            stderr=subprocess.DEVNULL,
+        )
 
-    return 0
+
+def run_check(schema_file: Path, crate_dir: Path, checked_in_lib: Path) -> int:
+    config_path = crate_dir.parent / "rustfmt.toml"
+    eprint(f"Running --check with schema {schema_file}")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        eprint(f"Created temporary workspace at {tmp_path}")
+        manifest_path = tmp_path / "Cargo.toml"
+        eprint(f"Copying Cargo.toml into {manifest_path}")
+        copy2(crate_dir / "Cargo.toml", manifest_path)
+        manifest_text = manifest_path.read_text(encoding="utf-8")
+        manifest_text = manifest_text.replace(
+            "version = { workspace = true }", 'version = "0.0.0"',
+        )
+        manifest_text = manifest_text.replace("\n[lints]\nworkspace = true\n", "\n")
+        manifest_path.write_text(manifest_text, encoding="utf-8")
+        src_dir = tmp_path / "src"
+        src_dir.mkdir(parents=True, exist_ok=True)
+        eprint(f"Generating lib.rs into {src_dir}")
+        generated_lib = src_dir / "lib.rs"
+
+        generate_lib_rs(schema_file, generated_lib, fmt=False)
+
+        eprint("Formatting generated lib.rs with rustfmt")
+        subprocess.check_call(
+            [
+                "rustfmt",
+                "--config-path",
+                str(config_path),
+                str(generated_lib),
+            ],
+            cwd=tmp_path,
+            stderr=subprocess.DEVNULL,
+        )
+
+        eprint("Running cargo build in temporary workspace")
+        subprocess.check_call(["cargo", "build", "--quiet"], cwd=tmp_path)
+
+        eprint("Comparing generated lib.rs with checked-in version")
+        checked_in_contents = checked_in_lib.read_text(encoding="utf-8")
+        generated_contents = generated_lib.read_text(encoding="utf-8")
+
+        if checked_in_contents == generated_contents:
+            eprint("lib.rs matches checked-in version")
+            return 0
+
+        diff = unified_diff(
+            checked_in_contents.splitlines(keepends=True),
+            generated_contents.splitlines(keepends=True),
+            fromfile=str(checked_in_lib),
+            tofile=str(generated_lib),
+        )
+        diff_text = "".join(diff)
+        eprint("Generated lib.rs does not match the checked-in version. Diff:")
+        if diff_text:
+            eprint(diff_text, end="")
+        eprint("Re-run generate_mcp_types.py without --check to update src/lib.rs.")
+        return 1
 
 
 def add_definition(name: str, definition: dict[str, Any], out: list[str]) -> None:
@@ -265,8 +346,11 @@ class StructField:
     name: str
     type_name: str
     serde: str | None = None
+    comment: str | None = None
 
     def append(self, out: list[str], supports_const: bool) -> None:
+        if self.comment:
+            out.append(f"    // {self.comment}\n")
         if self.serde:
             out.append(f"    {self.serde}\n")
         if self.viz == "const":
@@ -311,6 +395,18 @@ def define_struct(
             fields.append(StructField("const", rs_prop.name, prop_type, rs_prop.serde))
         else:
             fields.append(StructField("pub", rs_prop.name, prop_type, rs_prop.serde))
+
+    # Special-case: add Codex-specific user_agent to Implementation
+    if name == "Implementation":
+        fields.append(
+            StructField(
+                "pub",
+                "user_agent",
+                "Option<String>",
+                '#[serde(default, skip_serializing_if = "Option::is_none")]',
+                "This is an extra field that the Codex MCP server sends as part of InitializeResult.",
+            )
+        )
 
     if implements_request_trait(name):
         add_trait_impl(name, "ModelContextProtocolRequest", fields, out)
