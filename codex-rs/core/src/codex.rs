@@ -122,7 +122,7 @@ use crate::unified_exec::UnifiedExecSessionManager;
 use crate::user_instructions::UserInstructions;
 use crate::user_notification::UserNotification;
 use crate::util::backoff;
-use codex_otel::trace_manager::TraceManager;
+use codex_otel::trace_manager::{ToolDecisionOutcome, ToolDecisionSource, TraceManager};
 use codex_protocol::config_types::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::custom_prompts::CustomPrompt;
@@ -2303,6 +2303,7 @@ async fn handle_response_item(
                     sess,
                     turn_context,
                     turn_diff_tracker,
+                    "local_shell",
                     sub_id.to_string(),
                     effective_call_id,
                 )
@@ -2449,6 +2450,7 @@ async fn handle_function_call(
                 sess,
                 turn_context,
                 turn_diff_tracker,
+                name.as_str(),
                 sub_id,
                 call_id,
             )
@@ -2545,6 +2547,7 @@ async fn handle_function_call(
                 sess,
                 turn_context,
                 turn_diff_tracker,
+                "apply_patch",
                 sub_id,
                 call_id,
             )
@@ -2649,6 +2652,7 @@ async fn handle_custom_tool_call(
                 sess,
                 turn_context,
                 turn_diff_tracker,
+                "apply_patch",
                 sub_id,
                 call_id,
             )
@@ -2741,9 +2745,13 @@ async fn handle_container_exec_with_params(
     sess: &Session,
     turn_context: &TurnContext,
     turn_diff_tracker: &mut TurnDiffTracker,
+    tool_name: &str,
     sub_id: String,
     call_id: String,
 ) -> ResponseInputItem {
+    let trace_manager = turn_context.client.get_trace_manager();
+    let mut auto_approved_via_user = false;
+
     if params.with_escalated_permissions.unwrap_or(false)
         && !matches!(turn_context.approval_policy, AskForApproval::OnRequest)
     {
@@ -2819,6 +2827,7 @@ async fn handle_container_exec_with_params(
                 justification: params.justification.clone(),
             };
             let safety = if *user_explicitly_approved_this_action {
+                auto_approved_via_user = true;
                 SafetyCheck::AutoApprove {
                     sandbox_type: SandboxType::None,
                 }
@@ -2852,7 +2861,21 @@ async fn handle_container_exec_with_params(
     };
 
     let sandbox_type = match safety {
-        SafetyCheck::AutoApprove { sandbox_type } => sandbox_type,
+        SafetyCheck::AutoApprove { sandbox_type } => {
+            let source = if auto_approved_via_user {
+                ToolDecisionSource::UserTemporary
+            } else {
+                ToolDecisionSource::Config
+            };
+
+            trace_manager.tool_decision(
+                tool_name,
+                ToolDecisionOutcome::Accept,
+                source,
+            );
+
+            sandbox_type
+        }
         SafetyCheck::AskUser => {
             let rx_approve = sess
                 .request_command_approval(
@@ -2864,15 +2887,45 @@ async fn handle_container_exec_with_params(
                 )
                 .await;
             match rx_approve.await.unwrap_or_default() {
-                ReviewDecision::Approved => (),
+                ReviewDecision::Approved => {
+                    trace_manager.tool_decision(
+                        tool_name,
+                        ToolDecisionOutcome::Accept,
+                        ToolDecisionSource::UserTemporary,
+                    );
+                }
                 ReviewDecision::ApprovedForSession => {
+                    trace_manager.tool_decision(
+                        tool_name,
+                        ToolDecisionOutcome::Accept,
+                        ToolDecisionSource::UserForSession,
+                    );
                     sess.add_approved_command(params.command.clone()).await;
                 }
-                ReviewDecision::Denied | ReviewDecision::Abort => {
+                ReviewDecision::Denied => {
+                    trace_manager.tool_decision(
+                        tool_name,
+                        ToolDecisionOutcome::Reject,
+                        ToolDecisionSource::UserReject,
+                    );
                     return ResponseInputItem::FunctionCallOutput {
                         call_id,
                         output: FunctionCallOutputPayload {
                             content: "exec command rejected by user".to_string(),
+                            success: None,
+                        },
+                    };
+                }
+                ReviewDecision::Abort => {
+                    trace_manager.tool_decision(
+                        tool_name,
+                        ToolDecisionOutcome::Reject,
+                        ToolDecisionSource::UserAbort,
+                    );
+                    return ResponseInputItem::FunctionCallOutput {
+                        call_id,
+                        output: FunctionCallOutputPayload {
+                            content: "exec command aborted by user".to_string(),
                             success: None,
                         },
                     };
@@ -2885,6 +2938,11 @@ async fn handle_container_exec_with_params(
             SandboxType::None
         }
         SafetyCheck::Reject { reason } => {
+            trace_manager.tool_decision(
+                tool_name,
+                ToolDecisionOutcome::Reject,
+                ToolDecisionSource::Config,
+            );
             return ResponseInputItem::FunctionCallOutput {
                 call_id,
                 output: FunctionCallOutputPayload {
