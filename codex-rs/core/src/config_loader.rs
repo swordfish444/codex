@@ -9,7 +9,7 @@ use toml::Value as TomlValue;
 
 const CONFIG_TOML_FILE: &str = "config.toml";
 
-pub(crate) fn load_config_as_toml(codex_home: &Path) -> io::Result<TomlValue> {
+pub fn load_config_as_toml(codex_home: &Path) -> io::Result<TomlValue> {
     let user_config_path = codex_home.join(CONFIG_TOML_FILE);
     let global_config_path = home_dir().map(|mut path| {
         path.push(".codex");

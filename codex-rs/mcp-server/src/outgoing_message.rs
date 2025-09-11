@@ -14,6 +14,7 @@ use mcp_types::JSONRPCResponse;
 use mcp_types::LoggingLevel;
 use mcp_types::LoggingMessageNotification;
 use mcp_types::LoggingMessageNotificationParams;
+use mcp_types::ModelContextProtocolNotification;
 use mcp_types::RequestId;
 use mcp_types::Result;
 use serde::Serialize;

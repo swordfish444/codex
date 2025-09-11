@@ -1,6 +1,5 @@
 use crate::admin_controls::ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE;
 use crate::admin_controls::AdminControls;
-use crate::admin_controls::AdminDangerPrompt;
 use crate::config_profile::ConfigProfile;
 use crate::config_types::History;
 use crate::config_types::McpServerConfig;
@@ -27,7 +26,6 @@ use codex_protocol::mcp_protocol::UserSavedConfig;
 use dirs::home_dir;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use tempfile::NamedTempFile;

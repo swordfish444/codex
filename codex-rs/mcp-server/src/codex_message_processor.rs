@@ -9,8 +9,8 @@ use codex_core::ConversationManager;
 use codex_core::Cursor as RolloutCursor;
 use codex_core::NewConversation;
 use codex_core::RolloutRecorder;
-use codex_core::admin_controls::ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE;
 use codex_core::SessionMeta;
+use codex_core::admin_controls::ADMIN_DANGEROUS_SANDBOX_DISABLED_MESSAGE;
 use codex_core::auth::CLIENT_ID;
 use codex_core::auth::get_auth_file;
 use codex_core::auth::login_with_api_key;
@@ -902,6 +902,8 @@ impl CodexMessageProcessor {
             .collect();
 
         let controls = &self.config.admin_controls;
+        let sandbox_policy = self.config.sandbox_policy.clone();
+        let approval_policy = self.config.approval_policy;
         let sandbox_is_dangerous = sandbox_policy.has_full_network_access();
         let dangerously_bypass_requested =
             matches!(sandbox_policy, SandboxPolicy::DangerFullAccess)
