@@ -561,7 +561,6 @@ dependencies = [
  "clap",
  "codex-common",
  "codex-core",
- "codex-protocol",
  "serde",
  "serde_json",
  "tempfile",
@@ -770,6 +769,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "base64",
  "codex-arg0",
  "codex-common",
  "codex-core",
