@@ -1,6 +1,5 @@
 ---
 source: tui/src/chatwidget/tests.rs
-assertion_line: 794
 expression: terminal.backend()
 ---
 "                                                                                "
@@ -9,6 +8,8 @@ expression: terminal.backend()
 "This will grant write access to /tmp for the remainder of this session.         "
 "                                                                                "
 "▌Apply changes?                                                                 "
-"▌ Yes   No, provide feedback                                                    "
+"▌> 1. Yes                                                                       "
+"▌  2. No, provide feedback                                                      "
+"▌                                                                               "
 "▌ Approve and apply the changes                                                 "
 "                                                                                "

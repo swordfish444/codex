@@ -4,6 +4,9 @@ expression: terminal.backend()
 ---
 "                                                                                "
 "▌Allow command?                                                                 "
-"▌ Yes   Always   No, provide feedback                                           "
+"▌> 1. Yes                                                                       "
+"▌  2. Always                                                                    "
+"▌  3. No, provide feedback                                                      "
+"▌                                                                               "
 "▌ Approve and run the command                                                   "
 "                                                                                "

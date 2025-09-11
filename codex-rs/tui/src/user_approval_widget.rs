@@ -191,12 +191,11 @@ impl UserApprovalWidget {
 
     fn handle_select_key(&mut self, key_event: KeyEvent) {
         match key_event.code {
-            KeyCode::Left => {
-                self.selected_option = (self.selected_option + self.select_options.len() - 1)
-                    % self.select_options.len();
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::Left => {
+                self.select_previous_option();
             }
-            KeyCode::Right => {
-                self.selected_option = (self.selected_option + 1) % self.select_options.len();
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Right => {
+                self.select_next_option();
             }
             KeyCode::Enter => {
                 let opt = &self.select_options[self.selected_option];
@@ -204,6 +203,13 @@ impl UserApprovalWidget {
             }
             KeyCode::Esc => {
                 self.send_decision(ReviewDecision::Abort);
+            }
+            KeyCode::Char(c @ '1'..='9') => {
+                let idx = c as usize - '1' as usize;
+                if idx < self.select_options.len() {
+                    let opt = &self.select_options[idx];
+                    self.send_decision(opt.decision);
+                }
             }
             other => {
                 let normalized = Self::normalize_keycode(other);
@@ -216,6 +222,21 @@ impl UserApprovalWidget {
                 }
             }
         }
+    }
+
+    fn select_previous_option(&mut self) {
+        if self.select_options.is_empty() {
+            return;
+        }
+        self.selected_option =
+            (self.selected_option + self.select_options.len() - 1) % self.select_options.len();
+    }
+
+    fn select_next_option(&mut self) {
+        if self.select_options.is_empty() {
+            return;
+        }
+        self.selected_option = (self.selected_option + 1) % self.select_options.len();
     }
 
     fn send_decision(&mut self, decision: ReviewDecision) {
@@ -320,9 +341,10 @@ impl UserApprovalWidget {
     pub(crate) fn desired_height(&self, width: u16) -> u16 {
         // Reserve space for:
         // - 1 title line ("Allow command?" or "Apply changes?")
-        // - 1 buttons line (options rendered horizontally on a single row)
+        // - N option lines (one per choice rendered vertically)
+        // - 1 spacer line between the options and description
         // - 1 description line (context for the currently selected option)
-        self.get_confirmation_prompt_height(width) + 3
+        self.get_confirmation_prompt_height(width) + self.select_options.len() as u16 + 3
     }
 }
 
@@ -334,24 +356,37 @@ impl WidgetRef for &UserApprovalWidget {
             .constraints([Constraint::Length(prompt_height), Constraint::Min(0)])
             .areas(area);
 
-        let lines: Vec<Line> = self
-            .select_options
-            .iter()
-            .enumerate()
-            .map(|(idx, opt)| {
-                let style = if idx == self.selected_option {
-                    Style::new().bg(Color::Cyan).fg(Color::Black)
-                } else {
-                    Style::new().add_modifier(Modifier::DIM)
-                };
-                opt.label.clone().alignment(Alignment::Center).style(style)
-            })
-            .collect();
+        let mut option_lines: Vec<Line<'static>> = Vec::new();
+        for (idx, opt) in self.select_options.iter().enumerate() {
+            let is_selected = idx == self.selected_option;
+            let prefix = if is_selected {
+                format!("> {}. ", idx + 1).cyan().dim()
+            } else {
+                format!("  {}. ", idx + 1).dim()
+            };
 
-        let [title_area, button_area, description_area] = Layout::vertical([
+            let mut label_spans = opt.label.clone().spans;
+            let label_style = if is_selected {
+                Style::new().fg(Color::Cyan)
+            } else {
+                Style::new().add_modifier(Modifier::DIM)
+            };
+            for span in &mut label_spans {
+                span.style = span.style.patch(label_style);
+            }
+
+            let mut spans = Vec::with_capacity(label_spans.len() + 1);
+            spans.push(prefix);
+            spans.append(&mut label_spans);
+            option_lines.push(Line::from(spans));
+        }
+
+        let options_height = option_lines.len().max(1) as u16;
+        let [title_area, options_area, _spacer_area, description_area] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(options_height),
             Constraint::Length(1),
             Constraint::Length(1),
-            Constraint::Min(0),
         ])
         .areas(response_chunk.inner(Margin::new(1, 0)));
         let title = match &self.approval_request {
@@ -361,17 +396,7 @@ impl WidgetRef for &UserApprovalWidget {
         Line::from(title).render(title_area, buf);
 
         self.confirmation_prompt.clone().render(prompt_chunk, buf);
-        let areas = Layout::horizontal(
-            lines
-                .iter()
-                .map(|l| Constraint::Length(l.width() as u16 + 2)),
-        )
-        .spacing(1)
-        .split(button_area);
-        for (idx, area) in areas.iter().enumerate() {
-            let line = &lines[idx];
-            line.render(*area, buf);
-        }
+        Paragraph::new(option_lines).render(options_area, buf);
 
         Line::from(self.select_options[self.selected_option].description)
             .style(Style::new().italic().add_modifier(Modifier::DIM))
