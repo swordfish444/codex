@@ -88,7 +88,7 @@ impl ExecvChecker {
         let mut program = valid_exec.program.to_string();
         for system_path in valid_exec.system_path {
             if is_executable_file(&system_path) {
-                program = system_path.to_string();
+                program = system_path;
                 break;
             }
         }
