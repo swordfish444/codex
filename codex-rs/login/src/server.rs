@@ -42,7 +42,7 @@ impl ServerOptions {
     pub fn new(codex_home: PathBuf, client_id: String) -> Self {
         Self {
             codex_home,
-            client_id: client_id,
+            client_id,
             issuer: DEFAULT_ISSUER.to_string(),
             port: DEFAULT_PORT,
             open_browser: true,

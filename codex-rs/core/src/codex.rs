@@ -1727,7 +1727,7 @@ async fn try_run_turn(
                 }
             })
             .map(|call_id| ResponseItem::CustomToolCallOutput {
-                call_id: call_id,
+                call_id,
                 output: "aborted".to_string(),
             })
             .collect::<Vec<_>>()

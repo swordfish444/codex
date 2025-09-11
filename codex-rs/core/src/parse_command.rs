@@ -1202,7 +1202,7 @@ fn parse_bash_lc_commands(original: &[String]) -> Option<Vec<ParsedCommand>> {
                                 }
                             } else {
                                 ParsedCommand::Read {
-                                    cmd: cmd,
+                                    cmd,
                                     name,
                                 }
                             }
@@ -1216,7 +1216,7 @@ fn parse_bash_lc_commands(original: &[String]) -> Option<Vec<ParsedCommand>> {
                     ParsedCommand::ListFiles { path, cmd, .. } => {
                         if had_connectors {
                             ParsedCommand::ListFiles {
-                                cmd: cmd,
+                                cmd,
                                 path,
                             }
                         } else {
@@ -1231,7 +1231,7 @@ fn parse_bash_lc_commands(original: &[String]) -> Option<Vec<ParsedCommand>> {
                     } => {
                         if had_connectors {
                             ParsedCommand::Search {
-                                cmd: cmd,
+                                cmd,
                                 query,
                                 path,
                             }
