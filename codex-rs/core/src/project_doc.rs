@@ -26,7 +26,7 @@ const PROJECT_DOC_SEPARATOR: &str = "\n\n--- project-doc ---\n\n";
 
 /// Combines `Config::instructions` and `AGENTS.md` (if present) into a single
 /// string of instructions.
-pub(crate) async fn get_user_instructions(config: &Config) -> Option<String> {
+pub async fn get_user_instructions(config: &Config) -> Option<String> {
     match read_project_docs(config).await {
         Ok(Some(project_doc)) => match &config.user_instructions {
             Some(original_instructions) => Some(format!(
