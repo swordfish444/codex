@@ -308,13 +308,13 @@ async fn prefixes_context_and_instructions_once_and_consistently_across_requests
     let body1 = requests[0].body_json::<serde_json::Value>().unwrap();
     let body1_input = body1["input"].as_array().unwrap();
     assert_eq!(
-        body1_input.len(),
-        3,
-        "expected UI, env item, and the user message"
+        body1["input"],
+        serde_json::json!([
+            expected_ui_msg,
+            expected_env_msg_turn,
+            expected_user_message_1
+        ])
     );
-    assert_eq!(&body1_input[0], &expected_ui_msg);
-    assert_eq!(&body1_input[1], &expected_env_msg_turn);
-    assert_eq!(body1_input.last().unwrap(), &expected_user_message_1);
 
     let env_texts: Vec<&str> = body1_input
         .iter()
