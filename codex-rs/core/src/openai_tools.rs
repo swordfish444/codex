@@ -248,7 +248,7 @@ fn create_unified_exec_tool() -> OpenAiTool {
 
 const SHELL_TOOL_DESCRIPTION: &str = r#"Runs a shell command and returns its output"#;
 
-fn create_shell_tool_for_sandbox() -> OpenAiTool {
+fn create_shell_tool_for_request() -> OpenAiTool {
     let mut properties = BTreeMap::new();
     properties.insert(
         "command".to_string(),
@@ -536,7 +536,7 @@ pub(crate) fn get_openai_tools(
                 tools.push(create_shell_tool());
             }
             ConfigShellToolType::ShellWithRequest => {
-                tools.push(create_shell_tool_for_sandbox());
+                tools.push(create_shell_tool_for_request());
             }
             ConfigShellToolType::LocalShell => {
                 tools.push(OpenAiTool::LocalShell {});
@@ -1088,7 +1088,7 @@ mod tests {
 
     #[test]
     fn test_shell_tool_for_sandbox_workspace_write() {
-        let tool = super::create_shell_tool_for_sandbox();
+        let tool = super::create_shell_tool_for_request();
         let OpenAiTool::Function(ResponsesApiTool {
             description, name, ..
         }) = &tool
@@ -1103,7 +1103,7 @@ mod tests {
 
     #[test]
     fn test_shell_tool_for_sandbox_readonly() {
-        let tool = super::create_shell_tool_for_sandbox();
+        let tool = super::create_shell_tool_for_request();
         let OpenAiTool::Function(ResponsesApiTool {
             description, name, ..
         }) = &tool
@@ -1118,7 +1118,7 @@ mod tests {
 
     #[test]
     fn test_shell_tool_for_sandbox_danger_full_access() {
-        let tool = super::create_shell_tool_for_sandbox();
+        let tool = super::create_shell_tool_for_request();
         let OpenAiTool::Function(ResponsesApiTool {
             description, name, ..
         }) = &tool
