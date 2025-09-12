@@ -230,7 +230,6 @@ async fn detect_default_user_shell(session_id: Uuid, codex_home: &Path) -> Shell
             {
                 let shell_path = shell_path.clone();
                 let rc_path = rc_path.clone();
-                let home_path = home_path.clone();
                 let codex_home = codex_home.to_path_buf();
                 tokio::spawn(async move {
                     let snapshot_path = snapshots::ensure_posix_snapshot(
