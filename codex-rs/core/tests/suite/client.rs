@@ -954,5 +954,5 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
         .cloned()
         .expect("r3 missing input array");
 
-    assert_eq!(serde_json::json!(r3_input_array), r3_tail_expected);
+    assert_eq!(r3_input_array, r3_tail_expected);
 }
