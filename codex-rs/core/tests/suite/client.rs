@@ -903,7 +903,7 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
 
     // Assert on the last five messages of the input history for request 3.
     // We expect the conversation tail to be [U1, A, U2, A, U3], skipping earlier context and developer messages.
-    let r3_tail_expected = serde_json::json!([
+    let r3_tail_expected = json!([
         {
             "type": "message",
             "role": "user",
