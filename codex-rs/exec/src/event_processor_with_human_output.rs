@@ -280,7 +280,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 parsed_cmd: _,
             }) => {
                 self.call_id_to_command.insert(
-                    call_id.clone(),
+                    call_id,
                     ExecCommandBegin {
                         command: command.clone(),
                     },
@@ -382,7 +382,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 // Store metadata so we can calculate duration later when we
                 // receive the corresponding PatchApplyEnd event.
                 self.call_id_to_patch.insert(
-                    call_id.clone(),
+                    call_id,
                     PatchApplyBegin {
                         start_time: Instant::now(),
                         auto_approved,
@@ -520,9 +520,11 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 let SessionConfiguredEvent {
                     session_id: conversation_id,
                     model,
+                    reasoning_effort: _,
                     history_log_id: _,
                     history_entry_count: _,
                     initial_messages: _,
+                    rollout_path: _,
                 } = session_configured_event;
 
                 ts_println!(
@@ -558,7 +560,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 }
             },
             EventMsg::ShutdownComplete => return CodexStatus::Shutdown,
-            EventMsg::ConversationHistory(_) => {}
+            EventMsg::ConversationPath(_) => {}
             EventMsg::UserMessage(_) => {}
         }
         CodexStatus::Running
