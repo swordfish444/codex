@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
+use std::time::Instant;
 
 use crate::AuthManager;
 use crate::client_common::REVIEW_PROMPT;
@@ -123,7 +124,6 @@ use crate::user_instructions::UserInstructions;
 use crate::user_notification::UserNotification;
 use crate::util::backoff;
 use codex_otel::otel_event_manager::OtelEventManager;
-use codex_otel::otel_event_manager::ToolDecisionOutcome;
 use codex_otel::otel_event_manager::ToolDecisionSource;
 use codex_protocol::config_types::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
@@ -452,7 +452,7 @@ impl Session {
             config.model.as_str(),
             config.model_family.slug.as_str(),
             auth_manager.auth().and_then(|a| a.get_account_id()),
-            auth_manager.preferred_auth_method(),
+            auth_manager.auth().map(|a| a.mode),
             config.otel.log_user_prompt,
             terminal::user_agent(),
         );
@@ -1184,13 +1184,6 @@ impl AgentTask {
     }
 }
 
-#[tracing::instrument(
-    name = "codex.conversation",
-    skip_all,
-    fields(
-        conversation.id = %sess.conversation_id,
-    )
-)]
 async fn submission_loop(
     sess: Arc<Session>,
     turn_context: TurnContext,
@@ -1615,10 +1608,19 @@ async fn spawn_review_thread(
         per_turn_config.model_context_window = Some(model_info.context_window);
     }
 
+    let otel_event_manager = parent_turn_context
+        .client
+        .get_otel_event_manager()
+        .with_model(
+            per_turn_config.model.as_str(),
+            per_turn_config.model_family.slug.as_str(),
+        );
+
     let per_turn_config = Arc::new(per_turn_config);
     let client = ModelClient::new(
         per_turn_config.clone(),
         auth_manager,
+        otel_event_manager,
         provider,
         per_turn_config.model_reasoning_effort,
         per_turn_config.model_reasoning_summary,
@@ -2269,18 +2271,31 @@ async fn handle_response_item(
             ..
         } => {
             info!("FunctionCall: {name}({arguments})");
-            Some(
-                handle_function_call(
-                    sess,
-                    turn_context,
-                    turn_diff_tracker,
-                    sub_id.to_string(),
-                    name,
-                    arguments,
-                    call_id,
-                )
-                .await,
+
+            let run_start = Instant::now();
+            let output = handle_function_call(
+                sess,
+                turn_context,
+                turn_diff_tracker,
+                sub_id.to_string(),
+                name.to_owned(),
+                arguments.to_owned(),
+                call_id.to_owned(),
             )
+            .await;
+
+            if let ResponseInputItem::FunctionCallOutput { output, .. } = output.clone() {
+                turn_context.client.get_otel_event_manager().tool_result(
+                    name.as_str(),
+                    call_id.as_str(),
+                    arguments.as_str(),
+                    run_start.elapsed(),
+                    output.success.unwrap_or(false),
+                    output.content,
+                );
+            }
+
+            Some(output)
         }
         ResponseItem::LocalShellCall {
             id,
@@ -2288,6 +2303,7 @@ async fn handle_response_item(
             status: _,
             action,
         } => {
+            let name = "local_shell";
             let LocalShellAction::Exec(action) = action;
             tracing::info!("LocalShellCall: {action:?}");
             let params = ShellToolCallParams {
@@ -2301,11 +2317,22 @@ async fn handle_response_item(
                 (Some(call_id), _) => call_id,
                 (None, Some(id)) => id,
                 (None, None) => {
-                    error!("LocalShellCall without call_id or id");
+                    let error_message = "LocalShellCall without call_id or id";
+
+                    turn_context.client.get_otel_event_manager().tool_result(
+                        name,
+                        "",
+                        "",
+                        Duration::ZERO,
+                        false,
+                        error_message.to_string(),
+                    );
+
+                    error!(error_message);
                     return Ok(Some(ResponseInputItem::FunctionCallOutput {
                         call_id: "".to_string(),
                         output: FunctionCallOutputPayload {
-                            content: "LocalShellCall without call_id or id".to_string(),
+                            content: error_message.to_string(),
                             success: None,
                         },
                     }));
@@ -2313,18 +2340,33 @@ async fn handle_response_item(
             };
 
             let exec_params = to_exec_params(params, turn_context);
-            Some(
-                handle_container_exec_with_params(
-                    exec_params,
-                    sess,
-                    turn_context,
-                    turn_diff_tracker,
-                    "local_shell",
-                    sub_id.to_string(),
-                    effective_call_id,
-                )
-                .await,
+
+            let run_start = Instant::now();
+            let output = handle_container_exec_with_params(
+                exec_params.clone(),
+                sess,
+                turn_context,
+                turn_diff_tracker,
+                name,
+                sub_id.to_string(),
+                effective_call_id.to_owned(),
             )
+            .await;
+
+            if let ResponseInputItem::FunctionCallOutput { output, .. } = output.clone() {
+                let arguments = exec_params.command.join(" ");
+
+                turn_context.client.get_otel_event_manager().tool_result(
+                    name,
+                    effective_call_id.as_str(),
+                    arguments.as_str(),
+                    run_start.elapsed(),
+                    output.success.unwrap_or(false),
+                    output.content,
+                );
+            }
+
+            Some(output)
         }
         ResponseItem::CustomToolCall {
             id: _,
@@ -2332,18 +2374,32 @@ async fn handle_response_item(
             name,
             input,
             status: _,
-        } => Some(
-            handle_custom_tool_call(
+        } => {
+            let run_start = Instant::now();
+            let output = handle_custom_tool_call(
                 sess,
                 turn_context,
                 turn_diff_tracker,
                 sub_id.to_string(),
-                name,
-                input,
-                call_id,
+                name.to_owned(),
+                input.to_owned(),
+                call_id.to_owned(),
             )
-            .await,
-        ),
+            .await;
+
+            if let ResponseInputItem::CustomToolCallOutput { output, .. } = output.clone() {
+                turn_context.client.get_otel_event_manager().tool_result(
+                    name.as_str(),
+                    call_id.as_str(),
+                    input.as_str(),
+                    run_start.elapsed(),
+                    true,
+                    output,
+                );
+            }
+
+            Some(output)
+        }
         ResponseItem::FunctionCallOutput { .. } => {
             debug!("unexpected FunctionCallOutput from stream");
             None
@@ -2766,7 +2822,6 @@ async fn handle_container_exec_with_params(
     call_id: String,
 ) -> ResponseInputItem {
     let otel_event_manager = turn_context.client.get_otel_event_manager();
-    let mut auto_approved_via_user = false;
 
     if params.with_escalated_permissions.unwrap_or(false)
         && !matches!(turn_context.approval_policy, AskForApproval::OnRequest)
@@ -2843,8 +2898,7 @@ async fn handle_container_exec_with_params(
                 justification: params.justification.clone(),
             };
             let safety = if *user_explicitly_approved_this_action {
-                auto_approved_via_user = true;
-                SafetyCheck::AutoApprove {
+                SafetyCheck::UserAutoApprove {
                     sandbox_type: SandboxType::None,
                 }
             } else {
@@ -2877,14 +2931,23 @@ async fn handle_container_exec_with_params(
     };
 
     let sandbox_type = match safety {
-        SafetyCheck::AutoApprove { sandbox_type } => {
-            let source = if auto_approved_via_user {
-                ToolDecisionSource::UserTemporary
-            } else {
-                ToolDecisionSource::Config
-            };
+        SafetyCheck::UserAutoApprove { sandbox_type } => {
+            otel_event_manager.tool_decision(
+                tool_name,
+                call_id.as_str(),
+                ReviewDecision::Approved,
+                ToolDecisionSource::User,
+            );
 
-            otel_event_manager.tool_decision(tool_name, ToolDecisionOutcome::Accept, source);
+            sandbox_type
+        }
+        SafetyCheck::AutoApprove { sandbox_type } => {
+            otel_event_manager.tool_decision(
+                tool_name,
+                call_id.as_str(),
+                ReviewDecision::Approved,
+                ToolDecisionSource::Config,
+            );
 
             sandbox_type
         }
@@ -2902,23 +2965,26 @@ async fn handle_container_exec_with_params(
                 ReviewDecision::Approved => {
                     otel_event_manager.tool_decision(
                         tool_name,
-                        ToolDecisionOutcome::Accept,
-                        ToolDecisionSource::UserTemporary,
+                        call_id.as_str(),
+                        ReviewDecision::Approved,
+                        ToolDecisionSource::User,
                     );
                 }
                 ReviewDecision::ApprovedForSession => {
                     otel_event_manager.tool_decision(
                         tool_name,
-                        ToolDecisionOutcome::Accept,
-                        ToolDecisionSource::UserForSession,
+                        call_id.as_str(),
+                        ReviewDecision::ApprovedForSession,
+                        ToolDecisionSource::User,
                     );
                     sess.add_approved_command(params.command.clone()).await;
                 }
                 ReviewDecision::Denied => {
                     otel_event_manager.tool_decision(
                         tool_name,
-                        ToolDecisionOutcome::Reject,
-                        ToolDecisionSource::UserReject,
+                        call_id.as_str(),
+                        ReviewDecision::Denied,
+                        ToolDecisionSource::User,
                     );
                     return ResponseInputItem::FunctionCallOutput {
                         call_id,
@@ -2931,8 +2997,9 @@ async fn handle_container_exec_with_params(
                 ReviewDecision::Abort => {
                     otel_event_manager.tool_decision(
                         tool_name,
-                        ToolDecisionOutcome::Reject,
-                        ToolDecisionSource::UserAbort,
+                        call_id.as_str(),
+                        ReviewDecision::Abort,
+                        ToolDecisionSource::User,
                     );
                     return ResponseInputItem::FunctionCallOutput {
                         call_id,
@@ -2952,7 +3019,8 @@ async fn handle_container_exec_with_params(
         SafetyCheck::Reject { reason } => {
             otel_event_manager.tool_decision(
                 tool_name,
-                ToolDecisionOutcome::Reject,
+                call_id.as_str(),
+                ReviewDecision::Denied,
                 ToolDecisionSource::Config,
             );
             return ResponseInputItem::FunctionCallOutput {
@@ -3021,6 +3089,7 @@ async fn handle_container_exec_with_params(
         }
         Err(CodexErr::Sandbox(error)) => {
             handle_sandbox_error(
+                tool_name,
                 turn_diff_tracker,
                 params,
                 exec_command_context,
@@ -3028,6 +3097,7 @@ async fn handle_container_exec_with_params(
                 sandbox_type,
                 sess,
                 turn_context,
+                &otel_event_manager,
             )
             .await
         }
@@ -3041,7 +3111,9 @@ async fn handle_container_exec_with_params(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_sandbox_error(
+    tool_name: &str,
     turn_diff_tracker: &mut TurnDiffTracker,
     params: ExecParams,
     exec_command_context: ExecCommandContext,
@@ -3049,6 +3121,7 @@ async fn handle_sandbox_error(
     sandbox_type: SandboxType,
     sess: &Session,
     turn_context: &TurnContext,
+    otel_event_manager: &OtelEventManager,
 ) -> ResponseInputItem {
     let call_id = exec_command_context.call_id.clone();
     let sub_id = exec_command_context.sub_id.clone();
@@ -3105,7 +3178,7 @@ async fn handle_sandbox_error(
         .await;
 
     match rx_approve.await.unwrap_or_default() {
-        ReviewDecision::Approved | ReviewDecision::ApprovedForSession => {
+        decision @ (ReviewDecision::Approved | ReviewDecision::ApprovedForSession) => {
             // Persist this command as pre‑approved for the
             // remainder of the session so future
             // executions skip the sandbox directly.
@@ -3114,6 +3187,13 @@ async fn handle_sandbox_error(
             // Inform UI we are retrying without sandbox.
             sess.notify_background_event(&sub_id, "retrying command without sandbox")
                 .await;
+
+            otel_event_manager.tool_decision(
+                tool_name,
+                call_id.as_str(),
+                decision,
+                ToolDecisionSource::User,
+            );
 
             // This is an escalated retry; the policy will not be
             // examined and the sandbox has been set to `None`.
@@ -3146,7 +3226,6 @@ async fn handle_sandbox_error(
 
                     let is_success = *exit_code == 0;
                     let content = format_exec_output(&retry_output);
-
                     ResponseInputItem::FunctionCallOutput {
                         call_id: call_id.clone(),
                         output: FunctionCallOutputPayload {
@@ -3164,7 +3243,14 @@ async fn handle_sandbox_error(
                 },
             }
         }
-        ReviewDecision::Denied | ReviewDecision::Abort => {
+        decision @ (ReviewDecision::Denied | ReviewDecision::Abort) => {
+            otel_event_manager.tool_decision(
+                tool_name,
+                call_id.as_str(),
+                decision,
+                ToolDecisionSource::User,
+            );
+
             // Fall through to original failure handling.
             ResponseInputItem::FunctionCallOutput {
                 call_id,
@@ -3446,6 +3532,7 @@ mod tests {
     use crate::protocol::CompactedItem;
     use crate::protocol::InitialHistory;
     use crate::protocol::ResumedHistory;
+    use codex_protocol::mcp_protocol::AuthMode;
     use codex_protocol::models::ContentItem;
     use mcp_types::ContentBlock;
     use mcp_types::TextContent;
@@ -3690,9 +3777,21 @@ mod tests {
         .expect("load default test config");
         let config = Arc::new(config);
         let conversation_id = ConversationId::default();
+
+        let otel_event_manager = OtelEventManager::new(
+            conversation_id,
+            config.model.as_str(),
+            config.model_family.slug.as_str(),
+            None,
+            Some(AuthMode::ChatGPT),
+            false,
+            "test".to_string(),
+        );
+
         let client = ModelClient::new(
             config.clone(),
             None,
+            otel_event_manager,
             config.model_provider.clone(),
             config.model_reasoning_effort,
             config.model_reasoning_summary,
