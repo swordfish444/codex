@@ -915,12 +915,22 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
         {
             "type": "message",
             "role": "user",
+            "content": [{"type":"input_text","text":"<environment_context>\n  <cwd>/Users/aibrahim/code/codex/codex-rs/core</cwd>\n  <approval_policy>on-request</approval_policy>\n  <sandbox_mode>read-only</sandbox_mode>\n  <network_access>restricted</network_access>\n  <shell>zsh</shell>\n</environment_context>"}]
+        },
+        {
+            "type": "message",
+            "role": "user",
             "content": [{"type":"input_text","text":"U1"}]
         },
         {
             "type": "message",
             "role": "assistant",
             "content": [{"type":"output_text","text":"Hey there!\n"}]
+        },
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type":"input_text","text":"<environment_context>\n  <cwd>/Users/aibrahim/code/codex/codex-rs/core</cwd>\n  <approval_policy>on-request</approval_policy>\n  <sandbox_mode>read-only</sandbox_mode>\n  <network_access>restricted</network_access>\n  <shell>zsh</shell>\n</environment_context>"}]
         },
         {
             "type": "message",
@@ -935,12 +945,14 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
         {
             "type": "message",
             "role": "user",
+            "content": [{"type":"input_text","text":"<environment_context>\n  <cwd>/Users/aibrahim/code/codex/codex-rs/core</cwd>\n  <approval_policy>on-request</approval_policy>\n  <sandbox_mode>read-only</sandbox_mode>\n  <network_access>restricted</network_access>\n  <shell>zsh</shell>\n</environment_context>"}]
+        },
+        {
+            "type": "message",
+            "role": "user",
             "content": [{"type":"input_text","text":"U3"}]
         }
     ]);
 
-    // skipping earlier context and developer messages
-    let tail_len = r3_tail_expected.as_array().unwrap().len();
-    let actual_tail = &r3_input_array[r3_input_array.len() - tail_len..];
-    assert_eq!(serde_json::json!(actual_tail), r3_tail_expected);
+    assert_eq!(serde_json::json!(r3_input_array), r3_tail_expected);
 }
