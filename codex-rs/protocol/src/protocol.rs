@@ -1186,6 +1186,7 @@ mod tests {
                 "type": "session_configured",
                 "session_id": "67e55044-10b1-426f-9247-bb680e5fe0c8",
                 "model": "codex-mini-latest",
+                "reasoning_effort": "medium",
                 "history_log_id": 0,
                 "history_entry_count": 0,
                 "rollout_path": format!("{}", rollout_file.path().display()),
