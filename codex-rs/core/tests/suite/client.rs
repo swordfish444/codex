@@ -7,6 +7,7 @@ use codex_core::built_in_model_providers;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
+use codex_core::shell::default_user_shell;
 use codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use core_test_support::load_default_config_for_test;
 use core_test_support::load_sse_fixture_with_id;
@@ -221,6 +222,8 @@ async fn resume_includes_initial_messages_and_sends_prior_items() {
     };
     let codex_home = TempDir::new().unwrap();
     let mut config = load_default_config_for_test(&codex_home);
+    let cwd = TempDir::new().unwrap();
+    config.cwd = cwd.path().to_path_buf();
     config.model_provider = model_provider;
     config.experimental_resume = Some(session_path.clone());
     // Also configure user instructions to ensure they are NOT delivered on resume.
@@ -259,6 +262,29 @@ async fn resume_includes_initial_messages_and_sends_prior_items() {
 
     let request = &server.received_requests().await.unwrap()[0];
     let request_body = request.body_json::<serde_json::Value>().unwrap();
+
+    // Build expected environment context for this turn.
+    let shell = default_user_shell().await;
+    let shell_line = match shell.name() {
+        Some(name) => format!("  <shell>{name}</shell>\n"),
+        None => String::new(),
+    };
+    let expected_env_text_turn = format!(
+        r#"<environment_context>
+  <cwd>{}</cwd>
+  <approval_policy>on-request</approval_policy>
+  <sandbox_mode>read-only</sandbox_mode>
+  <network_access>restricted</network_access>
+{}</environment_context>"#,
+        cwd.path().to_string_lossy(),
+        shell_line.as_str(),
+    );
+    let expected_env_msg_turn = json!({
+        "type": "message",
+        "role": "user",
+        "content": [ { "type": "input_text", "text": expected_env_text_turn } ]
+    });
+
     let expected_input = json!([
         {
             "type": "message",
@@ -270,31 +296,15 @@ async fn resume_includes_initial_messages_and_sends_prior_items() {
             "role": "assistant",
             "content": [{ "type": "output_text", "text": "resumed assistant message" }]
         },
+        expected_env_msg_turn,
         {
             "type": "message",
             "role": "user",
             "content": [{ "type": "input_text", "text": "hello" }]
         }
     ]);
-    let input_array = request_body
-        .get("input")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .expect("input array in request body");
-    let filtered: Vec<serde_json::Value> = input_array
-        .into_iter()
-        .filter(|item| {
-            let text = item
-                .get("content")
-                .and_then(|c| c.as_array())
-                .and_then(|a| a.first())
-                .and_then(|o| o.get("text"))
-                .and_then(|t| t.as_str())
-                .unwrap_or("");
-            !text.contains("<environment_context>")
-        })
-        .collect();
-    assert_eq!(serde_json::json!(filtered), expected_input);
+
+    assert_eq!(request_body["input"], expected_input);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
