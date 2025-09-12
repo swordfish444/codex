@@ -7,6 +7,7 @@ use codex_core::built_in_model_providers;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
+use codex_core::shell::default_user_shell;
 use codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use core_test_support::load_default_config_for_test;
 use core_test_support::load_sse_fixture_with_id;
@@ -221,6 +222,8 @@ async fn resume_includes_initial_messages_and_sends_prior_items() {
     };
     let codex_home = TempDir::new().unwrap();
     let mut config = load_default_config_for_test(&codex_home);
+    let cwd = TempDir::new().unwrap();
+    config.cwd = cwd.path().to_path_buf();
     config.model_provider = model_provider;
     config.experimental_resume = Some(session_path.clone());
     // Also configure user instructions to ensure they are NOT delivered on resume.
@@ -259,6 +262,29 @@ async fn resume_includes_initial_messages_and_sends_prior_items() {
 
     let request = &server.received_requests().await.unwrap()[0];
     let request_body = request.body_json::<serde_json::Value>().unwrap();
+
+    // Build expected environment context for this turn.
+    let shell = default_user_shell().await;
+    let shell_line = match shell.name() {
+        Some(name) => format!("  <shell>{name}</shell>\n"),
+        None => String::new(),
+    };
+    let expected_env_text_turn = format!(
+        r#"<environment_context>
+  <cwd>{}</cwd>
+  <approval_policy>on-request</approval_policy>
+  <sandbox_mode>read-only</sandbox_mode>
+  <network_access>restricted</network_access>
+{}</environment_context>"#,
+        cwd.path().to_string_lossy(),
+        shell_line.as_str(),
+    );
+    let expected_env_msg_turn = json!({
+        "type": "message",
+        "role": "user",
+        "content": [ { "type": "input_text", "text": expected_env_text_turn } ]
+    });
+
     let expected_input = json!([
         {
             "type": "message",
@@ -270,12 +296,14 @@ async fn resume_includes_initial_messages_and_sends_prior_items() {
             "role": "assistant",
             "content": [{ "type": "output_text", "text": "resumed assistant message" }]
         },
+        expected_env_msg_turn,
         {
             "type": "message",
             "role": "user",
             "content": [{ "type": "input_text", "text": "hello" }]
         }
     ]);
+
     assert_eq!(request_body["input"], expected_input);
 }
 
@@ -873,34 +901,38 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 3, "expected 3 requests (one per turn)");
 
-    // Replace full-array compare with tail-only raw JSON compare using a single hard-coded value.
-    let r3_tail_expected = json!([
-        {
-            "type": "message",
-            "role": "user",
-            "content": [{"type":"input_text","text":"U1"}]
-        },
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type":"output_text","text":"Hey there!\n"}]
-        },
-        {
-            "type": "message",
-            "role": "user",
-            "content": [{"type":"input_text","text":"U2"}]
-        },
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type":"output_text","text":"Hey there!\n"}]
-        },
-        {
-            "type": "message",
-            "role": "user",
-            "content": [{"type":"input_text","text":"U3"}]
-        }
-    ]);
+    // Build expected environment context dynamically to avoid OS-dependent flakiness.
+    let shell = default_user_shell().await;
+    let shell_line = match shell.name() {
+        Some(name) => format!("  <shell>{name}</shell>\n"),
+        None => String::new(),
+    };
+    let expected_env_text = format!(
+        r#"<environment_context>
+  <cwd>{}</cwd>
+  <approval_policy>on-request</approval_policy>
+  <sandbox_mode>read-only</sandbox_mode>
+  <network_access>restricted</network_access>
+{}</environment_context>"#,
+        std::env::current_dir().unwrap().to_string_lossy(),
+        shell_line.as_str(),
+    );
+    let expected_env_msg = json!({
+        "type": "message",
+        "role": "user",
+        "content": [ { "type": "input_text", "text": expected_env_text } ]
+    });
+
+    let expected_full = json!([
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"<user_instructions>\n\n# Rust/codex-rs\n\nIn the codex-rs folder where the rust code lives:\n\n- Crate names are prefixed with `codex-`. For example, the `core` folder's crate is named `codex-core`\n- When using format! and you can inline variables into {}, always do that.\n- Never add or modify any code related to `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` or `CODEX_SANDBOX_ENV_VAR`.\n  - You operate in a sandbox where `CODEX_SANDBOX_NETWORK_DISABLED=1` will be set whenever you use the `shell` tool. Any existing code that uses `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` was authored with this fact in mind. It is often used to early exit out of tests that the author knew you would not be able to run given your sandbox limitations.\n  - Similarly, when you spawn a process using Seatbelt (`/usr/bin/sandbox-exec`), `CODEX_SANDBOX=seatbelt` will be set on the child process. Integration tests that want to run Seatbelt themselves cannot be run under Seatbelt, so checks for `CODEX_SANDBOX=seatbelt` are also often used to early exit out of tests, as appropriate.\n\nRun `just fmt` (in `codex-rs` directory) automatically after making Rust code changes; do not ask for approval to run it. Before finalizing a change to `codex-rs`, run `just fix -p <project>` (in `codex-rs` directory) to fix any linter issues in the code. Prefer scoping with `-p` to avoid slow workspace‑wide Clippy builds; only run `just fix` without `-p` if you changed shared crates. Additionally, run the tests:\n1. Run the test for the specific project that was changed. For example, if changes were made in `codex-rs/tui`, run `cargo test -p codex-tui`.\n2. Once those pass, if any changes were made in common, core, or protocol, run the complete test suite with `cargo test --all-features`.\nWhen running interactively, ask the user before running `just fix` to finalize. `just fmt` does not require approval. project-specific or individual tests can be run without asking the user, but do ask the user before running the complete test suite.\n\n## TUI style conventions\n\nSee `codex-rs/tui/styles.md`.\n\n## TUI code conventions\n\n- Use concise styling helpers from ratatui’s Stylize trait.\n  - Basic spans: use \"text\".into()\n  - Styled spans: use \"text\".red(), \"text\".green(), \"text\".magenta(), \"text\".dim(), etc.\n  - Prefer these over constructing styles with `Span::styled` and `Style` directly.\n  - Example: patch summary file lines\n    - Desired: vec![\"  └ \".into(), \"M\".red(), \" \".dim(), \"tui/src/app.rs\".dim()]\n\n### TUI Styling (ratatui)\n- Prefer Stylize helpers: use \"text\".dim(), .bold(), .cyan(), .italic(), .underlined() instead of manual Style where possible.\n- Prefer simple conversions: use \"text\".into() for spans and vec![…].into() for lines; when inference is ambiguous (e.g., Paragraph::new/Cell::from), use Line::from(spans) or Span::from(text).\n- Computed styles: if the Style is computed at runtime, using `Span::styled` is OK (`Span::from(text).set_style(style)` is also acceptable).\n- Avoid hardcoded white: do not use `.white()`; prefer the default foreground (no color).\n- Chaining: combine helpers by chaining for readability (e.g., url.cyan().underlined()).\n- Single items: prefer \"text\".into(); use Line::from(text) or Span::from(text) only when the target type isn’t obvious from context, or when using .into() would require extra type annotations.\n- Building lines: use vec![…].into() to construct a Line when the target type is obvious and no extra type annotations are needed; otherwise use Line::from(vec![…]).\n- Avoid churn: don’t refactor between equivalent forms (Span::styled ↔ set_style, Line::from ↔ .into()) without a clear readability or functional gain; follow file‑local conventions and do not introduce type annotations solely to satisfy .into().\n- Compactness: prefer the form that stays on one line after rustfmt; if only one of Line::from(vec![…]) or vec![…].into() avoids wrapping, choose that. If both wrap, pick the one with fewer wrapped lines.\n\n### Text wrapping\n- Always use textwrap::wrap to wrap plain strings.\n- If you have a ratatui Line and you want to wrap it, use the helpers in tui/src/wrapping.rs, e.g. word_wrap_lines / word_wrap_line.\n- If you need to indent wrapped lines, use the initial_indent / subsequent_indent options from RtOptions if you can, rather than writing custom logic.\n- If you have a list of lines and you need to prefix them all with some prefix (optionally different on the first vs subsequent lines), use the `prefix_lines` helper from line_utils.\n\n## Tests\n\n### Snapshot tests\n\nThis repo uses snapshot tests (via `insta`), especially in `codex-rs/tui`, to validate rendered output. When UI or text output changes intentionally, update the snapshots as follows:\n\n- Run tests to generate any updated snapshots:\n  - `cargo test -p codex-tui`\n- Check what’s pending:\n  - `cargo insta pending-snapshots -p codex-tui`\n- Review changes by reading the generated `*.snap.new` files directly in the repo, or preview a specific file:\n  - `cargo insta show -p codex-tui path/to/file.snap.new`\n- Only if you intend to accept all new snapshots in this crate, run:\n  - `cargo insta accept -p codex-tui`\n\nIf you don’t have the tool:\n- `cargo install cargo-insta`\n\n### Test assertions\n\n- Tests should use pretty_assertions::assert_eq for clearer diffs. Import this at the top of the test module if it isn't already.\n\n\n</user_instructions>"}]},
+        expected_env_msg.clone(),
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"U1"}]},
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hey there!\n"}]},
+        expected_env_msg.clone(),
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"U2"}]},
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hey there!\n"}]},
+        expected_env_msg,
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"U3"}]}]);
 
     let r3_input_array = requests[2]
         .body_json::<serde_json::Value>()
@@ -909,12 +941,6 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
         .and_then(|v| v.as_array())
         .cloned()
         .expect("r3 missing input array");
-    // skipping earlier context and developer messages
-    let tail_len = r3_tail_expected.as_array().unwrap().len();
-    let actual_tail = &r3_input_array[r3_input_array.len() - tail_len..];
-    assert_eq!(
-        serde_json::Value::Array(actual_tail.to_vec()),
-        r3_tail_expected,
-        "request 3 tail mismatch",
-    );
+
+    assert_eq!(json!(r3_input_array), expected_full);
 }

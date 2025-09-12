@@ -270,8 +270,13 @@ async fn prefixes_context_and_instructions_once_and_consistently_across_requests
     assert_eq!(requests.len(), 2, "expected two POST requests");
 
     let shell = default_user_shell().await;
+    let shell_line = match shell.name() {
+        Some(name) => format!("  <shell>{name}</shell>\n"),
+        None => String::new(),
+    };
 
-    let expected_env_text = format!(
+    // Per-turn environment context includes the shell tag.
+    let expected_env_text_turn = format!(
         r#"<environment_context>
   <cwd>{}</cwd>
   <approval_policy>on-request</approval_policy>
@@ -279,18 +284,15 @@ async fn prefixes_context_and_instructions_once_and_consistently_across_requests
   <network_access>restricted</network_access>
 {}</environment_context>"#,
         cwd.path().to_string_lossy(),
-        match shell.name() {
-            Some(name) => format!("  <shell>{name}</shell>\n"),
-            None => String::new(),
-        }
+        shell_line.as_str(),
     );
     let expected_ui_text =
         "<user_instructions>\n\nbe consistent and helpful\n\n</user_instructions>";
 
-    let expected_env_msg = serde_json::json!({
+    let expected_env_msg_turn = serde_json::json!({
         "type": "message",
         "role": "user",
-        "content": [ { "type": "input_text", "text": expected_env_text } ]
+        "content": [ { "type": "input_text", "text": expected_env_text_turn } ]
     });
     let expected_ui_msg = serde_json::json!({
         "type": "message",
@@ -304,10 +306,28 @@ async fn prefixes_context_and_instructions_once_and_consistently_across_requests
         "content": [ { "type": "input_text", "text": "hello 1" } ]
     });
     let body1 = requests[0].body_json::<serde_json::Value>().unwrap();
+    let body1_input = body1["input"].as_array().unwrap();
     assert_eq!(
         body1["input"],
-        serde_json::json!([expected_ui_msg, expected_env_msg, expected_user_message_1])
+        serde_json::json!([
+            expected_ui_msg,
+            expected_env_msg_turn,
+            expected_user_message_1
+        ])
     );
+
+    let env_texts: Vec<&str> = body1_input
+        .iter()
+        .filter_map(|msg| {
+            msg.get("content")
+                .and_then(|content| content.as_array())
+                .and_then(|content| content.first())
+                .and_then(|item| item.get("text"))
+                .and_then(|text| text.as_str())
+        })
+        .filter(|text| text.starts_with("<environment_context>"))
+        .collect();
+    assert_eq!(env_texts, vec![expected_env_text_turn.as_str()]);
 
     let expected_user_message_2 = serde_json::json!({
         "type": "message",
@@ -318,7 +338,7 @@ async fn prefixes_context_and_instructions_once_and_consistently_across_requests
     let expected_body2 = serde_json::json!(
         [
             body1["input"].as_array().unwrap().as_slice(),
-            [expected_user_message_2].as_slice(),
+            [expected_env_msg_turn, expected_user_message_2].as_slice(),
         ]
         .concat()
     );
@@ -423,19 +443,28 @@ async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() {
         "role": "user",
         "content": [ { "type": "input_text", "text": "hello 2" } ]
     });
+    let shell = default_user_shell().await;
+    let shell_line = match shell.name() {
+        Some(name) => format!("  <shell>{name}</shell>\n"),
+        None => String::new(),
+    };
+
     // After overriding the turn context, the environment context should be emitted again
     // reflecting the new approval policy and sandbox settings. Omit cwd because it did
     // not change.
     let expected_env_text_2 = format!(
         r#"<environment_context>
+  <cwd>{}</cwd>
   <approval_policy>never</approval_policy>
   <sandbox_mode>workspace-write</sandbox_mode>
   <network_access>enabled</network_access>
   <writable_roots>
     <root>{}</root>
   </writable_roots>
-</environment_context>"#,
-        writable.path().to_string_lossy()
+{}</environment_context>"#,
+        cwd.path().to_string_lossy(),
+        writable.path().to_string_lossy(),
+        shell_line.as_str()
     );
     let expected_env_msg_2 = serde_json::json!({
         "type": "message",
@@ -546,12 +575,165 @@ async fn per_turn_overrides_keep_cached_prefix_and_key_constant() {
         "role": "user",
         "content": [ { "type": "input_text", "text": "hello 2" } ]
     });
+    let shell = default_user_shell().await;
+    let shell_line = match shell.name() {
+        Some(name) => format!("  <shell>{name}</shell>\n"),
+        None => String::new(),
+    };
+    let expected_env_text_2 = format!(
+        r#"<environment_context>
+  <cwd>{}</cwd>
+  <approval_policy>never</approval_policy>
+  <sandbox_mode>workspace-write</sandbox_mode>
+  <network_access>enabled</network_access>
+  <writable_roots>
+    <root>{}</root>
+  </writable_roots>
+{}</environment_context>"#,
+        new_cwd.path().to_string_lossy(),
+        writable.path().to_string_lossy(),
+        shell_line.as_str()
+    );
+    let expected_env_msg_2 = serde_json::json!({
+        "type": "message",
+        "role": "user",
+        "content": [ { "type": "input_text", "text": expected_env_text_2 } ]
+    });
     let expected_body2 = serde_json::json!(
         [
             body1["input"].as_array().unwrap().as_slice(),
-            [expected_user_message_2].as_slice(),
+            [expected_env_msg_2, expected_user_message_2].as_slice(),
         ]
         .concat()
     );
     assert_eq!(body2["input"], expected_body2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tools_stable_across_all_approval_policy_transitions() {
+    use pretty_assertions::assert_eq;
+
+    let server = MockServer::start().await;
+
+    let sse = sse_completed("resp");
+    let template = ResponseTemplate::new(200)
+        .insert_header("content-type", "text/event-stream")
+        .set_body_raw(sse, "text/event-stream");
+
+    // Build all transitions FROM each to each other (exclude self transitions)
+    let policies = vec![
+        AskForApproval::UnlessTrusted,
+        AskForApproval::OnFailure,
+        AskForApproval::OnRequest,
+        AskForApproval::Never,
+    ];
+    let mut transitions: Vec<(AskForApproval, AskForApproval)> = Vec::new();
+    for &from in &policies {
+        for &to in &policies {
+            if from != to {
+                transitions.push((from, to));
+            }
+        }
+    }
+
+    // Expect 2 POSTs per transition
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(template)
+        .expect((transitions.len() * 2) as u64)
+        .mount(&server)
+        .await;
+
+    let model_provider = ModelProviderInfo {
+        base_url: Some(format!("{}/v1", server.uri())),
+        ..built_in_model_providers()["openai"].clone()
+    };
+
+    let cwd = TempDir::new().unwrap();
+    let codex_home = TempDir::new().unwrap();
+    let mut config = load_default_config_for_test(&codex_home);
+    config.cwd = cwd.path().to_path_buf();
+    config.model_provider = model_provider;
+    config.user_instructions = Some("be consistent and helpful".to_string());
+    // Keep tools stable and minimal
+    config.include_plan_tool = false;
+    config.include_apply_patch_tool = false;
+    config.tools_web_search_request = false;
+    config.use_experimental_unified_exec_tool = true; // policy-independent tool
+
+    let conversation_manager =
+        ConversationManager::with_auth(CodexAuth::from_api_key("Test API Key"));
+    let codex = conversation_manager
+        .new_conversation(config)
+        .await
+        .expect("create new conversation")
+        .conversation;
+
+    for (i, (from, to)) in transitions.iter().enumerate() {
+        // Ensure a known starting policy for this pair
+        codex
+            .submit(Op::OverrideTurnContext {
+                cwd: None,
+                approval_policy: Some(*from),
+                sandbox_policy: None,
+                model: None,
+                effort: None,
+                summary: None,
+            })
+            .await
+            .unwrap();
+
+        codex
+            .submit(Op::UserInput {
+                items: vec![InputItem::Text {
+                    text: format!("turn {i}-a"),
+                }],
+            })
+            .await
+            .unwrap();
+        wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+        // Override to the target policy and send next turn
+        codex
+            .submit(Op::OverrideTurnContext {
+                cwd: None,
+                approval_policy: Some(*to),
+                sandbox_policy: None,
+                model: None,
+                effort: None,
+                summary: None,
+            })
+            .await
+            .unwrap();
+
+        codex
+            .submit(Op::UserInput {
+                items: vec![InputItem::Text {
+                    text: format!("turn {i}-b"),
+                }],
+            })
+            .await
+            .unwrap();
+        wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+    }
+
+    // Verify tool arrays are identical across each pair of requests
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        requests.len(),
+        transitions.len() * 2,
+        "expected 2 requests per transition"
+    );
+
+    for i in 0..transitions.len() {
+        let body_a = requests[2 * i].body_json::<serde_json::Value>().unwrap();
+        let body_b = requests[2 * i + 1]
+            .body_json::<serde_json::Value>()
+            .unwrap();
+        assert_eq!(
+            body_a["tools"], body_b["tools"],
+            "tools changed between requests for transition #{i}: {:?}",
+            transitions[i]
+        );
+    }
 }
