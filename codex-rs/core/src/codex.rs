@@ -2834,8 +2834,7 @@ async fn submit_user_input(
         Some(cwd),
         Some(approval_policy),
         Some(sandbox_policy),
-        // Shell is not configurable from turn to turn
-        None,
+        Some(sess.user_shell.clone()),
     ))])
     .await;
     if let Err(items) = sess.inject_input(items) {
