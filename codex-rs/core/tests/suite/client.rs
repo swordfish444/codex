@@ -924,10 +924,15 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
         "role": "user",
         "content": [ { "type": "input_text", "text": expected_env_text } ]
     });
+    // Wrap user instructions in the XML container to match the raw/ingest view
+    let expected_ui_text = format!(
+        "<user_instructions>\n\n{}\n\n</user_instructions>",
+        user_instructions.clone().unwrap()
+    );
     let expected_ui_msg = json!({
         "type": "message",
         "role": "user",
-        "content": [ { "type": "input_text", "text": user_instructions.unwrap() } ]
+        "content": [ { "type": "input_text", "text": expected_ui_text } ]
     });
 
     let expected_full = json!([
