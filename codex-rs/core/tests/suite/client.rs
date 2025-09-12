@@ -901,14 +901,6 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 3, "expected 3 requests (one per turn)");
 
-    let r3_input_array = requests[2]
-        .body_json::<serde_json::Value>()
-        .unwrap()
-        .get("input")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .expect("r3 missing input array");
-
     // Assert on the last five messages of the input history for request 3.
     // We expect the conversation tail to be [U1, A, U2, A, U3], skipping earlier context and developer messages.
     let r3_tail_expected = serde_json::json!([
@@ -953,6 +945,14 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
             "content": [{"type":"input_text","text":"U3"}]
         }
     ]);
+
+    let r3_input_array = requests[2]
+        .body_json::<serde_json::Value>()
+        .unwrap()
+        .get("input")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .expect("r3 missing input array");
 
     assert_eq!(serde_json::json!(r3_input_array), r3_tail_expected);
 }
