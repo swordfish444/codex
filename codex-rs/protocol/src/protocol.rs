@@ -1081,6 +1081,9 @@ pub struct SessionConfiguredEvent {
     /// Tell the client what model is being queried.
     pub model: String,
 
+    /// The effort the model is putting into reasoning about the user's request.
+    pub reasoning_effort: ReasoningEffortConfig,
+
     /// Identifier of the history log file (inode on Unix, 0 otherwise).
     pub history_log_id: u64,
 
@@ -1169,6 +1172,7 @@ mod tests {
             msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
                 session_id: conversation_id,
                 model: "codex-mini-latest".to_string(),
+                reasoning_effort: ReasoningEffortConfig::default(),
                 history_log_id: 0,
                 history_entry_count: 0,
                 initial_messages: None,
