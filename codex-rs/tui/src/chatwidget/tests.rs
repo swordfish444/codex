@@ -525,6 +525,7 @@ fn begin_exec(chat: &mut ChatWidget, call_id: &str, raw_cmd: &str) {
             command,
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             parsed_cmd,
+            is_user_shell_command: false,
         }),
     });
 }
@@ -1039,6 +1040,7 @@ async fn binary_size_transcript_snapshot() {
                                         .into_iter()
                                         .map(std::convert::Into::into)
                                         .collect(),
+                                    is_user_shell_command: false,
                                 }),
                             }
                         }
@@ -2026,6 +2028,7 @@ fn chatwidget_exec_and_status_layout_vt100_snapshot() {
                 }
                 .into(),
             ],
+            is_user_shell_command: false,
         }),
     });
     chat.handle_codex_event(Event {

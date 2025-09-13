@@ -114,10 +114,14 @@ use codex_git_tooling::restore_ghost_commit;
 
 const MAX_TRACKED_GHOST_COMMITS: usize = 20;
 
+const BANG_COMMAND_HELP_TITLE: &str = "Prefix a command with ! to run it locally";
+const BANG_COMMAND_HELP_HINT: &str = "Example: !ls";
+
 // Track information about an in-flight exec command.
 struct RunningCommand {
     command: Vec<String>,
     parsed_cmd: Vec<ParsedCommand>,
+    is_user_shell_command: bool,
 }
 
 const RATE_LIMIT_WARNING_THRESHOLDS: [f64; 3] = [75.0, 90.0, 95.0];
@@ -617,9 +621,9 @@ impl ChatWidget {
 
     pub(crate) fn handle_exec_end_now(&mut self, ev: ExecCommandEndEvent) {
         let running = self.running_commands.remove(&ev.call_id);
-        let (command, parsed) = match running {
-            Some(rc) => (rc.command, rc.parsed_cmd),
-            None => (vec![ev.call_id.clone()], Vec::new()),
+        let (command, parsed, is_user_shell_command) = match running {
+            Some(rc) => (rc.command, rc.parsed_cmd, rc.is_user_shell_command),
+            None => (vec![ev.call_id.clone()], Vec::new(), false),
         };
 
         let needs_new = self
@@ -633,6 +637,7 @@ impl ChatWidget {
                 ev.call_id.clone(),
                 command,
                 parsed,
+                is_user_shell_command,
             )));
         }
 
@@ -717,6 +722,7 @@ impl ChatWidget {
             RunningCommand {
                 command: ev.command.clone(),
                 parsed_cmd: ev.parsed_cmd.clone(),
+                is_user_shell_command: ev.is_user_shell_command,
             },
         );
         if let Some(cell) = self
@@ -727,6 +733,7 @@ impl ChatWidget {
                 ev.call_id.clone(),
                 ev.command.clone(),
                 ev.parsed_cmd.clone(),
+                ev.is_user_shell_command,
             )
         {
             *cell = new_exec;
@@ -737,6 +744,7 @@ impl ChatWidget {
                 ev.call_id.clone(),
                 ev.command.clone(),
                 ev.parsed_cmd,
+                ev.is_user_shell_command,
             )));
         }
 
@@ -1170,6 +1178,24 @@ impl ChatWidget {
         self.capture_ghost_snapshot();
 
         let mut items: Vec<InputItem> = Vec::new();
+
+        // Special-case: "!cmd" executes a local shell command instead of sending to the model.
+        if let Some(stripped) = text.strip_prefix('!') {
+            let cmd = stripped.trim();
+            if cmd.is_empty() {
+                self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                    history_cell::new_info_event(
+                        BANG_COMMAND_HELP_TITLE.to_string(),
+                        Some(BANG_COMMAND_HELP_HINT.to_string()),
+                    ),
+                )));
+                return;
+            }
+            self.submit_op(Op::RunUserShellCommand {
+                command: cmd.to_string(),
+            });
+            return;
+        }
 
         if !text.is_empty() {
             items.push(InputItem::Text { text: text.clone() });
