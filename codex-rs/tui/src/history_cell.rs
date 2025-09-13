@@ -1,4 +1,5 @@
 use crate::diff_render::create_diff_summary;
+use crate::exec_command::escape_command;
 use crate::exec_command::relativize_to_home;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::markdown::append_markdown;
@@ -27,6 +28,7 @@ use codex_core::protocol::McpInvocation;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::SessionConfiguredEvent;
 use codex_core::protocol::TokenUsage;
+use codex_core::protocol::UnifiedExecCallEvent;
 use codex_protocol::mcp_protocol::ConversationId;
 use codex_protocol::num_format::format_with_separators;
 use codex_protocol::parse_command::ParsedCommand;
@@ -819,6 +821,74 @@ pub(crate) fn new_completed_mcp_tool_call(
     };
 
     Box::new(PlainHistoryCell { lines })
+}
+
+pub(crate) fn new_unified_exec_call(event: UnifiedExecCallEvent) -> PlainHistoryCell {
+    let UnifiedExecCallEvent {
+        requested_session_id,
+        session_id,
+        input_chunks,
+        output,
+        success,
+        ..
+    } = event;
+
+    let session_label = match (requested_session_id.as_deref(), session_id.as_deref()) {
+        (None, Some(ret)) => format!("session {ret} (new)"),
+        (None, None) => "session <none>".to_string(),
+        (Some(req), Some(ret)) if req == ret => format!("session {ret}"),
+        (Some(req), Some(ret)) => format!("session {req} -> {ret}"),
+        (Some(req), None) => format!("session {req} (ended)"),
+    };
+
+    let input_summary = if input_chunks.is_empty() {
+        "<no input>".to_string()
+    } else {
+        escape_command(&input_chunks)
+    };
+
+    let status_text = if success { "succeeded" } else { "failed" };
+    let title = format!("{session_label} {status_text}: {input_summary}");
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    lines.push(Line::from(vec![
+        "tool".magenta(),
+        " ".into(),
+        "unified_exec".bold(),
+        " ".into(),
+        if success { title.green() } else { title.red() },
+    ]));
+
+    if !output.trim().is_empty() {
+        let command_output = if success {
+            CommandOutput {
+                exit_code: 0,
+                stdout: output.clone(),
+                stderr: String::new(),
+                formatted_output: String::new(),
+            }
+        } else {
+            CommandOutput {
+                exit_code: 1,
+                stdout: String::new(),
+                stderr: output.clone(),
+                formatted_output: String::new(),
+            }
+        };
+        let nested_output = prefix_lines(
+            output_lines(Some(&command_output), false, false, false),
+            "    ".into(),
+            "    ".into(),
+        );
+        if !nested_output.is_empty() {
+            let mut labeled_output: Vec<Line<'static>> =
+                Vec::with_capacity(nested_output.len() + 1);
+            labeled_output.push(Line::from(vec!["output".dim(), ":".dim()]));
+            labeled_output.extend(nested_output);
+            lines.extend(prefix_lines(labeled_output, "  └ ".dim(), "    ".into()));
+        }
+    }
+
+    PlainHistoryCell { lines }
 }
 
 pub(crate) fn new_status_output(

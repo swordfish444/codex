@@ -460,6 +460,8 @@ pub enum EventMsg {
 
     McpToolCallEnd(McpToolCallEndEvent),
 
+    UnifiedExecCall(UnifiedExecCallEvent),
+
     WebSearchBegin(WebSearchBeginEvent),
 
     WebSearchEnd(WebSearchEndEvent),
@@ -819,6 +821,22 @@ impl McpToolCallEndEvent {
             Err(_) => false,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+pub struct UnifiedExecCallEvent {
+    /// Identifier for the corresponding `FunctionCall` from the model.
+    pub call_id: String,
+    /// Session identifier requested by the model when invoking the tool.
+    pub requested_session_id: Option<String>,
+    /// Session identifier returned by the tool after handling the request.
+    pub session_id: Option<String>,
+    /// Input chunks provided to the tool. For a new session, this represents the command line.
+    pub input_chunks: Vec<String>,
+    /// Aggregated output captured from the subprocess or an error message when the tool failed.
+    pub output: String,
+    /// Whether the tool invocation succeeded.
+    pub success: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]

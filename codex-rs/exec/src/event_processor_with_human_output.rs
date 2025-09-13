@@ -370,6 +370,50 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                     }
                 }
             }
+            EventMsg::UnifiedExecCall(unified_exec_event) => {
+                let requested_id = unified_exec_event.requested_session_id.as_deref();
+                let returned_id = unified_exec_event.session_id.as_deref();
+                let session_label = match (requested_id, returned_id) {
+                    (None, Some(ret)) => format!("session {ret} (new)"),
+                    (None, None) => "session <none>".to_string(),
+                    (Some(req), Some(ret)) if req == ret => format!("session {ret}"),
+                    (Some(req), Some(ret)) => format!("session {req} -> {ret}"),
+                    (Some(req), None) => format!("session {req} (ended)"),
+                };
+
+                let input_summary = if unified_exec_event.input_chunks.is_empty() {
+                    "<no input>".to_string()
+                } else {
+                    escape_command(&unified_exec_event.input_chunks)
+                };
+
+                let status_text = if unified_exec_event.success {
+                    "succeeded"
+                } else {
+                    "failed"
+                };
+                let status_style = if unified_exec_event.success {
+                    self.green
+                } else {
+                    self.red
+                };
+
+                let title = format!("{session_label} {status_text}: {input_summary}");
+                ts_println!(
+                    self,
+                    "{} {}",
+                    "unified_exec".style(self.magenta),
+                    title.style(status_style)
+                );
+
+                for line in unified_exec_event
+                    .output
+                    .lines()
+                    .take(MAX_OUTPUT_LINES_FOR_EXEC_TOOL_CALL)
+                {
+                    println!("{}", line.style(self.dimmed));
+                }
+            }
             EventMsg::WebSearchBegin(WebSearchBeginEvent { call_id: _ }) => {}
             EventMsg::WebSearchEnd(WebSearchEndEvent { call_id: _, query }) => {
                 ts_println!(self, "🌐 Searched: {query}");

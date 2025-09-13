@@ -106,6 +106,7 @@ use crate::protocol::TaskCompleteEvent;
 use crate::protocol::TokenUsage;
 use crate::protocol::TokenUsageInfo;
 use crate::protocol::TurnDiffEvent;
+use crate::protocol::UnifiedExecCallEvent;
 use crate::protocol::WebSearchBeginEvent;
 use crate::rollout::RolloutRecorder;
 use crate::rollout::RolloutRecorderParams;
@@ -2286,19 +2287,37 @@ async fn handle_response_item(
 
 async fn handle_unified_exec_tool_call(
     sess: &Session,
+    sub_id: String,
     call_id: String,
     session_id: Option<String>,
     arguments: Vec<String>,
     timeout_ms: Option<u64>,
 ) -> ResponseInputItem {
-    let parsed_session_id = if let Some(session_id) = session_id {
-        match session_id.parse::<i32>() {
+    let input_chunks = arguments;
+    let requested_session_id = session_id;
+    let parsed_session_id = if let Some(session_id_value) = requested_session_id.as_deref() {
+        match session_id_value.parse::<i32>() {
             Ok(parsed) => Some(parsed),
             Err(output) => {
+                let message =
+                    format!("invalid session_id: {session_id_value} due to error {output}");
+                let event_call_id = call_id.clone();
+                let event = Event {
+                    id: sub_id.clone(),
+                    msg: EventMsg::UnifiedExecCall(UnifiedExecCallEvent {
+                        call_id: event_call_id,
+                        requested_session_id: requested_session_id.clone(),
+                        session_id: None,
+                        input_chunks: input_chunks.clone(),
+                        output: message.clone(),
+                        success: false,
+                    }),
+                };
+                sess.send_event(event).await;
                 return ResponseInputItem::FunctionCallOutput {
-                    call_id: call_id.to_string(),
+                    call_id,
                     output: FunctionCallOutputPayload {
-                        content: format!("invalid session_id: {session_id} due to error {output}"),
+                        content: message,
                         success: Some(false),
                     },
                 };
@@ -2310,13 +2329,13 @@ async fn handle_unified_exec_tool_call(
 
     let request = crate::unified_exec::UnifiedExecRequest {
         session_id: parsed_session_id,
-        input_chunks: &arguments,
+        input_chunks: &input_chunks,
         timeout_ms,
     };
 
     let result = sess.unified_exec_manager.handle_request(request).await;
 
-    let output_payload = match result {
+    let (session_id_for_event, output_for_event, success, output_payload) = match result {
         Ok(value) => {
             #[derive(Serialize)]
             struct SerializedUnifiedExecResult<'a> {
@@ -2324,25 +2343,70 @@ async fn handle_unified_exec_tool_call(
                 output: &'a str,
             }
 
+            let crate::unified_exec::UnifiedExecResult {
+                session_id: value_session_id,
+                output,
+            } = value;
+            let session_id_string = value_session_id.map(|id| id.to_string());
             match serde_json::to_string(&SerializedUnifiedExecResult {
-                session_id: value.session_id.map(|id| id.to_string()),
-                output: &value.output,
+                session_id: session_id_string.clone(),
+                output: &output,
             }) {
-                Ok(serialized) => FunctionCallOutputPayload {
-                    content: serialized,
-                    success: Some(true),
-                },
-                Err(err) => FunctionCallOutputPayload {
-                    content: format!("failed to serialize unified exec output: {err}"),
-                    success: Some(false),
-                },
+                Ok(serialized) => (
+                    session_id_string,
+                    output,
+                    true,
+                    FunctionCallOutputPayload {
+                        content: serialized,
+                        success: Some(true),
+                    },
+                ),
+                Err(err) => {
+                    let message = format!("failed to serialize unified exec output: {err}");
+                    let combined_output = if output.is_empty() {
+                        message.clone()
+                    } else {
+                        format!("{message}\n{output}")
+                    };
+                    (
+                        session_id_string,
+                        combined_output,
+                        false,
+                        FunctionCallOutputPayload {
+                            content: message,
+                            success: Some(false),
+                        },
+                    )
+                }
             }
         }
-        Err(err) => FunctionCallOutputPayload {
-            content: format!("unified exec failed: {err}"),
-            success: Some(false),
-        },
+        Err(err) => {
+            let message = format!("unified exec failed: {err}");
+            (
+                requested_session_id.clone(),
+                message.clone(),
+                false,
+                FunctionCallOutputPayload {
+                    content: message,
+                    success: Some(false),
+                },
+            )
+        }
     };
+
+    let event_call_id = call_id.clone();
+    let event = Event {
+        id: sub_id,
+        msg: EventMsg::UnifiedExecCall(UnifiedExecCallEvent {
+            call_id: event_call_id,
+            requested_session_id,
+            session_id: session_id_for_event,
+            input_chunks,
+            output: output_for_event,
+            success,
+        }),
+    };
+    sess.send_event(event).await;
 
     ResponseInputItem::FunctionCallOutput {
         call_id,
@@ -2402,6 +2466,7 @@ async fn handle_function_call(
 
             handle_unified_exec_tool_call(
                 sess,
+                sub_id,
                 call_id,
                 args.session_id,
                 args.input,

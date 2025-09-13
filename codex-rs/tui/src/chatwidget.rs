@@ -32,6 +32,7 @@ use codex_core::protocol::TokenUsage;
 use codex_core::protocol::TokenUsageInfo;
 use codex_core::protocol::TurnAbortReason;
 use codex_core::protocol::TurnDiffEvent;
+use codex_core::protocol::UnifiedExecCallEvent;
 use codex_core::protocol::UserMessageEvent;
 use codex_core::protocol::WebSearchBeginEvent;
 use codex_core::protocol::WebSearchEndEvent;
@@ -378,6 +379,15 @@ impl ChatWidget {
         self.defer_or_handle(|q| q.push_mcp_end(ev), |s| s.handle_mcp_end_now(ev2));
     }
 
+    fn on_unified_exec_call(&mut self, ev: UnifiedExecCallEvent) {
+        self.flush_answer_stream_with_separator();
+        let ev2 = ev.clone();
+        self.defer_or_handle(
+            |q| q.push_unified_exec_call(ev),
+            |s| s.handle_unified_exec_call_now(ev2),
+        );
+    }
+
     fn on_web_search_begin(&mut self, _ev: WebSearchBeginEvent) {
         self.flush_answer_stream_with_separator();
     }
@@ -607,6 +617,11 @@ impl ChatWidget {
                 .unwrap_or(false),
             ev.result,
         ));
+    }
+
+    pub(crate) fn handle_unified_exec_call_now(&mut self, ev: UnifiedExecCallEvent) {
+        self.add_to_history(history_cell::new_unified_exec_call(ev));
+        self.request_redraw();
     }
 
     fn layout_areas(&self, area: Rect) -> [Rect; 2] {
@@ -1069,6 +1084,7 @@ impl ChatWidget {
             EventMsg::ExecCommandEnd(ev) => self.on_exec_command_end(ev),
             EventMsg::McpToolCallBegin(ev) => self.on_mcp_tool_call_begin(ev),
             EventMsg::McpToolCallEnd(ev) => self.on_mcp_tool_call_end(ev),
+            EventMsg::UnifiedExecCall(ev) => self.on_unified_exec_call(ev),
             EventMsg::WebSearchBegin(ev) => self.on_web_search_begin(ev),
             EventMsg::WebSearchEnd(ev) => self.on_web_search_end(ev),
             EventMsg::GetHistoryEntryResponse(ev) => self.on_get_history_entry_response(ev),
