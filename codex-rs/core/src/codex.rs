@@ -128,6 +128,7 @@ use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::ShellToolCallParams;
 use codex_protocol::protocol::InitialHistory;
+use uuid::Uuid;
 
 mod compact;
 
@@ -770,6 +771,7 @@ impl Session {
             command_for_display,
             cwd,
             apply_patch,
+            user_initiated_shell_command,
         } = exec_command_context;
         let msg = match apply_patch {
             Some(ApplyPatchCommandContext {
@@ -792,6 +794,7 @@ impl Session {
                     .into_iter()
                     .map(Into::into)
                     .collect(),
+                user_initiated_shell_command,
             }),
         };
         let event = Event {
@@ -1029,6 +1032,7 @@ pub(crate) struct ExecCommandContext {
     pub(crate) command_for_display: Vec<String>,
     pub(crate) cwd: PathBuf,
     pub(crate) apply_patch: Option<ApplyPatchCommandContext>,
+    pub(crate) user_initiated_shell_command: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1473,6 +1477,101 @@ async fn submission_loop(
                     }),
                 };
                 sess.send_event(event).await;
+            }
+            Op::RunUserShellCommand { command } => {
+                // Spawn a cancellable one-off shell command task so we can process
+                // further Ops (e.g., Interrupt) while it runs.
+                let sess_clone = sess.clone();
+                let turn_context = Arc::clone(&turn_context);
+                let sub_id = sub.id.clone();
+                let handle = tokio::spawn(async move {
+                    // Announce a running task so the UI can show a spinner and block input.
+                    let event = Event {
+                        id: sub_id.clone(),
+                        msg: EventMsg::TaskStarted(TaskStartedEvent {
+                            model_context_window: turn_context.client.get_model_context_window(),
+                        }),
+                    };
+                    sess_clone.send_event(event).await;
+
+                    // Build a shell invocation in the user's default shell.
+                    let shell_invocation = sess_clone
+                        .user_shell
+                        // Why we pass a ["bash", "-lc", <script>] sentinel instead of the raw command:
+                        // - The shell adapter (core/src/shell.rs) first calls `strip_bash_lc`. When it sees this
+                        //   exact shape it extracts <script> and then builds the correct argv for the user shell
+                        //   (e.g., `/bin/zsh -lc "source ~/.zshrc && (<script>)"`).
+                        // - If we pass the whole command as a single string (e.g., ["cat Cargo.toml | wc -l"]) the
+                        //   adapter may quote it when joining/embedding, and shells can treat the entire value as a
+                        //   single program name or a single quoted token.
+                        .format_default_shell_invocation(vec![
+                            "bash".to_string(),
+                            "-lc".to_string(),
+                            command.clone(),
+                        ])
+                        .unwrap_or_else(|| vec![command.clone()]);
+
+                    let params = ExecParams {
+                        command: shell_invocation.clone(),
+                        cwd: turn_context.cwd.clone(),
+                        timeout_ms: None,
+                        env: create_env(&turn_context.shell_environment_policy),
+                        with_escalated_permissions: None,
+                        justification: None,
+                    };
+
+                    // Use a fresh diff tracker (no patch application expected for ! commands).
+                    let mut turn_diff_tracker = TurnDiffTracker::new();
+                    // Initiated by user, not by the model. Hence, we generate a new call_id.
+                    let call_id = format!("call_{}", Uuid::new_v4());
+
+                    let exec_ctx = ExecCommandContext {
+                        sub_id: sub_id.clone(),
+                        call_id: call_id.clone(),
+                        command_for_display: shell_invocation,
+                        cwd: params.cwd.clone(),
+                        apply_patch: None,
+                        user_initiated_shell_command: true,
+                    };
+
+                    // Run without sandboxing or approval — this is a user-initiated command.
+                    // Output is not captured as it's sent to the TUI inside `run_exec_with_events`.
+                    let _ = sess_clone
+                        .run_exec_with_events(
+                            &mut turn_diff_tracker,
+                            exec_ctx,
+                            ExecInvokeArgs {
+                                params,
+                                sandbox_type: SandboxType::None,
+                                sandbox_policy: &turn_context.sandbox_policy,
+                                codex_linux_sandbox_exe: &sess_clone.codex_linux_sandbox_exe,
+                                stdout_stream: Some(StdoutStream {
+                                    sub_id: sub_id.clone(),
+                                    call_id: call_id.clone(),
+                                    tx_event: sess_clone.tx_event.clone(),
+                                }),
+                            },
+                        )
+                        .await;
+
+                    // Signal completion so the UI regains control.
+                    let complete = Event {
+                        id: sub_id.clone(),
+                        msg: EventMsg::TaskComplete(TaskCompleteEvent {
+                            last_agent_message: None,
+                        }),
+                    };
+                    sess_clone.send_event(complete).await;
+                })
+                .abort_handle();
+
+                // Track this as the current task so Interrupt can abort it.
+                sess.set_task(AgentTask {
+                    sess: sess.clone(),
+                    sub_id: sub.id,
+                    handle,
+                    kind: AgentTaskKind::Regular,
+                });
             }
             Op::Review { review_request } => {
                 spawn_review_thread(
@@ -2813,6 +2912,7 @@ async fn handle_container_exec_with_params(
                 changes: convert_apply_patch_to_protocol(&action),
             },
         ),
+        user_initiated_shell_command: false,
     };
 
     let params = maybe_translate_shell_command(params, sess, turn_context);
