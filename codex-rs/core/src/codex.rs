@@ -1622,15 +1622,6 @@ async fn run_task(
     let mut auto_compact_recently_attempted = false;
 
     loop {
-        // Note that pending_input would be something like a message the user
-        // submitted through the UI while the model was running. Though the UI
-        // may support this, the model might not.
-        let pending_input = sess
-            .get_pending_input()
-            .into_iter()
-            .map(ResponseItem::from)
-            .collect::<Vec<ResponseItem>>();
-
         // Construct the input that we will send to the model.
         //
         // - For review threads, use the isolated in-memory history so the
@@ -1642,11 +1633,17 @@ async fn run_task(
         //   only record the new items that originated in this turn so that it
         //   represents an append-only log without duplicates.
         let turn_input: Vec<ResponseItem> = if is_review_mode {
-            if !pending_input.is_empty() {
-                review_thread_history.extend(pending_input);
-            }
             review_thread_history.clone()
         } else {
+            // Note that pending_input would be something like a message the user
+            // submitted through the UI while the model was running. Though the UI
+            // may support this, the model might not.
+            let pending_input = sess
+                .get_pending_input()
+                .into_iter()
+                .map(ResponseItem::from)
+                .collect::<Vec<ResponseItem>>();
+
             sess.record_conversation_items(&pending_input).await;
             sess.turn_input_with_history(pending_input)
         };
