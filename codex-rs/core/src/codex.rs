@@ -11,6 +11,7 @@ use std::time::Duration;
 use crate::AuthManager;
 use crate::client_common::REVIEW_PROMPT;
 use crate::event_mapping::map_response_item_to_event_messages;
+use crate::prettify_command_for_display::prettify_command_for_display;
 use async_channel::Receiver;
 use async_channel::Sender;
 use codex_apply_patch::ApplyPatchAction;
@@ -845,6 +846,7 @@ impl Session {
             aggregated_output,
             duration,
             exit_code,
+            timed_out: _,
         } = output;
         // Send full stdout/stderr to clients; do not truncate.
         let stdout = stdout.text.clone();
@@ -920,6 +922,7 @@ impl Session {
         let output_stderr;
         let borrowed: &ExecToolCallOutput = match &result {
             Ok(output) => output,
+            Err(CodexErr::Sandbox(SandboxErr::Timeout { output })) => output,
             Err(e) => {
                 output_stderr = ExecToolCallOutput {
                     exit_code: -1,
@@ -927,6 +930,7 @@ impl Session {
                     stderr: StreamOutput::new(get_error_message_ui(e)),
                     aggregated_output: StreamOutput::new(get_error_message_ui(e)),
                     duration: Duration::default(),
+                    timed_out: false,
                 };
                 &output_stderr
             }
@@ -2780,7 +2784,8 @@ async fn handle_container_exec_with_params(
                     params.with_escalated_permissions.unwrap_or(false),
                 )
             };
-            let command_for_display = params.command.clone();
+            let command_for_display = prettify_command_for_display(&params.command)
+                .unwrap_or_else(|| params.command.clone());
             (params, safety, command_for_display)
         }
     };
@@ -2917,15 +2922,12 @@ async fn handle_sandbox_error(
     let sub_id = exec_command_context.sub_id.clone();
     let cwd = exec_command_context.cwd.clone();
 
-    // if the command timed out, we can simply return this failure to the model
-    if matches!(error, SandboxErr::Timeout) {
+    if let SandboxErr::Timeout { output } = &error {
+        let content = format_exec_output(output);
         return ResponseInputItem::FunctionCallOutput {
             call_id,
             output: FunctionCallOutputPayload {
-                content: format!(
-                    "command timed out after {} milliseconds",
-                    params.timeout_duration().as_millis()
-                ),
+                content,
                 success: Some(false),
             },
         };
@@ -3050,7 +3052,17 @@ fn format_exec_output_str(exec_output: &ExecToolCallOutput) -> String {
     // Head+tail truncation for the model: show the beginning and end with an elision.
     // Clients still receive full streams; only this formatted summary is capped.
 
-    let s = aggregated_output.text.as_str();
+    let mut s = &aggregated_output.text;
+    let prefixed_str: String;
+
+    if exec_output.timed_out {
+        prefixed_str = format!(
+            "command timed out after {} milliseconds\n",
+            exec_output.duration.as_millis()
+        ) + s;
+        s = &prefixed_str;
+    }
+
     let total_lines = s.lines().count();
     if s.len() <= MODEL_FORMAT_MAX_BYTES && total_lines <= MODEL_FORMAT_MAX_LINES {
         return s.to_string();
@@ -3093,6 +3105,7 @@ fn format_exec_output_str(exec_output: &ExecToolCallOutput) -> String {
     // Build final string respecting byte budgets
     let head_part = take_bytes_at_char_boundary(&head_lines_text, head_budget);
     let mut result = String::with_capacity(MODEL_FORMAT_MAX_BYTES.min(s.len()));
+
     result.push_str(head_part);
     result.push_str(&marker);
 
@@ -3342,6 +3355,7 @@ mod tests {
             stderr: StreamOutput::new(String::new()),
             aggregated_output: StreamOutput::new(full),
             duration: StdDuration::from_secs(1),
+            timed_out: false,
         };
 
         let out = format_exec_output_str(&exec);
@@ -3384,6 +3398,7 @@ mod tests {
             stderr: StreamOutput::new(String::new()),
             aggregated_output: StreamOutput::new(full.clone()),
             duration: StdDuration::from_secs(1),
+            timed_out: false,
         };
 
         let out = format_exec_output_str(&exec);
@@ -3403,6 +3418,25 @@ mod tests {
                     .collect::<String>()
                     .as_str()
             )
+        );
+    }
+
+    #[test]
+    fn includes_timed_out_message() {
+        let exec = ExecToolCallOutput {
+            exit_code: 0,
+            stdout: StreamOutput::new(String::new()),
+            stderr: StreamOutput::new(String::new()),
+            aggregated_output: StreamOutput::new("Command output".to_string()),
+            duration: StdDuration::from_secs(1),
+            timed_out: true,
+        };
+
+        let out = format_exec_output_str(&exec);
+
+        assert_eq!(
+            out,
+            "command timed out after 1000 milliseconds\nCommand output"
         );
     }
 
