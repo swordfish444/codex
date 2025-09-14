@@ -1228,93 +1228,6 @@ impl ChatWidget {
         );
     }
 
-    fn auth_mode_for_model_popup(&self) -> Option<AuthMode> {
-        if self.config.model_provider.requires_openai_auth {
-            match CodexAuth::from_codex_home(&self.config.codex_home) {
-                Ok(Some(auth)) => Some(auth.mode),
-                Ok(None) => None,
-                Err(err) => {
-                    debug!(?err, "failed to read auth state for model popup");
-                    None
-                }
-            }
-        } else {
-            None
-        }
-    }
-
-    fn is_preset_disabled_for_auth(preset: &ModelPreset, auth_mode: Option<AuthMode>) -> bool {
-        match auth_mode {
-            Some(mode) => !preset.enabled_for_auth.contains(&mode),
-            None => false,
-        }
-    }
-
-    fn model_family_key_from_slug(slug: &str) -> String {
-        if let Some(s) = slug.strip_suffix("-low") {
-            return s.to_string();
-        }
-        if let Some(s) = slug.strip_suffix("-medium") {
-            return s.to_string();
-        }
-        if let Some(s) = slug.strip_suffix("-high") {
-            return s.to_string();
-        }
-        slug.to_string()
-    }
-
-    fn description_with_auth_hint(
-        base: &str,
-        auth_mode: Option<AuthMode>,
-        disabled_for_auth: bool,
-    ) -> Option<String> {
-        let mut out = base.to_string();
-        if disabled_for_auth && matches!(auth_mode, Some(AuthMode::ApiKey)) {
-            if out.is_empty() {
-                out.push_str("(coming soon in API)");
-            } else {
-                out.push(' ');
-                out.push_str("(coming soon in API)");
-            }
-        }
-        if out.is_empty() { None } else { Some(out) }
-    }
-
-    fn is_current_for_family(current_model: &str, family: &str, preset_model: &str) -> bool {
-        current_model == preset_model || current_model.starts_with(&format!("{family}-"))
-    }
-
-    fn build_model_selection_action(
-        model_slug: String,
-        effort: Option<ReasoningEffortConfig>,
-        current_model_for_log: String,
-        current_effort: Option<ReasoningEffortConfig>,
-    ) -> SelectionAction {
-        Box::new(move |tx| {
-            tx.send(AppEvent::CodexOp(Op::OverrideTurnContext {
-                cwd: None,
-                approval_policy: None,
-                sandbox_policy: None,
-                model: Some(model_slug.clone()),
-                effort: Some(effort),
-                summary: None,
-            }));
-            tx.send(AppEvent::UpdateModel(model_slug.clone()));
-            tx.send(AppEvent::UpdateReasoningEffort(effort));
-            tracing::info!(
-                "New model: {}, New effort: {}, Current model: {}, Current effort: {}",
-                model_slug.clone(),
-                effort
-                    .map(|effort| effort.to_string())
-                    .unwrap_or_else(|| "none".to_string()),
-                current_model_for_log,
-                current_effort
-                    .map(|effort| effort.to_string())
-                    .unwrap_or_else(|| "none".to_string())
-            );
-        })
-    }
-
     /// Open a popup to choose the approvals mode (ask for approval policy + sandbox policy).
     pub(crate) fn open_approvals_popup(&mut self) {
         let current_approval = self.config.approval_policy;
@@ -1497,6 +1410,93 @@ impl ChatWidget {
     pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
         let [_, bottom_pane_area] = self.layout_areas(area);
         self.bottom_pane.cursor_pos(bottom_pane_area)
+    }
+
+    fn auth_mode_for_model_popup(&self) -> Option<AuthMode> {
+        if self.config.model_provider.requires_openai_auth {
+            match CodexAuth::from_codex_home(&self.config.codex_home) {
+                Ok(Some(auth)) => Some(auth.mode),
+                Ok(None) => None,
+                Err(err) => {
+                    debug!(?err, "failed to read auth state for model popup");
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    }
+
+    fn is_preset_disabled_for_auth(preset: &ModelPreset, auth_mode: Option<AuthMode>) -> bool {
+        match auth_mode {
+            Some(mode) => !preset.enabled_for_auth.contains(&mode),
+            None => false,
+        }
+    }
+
+    fn model_family_key_from_slug(slug: &str) -> String {
+        if let Some(s) = slug.strip_suffix("-low") {
+            return s.to_string();
+        }
+        if let Some(s) = slug.strip_suffix("-medium") {
+            return s.to_string();
+        }
+        if let Some(s) = slug.strip_suffix("-high") {
+            return s.to_string();
+        }
+        slug.to_string()
+    }
+
+    fn description_with_auth_hint(
+        base: &str,
+        auth_mode: Option<AuthMode>,
+        disabled_for_auth: bool,
+    ) -> Option<String> {
+        let mut out = base.to_string();
+        if disabled_for_auth && matches!(auth_mode, Some(AuthMode::ApiKey)) {
+            if out.is_empty() {
+                out.push_str("(coming soon in API)");
+            } else {
+                out.push(' ');
+                out.push_str("(coming soon in API)");
+            }
+        }
+        if out.is_empty() { None } else { Some(out) }
+    }
+
+    fn is_current_for_family(current_model: &str, family: &str, preset_model: &str) -> bool {
+        current_model == preset_model || current_model.starts_with(&format!("{family}-"))
+    }
+
+    fn build_model_selection_action(
+        model_slug: String,
+        effort: Option<ReasoningEffortConfig>,
+        current_model_for_log: String,
+        current_effort: Option<ReasoningEffortConfig>,
+    ) -> SelectionAction {
+        Box::new(move |tx| {
+            tx.send(AppEvent::CodexOp(Op::OverrideTurnContext {
+                cwd: None,
+                approval_policy: None,
+                sandbox_policy: None,
+                model: Some(model_slug.clone()),
+                effort: Some(effort),
+                summary: None,
+            }));
+            tx.send(AppEvent::UpdateModel(model_slug.clone()));
+            tx.send(AppEvent::UpdateReasoningEffort(effort));
+            tracing::info!(
+                "New model: {}, New effort: {}, Current model: {}, Current effort: {}",
+                model_slug.clone(),
+                effort
+                    .map(|effort| effort.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                current_model_for_log,
+                current_effort
+                    .map(|effort| effort.to_string())
+                    .unwrap_or_else(|| "none".to_string())
+            );
+        })
     }
 }
 
