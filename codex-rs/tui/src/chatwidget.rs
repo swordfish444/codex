@@ -88,6 +88,7 @@ use codex_core::protocol_config_types::ReasoningEffort as ReasoningEffortConfig;
 use codex_file_search::FileMatch;
 use codex_protocol::mcp_protocol::AuthMode;
 use codex_protocol::mcp_protocol::ConversationId;
+use std::collections::HashSet;
 
 // Track information about an in-flight exec command.
 struct RunningCommand {
@@ -1175,73 +1176,46 @@ impl ChatWidget {
         let current_effort = self.config.model_reasoning_effort;
         let presets: &[ModelPreset] = builtin_model_presets();
 
-        let is_api_auth = if self.config.model_provider.requires_openai_auth {
-            match CodexAuth::from_codex_home(&self.config.codex_home) {
-                Ok(Some(auth)) => auth.mode == AuthMode::ApiKey,
-                Ok(None) => false,
-                Err(err) => {
-                    debug!(?err, "failed to read auth state for model popup");
-                    false
-                }
-            }
-        } else {
-            false
-        };
+        let auth_mode = self.auth_mode_for_model_popup();
 
         let mut items: Vec<SelectionItem> = Vec::new();
+        let mut disabled_families_shown: HashSet<String> = HashSet::new();
+
         for preset in presets.iter() {
-            let name = preset.label.to_string();
-            let disable_for_api = is_api_auth && preset.model.starts_with("swiftfox");
-            let mut description_text = preset.description.to_string();
-            if disable_for_api {
-                if description_text.is_empty() {
-                    description_text.push_str("(coming soon in API)");
-                } else {
-                    description_text.push(' ');
-                    description_text.push_str("(coming soon in API)");
+            let disabled_for_auth = Self::is_preset_disabled_for_auth(preset, auth_mode);
+
+            if disabled_for_auth {
+                let family = Self::model_family_key_from_slug(preset.model);
+                if disabled_families_shown.insert(family.clone()) {
+                    let description =
+                        Self::description_with_auth_hint(preset.description, auth_mode, true);
+                    let is_current =
+                        Self::is_current_for_family(&current_model, &family, preset.model);
+                    items.push(SelectionItem {
+                        name: family,
+                        description,
+                        is_current,
+                        enabled: false,
+                        actions: Vec::new(),
+                    });
                 }
+                continue;
             }
-            let description = if description_text.is_empty() {
-                None
-            } else {
-                Some(description_text)
-            };
+
+            let description =
+                Self::description_with_auth_hint(preset.description, auth_mode, false);
             let is_current = preset.model == current_model && preset.effort == current_effort;
-            let actions: Vec<SelectionAction> = if disable_for_api {
-                Vec::new()
-            } else {
-                let model_slug = preset.model.to_string();
-                let effort = preset.effort;
-                let current_model_for_log = current_model.clone();
-                vec![Box::new(move |tx| {
-                    tx.send(AppEvent::CodexOp(Op::OverrideTurnContext {
-                        cwd: None,
-                        approval_policy: None,
-                        sandbox_policy: None,
-                        model: Some(model_slug.clone()),
-                        effort: Some(effort),
-                        summary: None,
-                    }));
-                    tx.send(AppEvent::UpdateModel(model_slug.clone()));
-                    tx.send(AppEvent::UpdateReasoningEffort(effort));
-                    tracing::info!(
-                        "New model: {}, New effort: {}, Current model: {}, Current effort: {}",
-                        model_slug.clone(),
-                        effort
-                            .map(|effort| effort.to_string())
-                            .unwrap_or_else(|| "none".to_string()),
-                        current_model_for_log,
-                        current_effort
-                            .map(|effort| effort.to_string())
-                            .unwrap_or_else(|| "none".to_string())
-                    );
-                })]
-            };
+            let actions: Vec<SelectionAction> = vec![Self::build_model_selection_action(
+                preset.model.to_string(),
+                preset.effort,
+                current_model.clone(),
+                current_effort,
+            )];
             items.push(SelectionItem {
-                name,
+                name: preset.label.to_string(),
                 description,
                 is_current,
-                enabled: !disable_for_api,
+                enabled: true,
                 actions,
             });
         }
@@ -1252,6 +1226,93 @@ impl ChatWidget {
             Some("Press Enter to confirm, Esc to go back, Ctrl+S to save".to_string()),
             items,
         );
+    }
+
+    fn auth_mode_for_model_popup(&self) -> Option<AuthMode> {
+        if self.config.model_provider.requires_openai_auth {
+            match CodexAuth::from_codex_home(&self.config.codex_home) {
+                Ok(Some(auth)) => Some(auth.mode),
+                Ok(None) => None,
+                Err(err) => {
+                    debug!(?err, "failed to read auth state for model popup");
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    }
+
+    fn is_preset_disabled_for_auth(preset: &ModelPreset, auth_mode: Option<AuthMode>) -> bool {
+        match auth_mode {
+            Some(mode) => !preset.enabled_for_auth.contains(&mode),
+            None => false,
+        }
+    }
+
+    fn model_family_key_from_slug(slug: &str) -> String {
+        if let Some(s) = slug.strip_suffix("-low") {
+            return s.to_string();
+        }
+        if let Some(s) = slug.strip_suffix("-medium") {
+            return s.to_string();
+        }
+        if let Some(s) = slug.strip_suffix("-high") {
+            return s.to_string();
+        }
+        slug.to_string()
+    }
+
+    fn description_with_auth_hint(
+        base: &str,
+        auth_mode: Option<AuthMode>,
+        disabled_for_auth: bool,
+    ) -> Option<String> {
+        let mut out = base.to_string();
+        if disabled_for_auth && matches!(auth_mode, Some(AuthMode::ApiKey)) {
+            if out.is_empty() {
+                out.push_str("(coming soon in API)");
+            } else {
+                out.push(' ');
+                out.push_str("(coming soon in API)");
+            }
+        }
+        if out.is_empty() { None } else { Some(out) }
+    }
+
+    fn is_current_for_family(current_model: &str, family: &str, preset_model: &str) -> bool {
+        current_model == preset_model || current_model.starts_with(&format!("{family}-"))
+    }
+
+    fn build_model_selection_action(
+        model_slug: String,
+        effort: Option<ReasoningEffortConfig>,
+        current_model_for_log: String,
+        current_effort: Option<ReasoningEffortConfig>,
+    ) -> SelectionAction {
+        Box::new(move |tx| {
+            tx.send(AppEvent::CodexOp(Op::OverrideTurnContext {
+                cwd: None,
+                approval_policy: None,
+                sandbox_policy: None,
+                model: Some(model_slug.clone()),
+                effort: Some(effort),
+                summary: None,
+            }));
+            tx.send(AppEvent::UpdateModel(model_slug.clone()));
+            tx.send(AppEvent::UpdateReasoningEffort(effort));
+            tracing::info!(
+                "New model: {}, New effort: {}, Current model: {}, Current effort: {}",
+                model_slug.clone(),
+                effort
+                    .map(|effort| effort.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                current_model_for_log,
+                current_effort
+                    .map(|effort| effort.to_string())
+                    .unwrap_or_else(|| "none".to_string())
+            );
+        })
     }
 
     /// Open a popup to choose the approvals mode (ask for approval policy + sandbox policy).

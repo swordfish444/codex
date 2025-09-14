@@ -1,4 +1,5 @@
 use codex_core::protocol_config_types::ReasoningEffort;
+use codex_protocol::mcp_protocol::AuthMode;
 
 /// A simple preset pairing a model slug with a reasoning effort.
 #[derive(Debug, Clone, Copy)]
@@ -13,6 +14,8 @@ pub struct ModelPreset {
     pub model: &'static str,
     /// Reasoning effort to apply for this preset.
     pub effort: Option<ReasoningEffort>,
+    /// Authentication modes this preset is enabled for.
+    pub enabled_for_auth: &'static [AuthMode],
 }
 
 /// Built-in list of model presets that pair a model with a reasoning effort.
@@ -27,6 +30,7 @@ pub fn builtin_model_presets() -> &'static [ModelPreset] {
             description: "",
             model: "swiftfox-low",
             effort: None,
+            enabled_for_auth: &[AuthMode::ChatGPT],
         },
         ModelPreset {
             id: "swiftfox-medium",
@@ -34,6 +38,7 @@ pub fn builtin_model_presets() -> &'static [ModelPreset] {
             description: "",
             model: "swiftfox-medium",
             effort: None,
+            enabled_for_auth: &[AuthMode::ChatGPT],
         },
         ModelPreset {
             id: "swiftfox-high",
@@ -41,6 +46,7 @@ pub fn builtin_model_presets() -> &'static [ModelPreset] {
             description: "",
             model: "swiftfox-high",
             effort: None,
+            enabled_for_auth: &[AuthMode::ChatGPT],
         },
         ModelPreset {
             id: "gpt-5-minimal",
@@ -48,6 +54,7 @@ pub fn builtin_model_presets() -> &'static [ModelPreset] {
             description: "— fastest responses with limited reasoning; ideal for coding, instructions, or lightweight tasks",
             model: "gpt-5",
             effort: Some(ReasoningEffort::Minimal),
+            enabled_for_auth: &[AuthMode::ApiKey, AuthMode::ChatGPT],
         },
         ModelPreset {
             id: "gpt-5-low",
@@ -55,6 +62,7 @@ pub fn builtin_model_presets() -> &'static [ModelPreset] {
             description: "— balances speed with some reasoning; useful for straightforward queries and short explanations",
             model: "gpt-5",
             effort: Some(ReasoningEffort::Low),
+            enabled_for_auth: &[AuthMode::ApiKey, AuthMode::ChatGPT],
         },
         ModelPreset {
             id: "gpt-5-medium",
@@ -62,6 +70,7 @@ pub fn builtin_model_presets() -> &'static [ModelPreset] {
             description: "— default setting; provides a solid balance of reasoning depth and latency for general-purpose tasks",
             model: "gpt-5",
             effort: Some(ReasoningEffort::Medium),
+            enabled_for_auth: &[AuthMode::ApiKey, AuthMode::ChatGPT],
         },
         ModelPreset {
             id: "gpt-5-high",
@@ -69,6 +78,7 @@ pub fn builtin_model_presets() -> &'static [ModelPreset] {
             description: "— maximizes reasoning depth for complex or ambiguous problems",
             model: "gpt-5",
             effort: Some(ReasoningEffort::High),
+            enabled_for_auth: &[AuthMode::ApiKey, AuthMode::ChatGPT],
         },
     ];
     PRESETS
