@@ -36,6 +36,7 @@ mod mcp_tool_call;
 mod message_history;
 mod model_provider_info;
 pub mod parse_command;
+mod prettify_command_for_display;
 mod truncate;
 mod unified_exec;
 mod user_instructions;

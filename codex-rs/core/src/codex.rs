@@ -11,6 +11,7 @@ use std::time::Duration;
 use crate::AuthManager;
 use crate::client_common::REVIEW_PROMPT;
 use crate::event_mapping::map_response_item_to_event_messages;
+use crate::prettify_command_for_display::prettify_command_for_display;
 use async_channel::Receiver;
 use async_channel::Sender;
 use codex_apply_patch::ApplyPatchAction;
@@ -2783,7 +2784,8 @@ async fn handle_container_exec_with_params(
                     params.with_escalated_permissions.unwrap_or(false),
                 )
             };
-            let command_for_display = params.command.clone();
+            let command_for_display = prettify_command_for_display(&params.command)
+                .unwrap_or_else(|| params.command.clone());
             (params, safety, command_for_display)
         }
     };
