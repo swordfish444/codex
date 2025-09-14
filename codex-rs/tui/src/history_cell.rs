@@ -43,6 +43,7 @@ use ratatui::style::Stylize;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
+use std::any::Any;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::Path;
@@ -69,7 +70,7 @@ pub(crate) enum PatchEventType {
 /// Represents an event to display in the conversation history. Returns its
 /// `Vec<Line<'static>>` representation to make it easier to display in a
 /// scrollable list.
-pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync {
+pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>>;
 
     fn transcript_lines(&self) -> Vec<Line<'static>> {
@@ -89,9 +90,15 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync {
     }
 }
 
+impl dyn HistoryCell {
+    pub(crate) fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct UserHistoryCell {
-    message: String,
+    pub message: String,
 }
 
 impl HistoryCell for UserHistoryCell {
@@ -429,9 +436,16 @@ impl ExecCell {
         if let Some(output) = call.output.as_ref()
             && output.exit_code != 0
         {
-            let out = output_lines(Some(output), false, false, false)
-                .into_iter()
-                .join("\n");
+            let out = output_lines(
+                Some(output),
+                OutputLinesParams {
+                    only_err: false,
+                    include_angle_pipe: false,
+                    include_prefix: false,
+                },
+            )
+            .into_iter()
+            .join("\n");
             if !out.trim().is_empty() {
                 // Wrap the output.
                 for line in out.lines() {
@@ -1053,9 +1067,13 @@ pub(crate) fn new_mcp_tools_output(
     PlainHistoryCell { lines }
 }
 
-pub(crate) fn new_info_event(message: String) -> PlainHistoryCell {
-    let lines: Vec<Line<'static>> =
-        vec![vec![padded_emoji("💾").green(), " ".into(), message.into()].into()];
+pub(crate) fn new_info_event(message: String, hint: Option<String>) -> PlainHistoryCell {
+    let mut line = vec!["> ".into(), message.into()];
+    if let Some(hint) = hint {
+        line.push(" ".into());
+        line.push(hint.dark_gray());
+    }
+    let lines: Vec<Line<'static>> = vec![line.into()];
     PlainHistoryCell { lines }
 }
 
@@ -1063,8 +1081,7 @@ pub(crate) fn new_error_event(message: String) -> PlainHistoryCell {
     // Use a hair space (U+200A) to create a subtle, near-invisible separation
     // before the text. VS16 is intentionally omitted to keep spacing tighter
     // in terminals like Ghostty.
-    let lines: Vec<Line<'static>> =
-        vec![vec![padded_emoji("🖐").red().bold(), " ".into(), message.into()].into()];
+    let lines: Vec<Line<'static>> = vec![vec![format!("■ {message}").red()].into()];
     PlainHistoryCell { lines }
 }
 
@@ -1168,9 +1185,11 @@ pub(crate) fn new_patch_apply_failure(stderr: String) -> PlainHistoryCell {
                 stderr,
                 formatted_output: String::new(),
             }),
-            true,
-            true,
-            true,
+            OutputLinesParams {
+                only_err: true,
+                include_angle_pipe: true,
+                include_prefix: true,
+            },
         ));
     }
 
@@ -1251,12 +1270,19 @@ pub(crate) fn new_reasoning_summary_block(
     vec![Box::new(new_reasoning_block(full_reasoning_buffer, config))]
 }
 
-fn output_lines(
-    output: Option<&CommandOutput>,
+#[derive(Clone, Copy, Debug, Default)]
+struct OutputLinesParams {
     only_err: bool,
     include_angle_pipe: bool,
     include_prefix: bool,
-) -> Vec<Line<'static>> {
+}
+
+fn output_lines(output: Option<&CommandOutput>, params: OutputLinesParams) -> Vec<Line<'static>> {
+    let OutputLinesParams {
+        only_err,
+        include_angle_pipe,
+        include_prefix,
+    } = params;
     let CommandOutput {
         exit_code,
         stdout,
