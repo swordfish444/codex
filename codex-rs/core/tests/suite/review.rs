@@ -507,6 +507,8 @@ async fn start_responses_server_with_sse(sse_raw: &str, expected_requests: usize
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
+                // Ensure clients don't wait for a keep‑alive connection: close after body.
+                .insert_header("connection", "close")
                 .set_body_raw(sse.clone(), "text/event-stream"),
         )
         .expect(expected_requests as u64)
@@ -527,6 +529,10 @@ where
 {
     let model_provider = ModelProviderInfo {
         base_url: Some(format!("{}/v1", server.uri())),
+        // Keep the SSE stream responsive in tests: if the mock server leaves the
+        // connection open after sending the final event, this short idle timeout
+        // will cause the client to emit an error and let the turn complete.
+        stream_idle_timeout_ms: Some(1_000),
         ..built_in_model_providers()["openai"].clone()
     };
     let mut config = load_default_config_for_test(codex_home);
