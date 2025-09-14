@@ -27,6 +27,7 @@ pub(crate) struct SelectionItem {
     pub description: Option<String>,
     pub is_current: bool,
     pub actions: Vec<SelectionAction>,
+    pub enabled: bool,
 }
 
 pub(crate) struct ListSelectionView {
@@ -47,6 +48,27 @@ impl ListSelectionView {
     fn render_dim_prefix_line(area: Rect, buf: &mut Buffer) {
         let para = Paragraph::new(Line::from(Self::dim_prefix_span()));
         para.render(area, buf);
+    }
+
+    fn ensure_selected_is_enabled(&mut self) {
+        if self.items.is_empty() {
+            self.state.selected_idx = None;
+            self.state.scroll_top = 0;
+            return;
+        }
+
+        if self
+            .state
+            .selected_idx
+            .is_some_and(|idx| self.items.get(idx).is_some_and(|item| item.enabled))
+        {
+            return;
+        }
+
+        self.state.selected_idx = self.items.iter().position(|item| item.enabled);
+        if self.state.selected_idx.is_none() {
+            self.state.scroll_top = 0;
+        }
     }
     pub fn new(
         title: String,
@@ -69,25 +91,64 @@ impl ListSelectionView {
             s.state.selected_idx = Some(idx);
         }
         s.state.clamp_selection(len);
+        s.ensure_selected_is_enabled();
         s.state.ensure_visible(len, MAX_POPUP_ROWS.min(len));
         s
     }
 
     fn move_up(&mut self) {
         let len = self.items.len();
-        self.state.move_up_wrap(len);
+        if len == 0 {
+            self.state.selected_idx = None;
+            self.state.scroll_top = 0;
+            return;
+        }
+
+        self.ensure_selected_is_enabled();
+        let Some(mut idx) = self.state.selected_idx else {
+            return;
+        };
+        for _ in 0..len {
+            idx = if idx == 0 { len - 1 } else { idx - 1 };
+            if self.items[idx].enabled {
+                self.state.selected_idx = Some(idx);
+                break;
+            }
+        }
+
         self.state.ensure_visible(len, MAX_POPUP_ROWS.min(len));
     }
 
     fn move_down(&mut self) {
         let len = self.items.len();
-        self.state.move_down_wrap(len);
+        if len == 0 {
+            self.state.selected_idx = None;
+            self.state.scroll_top = 0;
+            return;
+        }
+
+        self.ensure_selected_is_enabled();
+        let Some(mut idx) = self.state.selected_idx else {
+            return;
+        };
+        for _ in 0..len {
+            idx = (idx + 1) % len;
+            if self.items[idx].enabled {
+                self.state.selected_idx = Some(idx);
+                break;
+            }
+        }
+
         self.state.ensure_visible(len, MAX_POPUP_ROWS.min(len));
     }
 
     fn accept(&mut self) {
+        self.ensure_selected_is_enabled();
         if let Some(idx) = self.state.selected_idx {
             if let Some(item) = self.items.get(idx) {
+                if !item.enabled {
+                    return;
+                }
                 for act in &item.actions {
                     act(&self.app_event_tx);
                 }
@@ -220,6 +281,7 @@ impl BottomPaneView for ListSelectionView {
                     match_indices: None,
                     is_current: it.is_current,
                     description: it.description.clone(),
+                    enabled: it.enabled,
                 }
             })
             .collect();
@@ -266,12 +328,14 @@ mod tests {
                 description: Some("Codex can read files".to_string()),
                 is_current: true,
                 actions: vec![],
+                enabled: true,
             },
             SelectionItem {
                 name: "Full Access".to_string(),
                 description: Some("Codex can edit files".to_string()),
                 is_current: false,
                 actions: vec![],
+                enabled: true,
             },
         ];
         ListSelectionView::new(
@@ -320,5 +384,33 @@ mod tests {
     fn renders_blank_line_between_subtitle_and_items() {
         let view = make_selection_view(Some("Switch between Codex approval presets"));
         assert_snapshot!("list_selection_spacing_with_subtitle", render_lines(&view));
+    }
+
+    #[test]
+    fn skips_disabled_items_when_initial_selection_is_disabled() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let items = vec![
+            SelectionItem {
+                name: "Swiftfox".to_string(),
+                description: None,
+                is_current: true,
+                actions: vec![],
+                enabled: false,
+            },
+            SelectionItem {
+                name: "GPT".to_string(),
+                description: None,
+                is_current: false,
+                actions: vec![],
+                enabled: true,
+            },
+        ];
+        let view = ListSelectionView::new("Select Model".to_string(), None, None, items, tx);
+        let rendered = render_lines(&view);
+        assert!(
+            rendered.contains("> 2. GPT"),
+            "expected enabled item to be selected: {rendered}"
+        );
     }
 }

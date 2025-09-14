@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use codex_core::auth::CodexAuth;
 use codex_core::config::Config;
 use codex_core::protocol::AgentMessageDeltaEvent;
 use codex_core::protocol::AgentMessageEvent;
@@ -85,6 +86,7 @@ use codex_core::protocol::AskForApproval;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol_config_types::ReasoningEffort as ReasoningEffortConfig;
 use codex_file_search::FileMatch;
+use codex_protocol::mcp_protocol::AuthMode;
 use codex_protocol::mcp_protocol::ConversationId;
 
 // Track information about an in-flight exec command.
@@ -1173,41 +1175,73 @@ impl ChatWidget {
         let current_effort = self.config.model_reasoning_effort;
         let presets: &[ModelPreset] = builtin_model_presets();
 
+        let is_api_auth = if self.config.model_provider.requires_openai_auth {
+            match CodexAuth::from_codex_home(&self.config.codex_home) {
+                Ok(Some(auth)) => auth.mode == AuthMode::ApiKey,
+                Ok(None) => false,
+                Err(err) => {
+                    debug!(?err, "failed to read auth state for model popup");
+                    false
+                }
+            }
+        } else {
+            false
+        };
+
         let mut items: Vec<SelectionItem> = Vec::new();
         for preset in presets.iter() {
             let name = preset.label.to_string();
-            let description = Some(preset.description.to_string());
+            let disable_for_api = is_api_auth && preset.model.starts_with("swiftfox");
+            let mut description_text = preset.description.to_string();
+            if disable_for_api {
+                if description_text.is_empty() {
+                    description_text.push_str("(coming soon in API)");
+                } else {
+                    description_text.push(' ');
+                    description_text.push_str("(coming soon in API)");
+                }
+            }
+            let description = if description_text.is_empty() {
+                None
+            } else {
+                Some(description_text)
+            };
             let is_current = preset.model == current_model && preset.effort == current_effort;
-            let model_slug = preset.model.to_string();
-            let effort = preset.effort;
-            let current_model = current_model.clone();
-            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                tx.send(AppEvent::CodexOp(Op::OverrideTurnContext {
-                    cwd: None,
-                    approval_policy: None,
-                    sandbox_policy: None,
-                    model: Some(model_slug.clone()),
-                    effort: Some(effort),
-                    summary: None,
-                }));
-                tx.send(AppEvent::UpdateModel(model_slug.clone()));
-                tx.send(AppEvent::UpdateReasoningEffort(effort));
-                tracing::info!(
-                    "New model: {}, New effort: {}, Current model: {}, Current effort: {}",
-                    model_slug.clone(),
-                    effort
-                        .map(|effort| effort.to_string())
-                        .unwrap_or_else(|| "none".to_string()),
-                    current_model,
-                    current_effort
-                        .map(|effort| effort.to_string())
-                        .unwrap_or_else(|| "none".to_string())
-                );
-            })];
+            let actions: Vec<SelectionAction> = if disable_for_api {
+                Vec::new()
+            } else {
+                let model_slug = preset.model.to_string();
+                let effort = preset.effort;
+                let current_model_for_log = current_model.clone();
+                vec![Box::new(move |tx| {
+                    tx.send(AppEvent::CodexOp(Op::OverrideTurnContext {
+                        cwd: None,
+                        approval_policy: None,
+                        sandbox_policy: None,
+                        model: Some(model_slug.clone()),
+                        effort: Some(effort),
+                        summary: None,
+                    }));
+                    tx.send(AppEvent::UpdateModel(model_slug.clone()));
+                    tx.send(AppEvent::UpdateReasoningEffort(effort));
+                    tracing::info!(
+                        "New model: {}, New effort: {}, Current model: {}, Current effort: {}",
+                        model_slug.clone(),
+                        effort
+                            .map(|effort| effort.to_string())
+                            .unwrap_or_else(|| "none".to_string()),
+                        current_model_for_log,
+                        current_effort
+                            .map(|effort| effort.to_string())
+                            .unwrap_or_else(|| "none".to_string())
+                    );
+                })]
+            };
             items.push(SelectionItem {
                 name,
                 description,
                 is_current,
+                enabled: !disable_for_api,
                 actions,
             });
         }
@@ -1249,6 +1283,7 @@ impl ChatWidget {
                 name,
                 description,
                 is_current,
+                enabled: true,
                 actions,
             });
         }

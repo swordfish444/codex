@@ -23,6 +23,7 @@ pub(crate) struct GenericDisplayRow {
     pub match_indices: Option<Vec<usize>>, // indices to bold (char positions)
     pub is_current: bool,
     pub description: Option<String>, // optional grey text after the name
+    pub enabled: bool,
 }
 
 impl GenericDisplayRow {}
@@ -73,6 +74,7 @@ pub(crate) fn render_rows(
                 match_indices,
                 is_current: _is_current,
                 description,
+                enabled,
             } = row;
 
             // Highlight fuzzy indices when present.
@@ -97,12 +99,15 @@ pub(crate) fn render_rows(
             }
 
             let mut cell = Cell::from(Line::from(spans));
-            if Some(i) == state.selected_idx {
+            let is_selected = Some(i) == state.selected_idx;
+            if is_selected && *enabled {
                 cell = cell.style(
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 );
+            } else if !*enabled || is_selected {
+                cell = cell.style(Style::default().add_modifier(Modifier::DIM));
             }
             rows.push(Row::new(vec![cell]));
         }
