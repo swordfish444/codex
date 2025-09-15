@@ -115,7 +115,8 @@ impl ConversationManager {
         rollout_path: PathBuf,
         auth_manager: Arc<AuthManager>,
     ) -> CodexResult<NewConversation> {
-        let initial_history = RolloutRecorder::get_rollout_history(&rollout_path).await?;
+        let initial_history =
+            RolloutRecorder::get_rollout_history(&rollout_path, &config.cwd).await?;
         let CodexSpawnOk {
             codex,
             conversation_id,
@@ -145,7 +146,7 @@ impl ConversationManager {
         path: PathBuf,
     ) -> CodexResult<NewConversation> {
         // Compute the prefix up to the cut point.
-        let history = RolloutRecorder::get_rollout_history(&path).await?;
+        let history = RolloutRecorder::get_rollout_history(&path, &config.cwd).await?;
         let history = truncate_after_nth_user_message(history, nth_user_message);
 
         // Spawn a new conversation with the computed initial history.

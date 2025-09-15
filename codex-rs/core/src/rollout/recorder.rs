@@ -103,10 +103,11 @@ impl RolloutRecorder {
     /// List conversations (rollout files) under the provided Codex home directory.
     pub async fn list_conversations(
         codex_home: &Path,
+        cwd: &Path,
         page_size: usize,
         cursor: Option<&Cursor>,
     ) -> std::io::Result<ConversationsPage> {
-        get_conversations(codex_home, page_size, cursor).await
+        get_conversations(codex_home, cwd, page_size, cursor).await
     }
 
     /// Attempt to create a new [`RolloutRecorder`]. If the sessions directory
@@ -202,7 +203,10 @@ impl RolloutRecorder {
             .map_err(|e| IoError::other(format!("failed waiting for rollout flush: {e}")))
     }
 
-    pub(crate) async fn get_rollout_history(path: &Path) -> std::io::Result<InitialHistory> {
+    pub(crate) async fn get_rollout_history(
+        path: &Path,
+        cwd: &Path,
+    ) -> std::io::Result<InitialHistory> {
         info!("Resuming rollout from {path:?}");
         let text = tokio::fs::read_to_string(path).await?;
         if text.trim().is_empty() {
@@ -211,6 +215,7 @@ impl RolloutRecorder {
 
         let mut items: Vec<RolloutItem> = Vec::new();
         let mut conversation_id: Option<ConversationId> = None;
+        let mut session_cwd: Option<PathBuf> = None;
         for line in text.lines() {
             if line.trim().is_empty() {
                 continue;
@@ -231,6 +236,9 @@ impl RolloutRecorder {
                         // conversation id and main session information. Keep all items intact.
                         if conversation_id.is_none() {
                             conversation_id = Some(session_meta_line.meta.id);
+                        }
+                        if session_cwd.is_none() {
+                            session_cwd = Some(session_meta_line.meta.cwd.clone());
                         }
                         items.push(RolloutItem::SessionMeta(session_meta_line));
                     }
@@ -260,6 +268,22 @@ impl RolloutRecorder {
         );
         let conversation_id = conversation_id
             .ok_or_else(|| IoError::other("failed to parse conversation ID from rollout file"))?;
+
+        match session_cwd {
+            Some(meta_cwd) if meta_cwd == cwd => {}
+            Some(meta_cwd) => {
+                return Err(IoError::other(format!(
+                    "session cwd `{}` does not match requested cwd `{}`",
+                    meta_cwd.display(),
+                    cwd.display()
+                )));
+            }
+            None => {
+                return Err(IoError::other(
+                    "failed to parse session cwd from rollout file",
+                ));
+            }
+        }
 
         if items.is_empty() {
             return Ok(InitialHistory::New);

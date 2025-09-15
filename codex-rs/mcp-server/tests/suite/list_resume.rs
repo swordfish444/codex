@@ -23,23 +23,27 @@ const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 async fn test_list_and_resume_conversations() {
     // Prepare a temporary CODEX_HOME with a few fake rollout files.
     let codex_home = TempDir::new().expect("create temp dir");
+    let cwd = std::env::current_dir().expect("current dir");
     create_fake_rollout(
         codex_home.path(),
         "2025-01-02T12-00-00",
         "2025-01-02T12:00:00Z",
         "Hello A",
+        &cwd,
     );
     create_fake_rollout(
         codex_home.path(),
         "2025-01-01T13-00-00",
         "2025-01-01T13:00:00Z",
         "Hello B",
+        &cwd,
     );
     create_fake_rollout(
         codex_home.path(),
         "2025-01-01T12-00-00",
         "2025-01-01T12:00:00Z",
         "Hello C",
+        &cwd,
     );
 
     let mut mcp = McpProcess::new(codex_home.path())
@@ -145,7 +149,13 @@ async fn test_list_and_resume_conversations() {
     let _: uuid::Uuid = conversation_id.into();
 }
 
-fn create_fake_rollout(codex_home: &Path, filename_ts: &str, meta_rfc3339: &str, preview: &str) {
+fn create_fake_rollout(
+    codex_home: &Path,
+    filename_ts: &str,
+    meta_rfc3339: &str,
+    preview: &str,
+    cwd: &Path,
+) {
     let uuid = Uuid::new_v4();
     // sessions/YYYY/MM/DD/ derived from filename_ts (YYYY-MM-DDThh-mm-ss)
     let year = &filename_ts[0..4];
@@ -156,6 +166,7 @@ fn create_fake_rollout(codex_home: &Path, filename_ts: &str, meta_rfc3339: &str,
 
     let file_path = dir.join(format!("rollout-{filename_ts}-{uuid}.jsonl"));
     let mut lines = Vec::new();
+    let cwd_str = cwd.to_string_lossy();
     // Meta line with timestamp (flattened meta in payload for new schema)
     lines.push(
         json!({
@@ -164,7 +175,7 @@ fn create_fake_rollout(codex_home: &Path, filename_ts: &str, meta_rfc3339: &str,
             "payload": {
                 "id": uuid,
                 "timestamp": meta_rfc3339,
-                "cwd": "/",
+                "cwd": cwd_str,
                 "originator": "codex",
                 "cli_version": "0.0.0",
                 "instructions": null

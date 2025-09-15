@@ -675,6 +675,7 @@ impl CodexMessageProcessor {
 
         let page = match RolloutRecorder::list_conversations(
             &self.config.codex_home,
+            &self.config.cwd,
             page_size,
             cursor_ref,
         )

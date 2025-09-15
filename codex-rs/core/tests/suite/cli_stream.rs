@@ -2,6 +2,7 @@ use assert_cmd::Command as AssertCommand;
 use codex_core::RolloutRecorder;
 use codex_core::protocol::GitInfo;
 use codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
+use std::path::Path;
 use std::time::Duration;
 use std::time::Instant;
 use tempfile::TempDir;
@@ -81,7 +82,8 @@ async fn chat_mode_stream_cli() {
     server.verify().await;
 
     // Verify a new session rollout was created and is discoverable via list_conversations
-    let page = RolloutRecorder::list_conversations(home.path(), 10, None)
+    let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page = RolloutRecorder::list_conversations(home.path(), cwd, 10, None)
         .await
         .expect("list conversations");
     assert!(

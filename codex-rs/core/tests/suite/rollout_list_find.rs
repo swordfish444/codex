@@ -8,12 +8,13 @@ use uuid::Uuid;
 
 /// Create sessions/YYYY/MM/DD and write a minimal rollout file containing the
 /// provided conversation id in the SessionMeta line. Returns the absolute path.
-fn write_minimal_rollout_with_id(codex_home: &TempDir, id: Uuid) -> PathBuf {
+fn write_minimal_rollout_with_id(codex_home: &TempDir, id: Uuid, cwd: &std::path::Path) -> PathBuf {
     let sessions = codex_home.path().join("sessions/2024/01/01");
     std::fs::create_dir_all(&sessions).unwrap();
 
     let file = sessions.join(format!("rollout-2024-01-01T00-00-00-{id}.jsonl"));
     let mut f = std::fs::File::create(&file).unwrap();
+    let cwd_str = cwd.to_string_lossy();
     // Minimal first line: session_meta with the id so content search can find it
     writeln!(
         f,
@@ -25,7 +26,7 @@ fn write_minimal_rollout_with_id(codex_home: &TempDir, id: Uuid) -> PathBuf {
                 "id": id,
                 "timestamp": "2024-01-01T00:00:00Z",
                 "instructions": null,
-                "cwd": ".",
+                "cwd": cwd_str,
                 "originator": "test",
                 "cli_version": "test"
             }
@@ -40,7 +41,8 @@ fn write_minimal_rollout_with_id(codex_home: &TempDir, id: Uuid) -> PathBuf {
 async fn find_locates_rollout_file_by_id() {
     let home = TempDir::new().unwrap();
     let id = Uuid::new_v4();
-    let expected = write_minimal_rollout_with_id(&home, id);
+    let cwd = std::path::Path::new(".");
+    let expected = write_minimal_rollout_with_id(&home, id, cwd);
 
     let found = find_conversation_path_by_id_str(home.path(), &id.to_string())
         .await

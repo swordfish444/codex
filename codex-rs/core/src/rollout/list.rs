@@ -17,6 +17,7 @@ use super::SESSIONS_SUBDIR;
 use crate::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::RolloutLine;
+use codex_protocol::protocol::SessionMetaLine;
 
 /// Returned page of conversation summaries.
 #[derive(Debug, Default, PartialEq)]
@@ -87,6 +88,7 @@ impl<'de> serde::Deserialize<'de> for Cursor {
 /// concurrent new sessions being appended. Ordering is stable by timestamp desc, then UUID desc.
 pub(crate) async fn get_conversations(
     codex_home: &Path,
+    cwd: &Path,
     page_size: usize,
     cursor: Option<&Cursor>,
 ) -> io::Result<ConversationsPage> {
@@ -104,14 +106,26 @@ pub(crate) async fn get_conversations(
 
     let anchor = cursor.cloned();
 
-    let result = traverse_directories_for_paths(root.clone(), page_size, anchor).await?;
+    let result = traverse_directories_for_paths(root.clone(), cwd, page_size, anchor).await?;
     Ok(result)
 }
 
 /// Load the full contents of a single conversation session file at `path`.
 /// Returns the entire file contents as a String.
 #[allow(dead_code)]
-pub(crate) async fn get_conversation(path: &Path) -> io::Result<String> {
+pub(crate) async fn get_conversation(path: &Path, cwd: &Path) -> io::Result<String> {
+    let (_head, session_meta, _, _) = read_head_and_flags(path, 1).await?;
+    let Some(meta) = session_meta else {
+        return Err(io::Error::other("missing session meta in rollout file"));
+    };
+    if meta.meta.cwd != cwd {
+        return Err(io::Error::other(format!(
+            "session cwd `{}` does not match requested cwd `{}`",
+            meta.meta.cwd.display(),
+            cwd.display()
+        )));
+    }
+
     tokio::fs::read_to_string(path).await
 }
 
@@ -121,6 +135,7 @@ pub(crate) async fn get_conversation(path: &Path) -> io::Result<String> {
 /// Returned newest (latest) first.
 async fn traverse_directories_for_paths(
     root: PathBuf,
+    cwd: &Path,
     page_size: usize,
     anchor: Option<Cursor>,
 ) -> io::Result<ConversationsPage> {
@@ -176,12 +191,20 @@ async fn traverse_directories_for_paths(
                     }
                     // Read head and simultaneously detect message events within the same
                     // first N JSONL records to avoid a second file read.
-                    let (head, saw_session_meta, saw_user_event) =
-                        read_head_and_flags(&path, HEAD_RECORD_LIMIT)
-                            .await
-                            .unwrap_or((Vec::new(), false, false));
-                    // Apply filters: must have session meta and at least one user message event
-                    if saw_session_meta && saw_user_event {
+                    let (head, session_meta, saw_session_meta, saw_user_event) =
+                        match read_head_and_flags(&path, HEAD_RECORD_LIMIT).await {
+                            Ok(res) => res,
+                            Err(_) => continue,
+                        };
+                    // Apply filters: must have session meta, matching cwd, and at least one
+                    // user message event
+                    if saw_session_meta
+                        && saw_user_event
+                        && session_meta
+                            .as_ref()
+                            .map(|meta| meta.meta.cwd.as_path() == cwd)
+                            .unwrap_or(false)
+                    {
                         items.push(ConversationItem { path, head });
                     }
                 }
@@ -289,7 +312,7 @@ fn parse_timestamp_uuid_from_filename(name: &str) -> Option<(OffsetDateTime, Uui
 async fn read_head_and_flags(
     path: &Path,
     max_records: usize,
-) -> io::Result<(Vec<serde_json::Value>, bool, bool)> {
+) -> io::Result<(Vec<serde_json::Value>, Option<SessionMetaLine>, bool, bool)> {
     use tokio::io::AsyncBufReadExt;
 
     let file = tokio::fs::File::open(path).await?;
@@ -298,6 +321,7 @@ async fn read_head_and_flags(
     let mut head: Vec<serde_json::Value> = Vec::new();
     let mut saw_session_meta = false;
     let mut saw_user_event = false;
+    let mut session_meta: Option<SessionMetaLine> = None;
 
     while head.len() < max_records {
         let line_opt = lines.next_line().await?;
@@ -312,9 +336,12 @@ async fn read_head_and_flags(
 
         match rollout_line.item {
             RolloutItem::SessionMeta(session_meta_line) => {
-                if let Ok(val) = serde_json::to_value(session_meta_line) {
+                if let Ok(val) = serde_json::to_value(&session_meta_line) {
                     head.push(val);
                     saw_session_meta = true;
+                }
+                if session_meta.is_none() {
+                    session_meta = Some(session_meta_line);
                 }
             }
             RolloutItem::ResponseItem(item) => {
@@ -336,7 +363,7 @@ async fn read_head_and_flags(
         }
     }
 
-    Ok((head, saw_session_meta, saw_user_event))
+    Ok((head, session_meta, saw_session_meta, saw_user_event))
 }
 
 /// Locate a recorded conversation rollout file by its UUID string using the existing

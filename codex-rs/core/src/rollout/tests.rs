@@ -17,12 +17,14 @@ use crate::rollout::list::ConversationsPage;
 use crate::rollout::list::Cursor;
 use crate::rollout::list::get_conversation;
 use crate::rollout::list::get_conversations;
+use crate::rollout::recorder::RolloutRecorder;
 
 fn write_session_file(
     root: &Path,
     ts_str: &str,
     uuid: Uuid,
     num_records: usize,
+    cwd: &Path,
 ) -> std::io::Result<(OffsetDateTime, Uuid)> {
     let format: &[FormatItem] =
         format_description!("[year]-[month]-[day]T[hour]-[minute]-[second]");
@@ -40,6 +42,7 @@ fn write_session_file(
     let file_path = dir.join(filename);
     let mut file = File::create(file_path)?;
 
+    let cwd_str = cwd.to_string_lossy();
     let meta = serde_json::json!({
         "timestamp": ts_str,
         "type": "session_meta",
@@ -47,7 +50,7 @@ fn write_session_file(
             "id": uuid,
             "timestamp": ts_str,
             "instructions": null,
-            "cwd": ".",
+            "cwd": cwd_str,
             "originator": "test_originator",
             "cli_version": "test_version"
         }
@@ -86,12 +89,13 @@ async fn test_list_conversations_latest_first() {
     let u2 = Uuid::from_u128(2);
     let u3 = Uuid::from_u128(3);
 
+    let cwd = Path::new(".");
     // Create three sessions across three days
-    write_session_file(home, "2025-01-01T12-00-00", u1, 3).unwrap();
-    write_session_file(home, "2025-01-02T12-00-00", u2, 3).unwrap();
-    write_session_file(home, "2025-01-03T12-00-00", u3, 3).unwrap();
+    write_session_file(home, "2025-01-01T12-00-00", u1, 3, cwd).unwrap();
+    write_session_file(home, "2025-01-02T12-00-00", u2, 3, cwd).unwrap();
+    write_session_file(home, "2025-01-03T12-00-00", u3, 3, cwd).unwrap();
 
-    let page = get_conversations(home, 10, None).await.unwrap();
+    let page = get_conversations(home, cwd, 10, None).await.unwrap();
 
     // Build expected objects
     let p1 = home
@@ -165,6 +169,46 @@ async fn test_list_conversations_latest_first() {
 }
 
 #[tokio::test]
+async fn test_list_conversations_filters_by_cwd() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+
+    let match_cwd = Path::new("/match");
+    let other_cwd = Path::new("/other");
+
+    let id_match = Uuid::from_u128(11);
+    let id_other = Uuid::from_u128(22);
+
+    write_session_file(home, "2025-02-01T00-00-00", id_match, 1, match_cwd).unwrap();
+    write_session_file(home, "2025-02-02T00-00-00", id_other, 1, other_cwd).unwrap();
+
+    let page_match = get_conversations(home, match_cwd, 10, None).await.unwrap();
+    assert_eq!(page_match.items.len(), 1);
+    let head_id = page_match.items[0]
+        .head
+        .first()
+        .and_then(|meta| meta.get("id"))
+        .and_then(|id| id.as_str())
+        .expect("id str");
+    assert_eq!(head_id, id_match.to_string());
+
+    let page_other = get_conversations(home, other_cwd, 10, None).await.unwrap();
+    assert_eq!(page_other.items.len(), 1);
+    let other_head_id = page_other.items[0]
+        .head
+        .first()
+        .and_then(|meta| meta.get("id"))
+        .and_then(|id| id.as_str())
+        .expect("id str");
+    assert_eq!(other_head_id, id_other.to_string());
+
+    let none_page = get_conversations(home, Path::new("/missing"), 10, None)
+        .await
+        .unwrap();
+    assert!(none_page.items.is_empty());
+}
+
+#[tokio::test]
 async fn test_pagination_cursor() {
     let temp = TempDir::new().unwrap();
     let home = temp.path();
@@ -177,13 +221,15 @@ async fn test_pagination_cursor() {
     let u5 = Uuid::from_u128(55);
 
     // Oldest to newest
-    write_session_file(home, "2025-03-01T09-00-00", u1, 1).unwrap();
-    write_session_file(home, "2025-03-02T09-00-00", u2, 1).unwrap();
-    write_session_file(home, "2025-03-03T09-00-00", u3, 1).unwrap();
-    write_session_file(home, "2025-03-04T09-00-00", u4, 1).unwrap();
-    write_session_file(home, "2025-03-05T09-00-00", u5, 1).unwrap();
+    write_session_file(home, "2025-03-01T09-00-00", u1, 1, Path::new(".")).unwrap();
+    write_session_file(home, "2025-03-02T09-00-00", u2, 1, Path::new(".")).unwrap();
+    write_session_file(home, "2025-03-03T09-00-00", u3, 1, Path::new(".")).unwrap();
+    write_session_file(home, "2025-03-04T09-00-00", u4, 1, Path::new(".")).unwrap();
+    write_session_file(home, "2025-03-05T09-00-00", u5, 1, Path::new(".")).unwrap();
 
-    let page1 = get_conversations(home, 2, None).await.unwrap();
+    let page1 = get_conversations(home, Path::new("."), 2, None)
+        .await
+        .unwrap();
     let p5 = home
         .join("sessions")
         .join("2025")
@@ -231,7 +277,7 @@ async fn test_pagination_cursor() {
     };
     assert_eq!(page1, expected_page1);
 
-    let page2 = get_conversations(home, 2, page1.next_cursor.as_ref())
+    let page2 = get_conversations(home, Path::new("."), 2, page1.next_cursor.as_ref())
         .await
         .unwrap();
     let p3 = home
@@ -281,7 +327,7 @@ async fn test_pagination_cursor() {
     };
     assert_eq!(page2, expected_page2);
 
-    let page3 = get_conversations(home, 2, page2.next_cursor.as_ref())
+    let page3 = get_conversations(home, Path::new("."), 2, page2.next_cursor.as_ref())
         .await
         .unwrap();
     let p1 = home
@@ -319,12 +365,14 @@ async fn test_get_conversation_contents() {
 
     let uuid = Uuid::new_v4();
     let ts = "2025-04-01T10-30-00";
-    write_session_file(home, ts, uuid, 2).unwrap();
+    write_session_file(home, ts, uuid, 2, Path::new(".")).unwrap();
 
-    let page = get_conversations(home, 1, None).await.unwrap();
+    let page = get_conversations(home, Path::new("."), 1, None)
+        .await
+        .unwrap();
     let path = &page.items[0].path;
 
-    let content = get_conversation(path).await.unwrap();
+    let content = get_conversation(path, Path::new(".")).await.unwrap();
 
     // Page equality (single item)
     let expected_path = home
@@ -376,11 +424,13 @@ async fn test_stable_ordering_same_second_pagination() {
     let u2 = Uuid::from_u128(2);
     let u3 = Uuid::from_u128(3);
 
-    write_session_file(home, ts, u1, 0).unwrap();
-    write_session_file(home, ts, u2, 0).unwrap();
-    write_session_file(home, ts, u3, 0).unwrap();
+    write_session_file(home, ts, u1, 0, Path::new(".")).unwrap();
+    write_session_file(home, ts, u2, 0, Path::new(".")).unwrap();
+    write_session_file(home, ts, u3, 0, Path::new(".")).unwrap();
 
-    let page1 = get_conversations(home, 2, None).await.unwrap();
+    let page1 = get_conversations(home, Path::new("."), 2, None)
+        .await
+        .unwrap();
 
     let p3 = home
         .join("sessions")
@@ -422,7 +472,7 @@ async fn test_stable_ordering_same_second_pagination() {
     };
     assert_eq!(page1, expected_page1);
 
-    let page2 = get_conversations(home, 2, page1.next_cursor.as_ref())
+    let page2 = get_conversations(home, Path::new("."), 2, page1.next_cursor.as_ref())
         .await
         .unwrap();
     let p1 = home
@@ -442,4 +492,32 @@ async fn test_stable_ordering_same_second_pagination() {
         reached_scan_cap: false,
     };
     assert_eq!(page2, expected_page2);
+}
+
+#[tokio::test]
+async fn test_get_rollout_history_enforces_cwd() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+
+    let ts = "2025-08-01T00-00-00";
+    let uuid = Uuid::new_v4();
+    let match_cwd = Path::new("/history-match");
+
+    write_session_file(home, ts, uuid, 1, match_cwd).unwrap();
+
+    let path = home
+        .join("sessions")
+        .join("2025")
+        .join("08")
+        .join("01")
+        .join(format!("rollout-{ts}-{uuid}.jsonl"));
+
+    RolloutRecorder::get_rollout_history(&path, match_cwd)
+        .await
+        .expect("matching cwd should succeed");
+
+    let err = RolloutRecorder::get_rollout_history(&path, Path::new("/history-other"))
+        .await
+        .expect_err("mismatched cwd should error");
+    assert!(err.to_string().contains("does not match"));
 }

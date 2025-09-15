@@ -39,9 +39,17 @@ pub enum ResumeSelection {
 /// Interactive session picker that lists recorded rollout files with simple
 /// search and pagination. Shows the first user input as the preview, relative
 /// time (e.g., "5 seconds ago"), and the absolute path.
-pub async fn run_resume_picker(tui: &mut Tui, codex_home: &Path) -> Result<ResumeSelection> {
+pub async fn run_resume_picker(
+    tui: &mut Tui,
+    codex_home: &Path,
+    cwd: &Path,
+) -> Result<ResumeSelection> {
     let alt = AltScreenGuard::enter(tui);
-    let mut state = PickerState::new(codex_home.to_path_buf(), alt.tui.frame_requester());
+    let mut state = PickerState::new(
+        codex_home.to_path_buf(),
+        cwd.to_path_buf(),
+        alt.tui.frame_requester(),
+    );
     state.load_page(None).await?;
     state.request_frame();
 
@@ -88,6 +96,7 @@ impl Drop for AltScreenGuard<'_> {
 
 struct PickerState {
     codex_home: PathBuf,
+    cwd: PathBuf,
     requester: FrameRequester,
     // pagination
     pagination: Pagination,
@@ -115,9 +124,10 @@ struct Row {
 }
 
 impl PickerState {
-    fn new(codex_home: PathBuf, requester: FrameRequester) -> Self {
+    fn new(codex_home: PathBuf, cwd: PathBuf, requester: FrameRequester) -> Self {
         Self {
             codex_home,
+            cwd,
             requester,
             pagination: Pagination {
                 current_anchor: None,
@@ -225,7 +235,9 @@ impl PickerState {
     }
 
     async fn load_page(&mut self, anchor: Option<&Cursor>) -> Result<()> {
-        let page = RolloutRecorder::list_conversations(&self.codex_home, PAGE_SIZE, anchor).await?;
+        let page =
+            RolloutRecorder::list_conversations(&self.codex_home, &self.cwd, PAGE_SIZE, anchor)
+                .await?;
         self.pagination.next_cursor = page.next_cursor.clone();
         self.all_rows = to_rows(page);
         self.apply_filter();
