@@ -11,6 +11,7 @@ use std::time::Duration;
 use crate::AuthManager;
 use crate::client_common::REVIEW_PROMPT;
 use crate::event_mapping::map_response_item_to_event_messages;
+use crate::normalize_command::try_normalize_command;
 use async_channel::Receiver;
 use async_channel::Sender;
 use codex_apply_patch::ApplyPatchAction;
@@ -2774,6 +2775,25 @@ async fn handle_container_exec_with_params(
             )
         }
         None => {
+            // Normalize a classic bash -lc "cd ... && ..." wrapper into updated
+            // cwd and a cleaner script for display, if applicable. Once we have
+            // confidence in this approach, we will use the normalized command
+            // for execution as well.
+            let (params, command_for_display) =
+                match try_normalize_command(&params.command, &params.cwd) {
+                    Some(norm) => {
+                        let mut p = params;
+                        p.command = norm.command;
+                        p.cwd = norm.cwd;
+                        (p, norm.command_for_display)
+                    }
+                    None => {
+                        let p = params;
+                        let command_for_display = p.command.clone();
+                        (p, command_for_display)
+                    }
+                };
+
             let safety = {
                 let state = sess.state.lock_unchecked();
                 assess_command_safety(
@@ -2784,7 +2804,6 @@ async fn handle_container_exec_with_params(
                     params.with_escalated_permissions.unwrap_or(false),
                 )
             };
-            let command_for_display = params.command.clone();
             (params, safety, command_for_display)
         }
     };
