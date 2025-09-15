@@ -1,3 +1,4 @@
+use tree_sitter::Node;
 use tree_sitter::Parser;
 use tree_sitter::Tree;
 use tree_sitter_bash::LANGUAGE as BASH;
@@ -59,9 +60,6 @@ pub fn try_parse_word_only_commands_sequence(tree: &Tree, src: &str) -> Option<V
             }
         } else {
             // Reject any punctuation / operator tokens that are not explicitly allowed.
-            if kind.chars().any(|c| "&;|".contains(c)) && !ALLOWED_PUNCT_TOKENS.contains(&kind) {
-                return None;
-            }
             if !(ALLOWED_PUNCT_TOKENS.contains(&kind) || kind.trim().is_empty()) {
                 // If it's a quote token or operator it's allowed above; we also allow whitespace tokens.
                 // Any other punctuation like parentheses, braces, redirects, backticks, etc are rejected.
@@ -75,7 +73,7 @@ pub fn try_parse_word_only_commands_sequence(tree: &Tree, src: &str) -> Option<V
 
     let mut commands = Vec::new();
     for node in command_nodes {
-        if let Some(words) = parse_plain_command_from_node(node, src) {
+        if let Some(words) = extract_words_from_command_node(node, src) {
             commands.push(words);
         } else {
             return None;
@@ -84,7 +82,10 @@ pub fn try_parse_word_only_commands_sequence(tree: &Tree, src: &str) -> Option<V
     Some(commands)
 }
 
-fn parse_plain_command_from_node(cmd: tree_sitter::Node, src: &str) -> Option<Vec<String>> {
+/// Extract the plain words of a simple command node, normalizing quoted
+/// strings into their contents. Returns None if the node contains unsupported
+/// constructs for a word-only command.
+pub(crate) fn extract_words_from_command_node(cmd: Node, src: &str) -> Option<Vec<String>> {
     if cmd.kind() != "command" {
         return None;
     }
@@ -128,6 +129,48 @@ fn parse_plain_command_from_node(cmd: tree_sitter::Node, src: &str) -> Option<Ve
         }
     }
     Some(words)
+}
+
+/// Find the earliest `command` node in source order within the parse tree.
+pub(crate) fn find_first_command_node(tree: &Tree) -> Option<Node<'_>> {
+    let root = tree.root_node();
+    let mut cursor = root.walk();
+    let mut stack = vec![root];
+    let mut best: Option<Node> = None;
+    while let Some(node) = stack.pop() {
+        if node.is_named()
+            && node.kind() == "command"
+            && best.is_none_or(|b| node.start_byte() < b.start_byte())
+        {
+            best = Some(node);
+        }
+        for child in node.children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+    best
+}
+
+/// Given the first command node, return the byte index in `src` at which the
+/// remainder script starts, only if the next non-whitespace token is an allowed
+/// sequencing operator for dropping the leading `cd`/`pushd`.
+///
+/// Allowed operators: `&&` (conditional on success) and `;` (unconditional).
+/// Disallowed: `||`, `|` — removing `cd` would change semantics.
+pub(crate) fn remainder_start_after_wrapper_operator(first_cmd: Node, src: &str) -> Option<usize> {
+    let mut sib = first_cmd.next_sibling()?;
+    while !sib.is_named() && sib.kind().trim().is_empty() {
+        sib = sib.next_sibling()?;
+    }
+    if sib.is_named() || (sib.kind() != "&&" && sib.kind() != ";") {
+        return None;
+    }
+    let mut idx = sib.end_byte();
+    let bytes = src.as_bytes();
+    while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+        idx += 1;
+    }
+    if idx >= bytes.len() { None } else { Some(idx) }
 }
 
 #[cfg(test)]
