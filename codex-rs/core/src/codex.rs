@@ -11,6 +11,7 @@ use std::time::Duration;
 use crate::AuthManager;
 use crate::client_common::REVIEW_PROMPT;
 use crate::event_mapping::map_response_item_to_event_messages;
+use crate::normalize_command::try_normalize_command;
 use async_channel::Receiver;
 use async_channel::Sender;
 use codex_apply_patch::ApplyPatchAction;
@@ -2774,6 +2775,24 @@ async fn handle_container_exec_with_params(
             )
         }
         None => {
+            // Normalize a classic bash -lc "cd ... && ..." wrapper into updated
+            // cwd and a cleaner script for display, if applicable.
+            let command_for_display = match try_normalize_command(&params.command, &params.cwd) {
+                Some(norm) => {
+                    // Once we have confidence in this approach, we will use
+                    // the normalized command (and cwd) for execution as
+                    // well.
+                    //
+                    // Note that behavior changes slightly in that the
+                    // command is executed without considering whether
+                    // `cd` succeeded, but this is probably OK because the
+                    // argument to `cd` is used as the cwd for the exec,
+                    // so it will fail if the directory does not exist.
+                    norm.command_for_display
+                }
+                None => params.command.clone(),
+            };
+
             let safety = {
                 let state = sess.state.lock_unchecked();
                 assess_command_safety(
@@ -2784,7 +2803,6 @@ async fn handle_container_exec_with_params(
                     params.with_escalated_permissions.unwrap_or(false),
                 )
             };
-            let command_for_display = params.command.clone();
             (params, safety, command_for_display)
         }
     };
