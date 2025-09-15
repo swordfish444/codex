@@ -11,7 +11,7 @@ use codex_core::RolloutRecorder;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::ConfigToml;
-use codex_core::config::GPT_5_CODEX_MEDIUM_MODEL;
+use codex_core::config::GPT_5_CODEX_DISPLAY_NAME;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_config_as_toml_with_cli_overrides;
 use codex_core::config::persist_model_selection;
@@ -64,12 +64,10 @@ mod streaming;
 mod text_formatting;
 mod tui;
 mod ui_consts;
+mod updates;
 mod user_approval_widget;
 mod version;
 mod wrapping;
-
-#[cfg(not(debug_assertions))]
-mod updates;
 
 use crate::new_model_popup::ModelUpgradeDecision;
 use crate::new_model_popup::run_model_upgrade_popup;
@@ -275,10 +273,12 @@ async fn run_ratatui_app(
 
     let mut tui = Tui::new(terminal);
 
+    let login_status = get_login_status(&config);
+    let show_login_screen = should_show_login_screen(login_status, &config);
+
     // Show update banner in terminal history (instead of stderr) so it is visible
     // within the TUI scrollback. Building spans keeps styling consistent.
-    #[cfg(not(debug_assertions))]
-    if let Some(latest_version) = updates::get_upgrade_version(&config) {
+    if !show_login_screen && let Some(latest_version) = updates::get_upgrade_version(&config) {
         use ratatui::style::Stylize as _;
         use ratatui::text::Line;
 
@@ -325,13 +325,12 @@ async fn run_ratatui_app(
     session_log::maybe_init(&config);
 
     let auth_manager = AuthManager::shared(config.codex_home.clone());
-    let login_status = get_login_status(&config);
     let should_show_onboarding =
         should_show_onboarding(login_status, &config, should_show_trust_screen);
     if should_show_onboarding {
         let directory_trust_decision = run_onboarding_app(
             OnboardingScreenArgs {
-                show_login_screen: should_show_login_screen(login_status, &config),
+                show_login_screen,
                 show_trust_screen: should_show_trust_screen,
                 login_status,
                 auth_manager: auth_manager.clone(),
@@ -392,7 +391,7 @@ async fn run_ratatui_app(
         let switch_to_new_model = upgrade_decision == ModelUpgradeDecision::Switch;
 
         if switch_to_new_model {
-            config.model = GPT_5_CODEX_MEDIUM_MODEL.to_owned();
+            config.model = GPT_5_CODEX_DISPLAY_NAME.to_owned();
             config.model_reasoning_effort = None;
             if let Err(e) = persist_model_selection(
                 &config.codex_home,
@@ -525,13 +524,13 @@ fn should_show_model_rollout_prompt(
     cli: &Cli,
     config: &Config,
     active_profile: Option<&str>,
-    gpt_5_codex_model_prompt_seen: bool,
+    swiftfox_model_prompt_seen: bool,
 ) -> bool {
     let login_status = get_login_status(config);
 
     active_profile.is_none()
         && cli.model.is_none()
-        && !gpt_5_codex_model_prompt_seen
+        && !swiftfox_model_prompt_seen
         && config.model_provider.requires_openai_auth
         && matches!(login_status, LoginStatus::AuthMode(AuthMode::ChatGPT))
         && !cli.oss
