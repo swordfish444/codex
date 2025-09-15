@@ -25,7 +25,7 @@ pub fn builtin_approval_presets() -> Vec<ApprovalPreset> {
             id: "read-only",
             label: "Read Only",
             description: "Codex can read files and answer questions. Codex requires approval to make edits, run commands, or access network",
-            approval: AskForApproval::OnRequest,
+            approval: AskForApproval::Never,
             sandbox: SandboxPolicy::ReadOnly,
         },
         ApprovalPreset {
