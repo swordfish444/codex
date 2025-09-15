@@ -113,6 +113,7 @@ pub fn create_client() -> reqwest::Client {
     let ua = get_codex_user_agent();
 
     reqwest::Client::builder()
+        .gzip(true)
         // Set UA via dedicated helper to avoid header validation pitfalls
         .user_agent(ua)
         .default_headers(headers)
