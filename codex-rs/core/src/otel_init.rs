@@ -6,8 +6,7 @@ use codex_otel::config::OtelHttpProtocol;
 use codex_otel::config::OtelSettings;
 use codex_otel::otel_provider::OtelProvider;
 use std::error::Error;
-
-const SERVICE_NAME: &str = "codex-cli";
+use crate::default_client::ORIGINATOR;
 
 /// Build an OpenTelemetry provider from the app Config.
 ///
@@ -47,7 +46,7 @@ pub fn build_provider(
     };
 
     OtelProvider::from(&OtelSettings {
-        service_name: SERVICE_NAME.to_string(),
+        service_name: ORIGINATOR.value.to_owned(),
         service_version: service_version.to_string(),
         codex_home: config.codex_home.clone(),
         environment: config.otel.environment.to_string(),
