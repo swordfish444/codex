@@ -871,6 +871,7 @@ impl ChatWidget {
                 self.clear_token_usage();
                 self.app_event_tx.send(AppEvent::CodexOp(Op::Compact));
             }
+            SlashCommand::Review => {}
             SlashCommand::Model => {
                 self.open_model_popup();
             }
