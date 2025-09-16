@@ -14,6 +14,7 @@ use codex_core::config::Config;
 use codex_core::config::persist_model_selection;
 use codex_core::model_family::find_family_for_model;
 use codex_core::protocol::TokenUsage;
+use codex_core::protocol_config_types::ReasoningEffort as ReasoningEffortConfig;
 use color_eyre::eyre::Result;
 use color_eyre::eyre::WrapErr;
 use crossterm::event::KeyCode;
@@ -36,12 +37,11 @@ pub(crate) struct App {
     pub(crate) server: Arc<ConversationManager>,
     pub(crate) app_event_tx: AppEventSender,
     pub(crate) chat_widget: ChatWidget,
+    pub(crate) auth_manager: Arc<AuthManager>,
 
     /// Config is stored here so we can recreate ChatWidgets as needed.
     pub(crate) config: Config,
     pub(crate) active_profile: Option<String>,
-    model_saved_to_profile: bool,
-    model_saved_to_global: bool,
 
     pub(crate) file_search: FileSearchManager,
 
@@ -88,6 +88,7 @@ impl App {
                     initial_prompt: initial_prompt.clone(),
                     initial_images: initial_images.clone(),
                     enhanced_keys_supported,
+                    auth_manager: auth_manager.clone(),
                 };
                 ChatWidget::new(init, conversation_manager.clone())
             }
@@ -109,6 +110,7 @@ impl App {
                     initial_prompt: initial_prompt.clone(),
                     initial_images: initial_images.clone(),
                     enhanced_keys_supported,
+                    auth_manager: auth_manager.clone(),
                 };
                 ChatWidget::new_from_existing(
                     init,
@@ -124,10 +126,9 @@ impl App {
             server: conversation_manager,
             app_event_tx,
             chat_widget,
+            auth_manager: auth_manager.clone(),
             config,
             active_profile,
-            model_saved_to_profile: false,
-            model_saved_to_global: false,
             file_search,
             enhanced_keys_supported,
             transcript_lines: Vec::new(),
@@ -176,6 +177,7 @@ impl App {
                     self.chat_widget.handle_paste(pasted);
                 }
                 TuiEvent::Draw => {
+                    self.chat_widget.maybe_post_pending_notification(tui);
                     if self
                         .chat_widget
                         .handle_paste_burst_tick(tui.frame_requester())
@@ -207,6 +209,7 @@ impl App {
                     initial_prompt: None,
                     initial_images: Vec::new(),
                     enhanced_keys_supported: self.enhanced_keys_supported,
+                    auth_manager: self.auth_manager.clone(),
                 };
                 self.chat_widget = ChatWidget::new(init, self.server.clone());
                 tui.frame_requester().schedule_frame();
@@ -297,17 +300,46 @@ impl App {
                 self.chat_widget.apply_file_search_result(query, matches);
             }
             AppEvent::UpdateReasoningEffort(effort) => {
-                self.chat_widget.set_reasoning_effort(effort);
+                self.on_update_reasoning_effort(effort);
             }
             AppEvent::UpdateModel(model) => {
-                self.chat_widget.set_model(model.clone());
+                self.chat_widget.set_model(&model);
                 self.config.model = model.clone();
                 if let Some(family) = find_family_for_model(&model) {
                     self.config.model_family = family;
                 }
-                self.model_saved_to_profile = false;
-                self.model_saved_to_global = false;
-                self.show_model_save_hint();
+            }
+            AppEvent::PersistModelSelection { model, effort } => {
+                let profile = self.active_profile.as_deref();
+                match persist_model_selection(&self.config.codex_home, profile, &model, effort)
+                    .await
+                {
+                    Ok(()) => {
+                        if let Some(profile) = profile {
+                            self.chat_widget.add_info_message(
+                                format!("Model changed to {model} for {profile} profile"),
+                                None,
+                            );
+                        } else {
+                            self.chat_widget
+                                .add_info_message(format!("Model changed to {model}"), None);
+                        }
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            error = %err,
+                            "failed to persist model selection"
+                        );
+                        if let Some(profile) = profile {
+                            self.chat_widget.add_error_message(format!(
+                                "Failed to save model for profile `{profile}`: {err}"
+                            ));
+                        } else {
+                            self.chat_widget
+                                .add_error_message(format!("Failed to save default model: {err}"));
+                        }
+                    }
+                }
             }
             AppEvent::UpdateAskForApprovalPolicy(policy) => {
                 self.chat_widget.set_approval_policy(policy);
@@ -323,90 +355,9 @@ impl App {
         self.chat_widget.token_usage()
     }
 
-    fn show_model_save_hint(&mut self) {
-        let model = self.config.model.clone();
-        if self.active_profile.is_some() {
-            self.chat_widget.add_info_message(format!(
-                "Model switched to {model}. Press Ctrl+S to save it for this profile, then press Ctrl+S again to set it as your global default."
-            ));
-        } else {
-            self.chat_widget.add_info_message(format!(
-                "Model switched to {model}. Press Ctrl+S to save it as your global default."
-            ));
-        }
-    }
-
-    async fn persist_model_shortcut(&mut self) {
-        enum SaveScope<'a> {
-            Profile(&'a str),
-            Global,
-            AlreadySaved,
-        }
-
-        let scope = if let Some(profile) = self
-            .active_profile
-            .as_deref()
-            .filter(|_| !self.model_saved_to_profile)
-        {
-            SaveScope::Profile(profile)
-        } else if !self.model_saved_to_global {
-            SaveScope::Global
-        } else {
-            SaveScope::AlreadySaved
-        };
-
-        let model = self.config.model.clone();
-        let effort = self.config.model_reasoning_effort;
-        let codex_home = self.config.codex_home.clone();
-
-        match scope {
-            SaveScope::Profile(profile) => {
-                match persist_model_selection(&codex_home, Some(profile), &model, Some(effort))
-                    .await
-                {
-                    Ok(()) => {
-                        self.model_saved_to_profile = true;
-                        self.chat_widget.add_info_message(format!(
-                            "Saved model {model} ({effort}) for profile `{profile}`. Press Ctrl+S again to make this your global default."
-                        ));
-                    }
-                    Err(err) => {
-                        tracing::error!(
-                            error = %err,
-                            "failed to persist model selection via shortcut"
-                        );
-                        self.chat_widget.add_error_message(format!(
-                            "Failed to save model preference for profile `{profile}`: {err}"
-                        ));
-                    }
-                }
-            }
-            SaveScope::Global => {
-                match persist_model_selection(&codex_home, None, &model, Some(effort)).await {
-                    Ok(()) => {
-                        self.model_saved_to_global = true;
-                        self.chat_widget.add_info_message(format!(
-                            "Saved model {model} ({effort}) as your global default."
-                        ));
-                    }
-                    Err(err) => {
-                        tracing::error!(
-                            error = %err,
-                            "failed to persist global model selection via shortcut"
-                        );
-                        self.chat_widget.add_error_message(format!(
-                            "Failed to save global model preference: {err}"
-                        ));
-                    }
-                }
-            }
-            SaveScope::AlreadySaved => {
-                self.chat_widget.add_info_message(
-                    "Model preference already saved globally; no further action needed."
-                        .to_string(),
-                );
-            }
-        }
+    fn on_update_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {
+        self.chat_widget.set_reasoning_effort(effort);
+        self.config.model_reasoning_effort = effort;
     }
 
     async fn handle_key_event(&mut self, tui: &mut tui::Tui, key_event: KeyEvent) {
@@ -421,14 +372,6 @@ impl App {
                 let _ = tui.enter_alt_screen();
                 self.overlay = Some(Overlay::new_transcript(self.transcript_lines.clone()));
                 tui.frame_requester().schedule_frame();
-            }
-            KeyEvent {
-                code: KeyCode::Char('s'),
-                modifiers: crossterm::event::KeyModifiers::CONTROL,
-                kind: KeyEventKind::Press,
-                ..
-            } => {
-                self.persist_model_shortcut().await;
             }
             // Esc primes/advances backtracking only in normal (not working) mode
             // with an empty composer. In any other state, forward Esc so the
@@ -474,5 +417,67 @@ impl App {
                 // Ignore Release key events.
             }
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_backtrack::BacktrackState;
+    use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
+    use crate::file_search::FileSearchManager;
+    use codex_core::AuthManager;
+    use codex_core::CodexAuth;
+    use codex_core::ConversationManager;
+    use ratatui::text::Line;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    fn make_test_app() -> App {
+        let (chat_widget, app_event_tx, _rx, _op_rx) = make_chatwidget_manual_with_sender();
+        let config = chat_widget.config_ref().clone();
+
+        let server = Arc::new(ConversationManager::with_auth(CodexAuth::from_api_key(
+            "Test API Key",
+        )));
+        let auth_manager =
+            AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
+        let file_search = FileSearchManager::new(config.cwd.clone(), app_event_tx.clone());
+
+        App {
+            server,
+            app_event_tx,
+            chat_widget,
+            auth_manager,
+            config,
+            active_profile: None,
+            file_search,
+            transcript_lines: Vec::<Line<'static>>::new(),
+            overlay: None,
+            deferred_history_lines: Vec::new(),
+            has_emitted_history_lines: false,
+            enhanced_keys_supported: false,
+            commit_anim_running: Arc::new(AtomicBool::new(false)),
+            backtrack: BacktrackState::default(),
+        }
+    }
+
+    #[test]
+    fn update_reasoning_effort_updates_config() {
+        let mut app = make_test_app();
+        app.config.model_reasoning_effort = Some(ReasoningEffortConfig::Medium);
+        app.chat_widget
+            .set_reasoning_effort(Some(ReasoningEffortConfig::Medium));
+
+        app.on_update_reasoning_effort(Some(ReasoningEffortConfig::High));
+
+        assert_eq!(
+            app.config.model_reasoning_effort,
+            Some(ReasoningEffortConfig::High)
+        );
+        assert_eq!(
+            app.chat_widget.config_ref().model_reasoning_effort,
+            Some(ReasoningEffortConfig::High)
+        );
     }
 }

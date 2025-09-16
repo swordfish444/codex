@@ -20,7 +20,7 @@ use codex_core::config::ConfigToml;
 use codex_core::config::load_config_as_toml;
 use codex_core::config_edit::CONFIG_KEY_EFFORT;
 use codex_core::config_edit::CONFIG_KEY_MODEL;
-use codex_core::config_edit::persist_non_null_overrides;
+use codex_core::config_edit::persist_overrides_and_clear_if_none;
 use codex_core::default_client::get_codex_user_agent;
 use codex_core::exec::ExecParams;
 use codex_core::exec_env::create_env;
@@ -423,32 +423,41 @@ impl CodexMessageProcessor {
         // Determine whether auth is required based on the active model provider.
         // If a custom provider is configured with `requires_openai_auth == false`,
         // then no auth step is required; otherwise, default to requiring auth.
-        let requires_openai_auth = Some(self.config.model_provider.requires_openai_auth);
+        let requires_openai_auth = self.config.model_provider.requires_openai_auth;
 
-        let response = match self.auth_manager.auth() {
-            Some(auth) => {
-                let (reported_auth_method, token_opt) = match auth.get_token().await {
-                    Ok(token) if !token.is_empty() => {
-                        let tok = if include_token { Some(token) } else { None };
-                        (Some(auth.mode), tok)
-                    }
-                    Ok(_) => (None, None),
-                    Err(err) => {
-                        tracing::warn!("failed to get token for auth status: {err}");
-                        (None, None)
-                    }
-                };
-                codex_protocol::mcp_protocol::GetAuthStatusResponse {
-                    auth_method: reported_auth_method,
-                    auth_token: token_opt,
-                    requires_openai_auth,
-                }
-            }
-            None => codex_protocol::mcp_protocol::GetAuthStatusResponse {
+        let response = if !requires_openai_auth {
+            codex_protocol::mcp_protocol::GetAuthStatusResponse {
                 auth_method: None,
                 auth_token: None,
-                requires_openai_auth,
-            },
+                requires_openai_auth: Some(false),
+            }
+        } else {
+            match self.auth_manager.auth() {
+                Some(auth) => {
+                    let auth_mode = auth.mode;
+                    let (reported_auth_method, token_opt) = match auth.get_token().await {
+                        Ok(token) if !token.is_empty() => {
+                            let tok = if include_token { Some(token) } else { None };
+                            (Some(auth_mode), tok)
+                        }
+                        Ok(_) => (None, None),
+                        Err(err) => {
+                            tracing::warn!("failed to get token for auth status: {err}");
+                            (None, None)
+                        }
+                    };
+                    codex_protocol::mcp_protocol::GetAuthStatusResponse {
+                        auth_method: reported_auth_method,
+                        auth_token: token_opt,
+                        requires_openai_auth: Some(true),
+                    }
+                }
+                None => codex_protocol::mcp_protocol::GetAuthStatusResponse {
+                    auth_method: None,
+                    auth_token: None,
+                    requires_openai_auth: Some(true),
+                },
+            }
         };
 
         self.outgoing.send_response(request_id, response).await;
@@ -519,7 +528,7 @@ impl CodexMessageProcessor {
             (&[CONFIG_KEY_EFFORT], effort_str.as_deref()),
         ];
 
-        match persist_non_null_overrides(
+        match persist_overrides_and_clear_if_none(
             &self.config.codex_home,
             self.config.active_profile.as_deref(),
             &overrides,
@@ -1248,6 +1257,7 @@ fn derive_config_from_params(
     } = params;
     let overrides = ConfigOverrides {
         model,
+        review_model: None,
         config_profile: profile,
         cwd: cwd.map(PathBuf::from),
         approval_policy,

@@ -46,10 +46,16 @@ pub(crate) enum AppEvent {
     CommitTick,
 
     /// Update the current reasoning effort in the running app and widget.
-    UpdateReasoningEffort(ReasoningEffort),
+    UpdateReasoningEffort(Option<ReasoningEffort>),
 
     /// Update the current model slug in the running app and widget.
     UpdateModel(String),
+
+    /// Persist the selected model and reasoning effort to the appropriate config.
+    PersistModelSelection {
+        model: String,
+        effort: Option<ReasoningEffort>,
+    },
 
     /// Update the current approval policy in the running app and widget.
     UpdateAskForApprovalPolicy(AskForApproval),
