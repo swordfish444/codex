@@ -447,7 +447,8 @@ exporter = "none"          # defaults to "none"; set to otlp-http or otlp-grpc t
 log_user_prompt = false    # defaults to false; redact prompt text unless explicitly enabled
 ```
 
-Codex tags every exported event with `service.name = "codex-cli"`, the CLI
+Codex tags every exported event with `service.name = $ORIGINATOR` (the same
+value sent in the `originator` header, `codex_cli_rs` by default), the CLI
 version, and an `env` attribute so downstream collectors can distinguish
 dev/staging/prod traffic. Only telemetry produced inside the `codex_otel`
 crate—the events listed below—is forwarded to the exporter.
@@ -461,6 +462,17 @@ Every event shares a common set of metadata fields: `event.timestamp`,
 With OTEL enabled Codex emits the following event types (in addition to the
 metadata above):
 
+- `codex.conversation_starts`
+  - `provider_name`
+  - `reasoning_effort` (optional)
+  - `reasoning_summary`
+  - `context_window` (optional)
+  - `max_output_tokens` (optional)
+  - `auto_compact_token_limit` (optional)
+  - `approval_policy`
+  - `sandbox_policy`
+  - `mcp_servers` (comma-separated list)
+  - `active_profile` (optional)
 - `codex.api_request`
   - `cf_ray` (optional)
   - `attempt`
@@ -491,6 +503,8 @@ metadata above):
   - `duration_ms` (execution time for the tool)
   - `success` (`"true"` or `"false"`)
   - `output`
+
+These event shapes may change as we iterate.
 
 ### Choosing an exporter
 

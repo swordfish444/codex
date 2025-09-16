@@ -8,7 +8,6 @@ use reqwest::Error;
 use reqwest::Response;
 use serde::Serialize;
 use std::time::Duration;
-use opentelemetry_sdk::trace::Config;
 use strum_macros::Display;
 use codex_protocol::config_types::{ReasoningEffort, ReasoningSummary};
 
