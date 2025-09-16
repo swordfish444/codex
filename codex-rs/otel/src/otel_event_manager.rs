@@ -2,13 +2,15 @@ use chrono::SecondsFormat;
 use chrono::Utc;
 use codex_protocol::mcp_protocol::AuthMode;
 use codex_protocol::mcp_protocol::ConversationId;
-use codex_protocol::protocol::InputItem;
+use codex_protocol::protocol::{AskForApproval, InputItem, SandboxPolicy};
 use codex_protocol::protocol::ReviewDecision;
 use reqwest::Error;
 use reqwest::Response;
 use serde::Serialize;
 use std::time::Duration;
+use opentelemetry_sdk::trace::Config;
 use strum_macros::Display;
+use codex_protocol::config_types::{ReasoningEffort, ReasoningSummary};
 
 #[derive(Debug, Clone, Serialize, Display)]
 #[serde(rename_all = "snake_case")]
@@ -63,6 +65,43 @@ impl OtelEventManager {
         manager.metadata.model = model.to_owned();
         manager.metadata.slug = slug.to_owned();
         manager
+    }
+
+    pub fn conversation_starts(
+        &self,
+        provider_name: &str,
+        reasoning_effort: Option<ReasoningEffort>,
+        reasoning_summary: ReasoningSummary,
+        context_window: Option<u64>,
+        max_output_tokens: Option<u64>,
+        auto_compact_token_limit: Option<i64>,
+        approval_policy: AskForApproval,
+        sandbox_policy: SandboxPolicy,
+        mcp_servers: Vec<&str>,
+        active_profile: Option<String>,
+    ) {
+        tracing::event!(
+            tracing::Level::INFO,
+            event.name = "codex.conversation_starts",
+            event.timestamp = %timestamp(),
+            conversation.id = %self.metadata.conversation_id,
+            app.version = %self.metadata.app_version,
+            auth_mode = self.metadata.auth_mode,
+            user.account_id = self.metadata.account_id,
+            terminal.type = %self.metadata.terminal_type,
+            model = %self.metadata.model,
+            slug = %self.metadata.slug,
+            provider_name = %provider_name,
+            reasoning_effort = reasoning_effort.map(|e| e.to_string()),
+            reasoning_summary = %reasoning_summary,
+            context_window = context_window,
+            max_output_tokens = max_output_tokens,
+            auto_compact_token_limit = auto_compact_token_limit,
+            approval_policy = %approval_policy,
+            sandbox_policy = %sandbox_policy,
+            mcp_servers = mcp_servers.join(", "),
+            active_profile = active_profile,
+        )
     }
 
     pub fn request(

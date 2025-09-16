@@ -457,6 +457,19 @@ impl Session {
             terminal::user_agent(),
         );
 
+        otel_event_manager.conversation_starts(
+            config.model_provider.name.as_str(),
+            config.model_reasoning_effort,
+            config.model_reasoning_summary,
+            config.model_context_window,
+            config.model_max_output_tokens,
+            config.model_auto_compact_token_limit,
+            config.approval_policy,
+            config.sandbox_policy.clone(),
+            config.mcp_servers.keys().map(|k| k.as_str()).collect(),
+            config.active_profile.clone()
+        );
+
         // Now that the conversation id is final (may have been updated by resume),
         // construct the model client.
         let client = ModelClient::new(
