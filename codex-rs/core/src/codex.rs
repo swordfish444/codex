@@ -2898,8 +2898,9 @@ async fn handle_container_exec_with_params(
                 justification: params.justification.clone(),
             };
             let safety = if *user_explicitly_approved_this_action {
-                SafetyCheck::UserAutoApprove {
+                SafetyCheck::AutoApprove {
                     sandbox_type: SandboxType::None,
+                    user_explicitly_approved: true,
                 }
             } else {
                 assess_safety_for_untrusted_command(
@@ -2931,22 +2932,19 @@ async fn handle_container_exec_with_params(
     };
 
     let sandbox_type = match safety {
-        SafetyCheck::UserAutoApprove { sandbox_type } => {
+        SafetyCheck::AutoApprove {
+            sandbox_type,
+            user_explicitly_approved,
+        } => {
             otel_event_manager.tool_decision(
                 tool_name,
                 call_id.as_str(),
                 ReviewDecision::Approved,
-                ToolDecisionSource::User,
-            );
-
-            sandbox_type
-        }
-        SafetyCheck::AutoApprove { sandbox_type } => {
-            otel_event_manager.tool_decision(
-                tool_name,
-                call_id.as_str(),
-                ReviewDecision::Approved,
-                ToolDecisionSource::Config,
+                if user_explicitly_approved {
+                    ToolDecisionSource::User
+                } else {
+                    ToolDecisionSource::Config
+                },
             );
 
             sandbox_type

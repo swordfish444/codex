@@ -52,16 +52,10 @@ pub(crate) async fn apply_patch(
         &turn_context.sandbox_policy,
         &turn_context.cwd,
     ) {
-        SafetyCheck::UserAutoApprove { .. } => {
+        SafetyCheck::AutoApprove { user_explicitly_approved, .. } => {
             InternalApplyPatchInvocation::DelegateToExec(ApplyPatchExec {
                 action,
-                user_explicitly_approved_this_action: true,
-            })
-        }
-        SafetyCheck::AutoApprove { .. } => {
-            InternalApplyPatchInvocation::DelegateToExec(ApplyPatchExec {
-                action,
-                user_explicitly_approved_this_action: false,
+                user_explicitly_approved_this_action: user_explicitly_approved,
             })
         }
         SafetyCheck::AskUser => {
