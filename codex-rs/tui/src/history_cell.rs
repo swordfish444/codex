@@ -230,19 +230,10 @@ impl HistoryCell for TranscriptOnlyHistoryCell {
 }
 
 /// Cyan history cell line showing the current review status.
-#[derive(Debug)]
-pub(crate) struct ReviewStatusHistoryCell {
-    message: String,
-}
-
-impl HistoryCell for ReviewStatusHistoryCell {
-    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
-        vec![Line::from(self.message.clone().cyan())]
+pub(crate) fn new_review_status_line(message: String) -> PlainHistoryCell {
+    PlainHistoryCell {
+        lines: vec![Line::from(message.cyan())],
     }
-}
-
-pub(crate) fn new_review_status_line(message: String) -> ReviewStatusHistoryCell {
-    ReviewStatusHistoryCell { message }
 }
 
 #[derive(Debug)]
