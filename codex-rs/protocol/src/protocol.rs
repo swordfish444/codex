@@ -1367,7 +1367,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     fn deserialize_rollout_response_item_lines() {
         let timestamp = "2025-01-02T03:04:05.678Z";
         let cases: &[(&str, &str)] = &[
@@ -1511,7 +1510,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     fn deserialize_rollout_event_msg_lines() {
         let timestamp = "2025-01-02T03:04:05.678Z";
         let cases: &[(&str, &str)] = &[
@@ -1659,7 +1657,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
     fn deserialize_rollout_misc_lines() {
         let timestamp = "2025-01-02T03:04:05.678Z";
         let cases: &[(&str, &str)] = &[
