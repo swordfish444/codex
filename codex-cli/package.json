@@ -15,7 +15,8 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/openai/codex.git"
+    "url": "git+https://github.com/openai/codex.git",
+    "directory": "codex-cli"
   },
   "devDependencies": {
     "prettier": "^3.3.3"
