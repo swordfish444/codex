@@ -637,11 +637,7 @@ impl ChatWidget {
     }
 
     fn layout_areas(&self, area: Rect) -> [Rect; 3] {
-        let bottom_min = if self.is_review_mode {
-            3.min(area.height)
-        } else {
-            self.bottom_pane.desired_height(area.width).min(area.height)
-        };
+        let bottom_min = self.bottom_pane.desired_height(area.width).min(area.height);
         let remaining = area.height.saturating_sub(bottom_min);
 
         let active_desired = self
