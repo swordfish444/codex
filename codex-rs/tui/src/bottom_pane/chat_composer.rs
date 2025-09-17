@@ -142,16 +142,14 @@ impl ChatComposer {
             .desired_height(width.saturating_sub(LIVE_PREFIX_COLS))
             + match &self.active_popup {
                 ActivePopup::None => FOOTER_HEIGHT_WITH_HINT,
-                ActivePopup::Command(c) => c.calculate_required_height(width),
+                ActivePopup::Command(c) => c.calculate_required_height(),
                 ActivePopup::File(c) => c.calculate_required_height(),
             }
     }
 
     pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
         let popup_constraint = match &self.active_popup {
-            ActivePopup::Command(popup) => {
-                Constraint::Max(popup.calculate_required_height(area.width))
-            }
+            ActivePopup::Command(popup) => Constraint::Max(popup.calculate_required_height()),
             ActivePopup::File(popup) => Constraint::Max(popup.calculate_required_height()),
             ActivePopup::None => Constraint::Max(FOOTER_HEIGHT_WITH_HINT),
         };
@@ -1234,10 +1232,7 @@ impl ChatComposer {
 impl WidgetRef for ChatComposer {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let (popup_constraint, hint_spacing) = match &self.active_popup {
-            ActivePopup::Command(popup) => (
-                Constraint::Max(popup.calculate_required_height(area.width)),
-                0,
-            ),
+            ActivePopup::Command(popup) => (Constraint::Max(popup.calculate_required_height()), 0),
             ActivePopup::File(popup) => (Constraint::Max(popup.calculate_required_height()), 0),
             ActivePopup::None => (
                 Constraint::Length(FOOTER_HEIGHT_WITH_HINT),
