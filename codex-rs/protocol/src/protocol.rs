@@ -1558,12 +1558,10 @@ mod tests {
                     }),
                 ) => {
                     assert_eq!(summary.len(), 1);
-                    match &summary[0] {
-                        ReasoningItemReasoningSummary::SummaryText { text } => {
-                            assert_eq!(text, "Summarized thoughts");
-                        }
-                        other => panic!("unexpected summary variant: {other:?}"),
-                    }
+                    let ReasoningItemReasoningSummary::SummaryText { text } = &summary[0] else {
+                        panic!("unexpected summary variant: {summary:?}");
+                    };
+                    assert_eq!(text, "Summarized thoughts");
                     let reasoning_content = content.expect("expected reasoning content");
                     assert_eq!(reasoning_content.len(), 1);
                     if let ReasoningItemContent::ReasoningText { text } = &reasoning_content[0] {
