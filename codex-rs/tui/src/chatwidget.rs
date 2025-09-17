@@ -1181,8 +1181,8 @@ impl ChatWidget {
                     ));
                 } else {
                     // Show explanation when there are no structured findings.
-                    let mut rendered: Vec<ratatui::text::Line<'static>> = Vec::new();
-                    append_markdown(&format!("\n{explanation}"), &mut rendered, &self.config);
+                    let mut rendered: Vec<ratatui::text::Line<'static>> = vec!["".into()];
+                    append_markdown(&explanation, &mut rendered, &self.config);
                     let body_cell = AgentMessageCell::new(rendered, false);
                     self.app_event_tx
                         .send(AppEvent::InsertHistoryCell(Box::new(body_cell)));
