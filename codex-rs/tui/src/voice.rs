@@ -324,23 +324,22 @@ fn encode_wav_normalized(audio: &RecordedAudio) -> Result<Vec<u8>, String> {
 
 async fn resolve_auth() -> Result<(String, Option<String>), String> {
     let codex_home = find_codex_home().map_err(|e| format!("failed to find codex home: {e}"))?;
-    let auth_opt = CodexAuth::from_codex_home(&codex_home, AuthMode::ChatGPT)
-        .map_err(|e| format!("failed to read auth.json: {e}"))?;
-    match auth_opt {
-        Some(auth) => {
-            let token = auth
-                .get_token()
-                .await
-                .map_err(|e| format!("failed to get auth token: {e}"))?;
-            let account_id = if matches!(auth.mode, AuthMode::ChatGPT) {
-                auth.get_account_id()
-            } else {
-                None
-            };
-            Ok((token, account_id))
-        }
-        None => Err("No Codex auth is configured; please run `codex login`".to_string()),
+    let auth = CodexAuth::from_codex_home(&codex_home)
+        .map_err(|e| format!("failed to read auth.json: {e}"))?
+        .ok_or_else(|| "No Codex auth is configured; please run `codex login`".to_string())?;
+
+    if auth.mode != AuthMode::ChatGPT {
+        return Err(
+            "Voice transcription requires ChatGPT auth; please run `codex login`".to_string(),
+        );
     }
+
+    let token = auth
+        .get_token()
+        .await
+        .map_err(|e| format!("failed to get auth token: {e}"))?;
+    let account_id = auth.get_account_id();
+    Ok((token, account_id))
 }
 
 async fn transcribe_bytes(wav_bytes: Vec<u8>) -> Result<String, String> {

@@ -1,4 +1,4 @@
-use codex_core::protocol::ConversationHistoryResponseEvent;
+use codex_core::protocol::ConversationPathResponseEvent;
 use codex_core::protocol::Event;
 use codex_file_search::FileMatch;
 
@@ -59,10 +59,16 @@ pub(crate) enum AppEvent {
     },
 
     /// Update the current reasoning effort in the running app and widget.
-    UpdateReasoningEffort(ReasoningEffort),
+    UpdateReasoningEffort(Option<ReasoningEffort>),
 
     /// Update the current model slug in the running app and widget.
     UpdateModel(String),
+
+    /// Persist the selected model and reasoning effort to the appropriate config.
+    PersistModelSelection {
+        model: String,
+        effort: Option<ReasoningEffort>,
+    },
 
     /// Update the current approval policy in the running app and widget.
     UpdateAskForApprovalPolicy(AskForApproval),
@@ -71,7 +77,7 @@ pub(crate) enum AppEvent {
     UpdateSandboxPolicy(SandboxPolicy),
 
     /// Forwarded conversation history snapshot from the current conversation.
-    ConversationHistory(ConversationHistoryResponseEvent),
+    ConversationHistory(ConversationPathResponseEvent),
 
     /// Live update for the in-progress voice recording placeholder. Carries
     /// the placeholder `id` and the text to display (e.g., an ASCII meter).

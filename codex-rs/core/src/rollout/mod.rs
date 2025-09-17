@@ -7,10 +7,10 @@ pub mod list;
 pub(crate) mod policy;
 pub mod recorder;
 
+pub use codex_protocol::protocol::SessionMeta;
+pub use list::find_conversation_path_by_id_str;
 pub use recorder::RolloutRecorder;
 pub use recorder::RolloutRecorderParams;
-pub use recorder::SessionMeta;
-pub use recorder::SessionStateSnapshot;
 
 #[cfg(test)]
 pub mod tests;

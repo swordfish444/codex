@@ -701,10 +701,7 @@ impl TextArea {
     }
 
     fn add_element_with_id(&mut self, range: Range<usize>, id: Option<String>) {
-        let elem = TextElement {
-            range: range.clone(),
-            id,
-        };
+        let elem = TextElement { range, id };
         self.elements.push(elem);
         self.elements.sort_by_key(|e| e.range.start);
     }
