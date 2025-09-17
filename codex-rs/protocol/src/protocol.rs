@@ -518,7 +518,7 @@ pub enum EventMsg {
     ExitedReviewMode(ExitedReviewModeEvent),
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, TS)]
 pub struct ExitedReviewModeEvent {
     pub review_output: Option<ReviewOutputEvent>,
 }
@@ -540,7 +540,7 @@ pub struct TaskStartedEvent {
     pub model_context_window: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, TS)]
 pub struct TokenUsage {
     pub input_tokens: u64,
     pub cached_input_tokens: u64,
@@ -549,7 +549,7 @@ pub struct TokenUsage {
     pub total_tokens: u64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, TS)]
 pub struct TokenUsageInfo {
     pub total_token_usage: TokenUsage,
     pub last_token_usage: TokenUsage,
@@ -586,7 +586,7 @@ impl TokenUsageInfo {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, TS)]
 pub struct TokenCountEvent {
     pub info: Option<TokenUsageInfo>,
 }
@@ -695,12 +695,12 @@ impl fmt::Display for FinalOutput {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, TS)]
 pub struct AgentMessageEvent {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum InputMessageKind {
     /// Plain user text (default)
@@ -711,7 +711,7 @@ pub enum InputMessageKind {
     EnvironmentContext,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, TS)]
 pub struct UserMessageEvent {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -768,12 +768,12 @@ pub struct AgentMessageDeltaEvent {
     pub delta: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, TS)]
 pub struct AgentReasoningEvent {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, TS)]
 pub struct AgentReasoningRawContentEvent {
     pub text: String,
 }
@@ -896,7 +896,7 @@ impl InitialHistory {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Default, Debug, TS)]
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq, TS)]
 pub struct SessionMeta {
     pub id: ConversationId,
     pub timestamp: String,
@@ -906,7 +906,7 @@ pub struct SessionMeta {
     pub instructions: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
 pub struct SessionMetaLine {
     #[serde(flatten)]
     pub meta: SessionMeta,
@@ -924,7 +924,7 @@ pub enum RolloutItem {
     EventMsg(EventMsg),
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
 pub struct CompactedItem {
     pub message: String,
 }
@@ -941,7 +941,7 @@ impl From<CompactedItem> for ResponseItem {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
 pub struct TurnContextItem {
     pub cwd: PathBuf,
     pub approval_policy: AskForApproval,
@@ -959,7 +959,7 @@ pub struct RolloutLine {
     pub item: RolloutItem,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
 pub struct GitInfo {
     /// Current commit hash (SHA)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1230,7 +1230,7 @@ pub struct Chunk {
     pub inserted_lines: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, TS)]
 pub struct TurnAbortedEvent {
     pub reason: TurnAbortReason,
 }
@@ -1245,12 +1245,15 @@ pub enum TurnAbortReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::FunctionCallOutputPayload;
     use crate::models::LocalShellAction;
+    use crate::models::LocalShellExecAction;
     use crate::models::LocalShellStatus;
     use crate::models::ReasoningItemContent;
     use crate::models::ReasoningItemReasoningSummary;
     use crate::models::WebSearchAction;
     use serde_json::json;
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
 
@@ -1312,7 +1315,7 @@ mod tests {
     #[test]
     fn deserialize_rollout_session_meta_lines() {
         let timestamp = "2025-01-02T03:04:05.678Z";
-        let conversation_id = uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        let conversation_id = ConversationId(uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"));
         let cases: &[(&str, &str)] = &[
             (
                 "with_git",
@@ -1324,38 +1327,41 @@ mod tests {
             ),
         ];
 
+        let base_meta = SessionMeta {
+            id: conversation_id,
+            timestamp: timestamp.to_string(),
+            cwd: PathBuf::from("/workspace"),
+            originator: "codex-cli".to_string(),
+            cli_version: "1.0.0".to_string(),
+            instructions: None,
+        };
+
         for &(case, raw) in cases {
             let parsed = parse_rollout_line(raw, case);
             assert_eq!(parsed.timestamp, timestamp);
-            match parsed.item {
-                RolloutItem::SessionMeta(session_meta) => {
-                    assert_eq!(session_meta.meta.id, ConversationId(conversation_id));
-                    assert_eq!(session_meta.meta.cli_version, "1.0.0");
-                    assert_eq!(session_meta.meta.originator, "codex-cli");
-                    assert_eq!(session_meta.meta.cwd, PathBuf::from("/workspace"));
-                    assert_eq!(session_meta.meta.timestamp, timestamp);
-                    match case {
-                        "with_git" => {
-                            assert_eq!(
-                                session_meta.meta.instructions.as_deref(),
-                                Some("Remember the tests")
-                            );
-                            let git = session_meta.git.expect("expected git info");
-                            assert_eq!(git.commit_hash.as_deref(), Some("abc123"));
-                            assert_eq!(git.branch.as_deref(), Some("main"));
-                            assert_eq!(
-                                git.repository_url.as_deref(),
-                                Some("https://example.com/repo.git")
-                            );
-                        }
-                        "without_git" => {
-                            assert!(session_meta.meta.instructions.is_none());
-                            assert!(session_meta.git.is_none());
-                        }
-                        _ => unreachable!(),
-                    }
+            match (case, parsed.item) {
+                ("with_git", RolloutItem::SessionMeta(actual)) => {
+                    let expected = SessionMetaLine {
+                        meta: SessionMeta {
+                            instructions: Some("Remember the tests".to_string()),
+                            ..base_meta.clone()
+                        },
+                        git: Some(GitInfo {
+                            commit_hash: Some("abc123".to_string()),
+                            branch: Some("main".to_string()),
+                            repository_url: Some("https://example.com/repo.git".to_string()),
+                        }),
+                    };
+                    assert_eq!(actual, expected);
                 }
-                other => panic!("case {case} parsed as unexpected item {other:?}"),
+                ("without_git", RolloutItem::SessionMeta(actual)) => {
+                    let expected = SessionMetaLine {
+                        meta: base_meta.clone(),
+                        git: None,
+                    };
+                    assert_eq!(actual, expected);
+                }
+                (case, item) => panic!("case {case} parsed as unexpected item {item:?}"),
             }
         }
     }
@@ -1409,119 +1415,96 @@ mod tests {
             let parsed = parse_rollout_line(raw, case);
             assert_eq!(parsed.timestamp, timestamp);
             match (case, parsed.item) {
-                (
-                    "message",
-                    RolloutItem::ResponseItem(ResponseItem::Message { role, content, .. }),
-                ) => {
-                    assert_eq!(role, "assistant");
-                    assert_eq!(content.len(), 1);
-                    if let ContentItem::OutputText { text } = &content[0] {
-                        assert_eq!(text, "Hello from assistant");
-                    } else {
-                        panic!("unexpected content variant in message case");
-                    }
+                ("message", RolloutItem::ResponseItem(actual)) => {
+                    let expected = ResponseItem::Message {
+                        id: Some("legacy-message".to_string()),
+                        role: "assistant".to_string(),
+                        content: vec![ContentItem::OutputText {
+                            text: "Hello from assistant".to_string(),
+                        }],
+                    };
+                    assert_eq!(actual, expected);
                 }
-                (
-                    "reasoning",
-                    RolloutItem::ResponseItem(ResponseItem::Reasoning {
-                        summary,
-                        content,
-                        encrypted_content,
-                        ..
-                    }),
-                ) => {
-                    assert_eq!(summary.len(), 1);
-                    let ReasoningItemReasoningSummary::SummaryText { text } = &summary[0];
-                    assert_eq!(text, "Summarized thoughts");
-                    let reasoning_content = content.expect("expected reasoning content");
-                    assert_eq!(reasoning_content.len(), 1);
-                    if let ReasoningItemContent::ReasoningText { text } = &reasoning_content[0] {
-                        assert_eq!(text, "Detailed reasoning");
-                    } else {
-                        panic!("unexpected reasoning content variant");
-                    }
-                    assert_eq!(encrypted_content.as_deref(), Some("encrypted"));
+                ("reasoning", RolloutItem::ResponseItem(actual)) => {
+                    let expected = ResponseItem::Reasoning {
+                        id: "reasoning-1".to_string(),
+                        summary: vec![ReasoningItemReasoningSummary::SummaryText {
+                            text: "Summarized thoughts".to_string(),
+                        }],
+                        content: Some(vec![ReasoningItemContent::ReasoningText {
+                            text: "Detailed reasoning".to_string(),
+                        }]),
+                        encrypted_content: Some("encrypted".to_string()),
+                    };
+                    assert_eq!(actual, expected);
                 }
-                (
-                    "local_shell_call",
-                    RolloutItem::ResponseItem(ResponseItem::LocalShellCall {
-                        call_id,
-                        status,
-                        action,
-                        ..
-                    }),
-                ) => {
-                    assert_eq!(call_id.as_deref(), Some("shell-call-1"));
-                    assert!(matches!(status, LocalShellStatus::Completed));
-                    match action {
-                        LocalShellAction::Exec(exec) => {
-                            assert_eq!(exec.command, vec!["ls", "-la"]);
-                            assert_eq!(exec.timeout_ms, Some(1200));
-                            assert_eq!(exec.working_directory.as_deref(), Some("/workspace"));
-                            let env = exec.env.expect("expected env map");
-                            assert_eq!(env.get("PATH"), Some(&"/usr/bin".to_string()));
-                            assert_eq!(exec.user.as_deref(), Some("codex"));
-                        }
-                    }
+                ("local_shell_call", RolloutItem::ResponseItem(actual)) => {
+                    let expected = ResponseItem::LocalShellCall {
+                        id: Some("legacy-shell-call".to_string()),
+                        call_id: Some("shell-call-1".to_string()),
+                        status: LocalShellStatus::Completed,
+                        action: LocalShellAction::Exec(LocalShellExecAction {
+                            command: vec!["ls".to_string(), "-la".to_string()],
+                            timeout_ms: Some(1200),
+                            working_directory: Some("/workspace".to_string()),
+                            env: Some(HashMap::from([(
+                                "PATH".to_string(),
+                                "/usr/bin".to_string(),
+                            )])),
+                            user: Some("codex".to_string()),
+                        }),
+                    };
+                    assert_eq!(actual, expected);
                 }
-                (
-                    "function_call",
-                    RolloutItem::ResponseItem(ResponseItem::FunctionCall {
-                        name,
-                        arguments,
-                        call_id,
-                        ..
-                    }),
-                ) => {
-                    assert_eq!(name, "shell");
-                    assert_eq!(arguments, "{\"command\":[\"echo\",\"hi\"]}");
-                    assert_eq!(call_id, "call-123");
+                ("function_call", RolloutItem::ResponseItem(actual)) => {
+                    let expected = ResponseItem::FunctionCall {
+                        id: Some("legacy-function".to_string()),
+                        name: "shell".to_string(),
+                        arguments: "{\"command\":[\"echo\",\"hi\"]}".to_string(),
+                        call_id: "call-123".to_string(),
+                    };
+                    assert_eq!(actual, expected);
                 }
-                (
-                    "function_call_output",
-                    RolloutItem::ResponseItem(ResponseItem::FunctionCallOutput { output, .. }),
-                ) => {
-                    assert_eq!(output.content, "{\"stdout\":\"done\"}");
-                    assert!(output.success.is_none());
+                ("function_call_output", RolloutItem::ResponseItem(actual)) => {
+                    let expected = ResponseItem::FunctionCallOutput {
+                        call_id: "call-123".to_string(),
+                        output: FunctionCallOutputPayload {
+                            content: "{\"stdout\":\"done\"}".to_string(),
+                            success: None,
+                        },
+                    };
+                    assert_eq!(actual, expected);
                 }
-                (
-                    "custom_tool_call",
-                    RolloutItem::ResponseItem(ResponseItem::CustomToolCall {
-                        status,
-                        call_id,
-                        name,
-                        input,
-                        ..
-                    }),
-                ) => {
-                    assert_eq!(status.as_deref(), Some("completed"));
-                    assert_eq!(call_id, "tool-456");
-                    assert_eq!(name, "my_tool");
-                    assert_eq!(input, "{\"foo\":1}");
+                ("custom_tool_call", RolloutItem::ResponseItem(actual)) => {
+                    let expected = ResponseItem::CustomToolCall {
+                        id: Some("legacy-tool".to_string()),
+                        status: Some("completed".to_string()),
+                        call_id: "tool-456".to_string(),
+                        name: "my_tool".to_string(),
+                        input: "{\"foo\":1}".to_string(),
+                    };
+                    assert_eq!(actual, expected);
                 }
-                (
-                    "custom_tool_call_output",
-                    RolloutItem::ResponseItem(ResponseItem::CustomToolCallOutput {
-                        output, ..
-                    }),
-                ) => {
-                    assert_eq!(output, "tool finished");
+                ("custom_tool_call_output", RolloutItem::ResponseItem(actual)) => {
+                    let expected = ResponseItem::CustomToolCallOutput {
+                        call_id: "tool-456".to_string(),
+                        output: "tool finished".to_string(),
+                    };
+                    assert_eq!(actual, expected);
                 }
-                (
-                    "web_search_call",
-                    RolloutItem::ResponseItem(ResponseItem::WebSearchCall {
-                        status, action, ..
-                    }),
-                ) => {
-                    assert_eq!(status.as_deref(), Some("completed"));
-                    match action {
-                        WebSearchAction::Search { query } => {
-                            assert_eq!(query, "weather in SF");
-                        }
-                        WebSearchAction::Other => panic!("unexpected web search action variant"),
-                    }
+                ("web_search_call", RolloutItem::ResponseItem(actual)) => {
+                    let expected = ResponseItem::WebSearchCall {
+                        id: Some("legacy-search".to_string()),
+                        status: Some("completed".to_string()),
+                        action: WebSearchAction::Search {
+                            query: "weather in SF".to_string(),
+                        },
+                    };
+                    assert_eq!(actual, expected);
                 }
-                ("other", RolloutItem::ResponseItem(ResponseItem::Other)) => {}
+                ("other", RolloutItem::ResponseItem(actual)) => {
+                    assert_eq!(actual, ResponseItem::Other);
+                }
                 (case, item) => panic!("case {case} returned unexpected item {item:?}"),
             }
         }
@@ -1576,67 +1559,99 @@ mod tests {
             let parsed = parse_rollout_line(raw, case);
             assert_eq!(parsed.timestamp, timestamp);
             match (case, parsed.item) {
-                ("user_message", RolloutItem::EventMsg(EventMsg::UserMessage(event))) => {
-                    assert_eq!(event.message, "Please help");
-                    assert!(matches!(event.kind, Some(InputMessageKind::Plain)));
-                    let images = event.images.expect("expected images");
-                    assert_eq!(images, vec!["data:image/png;base64,AAA".to_string()]);
+                ("user_message", RolloutItem::EventMsg(EventMsg::UserMessage(actual))) => {
+                    let expected = UserMessageEvent {
+                        message: "Please help".to_string(),
+                        kind: Some(InputMessageKind::Plain),
+                        images: Some(vec!["data:image/png;base64,AAA".to_string()]),
+                    };
+                    assert_eq!(actual, expected);
                 }
-                ("agent_message", RolloutItem::EventMsg(EventMsg::AgentMessage(event))) => {
-                    assert_eq!(event.message, "Sure thing");
+                ("agent_message", RolloutItem::EventMsg(EventMsg::AgentMessage(actual))) => {
+                    let expected = AgentMessageEvent {
+                        message: "Sure thing".to_string(),
+                    };
+                    assert_eq!(actual, expected);
                 }
-                ("agent_reasoning", RolloutItem::EventMsg(EventMsg::AgentReasoning(event))) => {
-                    assert_eq!(event.text, "Thinking...");
+                ("agent_reasoning", RolloutItem::EventMsg(EventMsg::AgentReasoning(actual))) => {
+                    let expected = AgentReasoningEvent {
+                        text: "Thinking...".to_string(),
+                    };
+                    assert_eq!(actual, expected);
                 }
                 (
                     "agent_reasoning_raw_content",
-                    RolloutItem::EventMsg(EventMsg::AgentReasoningRawContent(event)),
+                    RolloutItem::EventMsg(EventMsg::AgentReasoningRawContent(actual)),
                 ) => {
-                    assert_eq!(event.text, "raw reasoning");
+                    let expected = AgentReasoningRawContentEvent {
+                        text: "raw reasoning".to_string(),
+                    };
+                    assert_eq!(actual, expected);
                 }
-                ("token_count_info", RolloutItem::EventMsg(EventMsg::TokenCount(event))) => {
-                    let info = event.info.expect("expected token info");
-                    assert_eq!(info.total_token_usage.input_tokens, 120);
-                    assert_eq!(info.total_token_usage.cached_input_tokens, 10);
-                    assert_eq!(info.total_token_usage.output_tokens, 30);
-                    assert_eq!(info.total_token_usage.reasoning_output_tokens, 5);
-                    assert_eq!(info.total_token_usage.total_tokens, 165);
-                    assert_eq!(info.last_token_usage.output_tokens, 15);
-                    assert_eq!(info.model_context_window, Some(16000));
+                ("token_count_info", RolloutItem::EventMsg(EventMsg::TokenCount(actual))) => {
+                    let expected = TokenCountEvent {
+                        info: Some(TokenUsageInfo {
+                            total_token_usage: TokenUsage {
+                                input_tokens: 120,
+                                cached_input_tokens: 10,
+                                output_tokens: 30,
+                                reasoning_output_tokens: 5,
+                                total_tokens: 165,
+                            },
+                            last_token_usage: TokenUsage {
+                                input_tokens: 20,
+                                cached_input_tokens: 0,
+                                output_tokens: 15,
+                                reasoning_output_tokens: 5,
+                                total_tokens: 40,
+                            },
+                            model_context_window: Some(16000),
+                        }),
+                    };
+                    assert_eq!(actual, expected);
                 }
-                ("token_count_none", RolloutItem::EventMsg(EventMsg::TokenCount(event))) => {
-                    assert!(event.info.is_none());
+                ("token_count_none", RolloutItem::EventMsg(EventMsg::TokenCount(actual))) => {
+                    let expected = TokenCountEvent { info: None };
+                    assert_eq!(actual, expected);
                 }
                 (
                     "entered_review_mode",
-                    RolloutItem::EventMsg(EventMsg::EnteredReviewMode(request)),
+                    RolloutItem::EventMsg(EventMsg::EnteredReviewMode(actual)),
                 ) => {
-                    assert_eq!(request.prompt, "Need review");
-                    assert_eq!(request.user_facing_hint, "double-check work");
+                    let expected = ReviewRequest {
+                        prompt: "Need review".to_string(),
+                        user_facing_hint: "double-check work".to_string(),
+                    };
+                    assert_eq!(actual, expected);
                 }
                 (
                     "exited_review_mode",
-                    RolloutItem::EventMsg(EventMsg::ExitedReviewMode(event)),
+                    RolloutItem::EventMsg(EventMsg::ExitedReviewMode(actual)),
                 ) => {
-                    let output = event.review_output.expect("expected review output");
-                    assert_eq!(output.findings.len(), 1);
-                    let finding = &output.findings[0];
-                    assert_eq!(finding.title, "Bug");
-                    assert_eq!(finding.body, "Found an issue");
-                    assert_eq!(finding.confidence_score, 0.4);
-                    assert_eq!(finding.priority, 1);
-                    assert_eq!(
-                        finding.code_location.absolute_file_path,
-                        PathBuf::from("/workspace/src/lib.rs")
-                    );
-                    assert_eq!(finding.code_location.line_range.start, 1);
-                    assert_eq!(finding.code_location.line_range.end, 3);
-                    assert_eq!(output.overall_correctness, "needs_changes");
-                    assert_eq!(output.overall_explanation, "Please fix");
-                    assert_eq!(output.overall_confidence_score, 0.9);
+                    let expected = ExitedReviewModeEvent {
+                        review_output: Some(ReviewOutputEvent {
+                            findings: vec![ReviewFinding {
+                                title: "Bug".to_string(),
+                                body: "Found an issue".to_string(),
+                                confidence_score: 0.4,
+                                priority: 1,
+                                code_location: ReviewCodeLocation {
+                                    absolute_file_path: PathBuf::from("/workspace/src/lib.rs"),
+                                    line_range: ReviewLineRange { start: 1, end: 3 },
+                                },
+                            }],
+                            overall_correctness: "needs_changes".to_string(),
+                            overall_explanation: "Please fix".to_string(),
+                            overall_confidence_score: 0.9,
+                        }),
+                    };
+                    assert_eq!(actual, expected);
                 }
-                ("turn_aborted", RolloutItem::EventMsg(EventMsg::TurnAborted(event))) => {
-                    assert_eq!(event.reason, TurnAbortReason::Interrupted);
+                ("turn_aborted", RolloutItem::EventMsg(EventMsg::TurnAborted(actual))) => {
+                    let expected = TurnAbortedEvent {
+                        reason: TurnAbortReason::Interrupted,
+                    };
+                    assert_eq!(actual, expected);
                 }
                 (case, item) => panic!("case {case} returned unexpected item {item:?}"),
             }
@@ -1666,39 +1681,38 @@ mod tests {
             let parsed = parse_rollout_line(raw, case);
             assert_eq!(parsed.timestamp, timestamp);
             match (case, parsed.item) {
-                ("compacted", RolloutItem::Compacted(CompactedItem { message })) => {
-                    assert_eq!(message, "Turn summary");
+                ("compacted", RolloutItem::Compacted(actual)) => {
+                    let expected = CompactedItem {
+                        message: "Turn summary".to_string(),
+                    };
+                    assert_eq!(actual, expected);
                 }
-                ("turn_context_workspace", RolloutItem::TurnContext(turn_context)) => {
-                    assert_eq!(turn_context.cwd, PathBuf::from("/workspace"));
-                    assert_eq!(turn_context.approval_policy, AskForApproval::OnRequest);
-                    match turn_context.sandbox_policy {
-                        SandboxPolicy::WorkspaceWrite {
-                            writable_roots,
-                            network_access,
-                            exclude_tmpdir_env_var,
-                            exclude_slash_tmp,
-                        } => {
-                            assert_eq!(writable_roots, vec![PathBuf::from("/workspace/tmp")]);
-                            assert!(network_access);
-                            assert!(!exclude_tmpdir_env_var);
-                            assert!(exclude_slash_tmp);
-                        }
-                        other => panic!("expected workspace-write sandbox policy, got {other:?}"),
-                    }
-                    assert_eq!(turn_context.model, "gpt-5");
-                    assert_eq!(turn_context.effort, Some(ReasoningEffortConfig::High));
-                    assert_eq!(turn_context.summary, ReasoningSummaryConfig::Detailed);
+                ("turn_context_workspace", RolloutItem::TurnContext(actual)) => {
+                    let expected = TurnContextItem {
+                        cwd: PathBuf::from("/workspace"),
+                        approval_policy: AskForApproval::OnRequest,
+                        sandbox_policy: SandboxPolicy::WorkspaceWrite {
+                            writable_roots: vec![PathBuf::from("/workspace/tmp")],
+                            network_access: true,
+                            exclude_tmpdir_env_var: false,
+                            exclude_slash_tmp: true,
+                        },
+                        model: "gpt-5".to_string(),
+                        effort: Some(ReasoningEffortConfig::High),
+                        summary: ReasoningSummaryConfig::Detailed,
+                    };
+                    assert_eq!(actual, expected);
                 }
-                ("turn_context_read_only", RolloutItem::TurnContext(turn_context)) => {
-                    assert_eq!(turn_context.cwd, PathBuf::from("/workspace"));
-                    assert_eq!(turn_context.approval_policy, AskForApproval::Never);
-                    assert!(turn_context.effort.is_none());
-                    assert_eq!(turn_context.summary, ReasoningSummaryConfig::Auto);
-                    match turn_context.sandbox_policy {
-                        SandboxPolicy::ReadOnly => {}
-                        other => panic!("expected read-only sandbox policy, got {other:?}"),
-                    }
+                ("turn_context_read_only", RolloutItem::TurnContext(actual)) => {
+                    let expected = TurnContextItem {
+                        cwd: PathBuf::from("/workspace"),
+                        approval_policy: AskForApproval::Never,
+                        sandbox_policy: SandboxPolicy::ReadOnly,
+                        model: "gpt-5".to_string(),
+                        effort: None,
+                        summary: ReasoningSummaryConfig::Auto,
+                    };
+                    assert_eq!(actual, expected);
                 }
                 (case, item) => panic!("case {case} returned unexpected item {item:?}"),
             }
