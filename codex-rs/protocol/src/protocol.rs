@@ -1558,9 +1558,7 @@ mod tests {
                     }),
                 ) => {
                     assert_eq!(summary.len(), 1);
-                    let ReasoningItemReasoningSummary::SummaryText { text } = &summary[0] else {
-                        panic!("unexpected summary variant: {summary:?}");
-                    };
+                    let ReasoningItemReasoningSummary::SummaryText { text } = &summary[0];
                     assert_eq!(text, "Summarized thoughts");
                     let reasoning_content = content.expect("expected reasoning content");
                     assert_eq!(reasoning_content.len(), 1);
