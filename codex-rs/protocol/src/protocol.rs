@@ -1250,7 +1250,6 @@ mod tests {
     use crate::models::ReasoningItemContent;
     use crate::models::ReasoningItemReasoningSummary;
     use crate::models::WebSearchAction;
-    use serde_json::Value;
     use serde_json::json;
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
@@ -1306,57 +1305,27 @@ mod tests {
         assert_eq!(deserialized, event);
     }
 
-    fn parse_rollout_line(value: Value, case: &str) -> RolloutLine {
-        let serialized = serde_json::to_string(&value)
-            .unwrap_or_else(|err| panic!("failed to serialize {case}: {err}"));
-        serde_json::from_str(&serialized)
-            .unwrap_or_else(|err| panic!("failed to parse {case}: {err}"))
+    fn parse_rollout_line(value: &str, case: &str) -> RolloutLine {
+        serde_json::from_str(value).unwrap_or_else(|err| panic!("failed to parse {case}: {err}"))
     }
 
     #[test]
     fn deserialize_rollout_session_meta_lines() {
         let timestamp = "2025-01-02T03:04:05.678Z";
         let conversation_id = uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-        let cases: Vec<(&str, Value)> = vec![
+        let cases: &[(&str, &str)] = &[
             (
                 "with_git",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "session_meta",
-                    "payload": {
-                        "id": conversation_id,
-                        "timestamp": timestamp,
-                        "cwd": "/workspace",
-                        "originator": "codex-cli",
-                        "cli_version": "1.0.0",
-                        "instructions": "Remember the tests",
-                        "git": {
-                            "commit_hash": "abc123",
-                            "branch": "main",
-                            "repository_url": "https://example.com/repo.git"
-                        }
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/session_meta/with_git.json"),
             ),
             (
                 "without_git",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "session_meta",
-                    "payload": {
-                        "id": conversation_id,
-                        "timestamp": timestamp,
-                        "cwd": "/workspace",
-                        "originator": "codex-cli",
-                        "cli_version": "1.0.0",
-                        "instructions": null
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/session_meta/without_git.json"),
             ),
         ];
 
-        for (case, value) in cases {
-            let parsed = parse_rollout_line(value, case);
+        for &(case, raw) in cases {
+            let parsed = parse_rollout_line(raw, case);
             assert_eq!(parsed.timestamp, timestamp);
             match parsed.item {
                 RolloutItem::SessionMeta(session_meta) => {
@@ -1395,145 +1364,49 @@ mod tests {
     #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     fn deserialize_rollout_response_item_lines() {
         let timestamp = "2025-01-02T03:04:05.678Z";
-        let cases: Vec<(&str, Value)> = vec![
+        let cases: &[(&str, &str)] = &[
             (
                 "message",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "response_item",
-                    "payload": {
-                        "type": "message",
-                        "id": "legacy-message",
-                        "role": "assistant",
-                        "content": [
-                            { "type": "output_text", "text": "Hello from assistant" }
-                        ]
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/response_item/message.json"),
             ),
             (
                 "reasoning",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "response_item",
-                    "payload": {
-                        "type": "reasoning",
-                        "id": "reasoning-1",
-                        "summary": [
-                            { "type": "summary_text", "text": "Summarized thoughts" }
-                        ],
-                        "content": [
-                            { "type": "reasoning_text", "text": "Detailed reasoning" }
-                        ],
-                        "encrypted_content": "encrypted"
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/response_item/reasoning.json"),
             ),
             (
                 "local_shell_call",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "response_item",
-                    "payload": {
-                        "type": "local_shell_call",
-                        "id": "legacy-shell-call",
-                        "call_id": "shell-call-1",
-                        "status": "completed",
-                        "action": {
-                            "type": "exec",
-                            "command": ["ls", "-la"],
-                            "timeout_ms": 1200,
-                            "working_directory": "/workspace",
-                            "env": { "PATH": "/usr/bin" },
-                            "user": "codex"
-                        }
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/response_item/local_shell_call.json"),
             ),
             (
                 "function_call",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "response_item",
-                    "payload": {
-                        "type": "function_call",
-                        "id": "legacy-function",
-                        "name": "shell",
-                        "arguments": "{\"command\":[\"echo\",\"hi\"]}",
-                        "call_id": "call-123"
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/response_item/function_call.json"),
             ),
             (
                 "function_call_output",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "response_item",
-                    "payload": {
-                        "type": "function_call_output",
-                        "call_id": "call-123",
-                        "output": "{\"stdout\":\"done\"}"
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/response_item/function_call_output.json"),
             ),
             (
                 "custom_tool_call",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "response_item",
-                    "payload": {
-                        "type": "custom_tool_call",
-                        "id": "legacy-tool",
-                        "status": "completed",
-                        "call_id": "tool-456",
-                        "name": "my_tool",
-                        "input": "{\"foo\":1}"
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/response_item/custom_tool_call.json"),
             ),
             (
                 "custom_tool_call_output",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "response_item",
-                    "payload": {
-                        "type": "custom_tool_call_output",
-                        "call_id": "tool-456",
-                        "output": "tool finished"
-                    }
-                }),
+                include_str!(
+                    "../tests/fixtures/rollouts/response_item/custom_tool_call_output.json"
+                ),
             ),
             (
                 "web_search_call",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "response_item",
-                    "payload": {
-                        "type": "web_search_call",
-                        "id": "legacy-search",
-                        "status": "completed",
-                        "action": {
-                            "type": "search",
-                            "query": "weather in SF"
-                        }
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/response_item/web_search_call.json"),
             ),
             (
                 "other",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "response_item",
-                    "payload": {
-                        "type": "new_future_item",
-                        "foo": "bar"
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/response_item/other.json"),
             ),
         ];
 
-        for (case, value) in cases {
-            let parsed = parse_rollout_line(value, case);
+        for &(case, raw) in cases {
+            let parsed = parse_rollout_line(raw, case);
             assert_eq!(parsed.timestamp, timestamp);
             match (case, parsed.item) {
                 (
@@ -1658,145 +1531,49 @@ mod tests {
     #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     fn deserialize_rollout_event_msg_lines() {
         let timestamp = "2025-01-02T03:04:05.678Z";
-        let cases: Vec<(&str, Value)> = vec![
+        let cases: &[(&str, &str)] = &[
             (
                 "user_message",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "user_message",
-                        "message": "Please help",
-                        "kind": "plain",
-                        "images": ["data:image/png;base64,AAA"]
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/event_msg/user_message.json"),
             ),
             (
                 "agent_message",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "agent_message",
-                        "message": "Sure thing"
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/event_msg/agent_message.json"),
             ),
             (
                 "agent_reasoning",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "agent_reasoning",
-                        "text": "Thinking..."
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/event_msg/agent_reasoning.json"),
             ),
             (
                 "agent_reasoning_raw_content",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "agent_reasoning_raw_content",
-                        "text": "raw reasoning"
-                    }
-                }),
+                include_str!(
+                    "../tests/fixtures/rollouts/event_msg/agent_reasoning_raw_content.json"
+                ),
             ),
             (
                 "token_count_info",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "token_count",
-                        "info": {
-                            "total_token_usage": {
-                                "input_tokens": 120,
-                                "cached_input_tokens": 10,
-                                "output_tokens": 30,
-                                "reasoning_output_tokens": 5,
-                                "total_tokens": 165
-                            },
-                            "last_token_usage": {
-                                "input_tokens": 20,
-                                "cached_input_tokens": 0,
-                                "output_tokens": 15,
-                                "reasoning_output_tokens": 5,
-                                "total_tokens": 40
-                            },
-                            "model_context_window": 16000
-                        }
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/event_msg/token_count_info.json"),
             ),
             (
                 "token_count_none",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "token_count",
-                        "info": null
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/event_msg/token_count_none.json"),
             ),
             (
                 "entered_review_mode",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "entered_review_mode",
-                        "prompt": "Need review",
-                        "user_facing_hint": "double-check work"
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/event_msg/entered_review_mode.json"),
             ),
             (
                 "exited_review_mode",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "exited_review_mode",
-                        "review_output": {
-                            "findings": [
-                                {
-                                    "title": "Bug",
-                                    "body": "Found an issue",
-                                    "confidence_score": 0.4,
-                                    "priority": 1,
-                                    "code_location": {
-                                        "absolute_file_path": "/workspace/src/lib.rs",
-                                        "line_range": { "start": 1, "end": 3 }
-                                    }
-                                }
-                            ],
-                            "overall_correctness": "needs_changes",
-                            "overall_explanation": "Please fix",
-                            "overall_confidence_score": 0.9
-                        }
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/event_msg/exited_review_mode.json"),
             ),
             (
                 "turn_aborted",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "turn_aborted",
-                        "reason": "interrupted"
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/event_msg/turn_aborted.json"),
             ),
         ];
 
-        for (case, value) in cases {
-            let parsed = parse_rollout_line(value, case);
+        for &(case, raw) in cases {
+            let parsed = parse_rollout_line(raw, case);
             assert_eq!(parsed.timestamp, timestamp);
             match (case, parsed.item) {
                 ("user_message", RolloutItem::EventMsg(EventMsg::UserMessage(event))) => {
@@ -1870,58 +1647,23 @@ mod tests {
     #[allow(clippy::too_many_lines)]
     fn deserialize_rollout_misc_lines() {
         let timestamp = "2025-01-02T03:04:05.678Z";
-        let cases: Vec<(&str, Value)> = vec![
+        let cases: &[(&str, &str)] = &[
             (
                 "compacted",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "compacted",
-                    "payload": {
-                        "message": "Turn summary"
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/misc/compacted.json"),
             ),
             (
                 "turn_context_workspace",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "turn_context",
-                    "payload": {
-                        "cwd": "/workspace",
-                        "approval_policy": "on-request",
-                        "sandbox_policy": {
-                            "mode": "workspace-write",
-                            "writable_roots": ["/workspace/tmp"],
-                            "network_access": true,
-                            "exclude_tmpdir_env_var": false,
-                            "exclude_slash_tmp": true
-                        },
-                        "model": "gpt-5",
-                        "effort": "high",
-                        "summary": "detailed"
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/misc/turn_context_workspace.json"),
             ),
             (
                 "turn_context_read_only",
-                json!({
-                    "timestamp": timestamp,
-                    "type": "turn_context",
-                    "payload": {
-                        "cwd": "/workspace",
-                        "approval_policy": "never",
-                        "sandbox_policy": {
-                            "mode": "read-only"
-                        },
-                        "model": "gpt-5",
-                        "summary": "auto"
-                    }
-                }),
+                include_str!("../tests/fixtures/rollouts/misc/turn_context_read_only.json"),
             ),
         ];
 
-        for (case, value) in cases {
-            let parsed = parse_rollout_line(value, case);
+        for &(case, raw) in cases {
+            let parsed = parse_rollout_line(raw, case);
             assert_eq!(parsed.timestamp, timestamp);
             match (case, parsed.item) {
                 ("compacted", RolloutItem::Compacted(CompactedItem { message })) => {
