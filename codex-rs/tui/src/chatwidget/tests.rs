@@ -191,6 +191,82 @@ fn resumed_initial_messages_render_history() {
     );
 }
 
+/// Compose-mode: selecting /review pre-fills the composer and moves cursor to end.
+#[test]
+fn compose_review_prefill_and_cursor() {
+    use crossterm::event::KeyCode;
+    use crossterm::event::KeyEvent;
+    use crossterm::event::KeyModifiers;
+
+    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+    chat.dispatch_command(SlashCommand::Review);
+
+    // Prefill text present
+    assert_eq!(
+        chat.bottom_pane.composer_text(),
+        "/review Review my current changes."
+    );
+
+    // Typing continues at the end (smoke check by submitting)
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+}
+
+/// Compose-mode: pressing Enter sends a mapped Review op with the default prompt.
+#[test]
+fn compose_review_enter_sends_review_op() {
+    use crossterm::event::KeyCode;
+    use crossterm::event::KeyEvent;
+    use crossterm::event::KeyModifiers;
+
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual();
+    chat.dispatch_command(SlashCommand::Review);
+    // Immediately submit without editing; should use default prompt.
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    // Collect ops until we see a Review
+    let mut saw_review = false;
+    while let Ok(op) = op_rx.try_recv() {
+        if let Op::Review { review_request } = op {
+            assert_eq!(review_request.prompt, "Review my current changes.");
+            saw_review = true;
+            break;
+        }
+    }
+    assert!(saw_review, "expected a Review op to be submitted");
+}
+
+/// Compose-mode queueing: Enter while task running queues the user text; when idle, it submits Review.
+#[test]
+fn compose_review_queue_then_submit_when_idle() {
+    use crossterm::event::KeyCode;
+    use crossterm::event::KeyEvent;
+    use crossterm::event::KeyModifiers;
+
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual();
+    // Prefill while idle
+    chat.dispatch_command(SlashCommand::Review);
+    // Now a task begins; Enter should queue the message instead of sending.
+    chat.bottom_pane.set_task_running(true);
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    // Should be queued, not sent yet
+    assert_eq!(chat.queued_user_messages.len(), 1);
+
+    // Become idle and trigger dequeue
+    chat.bottom_pane.set_task_running(false);
+    chat.maybe_send_next_queued_input();
+
+    let mut saw_review = false;
+    while let Ok(op) = op_rx.try_recv() {
+        if let Op::Review { review_request } = op {
+            assert_eq!(review_request.prompt, "Review my current changes.");
+            saw_review = true;
+            break;
+        }
+    }
+    assert!(saw_review, "expected a Review op after becoming idle");
+}
+
 /// Entering review mode uses the hint provided by the review request.
 #[test]
 fn entered_review_mode_uses_request_hint() {

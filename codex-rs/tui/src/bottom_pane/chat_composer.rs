@@ -1,3 +1,6 @@
+use crate::slash_command::SlashInputMode;
+use crate::slash_command::parse_slash_invocation;
+use crate::slash_command::slash_input_mode;
 use codex_core::protocol::TokenUsageInfo;
 use codex_protocol::num_format::format_si_suffix;
 use crossterm::event::KeyCode;
@@ -261,6 +264,19 @@ impl ChatComposer {
         self.textarea.set_cursor(0);
         self.sync_command_popup();
         self.sync_file_search_popup();
+    }
+
+    /// Move the cursor to the end of the current line/content and resync popups.
+    pub(crate) fn move_cursor_to_end(&mut self) {
+        let end = self.textarea.text().len();
+        self.textarea.set_cursor(end);
+        // Keep popup sync consistent with other cursor/text changes.
+        self.sync_command_popup();
+        if matches!(self.active_popup, ActivePopup::Command(_)) {
+            self.dismissed_file_popup_token = None;
+        } else {
+            self.sync_file_search_popup();
+        }
     }
 
     /// Get the current composer text.
@@ -1147,16 +1163,27 @@ impl ChatComposer {
     fn sync_command_popup(&mut self) {
         let first_line = self.textarea.text().lines().next().unwrap_or("");
         let input_starts_with_slash = first_line.starts_with('/');
+
+        // Suppress the slash popup when the input is an already-formed compose command
+        // with additional text (e.g., "/review <prompt>").
+        let mut suppress_for_compose = false;
+        if let Some((cmd, remainder)) = parse_slash_invocation(first_line) {
+            if let SlashInputMode::Compose { .. } = slash_input_mode(cmd) {
+                if !remainder.is_empty() {
+                    suppress_for_compose = true;
+                }
+            }
+        }
         match &mut self.active_popup {
             ActivePopup::Command(popup) => {
-                if input_starts_with_slash {
+                if input_starts_with_slash && !suppress_for_compose {
                     popup.on_composer_text_change(first_line.to_string());
                 } else {
                     self.active_popup = ActivePopup::None;
                 }
             }
             _ => {
-                if input_starts_with_slash {
+                if input_starts_with_slash && !suppress_for_compose {
                     let mut command_popup = CommandPopup::new(self.custom_prompts.clone());
                     command_popup.on_composer_text_change(first_line.to_string());
                     self.active_popup = ActivePopup::Command(command_popup);
@@ -1380,6 +1407,9 @@ mod tests {
     use crate::bottom_pane::chat_composer::AttachedImage;
     use crate::bottom_pane::chat_composer::LARGE_PASTE_CHAR_THRESHOLD;
     use crate::bottom_pane::textarea::TextArea;
+    use crossterm::event::KeyCode;
+    use crossterm::event::KeyEvent;
+    use crossterm::event::KeyModifiers;
     use tokio::sync::mpsc::unbounded_channel;
 
     #[test]
@@ -1891,6 +1921,30 @@ mod tests {
 
         assert_eq!(composer.textarea.text(), "/compact ");
         assert_eq!(composer.textarea.cursor(), composer.textarea.text().len());
+    }
+
+    #[test]
+    fn compose_review_suppresses_slash_popup_when_remainder_present() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        // Type '/rev' to show the slash popup filtered to review
+        type_chars_humanlike(&mut composer, &['/', 'r', 'e', 'v']);
+        assert!(composer.popup_active(), "popup should be active for '/rev'");
+
+        // Add remainder after the command; popup should be suppressed
+        type_chars_humanlike(&mut composer, &['i', 'e', 'w', ' ', 'x']);
+        assert!(
+            !composer.popup_active(),
+            "popup should be suppressed for '/review <text>'"
+        );
     }
 
     #[test]

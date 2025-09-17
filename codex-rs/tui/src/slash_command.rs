@@ -1,8 +1,12 @@
+use std::str::FromStr;
 use strum::IntoEnumIterator;
 use strum_macros::AsRefStr;
 use strum_macros::EnumIter;
 use strum_macros::EnumString;
 use strum_macros::IntoStaticStr;
+
+use codex_core::protocol::Op;
+use codex_core::protocol::ReviewRequest;
 
 /// Commands that can be invoked by starting a message with a leading slash.
 #[derive(
@@ -80,4 +84,57 @@ impl SlashCommand {
 /// Return all built-in commands in a Vec paired with their command string.
 pub fn built_in_slash_commands() -> Vec<(&'static str, SlashCommand)> {
     SlashCommand::iter().map(|c| (c.command(), c)).collect()
+}
+
+/// Input mode for a slash command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlashInputMode {
+    /// Execute immediately (handled via popup selection or dispatch_command).
+    Immediate,
+    /// Prefill composer with `/<cmd> <default_prompt>`; on Enter, submit a specific Op.
+    Compose { default_prompt: &'static str },
+}
+
+/// Describe how a built-in command is edited/submitted.
+pub fn slash_input_mode(cmd: SlashCommand) -> SlashInputMode {
+    match cmd {
+        SlashCommand::Review => SlashInputMode::Compose {
+            default_prompt: "Review my current changes.",
+        },
+        _ => SlashInputMode::Immediate,
+    }
+}
+
+/// If `text` begins with a built-in slash command, return the command and the
+/// remainder (everything after the command token, across newlines). Callers that
+/// only want to consider the first line can pass just that slice.
+pub fn parse_slash_invocation(text: &str) -> Option<(SlashCommand, &str)> {
+    // Must start with a slash.
+    let after_slash = text.strip_prefix('/')?;
+    // Allow optional whitespace after the slash before the command token.
+    let token_start = after_slash.trim_start();
+    let mut parts = token_start.splitn(2, char::is_whitespace);
+    let cmd_token = parts.next()?;
+    if cmd_token.is_empty() {
+        return None;
+    }
+    let cmd = SlashCommand::from_str(cmd_token).ok()?;
+    // Preserve the rest of the original input (including newlines),
+    // trimming only leading/trailing whitespace around it.
+    let remainder = parts.next().map(str::trim).unwrap_or("");
+    Some((cmd, remainder))
+}
+
+/// Map a compose-style command + remainder into an Op for Codex.
+/// Returns None for commands that don't have a direct Op mapping.
+pub fn slash_submit_op(cmd: SlashCommand, remainder: String) -> Option<Op> {
+    match cmd {
+        SlashCommand::Review => Some(Op::Review {
+            review_request: ReviewRequest {
+                prompt: remainder.clone(),
+                user_facing_hint: remainder,
+            },
+        }),
+        _ => None,
+    }
 }

@@ -243,6 +243,12 @@ impl BottomPane {
         self.request_redraw();
     }
 
+    /// Move the composer cursor to the end of the current content.
+    pub(crate) fn move_cursor_to_end(&mut self) {
+        self.composer.move_cursor_to_end();
+        self.request_redraw();
+    }
+
     /// Get the current composer text (for tests and programmatic checks).
     #[cfg(test)]
     pub(crate) fn composer_text(&self) -> String {

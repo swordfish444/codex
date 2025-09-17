@@ -73,6 +73,10 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell::PatchEventType;
 use crate::markdown::append_markdown;
 use crate::slash_command::SlashCommand;
+use crate::slash_command::SlashInputMode;
+use crate::slash_command::parse_slash_invocation;
+use crate::slash_command::slash_input_mode;
+use crate::slash_command::slash_submit_op;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
 // streaming internals are provided by crate::streaming and crate::markdown_stream
@@ -822,7 +826,51 @@ impl ChatWidget {
             _ => {
                 match self.bottom_pane.handle_key_event(key_event) {
                     InputResult::Submitted(text) => {
-                        // If a task is running, queue the user input to be sent after the turn completes.
+                        // Generic compose-style submission: interpret `/<cmd> ...` if cmd is compose.
+                        if let Some((cmd, remainder)) = parse_slash_invocation(&text) {
+                            if let SlashInputMode::Compose { default_prompt, .. } =
+                                slash_input_mode(cmd)
+                            {
+                                let prompt = if remainder.is_empty() {
+                                    default_prompt.to_string()
+                                } else {
+                                    remainder.to_string()
+                                };
+
+                                // Mirror normal flow: persist and show the user's message text.
+                                self.add_to_history(history_cell::new_user_prompt(text.clone()));
+                                self.codex_op_tx
+                                    .send(Op::AddToHistory { text: text.clone() })
+                                    .unwrap_or_else(|e| {
+                                        tracing::error!("failed to send AddHistory op: {e}");
+                                    });
+
+                                if self.bottom_pane.is_task_running() {
+                                    // Queue raw text; dequeue path will re-interpret and submit.
+                                    let user_message = UserMessage {
+                                        text,
+                                        image_paths: self
+                                            .bottom_pane
+                                            .take_recent_submission_images(),
+                                    };
+                                    self.queued_user_messages.push_back(user_message);
+                                    self.refresh_queued_user_messages();
+                                } else if let Some(op) = slash_submit_op(cmd, prompt) {
+                                    self.submit_op(op);
+                                } else {
+                                    // Fallback: treat as a normal message if no submit mapping exists.
+                                    let user_message = UserMessage {
+                                        text,
+                                        image_paths: self
+                                            .bottom_pane
+                                            .take_recent_submission_images(),
+                                    };
+                                    self.submit_user_message(user_message);
+                                }
+                                return;
+                            }
+                        }
+                        // Normal user input path
                         let user_message = UserMessage {
                             text,
                             image_paths: self.bottom_pane.take_recent_submission_images(),
@@ -881,13 +929,12 @@ impl ChatWidget {
                 self.app_event_tx.send(AppEvent::CodexOp(Op::Compact));
             }
             SlashCommand::Review => {
-                // Simplified flow: directly send a review op for current changes.
-                self.submit_op(Op::Review {
-                    review_request: ReviewRequest {
-                        prompt: "review current changes".to_string(),
-                        user_facing_hint: "current changes".to_string(),
-                    },
-                });
+                // Prefill the composer with a review command allowing the user to edit.
+                self.bottom_pane
+                    .set_composer_text("/review Review my current changes.".to_string());
+                // Move cursor to the end so typing continues after the prefill.
+                self.bottom_pane.move_cursor_to_end();
+                self.request_redraw();
             }
             SlashCommand::Model => {
                 self.open_model_popup();
@@ -1254,6 +1301,21 @@ impl ChatWidget {
             return;
         }
         if let Some(user_message) = self.queued_user_messages.pop_front() {
+            // Intercept queued compose-style commands and convert to their Ops.
+            if let Some((cmd, remainder)) = parse_slash_invocation(&user_message.text) {
+                if let SlashInputMode::Compose { default_prompt, .. } = slash_input_mode(cmd) {
+                    let prompt = if remainder.is_empty() {
+                        default_prompt.to_string()
+                    } else {
+                        remainder.to_string()
+                    };
+                    if let Some(op) = slash_submit_op(cmd, prompt) {
+                        self.submit_op(op);
+                        self.refresh_queued_user_messages();
+                        return;
+                    }
+                }
+            }
             self.submit_user_message(user_message);
         }
         // Update the list to reflect the remaining queued messages (if any).
