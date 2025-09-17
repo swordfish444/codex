@@ -7,6 +7,7 @@ use codex_core::config::Config;
 use codex_core::config_types::Notifications;
 use codex_core::plan_tool::PlanItemArg;
 use codex_core::plan_tool::StepStatus;
+use codex_core::plan_tool::newly_completed_steps;
 use codex_core::protocol::AgentMessageDeltaEvent;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::AgentReasoningDeltaEvent;
@@ -143,6 +144,7 @@ pub(crate) struct ChatWidget {
     queued_user_messages: VecDeque<UserMessage>,
     // Pending notification to show when unfocused on next Draw
     pending_notification: Option<Notification>,
+    last_plan: Vec<PlanItemArg>,
 }
 
 struct UserMessage {
@@ -175,6 +177,7 @@ impl ChatWidget {
     // --- Small event handlers ---
     fn on_session_configured(&mut self, event: codex_core::protocol::SessionConfiguredEvent) {
         self.bottom_pane.set_plan_progress(None);
+        self.last_plan.clear();
         self.bottom_pane
             .set_history_metadata(event.history_log_id, event.history_entry_count);
         self.conversation_id = Some(event.session_id);
@@ -328,8 +331,19 @@ impl ChatWidget {
     }
 
     fn on_plan_update(&mut self, update: codex_core::plan_tool::UpdatePlanArgs) {
+        let completed_steps = newly_completed_steps(&self.last_plan, &update.plan);
         let current_step = select_current_plan_step(&update.plan);
         self.bottom_pane.set_plan_progress(current_step);
+        if self.config.plan_step_notifications {
+            for completed in &completed_steps {
+                self.notify(Notification::PlanStepComplete {
+                    step: completed.step.clone(),
+                    position: completed.position,
+                    total: completed.total,
+                });
+            }
+        }
+        self.last_plan = update.plan.clone();
         self.add_to_history(history_cell::new_plan_update(update));
     }
 
@@ -705,6 +719,7 @@ impl ChatWidget {
             show_welcome_banner: true,
             suppress_session_configured_redraw: false,
             pending_notification: None,
+            last_plan: Vec::new(),
         }
     }
 
@@ -761,6 +776,7 @@ impl ChatWidget {
             show_welcome_banner: true,
             suppress_session_configured_redraw: true,
             pending_notification: None,
+            last_plan: Vec::new(),
         }
     }
 
@@ -1158,7 +1174,12 @@ impl ChatWidget {
     }
 
     fn notify(&mut self, notification: Notification) {
-        if !notification.allowed_for(&self.config.tui_notifications) {
+        let allow = match &self.config.tui_notifications {
+            Notifications::Enabled(enabled) => *enabled,
+            custom => notification.allowed_for(custom),
+        };
+
+        if !allow {
             return;
         }
         self.pending_notification = Some(notification);
@@ -1483,10 +1504,21 @@ impl WidgetRef for &ChatWidget {
     }
 }
 
+#[derive(Debug)]
 enum Notification {
     AgentTurnComplete,
-    ExecApprovalRequested { command: String },
-    EditApprovalRequested { cwd: PathBuf, changes: Vec<PathBuf> },
+    ExecApprovalRequested {
+        command: String,
+    },
+    EditApprovalRequested {
+        cwd: PathBuf,
+        changes: Vec<PathBuf>,
+    },
+    PlanStepComplete {
+        step: String,
+        position: usize,
+        total: usize,
+    },
 }
 
 impl Notification {
@@ -1507,6 +1539,18 @@ impl Notification {
                     }
                 )
             }
+            Notification::PlanStepComplete {
+                step,
+                position,
+                total,
+            } => {
+                format!(
+                    "Plan step complete ({}/{}): {}",
+                    position,
+                    total,
+                    truncate_text(step, 40)
+                )
+            }
         }
     }
 
@@ -1515,6 +1559,7 @@ impl Notification {
             Notification::AgentTurnComplete => "agent-turn-complete",
             Notification::ExecApprovalRequested { .. }
             | Notification::EditApprovalRequested { .. } => "approval-requested",
+            Notification::PlanStepComplete { .. } => "plan-step-complete",
         }
     }
 

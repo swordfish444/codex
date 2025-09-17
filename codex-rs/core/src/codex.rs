@@ -3603,6 +3603,7 @@ mod tests {
             session_manager: ExecSessionManager::default(),
             unified_exec_manager: UnifiedExecSessionManager::default(),
             notify: None,
+            plan_step_notifications: false,
             rollout: Mutex::new(None),
             state: Mutex::new(State {
                 history: ConversationHistory::new(),

@@ -122,6 +122,9 @@ pub struct Config {
     /// and turn completions when not focused.
     pub tui_notifications: Notifications,
 
+    /// Enable plan step completion notifications in the UI and external notifier.
+    pub plan_step_notifications: bool,
+
     /// The directory that should be treated as the current working directory
     /// for the session. All relative paths inside the business-logic layer are
     /// resolved against this path.
@@ -1053,6 +1056,11 @@ impl Config {
                 .as_ref()
                 .map(|t| t.notifications.clone())
                 .unwrap_or_default(),
+            plan_step_notifications: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.plan_step_notifications)
+                .unwrap_or(true),
         };
         Ok(config)
     }
@@ -1617,6 +1625,7 @@ model_verbosity = "high"
                 active_profile: Some("o3".to_string()),
                 disable_paste_burst: false,
                 tui_notifications: Default::default(),
+                plan_step_notifications: true,
             },
             o3_profile_config
         );
@@ -1675,6 +1684,7 @@ model_verbosity = "high"
             active_profile: Some("gpt3".to_string()),
             disable_paste_burst: false,
             tui_notifications: Default::default(),
+            plan_step_notifications: true,
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -1748,6 +1758,7 @@ model_verbosity = "high"
             active_profile: Some("zdr".to_string()),
             disable_paste_burst: false,
             tui_notifications: Default::default(),
+            plan_step_notifications: true,
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);
@@ -1807,6 +1818,7 @@ model_verbosity = "high"
             active_profile: Some("gpt5".to_string()),
             disable_paste_burst: false,
             tui_notifications: Default::default(),
+            plan_step_notifications: true,
         };
 
         assert_eq!(expected_gpt5_profile_config, gpt5_profile_config);
@@ -1913,12 +1925,19 @@ trust_level = "trusted"
 
 #[cfg(test)]
 mod notifications_tests {
+    use crate::config::{Config, ConfigOverrides, ConfigToml};
     use crate::config_types::Notifications;
     use serde::Deserialize;
 
     #[derive(Deserialize, Debug, PartialEq)]
     struct TuiTomlTest {
         notifications: Notifications,
+        #[serde(default = "default_true")]
+        plan_step_notifications: bool,
+    }
+
+    const fn default_true() -> bool {
+        true
     }
 
     #[derive(Deserialize, Debug, PartialEq)]
@@ -1951,5 +1970,41 @@ mod notifications_tests {
             parsed.tui.notifications,
             Notifications::Custom(ref v) if v == &vec!["foo".to_string()]
         ));
+    }
+
+    #[test]
+    fn test_plan_step_notifications_default_true() {
+        let toml = r#"
+            [tui]
+            notifications = false
+        "#;
+        let parsed: RootTomlTest =
+            toml::from_str(toml).expect("deserialize [tui] with only notifications");
+        assert!(
+            parsed.tui.plan_step_notifications,
+            "plan_step_notifications should default to true"
+        );
+    }
+
+    #[test]
+    fn test_config_loads_plan_step_notifications_by_default() {
+        let cfg: ConfigToml = toml::from_str(
+            r#"
+            [tui]
+            notifications = false
+            "#,
+        )
+        .expect("parse config toml");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config = Config::load_from_base_config_with_overrides(
+            cfg,
+            ConfigOverrides::default(),
+            temp.path().to_path_buf(),
+        )
+        .expect("load config");
+        assert!(
+            config.plan_step_notifications,
+            "plan_step_notifications should default to true in Config"
+        );
     }
 }

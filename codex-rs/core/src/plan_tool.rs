@@ -90,6 +90,50 @@ pub(crate) async fn handle_update_plan(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletedStep {
+    pub step: String,
+    pub position: usize,
+    pub total: usize,
+}
+
+pub fn newly_completed_steps(
+    previous: &[PlanItemArg],
+    current: &[PlanItemArg],
+) -> Vec<CompletedStep> {
+    use std::collections::HashMap;
+
+    let mut prev_status: HashMap<&str, &StepStatus> = HashMap::new();
+    for item in previous {
+        let step = item.step.trim();
+        if !step.is_empty() {
+            prev_status.insert(step, &item.status);
+        }
+    }
+
+    let total = current.len();
+    let mut completed = Vec::new();
+    for (idx, item) in current.iter().enumerate() {
+        let step = item.step.trim();
+        if step.is_empty() || !matches!(item.status, StepStatus::Completed) {
+            continue;
+        }
+        let was_completed = prev_status
+            .get(step)
+            .map(|status| matches!(status, StepStatus::Completed))
+            .unwrap_or(false);
+        if !was_completed {
+            completed.push(CompletedStep {
+                step: step.to_owned(),
+                position: idx + 1,
+                total,
+            });
+        }
+    }
+
+    completed
+}
+
 fn parse_update_plan_arguments(
     arguments: String,
     call_id: &str,
@@ -106,5 +150,65 @@ fn parse_update_plan_arguments(
             };
             Err(Box::new(output))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_step(step: &str, status: StepStatus) -> PlanItemArg {
+        PlanItemArg {
+            step: step.to_string(),
+            status,
+        }
+    }
+
+    #[test]
+    fn detects_newly_completed_steps() {
+        let prev = vec![
+            make_step("Explore", StepStatus::Completed),
+            make_step("Implement", StepStatus::InProgress),
+        ];
+        let current = vec![
+            make_step("Explore", StepStatus::Completed),
+            make_step("Implement", StepStatus::Completed),
+            make_step("Document", StepStatus::Pending),
+        ];
+
+        let completed = newly_completed_steps(&prev, &current);
+        assert_eq!(
+            completed,
+            vec![CompletedStep {
+                step: "Implement".to_string(),
+                position: 2,
+                total: 3,
+            }]
+        );
+    }
+
+    #[test]
+    fn ignores_already_completed_steps() {
+        let prev = vec![make_step("Explore", StepStatus::Completed)];
+        let current = vec![make_step("Explore", StepStatus::Completed)];
+
+        let completed = newly_completed_steps(&prev, &current);
+        assert!(completed.is_empty());
+    }
+
+    #[test]
+    fn trims_whitespace_in_step_names() {
+        let prev = vec![make_step(" Implement ", StepStatus::InProgress)];
+        let current = vec![make_step("Implement", StepStatus::Completed)];
+
+        let completed = newly_completed_steps(&prev, &current);
+        assert_eq!(
+            completed,
+            vec![CompletedStep {
+                step: "Implement".to_string(),
+                position: 1,
+                total: 1,
+            }]
+        );
     }
 }

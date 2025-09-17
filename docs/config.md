@@ -510,7 +510,7 @@ notify = ["python3", "/Users/mbolin/.codex/notify.py"]
 ```
 
 > [!NOTE]
-> Use `notify` for automation and integrations: Codex invokes your external program with a single JSON argument for each event, independent of the TUI. If you only want lightweight desktop notifications while using the TUI, prefer `tui.notifications`, which uses terminal escape codes and requires no external program. You can enable both; `tui.notifications` covers in‑TUI alerts (e.g., approval prompts), while `notify` is best for system‑level hooks or custom notifiers. Currently, `notify` emits only `agent-turn-complete`, whereas `tui.notifications` supports `agent-turn-complete` and `approval-requested` with optional filtering.
+> Use `notify` for automation and integrations: Codex invokes your external program with a single JSON argument for each event, independent of the TUI. If you only want lightweight desktop notifications while using the TUI, prefer `tui.notifications`, which uses terminal escape codes and requires no external program. You can enable both; `tui.notifications` covers in‑TUI alerts (e.g., approval prompts), while `notify` is best for system-level hooks or custom notifiers. Currently, `notify` emits only `agent-turn-complete`, whereas `tui.notifications` supports `agent-turn-complete`, `approval-requested`, and `plan-step-complete` with optional filtering.
 
 ## history
 
@@ -589,8 +589,12 @@ Options that are specific to the TUI.
 notifications = true
 
 # You can optionally filter to specific notification types.
-# Available types are "agent-turn-complete" and "approval-requested".
+# Available types are "agent-turn-complete", "approval-requested", and "plan-step-complete".
 notifications = [ "agent-turn-complete", "approval-requested" ]
+
+# Emit notifications when a plan step transitions to completed.
+# Defaults to true; set to false to silence plan updates.
+plan_step_notifications = true
 ```
 
 > [!NOTE]
@@ -615,6 +619,7 @@ notifications = [ "agent-turn-complete", "approval-requested" ]
 | `sandbox_workspace_write.exclude_slash_tmp` | boolean | Exclude `/tmp` from writable roots (default: false). |
 | `disable_response_storage` | boolean | Required for ZDR orgs. |
 | `notify` | array<string> | External program for notifications. |
+| `tui.plan_step_notifications` | boolean | Notify when plan steps complete (default: true). |
 | `instructions` | string | Currently ignored; use `experimental_instructions_file` or `AGENTS.md`. |
 | `mcp_servers.<id>.command` | string | MCP server launcher command. |
 | `mcp_servers.<id>.args` | array<string> | MCP server args. |

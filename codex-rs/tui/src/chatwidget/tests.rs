@@ -252,6 +252,7 @@ fn make_chatwidget_manual() -> (
         queued_user_messages: VecDeque::new(),
         suppress_session_configured_redraw: false,
         pending_notification: None,
+        last_plan: Vec::new(),
     };
     (widget, rx, op_rx)
 }
@@ -1494,6 +1495,74 @@ fn plan_update_renders_history_cell() {
     assert!(blob.contains("Explore codebase"));
     assert!(blob.contains("Implement feature"));
     assert!(blob.contains("Write tests"));
+}
+
+#[test]
+fn plan_completion_notification_emitted_when_enabled() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
+    chat.config.plan_step_notifications = true;
+    chat.config.tui_notifications = Notifications::Enabled(true);
+
+    let seed_plan = UpdatePlanArgs {
+        explanation: None,
+        plan: vec![PlanItemArg {
+            step: "Implement feature".into(),
+            status: StepStatus::InProgress,
+        }],
+    };
+    chat.handle_codex_event(Event {
+        id: "sub-seed".into(),
+        msg: EventMsg::PlanUpdate(seed_plan),
+    });
+    drain_insert_history(&mut rx);
+    assert!(chat.pending_notification.is_none());
+
+    let completion = UpdatePlanArgs {
+        explanation: None,
+        plan: vec![PlanItemArg {
+            step: "Implement feature".into(),
+            status: StepStatus::Completed,
+        }],
+    };
+    chat.handle_codex_event(Event {
+        id: "sub-complete".into(),
+        msg: EventMsg::PlanUpdate(completion),
+    });
+    drain_insert_history(&mut rx);
+
+    match chat.pending_notification {
+        Some(Notification::PlanStepComplete {
+            ref step,
+            position,
+            total,
+        }) => {
+            assert_eq!(step, "Implement feature");
+            assert_eq!(position, 1);
+            assert_eq!(total, 1);
+        }
+        other => panic!("expected plan completion notification, got {other:?}"),
+    }
+}
+
+#[test]
+fn plan_completion_notification_respects_toggle() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
+    chat.config.plan_step_notifications = false;
+    chat.config.tui_notifications = Notifications::Enabled(true);
+
+    let update = UpdatePlanArgs {
+        explanation: None,
+        plan: vec![PlanItemArg {
+            step: "Implement feature".into(),
+            status: StepStatus::Completed,
+        }],
+    };
+    chat.handle_codex_event(Event {
+        id: "sub".into(),
+        msg: EventMsg::PlanUpdate(update),
+    });
+    drain_insert_history(&mut rx);
+    assert!(chat.pending_notification.is_none());
 }
 
 #[test]

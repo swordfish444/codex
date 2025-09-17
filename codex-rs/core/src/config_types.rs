@@ -95,6 +95,13 @@ pub struct Tui {
     /// Enable desktop notifications from the TUI when the terminal is unfocused.
     /// Defaults to `false`.
     pub notifications: Notifications,
+    /// When true, emit notifications as plan steps are completed. Defaults to `true`.
+    #[serde(default = "true_bool")]
+    pub plan_step_notifications: bool,
+}
+
+const fn true_bool() -> bool {
+    true
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Default)]
