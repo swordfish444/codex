@@ -406,9 +406,9 @@ impl ChatWidget {
 
     fn on_web_search_end(&mut self, ev: WebSearchEndEvent) {
         self.flush_answer_stream_with_separator();
-        let query = ev.query;
         self.add_to_history(history_cell::new_web_search_call(format!(
-            "Searched: {query}"
+            "Searched: {}",
+            ev.query
         )));
     }
 
@@ -999,8 +999,8 @@ impl ChatWidget {
 
     fn flush_active_exec_cell(&mut self) {
         if let Some(active) = self.active_exec_cell.take() {
-            let cell: Box<dyn history_cell::HistoryCell> = Box::new(active);
-            self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
+            self.app_event_tx
+                .send(AppEvent::InsertHistoryCell(Box::new(active)));
         }
     }
 
