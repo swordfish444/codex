@@ -1245,7 +1245,14 @@ pub enum TurnAbortReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::LocalShellAction;
+    use crate::models::LocalShellStatus;
+    use crate::models::ReasoningItemContent;
+    use crate::models::ReasoningItemReasoningSummary;
+    use crate::models::WebSearchAction;
+    use serde_json::Value;
     use serde_json::json;
+    use std::path::PathBuf;
     use tempfile::NamedTempFile;
 
     /// Serialize Event to verify that its JSON representation has the expected
@@ -1297,5 +1304,666 @@ mod tests {
 
         let deserialized: ExecCommandOutputDeltaEvent = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized, event);
+    }
+
+    fn parse_rollout_line(value: Value, case: &str) -> RolloutLine {
+        let serialized = serde_json::to_string(&value)
+            .unwrap_or_else(|err| panic!("failed to serialize {case}: {err}"));
+        serde_json::from_str(&serialized)
+            .unwrap_or_else(|err| panic!("failed to parse {case}: {err}"))
+    }
+
+    #[test]
+    fn deserialize_rollout_session_meta_lines() {
+        let timestamp = "2025-01-02T03:04:05.678Z";
+        let conversation_id = uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        let cases: Vec<(&str, Value)> = vec![
+            (
+                "with_git",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "session_meta",
+                    "payload": {
+                        "id": conversation_id,
+                        "timestamp": timestamp,
+                        "cwd": "/workspace",
+                        "originator": "codex-cli",
+                        "cli_version": "1.0.0",
+                        "instructions": "Remember the tests",
+                        "git": {
+                            "commit_hash": "abc123",
+                            "branch": "main",
+                            "repository_url": "https://example.com/repo.git"
+                        }
+                    }
+                }),
+            ),
+            (
+                "without_git",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "session_meta",
+                    "payload": {
+                        "id": conversation_id,
+                        "timestamp": timestamp,
+                        "cwd": "/workspace",
+                        "originator": "codex-cli",
+                        "cli_version": "1.0.0",
+                        "instructions": null
+                    }
+                }),
+            ),
+        ];
+
+        for (case, value) in cases {
+            let parsed = parse_rollout_line(value, case);
+            assert_eq!(parsed.timestamp, timestamp);
+            match parsed.item {
+                RolloutItem::SessionMeta(session_meta) => {
+                    assert_eq!(session_meta.meta.id, ConversationId(conversation_id));
+                    assert_eq!(session_meta.meta.cli_version, "1.0.0");
+                    assert_eq!(session_meta.meta.originator, "codex-cli");
+                    assert_eq!(session_meta.meta.cwd, PathBuf::from("/workspace"));
+                    assert_eq!(session_meta.meta.timestamp, timestamp);
+                    match case {
+                        "with_git" => {
+                            assert_eq!(
+                                session_meta.meta.instructions.as_deref(),
+                                Some("Remember the tests")
+                            );
+                            let git = session_meta.git.expect("expected git info");
+                            assert_eq!(git.commit_hash.as_deref(), Some("abc123"));
+                            assert_eq!(git.branch.as_deref(), Some("main"));
+                            assert_eq!(
+                                git.repository_url.as_deref(),
+                                Some("https://example.com/repo.git")
+                            );
+                        }
+                        "without_git" => {
+                            assert!(session_meta.meta.instructions.is_none());
+                            assert!(session_meta.git.is_none());
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                other => panic!("case {case} parsed as unexpected item {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+    fn deserialize_rollout_response_item_lines() {
+        let timestamp = "2025-01-02T03:04:05.678Z";
+        let cases: Vec<(&str, Value)> = vec![
+            (
+                "message",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "id": "legacy-message",
+                        "role": "assistant",
+                        "content": [
+                            { "type": "output_text", "text": "Hello from assistant" }
+                        ]
+                    }
+                }),
+            ),
+            (
+                "reasoning",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "response_item",
+                    "payload": {
+                        "type": "reasoning",
+                        "id": "reasoning-1",
+                        "summary": [
+                            { "type": "summary_text", "text": "Summarized thoughts" }
+                        ],
+                        "content": [
+                            { "type": "reasoning_text", "text": "Detailed reasoning" }
+                        ],
+                        "encrypted_content": "encrypted"
+                    }
+                }),
+            ),
+            (
+                "local_shell_call",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "response_item",
+                    "payload": {
+                        "type": "local_shell_call",
+                        "id": "legacy-shell-call",
+                        "call_id": "shell-call-1",
+                        "status": "completed",
+                        "action": {
+                            "type": "exec",
+                            "command": ["ls", "-la"],
+                            "timeout_ms": 1200,
+                            "working_directory": "/workspace",
+                            "env": { "PATH": "/usr/bin" },
+                            "user": "codex"
+                        }
+                    }
+                }),
+            ),
+            (
+                "function_call",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "id": "legacy-function",
+                        "name": "shell",
+                        "arguments": "{\"command\":[\"echo\",\"hi\"]}",
+                        "call_id": "call-123"
+                    }
+                }),
+            ),
+            (
+                "function_call_output",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": "call-123",
+                        "output": "{\"stdout\":\"done\"}"
+                    }
+                }),
+            ),
+            (
+                "custom_tool_call",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call",
+                        "id": "legacy-tool",
+                        "status": "completed",
+                        "call_id": "tool-456",
+                        "name": "my_tool",
+                        "input": "{\"foo\":1}"
+                    }
+                }),
+            ),
+            (
+                "custom_tool_call_output",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call_output",
+                        "call_id": "tool-456",
+                        "output": "tool finished"
+                    }
+                }),
+            ),
+            (
+                "web_search_call",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "response_item",
+                    "payload": {
+                        "type": "web_search_call",
+                        "id": "legacy-search",
+                        "status": "completed",
+                        "action": {
+                            "type": "search",
+                            "query": "weather in SF"
+                        }
+                    }
+                }),
+            ),
+            (
+                "other",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "response_item",
+                    "payload": {
+                        "type": "new_future_item",
+                        "foo": "bar"
+                    }
+                }),
+            ),
+        ];
+
+        for (case, value) in cases {
+            let parsed = parse_rollout_line(value, case);
+            assert_eq!(parsed.timestamp, timestamp);
+            match (case, parsed.item) {
+                (
+                    "message",
+                    RolloutItem::ResponseItem(ResponseItem::Message { role, content, .. }),
+                ) => {
+                    assert_eq!(role, "assistant");
+                    assert_eq!(content.len(), 1);
+                    if let ContentItem::OutputText { text } = &content[0] {
+                        assert_eq!(text, "Hello from assistant");
+                    } else {
+                        panic!("unexpected content variant in message case");
+                    }
+                }
+                (
+                    "reasoning",
+                    RolloutItem::ResponseItem(ResponseItem::Reasoning {
+                        summary,
+                        content,
+                        encrypted_content,
+                        ..
+                    }),
+                ) => {
+                    assert_eq!(summary.len(), 1);
+                    match &summary[0] {
+                        ReasoningItemReasoningSummary::SummaryText { text } => {
+                            assert_eq!(text, "Summarized thoughts");
+                        }
+                        other => panic!("unexpected summary variant: {other:?}"),
+                    }
+                    let reasoning_content = content.expect("expected reasoning content");
+                    assert_eq!(reasoning_content.len(), 1);
+                    if let ReasoningItemContent::ReasoningText { text } = &reasoning_content[0] {
+                        assert_eq!(text, "Detailed reasoning");
+                    } else {
+                        panic!("unexpected reasoning content variant");
+                    }
+                    assert_eq!(encrypted_content.as_deref(), Some("encrypted"));
+                }
+                (
+                    "local_shell_call",
+                    RolloutItem::ResponseItem(ResponseItem::LocalShellCall {
+                        call_id,
+                        status,
+                        action,
+                        ..
+                    }),
+                ) => {
+                    assert_eq!(call_id.as_deref(), Some("shell-call-1"));
+                    assert!(matches!(status, LocalShellStatus::Completed));
+                    match action {
+                        LocalShellAction::Exec(exec) => {
+                            assert_eq!(exec.command, vec!["ls", "-la"]);
+                            assert_eq!(exec.timeout_ms, Some(1200));
+                            assert_eq!(exec.working_directory.as_deref(), Some("/workspace"));
+                            let env = exec.env.expect("expected env map");
+                            assert_eq!(env.get("PATH"), Some(&"/usr/bin".to_string()));
+                            assert_eq!(exec.user.as_deref(), Some("codex"));
+                        }
+                    }
+                }
+                (
+                    "function_call",
+                    RolloutItem::ResponseItem(ResponseItem::FunctionCall {
+                        name,
+                        arguments,
+                        call_id,
+                        ..
+                    }),
+                ) => {
+                    assert_eq!(name, "shell");
+                    assert_eq!(arguments, "{\"command\":[\"echo\",\"hi\"]}");
+                    assert_eq!(call_id, "call-123");
+                }
+                (
+                    "function_call_output",
+                    RolloutItem::ResponseItem(ResponseItem::FunctionCallOutput { output, .. }),
+                ) => {
+                    assert_eq!(output.content, "{\"stdout\":\"done\"}");
+                    assert!(output.success.is_none());
+                }
+                (
+                    "custom_tool_call",
+                    RolloutItem::ResponseItem(ResponseItem::CustomToolCall {
+                        status,
+                        call_id,
+                        name,
+                        input,
+                        ..
+                    }),
+                ) => {
+                    assert_eq!(status.as_deref(), Some("completed"));
+                    assert_eq!(call_id, "tool-456");
+                    assert_eq!(name, "my_tool");
+                    assert_eq!(input, "{\"foo\":1}");
+                }
+                (
+                    "custom_tool_call_output",
+                    RolloutItem::ResponseItem(ResponseItem::CustomToolCallOutput {
+                        output, ..
+                    }),
+                ) => {
+                    assert_eq!(output, "tool finished");
+                }
+                (
+                    "web_search_call",
+                    RolloutItem::ResponseItem(ResponseItem::WebSearchCall {
+                        status, action, ..
+                    }),
+                ) => {
+                    assert_eq!(status.as_deref(), Some("completed"));
+                    match action {
+                        WebSearchAction::Search { query } => {
+                            assert_eq!(query, "weather in SF");
+                        }
+                        WebSearchAction::Other => panic!("unexpected web search action variant"),
+                    }
+                }
+                ("other", RolloutItem::ResponseItem(ResponseItem::Other)) => {}
+                (case, item) => panic!("case {case} returned unexpected item {item:?}"),
+            }
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+    fn deserialize_rollout_event_msg_lines() {
+        let timestamp = "2025-01-02T03:04:05.678Z";
+        let cases: Vec<(&str, Value)> = vec![
+            (
+                "user_message",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "user_message",
+                        "message": "Please help",
+                        "kind": "plain",
+                        "images": ["data:image/png;base64,AAA"]
+                    }
+                }),
+            ),
+            (
+                "agent_message",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "agent_message",
+                        "message": "Sure thing"
+                    }
+                }),
+            ),
+            (
+                "agent_reasoning",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "agent_reasoning",
+                        "text": "Thinking..."
+                    }
+                }),
+            ),
+            (
+                "agent_reasoning_raw_content",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "agent_reasoning_raw_content",
+                        "text": "raw reasoning"
+                    }
+                }),
+            ),
+            (
+                "token_count_info",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": {
+                                "input_tokens": 120,
+                                "cached_input_tokens": 10,
+                                "output_tokens": 30,
+                                "reasoning_output_tokens": 5,
+                                "total_tokens": 165
+                            },
+                            "last_token_usage": {
+                                "input_tokens": 20,
+                                "cached_input_tokens": 0,
+                                "output_tokens": 15,
+                                "reasoning_output_tokens": 5,
+                                "total_tokens": 40
+                            },
+                            "model_context_window": 16000
+                        }
+                    }
+                }),
+            ),
+            (
+                "token_count_none",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": null
+                    }
+                }),
+            ),
+            (
+                "entered_review_mode",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "entered_review_mode",
+                        "prompt": "Need review",
+                        "user_facing_hint": "double-check work"
+                    }
+                }),
+            ),
+            (
+                "exited_review_mode",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "exited_review_mode",
+                        "review_output": {
+                            "findings": [
+                                {
+                                    "title": "Bug",
+                                    "body": "Found an issue",
+                                    "confidence_score": 0.4,
+                                    "priority": 1,
+                                    "code_location": {
+                                        "absolute_file_path": "/workspace/src/lib.rs",
+                                        "line_range": { "start": 1, "end": 3 }
+                                    }
+                                }
+                            ],
+                            "overall_correctness": "needs_changes",
+                            "overall_explanation": "Please fix",
+                            "overall_confidence_score": 0.9
+                        }
+                    }
+                }),
+            ),
+            (
+                "turn_aborted",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "turn_aborted",
+                        "reason": "interrupted"
+                    }
+                }),
+            ),
+        ];
+
+        for (case, value) in cases {
+            let parsed = parse_rollout_line(value, case);
+            assert_eq!(parsed.timestamp, timestamp);
+            match (case, parsed.item) {
+                ("user_message", RolloutItem::EventMsg(EventMsg::UserMessage(event))) => {
+                    assert_eq!(event.message, "Please help");
+                    assert!(matches!(event.kind, Some(InputMessageKind::Plain)));
+                    let images = event.images.expect("expected images");
+                    assert_eq!(images, vec!["data:image/png;base64,AAA".to_string()]);
+                }
+                ("agent_message", RolloutItem::EventMsg(EventMsg::AgentMessage(event))) => {
+                    assert_eq!(event.message, "Sure thing");
+                }
+                ("agent_reasoning", RolloutItem::EventMsg(EventMsg::AgentReasoning(event))) => {
+                    assert_eq!(event.text, "Thinking...");
+                }
+                (
+                    "agent_reasoning_raw_content",
+                    RolloutItem::EventMsg(EventMsg::AgentReasoningRawContent(event)),
+                ) => {
+                    assert_eq!(event.text, "raw reasoning");
+                }
+                ("token_count_info", RolloutItem::EventMsg(EventMsg::TokenCount(event))) => {
+                    let info = event.info.expect("expected token info");
+                    assert_eq!(info.total_token_usage.input_tokens, 120);
+                    assert_eq!(info.total_token_usage.cached_input_tokens, 10);
+                    assert_eq!(info.total_token_usage.output_tokens, 30);
+                    assert_eq!(info.total_token_usage.reasoning_output_tokens, 5);
+                    assert_eq!(info.total_token_usage.total_tokens, 165);
+                    assert_eq!(info.last_token_usage.output_tokens, 15);
+                    assert_eq!(info.model_context_window, Some(16000));
+                }
+                ("token_count_none", RolloutItem::EventMsg(EventMsg::TokenCount(event))) => {
+                    assert!(event.info.is_none());
+                }
+                (
+                    "entered_review_mode",
+                    RolloutItem::EventMsg(EventMsg::EnteredReviewMode(request)),
+                ) => {
+                    assert_eq!(request.prompt, "Need review");
+                    assert_eq!(request.user_facing_hint, "double-check work");
+                }
+                (
+                    "exited_review_mode",
+                    RolloutItem::EventMsg(EventMsg::ExitedReviewMode(event)),
+                ) => {
+                    let output = event.review_output.expect("expected review output");
+                    assert_eq!(output.findings.len(), 1);
+                    let finding = &output.findings[0];
+                    assert_eq!(finding.title, "Bug");
+                    assert_eq!(finding.body, "Found an issue");
+                    assert_eq!(finding.confidence_score, 0.4);
+                    assert_eq!(finding.priority, 1);
+                    assert_eq!(
+                        finding.code_location.absolute_file_path,
+                        PathBuf::from("/workspace/src/lib.rs")
+                    );
+                    assert_eq!(finding.code_location.line_range.start, 1);
+                    assert_eq!(finding.code_location.line_range.end, 3);
+                    assert_eq!(output.overall_correctness, "needs_changes");
+                    assert_eq!(output.overall_explanation, "Please fix");
+                    assert_eq!(output.overall_confidence_score, 0.9);
+                }
+                ("turn_aborted", RolloutItem::EventMsg(EventMsg::TurnAborted(event))) => {
+                    assert_eq!(event.reason, TurnAbortReason::Interrupted);
+                }
+                (case, item) => panic!("case {case} returned unexpected item {item:?}"),
+            }
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn deserialize_rollout_misc_lines() {
+        let timestamp = "2025-01-02T03:04:05.678Z";
+        let cases: Vec<(&str, Value)> = vec![
+            (
+                "compacted",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "compacted",
+                    "payload": {
+                        "message": "Turn summary"
+                    }
+                }),
+            ),
+            (
+                "turn_context_workspace",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "turn_context",
+                    "payload": {
+                        "cwd": "/workspace",
+                        "approval_policy": "on-request",
+                        "sandbox_policy": {
+                            "mode": "workspace-write",
+                            "writable_roots": ["/workspace/tmp"],
+                            "network_access": true,
+                            "exclude_tmpdir_env_var": false,
+                            "exclude_slash_tmp": true
+                        },
+                        "model": "gpt-5",
+                        "effort": "high",
+                        "summary": "detailed"
+                    }
+                }),
+            ),
+            (
+                "turn_context_read_only",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "turn_context",
+                    "payload": {
+                        "cwd": "/workspace",
+                        "approval_policy": "never",
+                        "sandbox_policy": {
+                            "mode": "read-only"
+                        },
+                        "model": "gpt-5",
+                        "summary": "auto"
+                    }
+                }),
+            ),
+        ];
+
+        for (case, value) in cases {
+            let parsed = parse_rollout_line(value, case);
+            assert_eq!(parsed.timestamp, timestamp);
+            match (case, parsed.item) {
+                ("compacted", RolloutItem::Compacted(CompactedItem { message })) => {
+                    assert_eq!(message, "Turn summary");
+                }
+                ("turn_context_workspace", RolloutItem::TurnContext(turn_context)) => {
+                    assert_eq!(turn_context.cwd, PathBuf::from("/workspace"));
+                    assert_eq!(turn_context.approval_policy, AskForApproval::OnRequest);
+                    match turn_context.sandbox_policy {
+                        SandboxPolicy::WorkspaceWrite {
+                            writable_roots,
+                            network_access,
+                            exclude_tmpdir_env_var,
+                            exclude_slash_tmp,
+                        } => {
+                            assert_eq!(writable_roots, vec![PathBuf::from("/workspace/tmp")]);
+                            assert!(network_access);
+                            assert!(!exclude_tmpdir_env_var);
+                            assert!(exclude_slash_tmp);
+                        }
+                        other => panic!("expected workspace-write sandbox policy, got {other:?}"),
+                    }
+                    assert_eq!(turn_context.model, "gpt-5");
+                    assert_eq!(turn_context.effort, Some(ReasoningEffortConfig::High));
+                    assert_eq!(turn_context.summary, ReasoningSummaryConfig::Detailed);
+                }
+                ("turn_context_read_only", RolloutItem::TurnContext(turn_context)) => {
+                    assert_eq!(turn_context.cwd, PathBuf::from("/workspace"));
+                    assert_eq!(turn_context.approval_policy, AskForApproval::Never);
+                    assert!(turn_context.effort.is_none());
+                    assert_eq!(turn_context.summary, ReasoningSummaryConfig::Auto);
+                    match turn_context.sandbox_policy {
+                        SandboxPolicy::ReadOnly => {}
+                        other => panic!("expected read-only sandbox policy, got {other:?}"),
+                    }
+                }
+                (case, item) => panic!("case {case} returned unexpected item {item:?}"),
+            }
+        }
     }
 }
