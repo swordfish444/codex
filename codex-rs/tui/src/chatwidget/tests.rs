@@ -206,7 +206,7 @@ fn entered_review_mode_uses_request_hint() {
 
     let cells = drain_insert_history(&mut rx);
     let banner = lines_to_single_string(cells.last().expect("review banner"));
-    assert_eq!(banner, "\n>> Code review started: feature branch <<\n");
+    assert_eq!(banner, ">> Code review started: feature branch <<\n");
     assert!(chat.is_review_mode);
 }
 
@@ -225,7 +225,7 @@ fn entered_review_mode_defaults_to_current_changes_banner() {
 
     let cells = drain_insert_history(&mut rx);
     let banner = lines_to_single_string(cells.last().expect("review banner"));
-    assert_eq!(banner, "\n>> Code review started: current changes <<\n");
+    assert_eq!(banner, ">> Code review started: current changes <<\n");
     assert!(chat.is_review_mode);
 }
 

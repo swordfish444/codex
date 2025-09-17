@@ -237,14 +237,7 @@ pub(crate) struct ReviewStatusHistoryCell {
 
 impl HistoryCell for ReviewStatusHistoryCell {
     fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
-        // Add one empty line above the review status banner for visual padding
-        vec!["".into(), Line::from(self.message.clone().cyan())]
-    }
-
-    fn is_stream_continuation(&self) -> bool {
-        // Treat status lines as part of the same history block to avoid an extra
-        // blank separator when following other content in the same turn.
-        true
+        vec![Line::from(self.message.clone().cyan())]
     }
 }
 

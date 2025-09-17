@@ -281,15 +281,10 @@ impl ChatWidget {
         self.bottom_pane.set_token_usage(info.clone());
         self.token_info = info;
     }
-    /// Finalize any active exec as failed, push an error message into history,
-    /// and stop/clear running UI state.
-    fn finalize_turn_with_error_message(&mut self, message: Option<String>) {
+    /// Finalize any active exec as failed and stop/clear running UI state.
+    fn finalize_turn(&mut self) {
         // Ensure any spinner is replaced by a red ✗ and flushed into history.
         self.finalize_active_exec_cell_as_failed();
-        // Emit the provided error message/history cell.
-        if let Some(message) = message {
-            self.add_to_history(history_cell::new_error_event(message));
-        }
         // Reset running state and clear streaming buffers.
         self.bottom_pane.set_task_running(false);
         self.running_commands.clear();
@@ -297,7 +292,8 @@ impl ChatWidget {
     }
 
     fn on_error(&mut self, message: String) {
-        self.finalize_turn_with_error_message(Some(message));
+        self.finalize_turn();
+        self.add_to_history(history_cell::new_error_event(message));
         self.request_redraw();
 
         // After an error ends the turn, try sending the next queued input.
@@ -309,11 +305,13 @@ impl ChatWidget {
     /// separated by newlines rather than auto‑submitting the next one.
     fn on_interrupted_turn(&mut self, reason: TurnAbortReason) {
         // Finalize, log a gentle prompt, and clear running state.
-        self.finalize_turn_with_error_message(if reason == TurnAbortReason::ReviewEnded {
-            None
-        } else {
-            Some("Conversation interrupted - tell the model what to do differently".to_owned())
-        });
+        self.finalize_turn();
+
+        if reason != TurnAbortReason::ReviewEnded {
+            self.add_to_history(history_cell::new_error_event(
+                "Conversation interrupted - tell the model what to do differently".to_owned(),
+            ));
+        }
 
         // If any messages were queued during the task, restore them into the composer.
         if !self.queued_user_messages.is_empty() {
@@ -1177,24 +1175,21 @@ impl ChatWidget {
             self.flush_active_exec_cell();
 
             if output.findings.is_empty() {
-                // Show explanation or a fallback when there are no structured findings.
-                let mut lines: Vec<ratatui::text::Line<'static>> =
-                    codex_core::review_format::format_review_findings_block(&[], None)
-                        .lines()
-                        .map(|s| ratatui::text::Line::from(s.to_string()))
-                        .collect();
-                lines.push("".into());
                 let explanation = output.overall_explanation.trim().to_string();
                 if explanation.is_empty() {
-                    lines.push("Review failed -- no response found".into());
+                    tracing::error!("Reviewer failed to output a response.");
+                    self.add_to_history(history_cell::new_error_event(
+                        "Reviewer failed to output a response.".to_owned(),
+                    ));
                 } else {
-                    for l in explanation.lines() {
-                        lines.push(ratatui::text::Line::from(l.to_string()));
-                    }
+                    // Show explanation when there are no structured findings.
+                    let body_cell = crate::history_cell::AgentMessageCell::new(
+                        vec![format!("\n{explanation}").into()],
+                        false,
+                    );
+                    self.app_event_tx
+                        .send(AppEvent::InsertHistoryCell(Box::new(body_cell)));
                 }
-                let body_cell = crate::history_cell::AgentMessageCell::new(lines, false);
-                self.app_event_tx
-                    .send(AppEvent::InsertHistoryCell(Box::new(body_cell)));
             } else {
                 let message_text =
                     codex_core::review_format::format_review_findings_block(&output.findings, None);
@@ -1515,14 +1510,7 @@ impl ChatWidget {
         if text.is_empty() {
             return;
         }
-
-        let user_message: UserMessage = text.into();
-        if self.bottom_pane.is_task_running() {
-            self.queued_user_messages.push_back(user_message);
-            self.refresh_queued_user_messages();
-        } else {
-            self.submit_user_message(user_message);
-        }
+        self.submit_user_message(text.into());
     }
 
     pub(crate) fn token_usage(&self) -> TokenUsage {
@@ -1560,10 +1548,10 @@ impl WidgetRef for &ChatWidget {
         if !active_cell_area.is_empty()
             && let Some(cell) = &self.active_exec_cell
         {
-            let mut area_to_render = active_cell_area;
-            area_to_render.y = area_to_render.y.saturating_add(1);
-            area_to_render.height = area_to_render.height.saturating_sub(1);
-            cell.render_ref(area_to_render, buf);
+            let mut active_cell_area = active_cell_area;
+            active_cell_area.y = active_cell_area.y.saturating_add(1);
+            active_cell_area.height -= 1;
+            cell.render_ref(active_cell_area, buf);
         }
     }
 }

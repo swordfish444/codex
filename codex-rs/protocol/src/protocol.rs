@@ -984,6 +984,9 @@ pub struct ReviewRequest {
 pub struct ReviewOutputEvent {
     pub findings: Vec<ReviewFinding>,
     pub overall_correctness: String,
+
+    /// This will always have a value, even when there are no findings, or
+    /// if the review output wasn't valid JSON.
     pub overall_explanation: String,
     pub overall_confidence_score: f32,
 }
