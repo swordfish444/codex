@@ -229,7 +229,7 @@ impl HistoryCell for TranscriptOnlyHistoryCell {
     }
 }
 
-/// Insert a transcript line describing the current review status.
+/// Cyan history cell line showing the current review status.
 #[derive(Debug)]
 pub(crate) struct ReviewStatusHistoryCell {
     message: String,

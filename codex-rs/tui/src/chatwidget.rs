@@ -66,10 +66,12 @@ use crate::clipboard_paste::paste_image_to_temp_png;
 use crate::diff_render::display_path_for;
 use crate::get_git_diff::get_git_diff;
 use crate::history_cell;
+use crate::history_cell::AgentMessageCell;
 use crate::history_cell::CommandOutput;
 use crate::history_cell::ExecCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PatchEventType;
+use crate::markdown::append_markdown;
 use crate::slash_command::SlashCommand;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
@@ -1179,21 +1181,18 @@ impl ChatWidget {
                     ));
                 } else {
                     // Show explanation when there are no structured findings.
-                    let body_cell = crate::history_cell::AgentMessageCell::new(
-                        vec![format!("\n{explanation}").into()],
-                        false,
-                    );
+                    let mut rendered: Vec<ratatui::text::Line<'static>> = Vec::new();
+                    append_markdown(&format!("\n{explanation}"), &mut rendered, &self.config);
+                    let body_cell = AgentMessageCell::new(rendered, false);
                     self.app_event_tx
                         .send(AppEvent::InsertHistoryCell(Box::new(body_cell)));
                 }
             } else {
                 let message_text =
                     codex_core::review_format::format_review_findings_block(&output.findings, None);
-                let message_lines: Vec<ratatui::text::Line<'static>> = message_text
-                    .lines()
-                    .map(|s| ratatui::text::Line::from(s.to_string()))
-                    .collect();
-                let body_cell = crate::history_cell::AgentMessageCell::new(message_lines, true);
+                let mut message_lines: Vec<ratatui::text::Line<'static>> = Vec::new();
+                append_markdown(&message_text, &mut message_lines, &self.config);
+                let body_cell = AgentMessageCell::new(message_lines, true);
                 self.app_event_tx
                     .send(AppEvent::InsertHistoryCell(Box::new(body_cell)));
             }
@@ -1480,7 +1479,7 @@ impl ChatWidget {
         self.bottom_pane.clear_esc_backtrack_hint();
     }
     /// Forward an `Op` directly to codex.
-    pub(crate) fn submit_op(&mut self, op: Op) {
+    pub(crate) fn submit_op(&self, op: Op) {
         // Record outbound operation for session replay fidelity.
         crate::session_log::log_outbound_op(&op);
         if let Err(e) = self.codex_op_tx.send(op) {
