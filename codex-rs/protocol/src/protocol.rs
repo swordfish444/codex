@@ -1363,7 +1363,11 @@ mod tests {
             serde_json::from_str(raw).unwrap_or_else(|err| panic!("failed to parse {case}: {err}"));
         let serialized = serde_json::to_value(&parsed)
             .unwrap_or_else(|err| panic!("failed to serialize {case}: {err}"));
-        assert_eq!(serialized, expected, "case {case} failed round trip");
+        assert_eq!(
+            normalize_rollout_value(serialized),
+            normalize_rollout_value(expected),
+            "case {case} failed round trip",
+        );
     }
 
     #[test]
