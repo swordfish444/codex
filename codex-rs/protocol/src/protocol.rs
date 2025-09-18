@@ -1398,8 +1398,89 @@ mod tests {
                 expected_kind: ExpectedItemKind::Response,
             },
             RolloutFixtureCase {
+                name: "response_item/reasoning",
+                raw: include_str!("../tests/fixtures/rollouts/response_item/reasoning.json"),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/local_shell_call",
+                raw: include_str!("../tests/fixtures/rollouts/response_item/local_shell_call.json"),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/function_call",
+                raw: include_str!("../tests/fixtures/rollouts/response_item/function_call.json"),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/function_call_output",
+                raw: include_str!(
+                    "../tests/fixtures/rollouts/response_item/function_call_output.json"
+                ),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/custom_tool_call",
+                raw: include_str!("../tests/fixtures/rollouts/response_item/custom_tool_call.json"),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/custom_tool_call_output",
+                raw: include_str!(
+                    "../tests/fixtures/rollouts/response_item/custom_tool_call_output.json"
+                ),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/web_search_call",
+                raw: include_str!("../tests/fixtures/rollouts/response_item/web_search_call.json"),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/other",
+                raw: include_str!("../tests/fixtures/rollouts/response_item/other.json"),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
                 name: "event_msg/user_message",
                 raw: include_str!("../tests/fixtures/rollouts/event_msg/user_message.json"),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/agent_message",
+                raw: include_str!("../tests/fixtures/rollouts/event_msg/agent_message.json"),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/agent_reasoning",
+                raw: include_str!("../tests/fixtures/rollouts/event_msg/agent_reasoning.json"),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/agent_reasoning_raw_content",
+                raw: include_str!(
+                    "../tests/fixtures/rollouts/event_msg/agent_reasoning_raw_content.json"
+                ),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/token_count_info",
+                raw: include_str!("../tests/fixtures/rollouts/event_msg/token_count_info.json"),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/entered_review_mode",
+                raw: include_str!("../tests/fixtures/rollouts/event_msg/entered_review_mode.json"),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/exited_review_mode",
+                raw: include_str!("../tests/fixtures/rollouts/event_msg/exited_review_mode.json"),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/turn_aborted",
+                raw: include_str!("../tests/fixtures/rollouts/event_msg/turn_aborted.json"),
                 expected_kind: ExpectedItemKind::Event,
             },
             RolloutFixtureCase {
@@ -1410,6 +1491,11 @@ mod tests {
             RolloutFixtureCase {
                 name: "misc/turn_context_workspace",
                 raw: include_str!("../tests/fixtures/rollouts/misc/turn_context_workspace.json"),
+                expected_kind: ExpectedItemKind::TurnContext,
+            },
+            RolloutFixtureCase {
+                name: "misc/turn_context_read_only",
+                raw: include_str!("../tests/fixtures/rollouts/misc/turn_context_read_only.json"),
                 expected_kind: ExpectedItemKind::TurnContext,
             },
         ];
