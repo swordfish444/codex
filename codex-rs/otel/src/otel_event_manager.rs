@@ -1,15 +1,18 @@
 use chrono::SecondsFormat;
 use chrono::Utc;
+use codex_protocol::config_types::ReasoningEffort;
+use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::mcp_protocol::AuthMode;
 use codex_protocol::mcp_protocol::ConversationId;
-use codex_protocol::protocol::{AskForApproval, InputItem, SandboxPolicy};
+use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::InputItem;
 use codex_protocol::protocol::ReviewDecision;
+use codex_protocol::protocol::SandboxPolicy;
 use reqwest::Error;
 use reqwest::Response;
 use serde::Serialize;
 use std::time::Duration;
 use strum_macros::Display;
-use codex_protocol::config_types::{ReasoningEffort, ReasoningSummary};
 
 #[derive(Debug, Clone, Serialize, Display)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +69,7 @@ impl OtelEventManager {
         manager
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn conversation_starts(
         &self,
         provider_name: &str,
@@ -134,7 +138,7 @@ impl OtelEventManager {
         );
     }
 
-    pub fn sse_event(&self, kind: String, duration: Duration) {
+    pub fn sse_event(&self, kind: &str, duration: Duration) {
         tracing::event!(
             tracing::Level::INFO,
             event.name = "codex.sse_event",
@@ -152,21 +156,37 @@ impl OtelEventManager {
     }
 
     pub fn sse_event_failed(&self, kind: Option<String>, duration: Duration, error: &str) {
-        tracing::event!(
-            tracing::Level::INFO,
-            event.name = "codex.sse_event",
-            event.timestamp = %timestamp(),
-            event.kind = kind,
-            conversation.id = %self.metadata.conversation_id,
-            app.version = %self.metadata.app_version,
-            auth_mode = self.metadata.auth_mode,
-            user.account_id = self.metadata.account_id,
-            terminal.type = %self.metadata.terminal_type,
-            model = %self.metadata.model,
-            slug = %self.metadata.slug,
-            duration_ms = %duration.as_millis(),
-            error.message = %error,
-        );
+        match kind {
+            Some(kind) => tracing::event!(
+                tracing::Level::INFO,
+                event.name = "codex.sse_event",
+                event.timestamp = %timestamp(),
+                event.kind = %kind,
+                conversation.id = %self.metadata.conversation_id,
+                app.version = %self.metadata.app_version,
+                auth_mode = self.metadata.auth_mode,
+                user.account_id = self.metadata.account_id,
+                terminal.type = %self.metadata.terminal_type,
+                model = %self.metadata.model,
+                slug = %self.metadata.slug,
+                duration_ms = %duration.as_millis(),
+                error.message = %error,
+            ),
+            None => tracing::event!(
+                tracing::Level::INFO,
+                event.name = "codex.sse_event",
+                event.timestamp = %timestamp(),
+                conversation.id = %self.metadata.conversation_id,
+                app.version = %self.metadata.app_version,
+                auth_mode = self.metadata.auth_mode,
+                user.account_id = self.metadata.account_id,
+                terminal.type = %self.metadata.terminal_type,
+                model = %self.metadata.model,
+                slug = %self.metadata.slug,
+                duration_ms = %duration.as_millis(),
+                error.message = %error,
+            ),
+        }
     }
 
     pub fn sse_event_completed(
@@ -182,7 +202,7 @@ impl OtelEventManager {
             tracing::Level::INFO,
             event.name = "codex.sse_event",
             event.timestamp = %timestamp(),
-            event.kind = "response.completed",
+            event.kind = %"response.completed",
             conversation.id = %self.metadata.conversation_id,
             app.version = %self.metadata.app_version,
             auth_mode = self.metadata.auth_mode,
@@ -250,8 +270,8 @@ impl OtelEventManager {
             slug = %self.metadata.slug,
             tool_name = %tool_name,
             call_id = %call_id,
-            decision = decision.to_string().to_lowercase(),
-            source = source.to_string(),
+            decision = %decision.to_string().to_lowercase(),
+            source = %source.to_string(),
         );
     }
 

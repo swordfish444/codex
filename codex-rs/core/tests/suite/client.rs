@@ -30,6 +30,7 @@ use serde_json::json;
 use std::io::Write;
 use std::sync::Arc;
 use tempfile::TempDir;
+use tracing_test::traced_test;
 use uuid::Uuid;
 use wiremock::Mock;
 use wiremock::MockServer;
@@ -1088,4 +1089,58 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
         r3_tail_expected,
         "request 3 tail mismatch",
     );
+}
+
+#[tokio::test]
+#[traced_test]
+async fn responses_api_emits_api_request_event() {
+    let server = MockServer::start().await;
+
+    let first = ResponseTemplate::new(200)
+        .insert_header("content-type", "text/event-stream")
+        .set_body_raw(sse_completed("resp1"), "text/event-stream");
+
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(first)
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let model_provider = ModelProviderInfo {
+        base_url: Some(format!("{}/v1", server.uri())),
+        ..built_in_model_providers()["openai"].clone()
+    };
+
+    let codex_home = TempDir::new().unwrap();
+    let mut config = load_default_config_for_test(&codex_home);
+    config.model_provider = model_provider;
+    config.user_instructions = Some("be nice".to_string());
+
+    let conversation_manager =
+        ConversationManager::with_auth(CodexAuth::from_api_key("Test API Key"));
+    let codex = conversation_manager
+        .new_conversation(config)
+        .await
+        .expect("create new conversation")
+        .conversation;
+
+    codex
+        .submit(Op::UserInput {
+            items: vec![InputItem::Text {
+                text: "hello".into(),
+            }],
+        })
+        .await
+        .unwrap();
+
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+    logs_assert(|lines: &[&str]| {
+        lines
+            .iter()
+            .find(|line| line.contains("codex.api_request"))
+            .map(|_| Ok(()))
+            .unwrap_or_else(|| Err("expected codex.api_request event".to_string()))
+    });
 }

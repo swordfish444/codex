@@ -421,7 +421,7 @@ async fn process_chat_sse<S>(
 
         // OpenAI Chat streaming sends a literal string "[DONE]" when finished.
         if sse.data.trim() == "[DONE]" {
-            otel_event_manager.sse_event(sse.event, start.elapsed());
+            otel_event_manager.sse_event(&sse.event, start.elapsed());
             // Emit any finalized items before closing so downstream consumers receive
             // terminal events for both assistant content and raw reasoning.
             if !assistant_text.is_empty() {
@@ -466,7 +466,7 @@ async fn process_chat_sse<S>(
             }
         };
         trace!("chat_completions received SSE chunk: {chunk:?}");
-        otel_event_manager.sse_event(sse.event, start.elapsed());
+        otel_event_manager.sse_event(&sse.event, start.elapsed());
 
         let choice_opt = chunk.get("choices").and_then(|c| c.get(0));
 

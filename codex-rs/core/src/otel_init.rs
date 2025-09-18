@@ -1,12 +1,12 @@
 use crate::config::Config;
 use crate::config_types::OtelExporterKind as Kind;
 use crate::config_types::OtelHttpProtocol as Protocol;
+use crate::default_client::ORIGINATOR;
 use codex_otel::config::OtelExporter;
 use codex_otel::config::OtelHttpProtocol;
 use codex_otel::config::OtelSettings;
 use codex_otel::otel_provider::OtelProvider;
 use std::error::Error;
-use crate::default_client::ORIGINATOR;
 
 /// Build an OpenTelemetry provider from the app Config.
 ///

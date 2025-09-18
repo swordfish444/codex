@@ -600,6 +600,8 @@ async fn process_sse<S>(
             }
         };
 
+        otel_event_manager.sse_event(event.kind.as_str(), start.elapsed());
+
         match event.kind.as_str() {
             // Individual output item finalised. Forward immediately so the
             // rest of the agent can stream assistant text/functions *live*
@@ -621,7 +623,6 @@ async fn process_sse<S>(
             // drop the duplicated list inside `response.completed`.
             "response.output_item.done" => {
                 let Some(item_val) = event.item else {
-                    otel_event_manager.sse_event(event.kind, start.elapsed());
                     continue
                 };
                 let Ok(item) = serde_json::from_value::<ResponseItem>(item_val) else {
@@ -631,15 +632,12 @@ async fn process_sse<S>(
                     continue;
                 };
 
-                otel_event_manager.sse_event(event.kind, start.elapsed());
-
                 let event = ResponseEvent::OutputItemDone(item);
                 if tx_event.send(Ok(event)).await.is_err() {
                     return;
                 }
             }
             "response.output_text.delta" => {
-                otel_event_manager.sse_event(event.kind, start.elapsed());
                 if let Some(delta) = event.delta {
                     let event = ResponseEvent::OutputTextDelta(delta);
                     if tx_event.send(Ok(event)).await.is_err() {
@@ -648,7 +646,6 @@ async fn process_sse<S>(
                 }
             }
             "response.reasoning_summary_text.delta" => {
-                otel_event_manager.sse_event(event.kind, start.elapsed());
                 if let Some(delta) = event.delta {
                     let event = ResponseEvent::ReasoningSummaryDelta(delta);
                     if tx_event.send(Ok(event)).await.is_err() {
@@ -657,7 +654,6 @@ async fn process_sse<S>(
                 }
             }
             "response.reasoning_text.delta" => {
-                otel_event_manager.sse_event(event.kind, start.elapsed());
                 if let Some(delta) = event.delta {
                     let event = ResponseEvent::ReasoningContentDelta(delta);
                     if tx_event.send(Ok(event)).await.is_err() {
@@ -666,7 +662,6 @@ async fn process_sse<S>(
                 }
             }
             "response.created" => {
-                otel_event_manager.sse_event(event.kind, start.elapsed());
                 if event.response.is_some() {
                     let _ = tx_event.send(Ok(ResponseEvent::Created {})).await;
                 }
@@ -723,7 +718,6 @@ async fn process_sse<S>(
             | "response.in_progress"
             | "response.output_text.done" => {}
             "response.output_item.added" => {
-                otel_event_manager.sse_event(event.kind, start.elapsed());
                 if let Some(item) = event.item.as_ref() {
                     // Detect web_search_call begin and forward a synthetic event upstream.
                     if let Some(ty) = item.get("type").and_then(|v| v.as_str())
@@ -743,17 +737,14 @@ async fn process_sse<S>(
             }
             "response.reasoning_summary_part.added" => {
                 // Boundary between reasoning summary sections (e.g., titles).
-                otel_event_manager.sse_event(event.kind, start.elapsed());
                 let event = ResponseEvent::ReasoningSummaryPartAdded;
                 if tx_event.send(Ok(event)).await.is_err() {
                     return;
                 }
             }
             "response.reasoning_summary_text.done" => {
-                otel_event_manager.sse_event(event.kind, start.elapsed());
             }
             _ => {
-                otel_event_manager.sse_event(event.kind, start.elapsed());
             }
         }
     }
@@ -828,7 +819,7 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio_test::io::Builder as IoBuilder;
     use tokio_util::io::ReaderStream;
-
+    use tracing_test::traced_test;
     // ────────────────────────────
     // Helpers
     // ────────────────────────────
@@ -860,6 +851,29 @@ mod tests {
             events.push(ev);
         }
         events
+    }
+
+    async fn run_sse_allow_errors(
+        events: Vec<serde_json::Value>,
+        provider: ModelProviderInfo,
+        otel_event_manager: OtelEventManager,
+    ) {
+        let chunks: Vec<Vec<u8>> = events
+            .into_iter()
+            .map(|event| {
+                let kind = event
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .expect("fixture event missing type");
+                if event.as_object().map(|o| o.len() == 1).unwrap_or(false) {
+                    format!("event: {kind}\n\n").into_bytes()
+                } else {
+                    format!("event: {kind}\ndata: {event}\n\n").into_bytes()
+                }
+            })
+            .collect();
+        let chunk_refs: Vec<&[u8]> = chunks.iter().map(Vec::as_slice).collect();
+        let _ = collect_events(&chunk_refs, provider, otel_event_manager).await;
     }
 
     /// Builds an in-memory SSE stream from JSON fixtures and returns only the
@@ -898,6 +912,378 @@ mod tests {
         out
     }
 
+    fn otel_event_manager() -> OtelEventManager {
+        OtelEventManager::new(
+            ConversationId::new(),
+            "test-model",
+            "test-slug",
+            None,
+            Some(AuthMode::ChatGPT),
+            true,
+            "test-terminal".to_string(),
+        )
+    }
+
+    fn model_provider() -> ModelProviderInfo {
+        ModelProviderInfo {
+            name: "test".to_string(),
+            base_url: Some("https://example.com".to_string()),
+            env_key: Some("TEST_KEY".to_string()),
+            env_key_instructions: None,
+            wire_api: WireApi::Responses,
+            query_params: None,
+            http_headers: None,
+            env_http_headers: None,
+            request_max_retries: Some(0),
+            stream_max_retries: Some(0),
+            stream_idle_timeout_ms: Some(1_000),
+            requires_openai_auth: false,
+        }
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn process_sse_emits_tracing_for_output_item() {
+        let provider = model_provider();
+        let otel_event_manager = otel_event_manager();
+
+        let _ = run_sse(
+            vec![
+                json!({
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{ "type": "output_text", "text": "hi" }]
+                    }
+                }),
+                json!({
+                    "type": "response.completed",
+                    "response": { "id": "resp1" }
+                }),
+            ],
+            provider,
+            otel_event_manager,
+        )
+        .await;
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.sse_event")
+                        && line.contains("event.kind=response.output_item.done")
+                })
+                .map(|_| Ok(()))
+                .unwrap_or(Err("missing response.output_item.done event".to_string()))
+        });
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn process_sse_emits_failed_event_on_parse_error() {
+        let chunk = "data: not-json\n\n";
+        let provider = model_provider();
+        let otel_event_manager = otel_event_manager();
+
+        let _ = collect_events(&[chunk.as_bytes()], provider, otel_event_manager).await;
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.sse_event")
+                        && line.contains("error.message")
+                        && line.contains("Failed to parse SSE event")
+                })
+                .map(|_| Ok(()))
+                .unwrap_or(Err("missing codex.sse_event".to_string()))
+        });
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn process_sse_stream_error_records_failed_event() {
+        let provider = model_provider();
+        let otel_event_manager = otel_event_manager();
+        let (tx, mut rx) = mpsc::channel::<Result<ResponseEvent>>(1);
+
+        let stream = stream::iter(vec![Err::<Bytes, CodexErr>(
+            std::io::Error::new(std::io::ErrorKind::Other, "boom").into(),
+        )]);
+
+        let handle = tokio::spawn(process_sse(
+            stream,
+            tx,
+            provider.stream_idle_timeout(),
+            otel_event_manager,
+        ));
+
+        while rx.recv().await.is_some() {}
+        handle.await.expect("process_sse task");
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.sse_event")
+                        && line.contains("error.message")
+                        && line.contains("boom")
+                })
+                .map(|_| Ok(()))
+                .unwrap_or(Err("missing codex.sse_event".to_string()))
+        });
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn process_sse_idle_timeout_records_failed_event() {
+        let otel_event_manager = otel_event_manager();
+        let (tx, mut rx) = mpsc::channel::<Result<ResponseEvent>>(1);
+        let stream = stream::pending::<std::result::Result<Bytes, CodexErr>>();
+        let idle_timeout = std::time::Duration::from_millis(1);
+
+        let handle = tokio::spawn(process_sse(stream, tx, idle_timeout, otel_event_manager));
+        let _ = rx.recv().await;
+        handle.await.expect("process_sse task");
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.sse_event")
+                        && line.contains("error.message")
+                        && line.contains("idle timeout")
+                })
+                .map(|_| Ok(()))
+                .unwrap_or(Err("missing codex.sse_event".to_string()))
+        });
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn process_sse_records_failed_event_when_stream_closes_without_completed() {
+        let item = json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "hi"}]
+            }
+        })
+        .to_string();
+        let sse = format!("event: response.output_item.done\ndata: {item}\n\n");
+        let provider = model_provider();
+        let otel_event_manager = otel_event_manager();
+
+        let _ = collect_events(&[sse.as_bytes()], provider, otel_event_manager).await;
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.sse_event")
+                        && line.contains("error.message")
+                        && line.contains("stream closed before response.completed")
+                })
+                .map(|_| Ok(()))
+                .unwrap_or(Err("missing codex.sse_event".to_string()))
+        });
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn process_sse_output_item_parse_failure_logs_event() {
+        let provider = model_provider();
+        let otel_event_manager = otel_event_manager();
+        let _ = run_sse_allow_errors(
+            vec![json!({
+                "type": "response.output_item.done",
+                "item": "unexpected"
+            })],
+            provider,
+            otel_event_manager,
+        )
+        .await;
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.sse_event")
+                        && line.contains("event.kind=response.output_item.done")
+                        && line.contains("error.message")
+                        && line.contains("failed to parse ResponseItem")
+                })
+                .map(|_| Ok(()))
+                .unwrap_or(Err("missing codex.sse_event".to_string()))
+        });
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn process_sse_failed_event_records_response_error_message() {
+        let provider = model_provider();
+        let otel_event_manager = otel_event_manager();
+        let _ = run_sse_allow_errors(
+            vec![json!({
+                "type": "response.failed",
+                "response": {
+                    "error": {
+                        "message": "boom",
+                        "code": "bad"
+                    }
+                }
+            })],
+            provider,
+            otel_event_manager,
+        )
+        .await;
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.sse_event")
+                        && line.contains("event.kind=response.failed")
+                        && line.contains("error.message")
+                        && line.contains("boom")
+                })
+                .map(|_| Ok(()))
+                .unwrap_or(Err("missing codex.sse_event".to_string()))
+        });
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn process_sse_failed_event_logs_parse_error() {
+        let provider = model_provider();
+        let otel_event_manager = otel_event_manager();
+        let _ = run_sse_allow_errors(
+            vec![json!({
+                "type": "response.failed",
+                "response": {
+                    "error": "not-an-object"
+                }
+            })],
+            provider,
+            otel_event_manager,
+        )
+        .await;
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.sse_event")
+                        && line.contains("event.kind=response.failed")
+                        && line.contains("error.message")
+                        && line.contains("failed to parse ErrorResponse")
+                })
+                .map(|_| Ok(()))
+                .unwrap_or(Err("missing codex.sse_event".to_string()))
+        });
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn process_sse_failed_event_logs_missing_error() {
+        let provider = model_provider();
+        let otel_event_manager = otel_event_manager();
+        let _ = run_sse_allow_errors(
+            vec![json!({
+                "type": "response.failed",
+                "response": {}
+            })],
+            provider,
+            otel_event_manager,
+        )
+        .await;
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.sse_event")
+                        && line.contains("event.kind=response.failed")
+                        && line.contains("error.message")
+                        && line.contains("response.failed event received")
+                })
+                .map(|_| Ok(()))
+                .unwrap_or(Err("missing codex.sse_event".to_string()))
+        });
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn process_sse_failed_event_logs_response_completed_parse_error() {
+        let provider = model_provider();
+        let otel_event_manager = otel_event_manager();
+        let _ = run_sse_allow_errors(
+            vec![json!({
+                "type": "response.completed",
+                "response": {}
+            })],
+            provider,
+            otel_event_manager,
+        )
+        .await;
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.sse_event")
+                        && line.contains("event.kind=response.completed")
+                        && line.contains("error.message")
+                        && line.contains("failed to parse ResponseCompleted")
+                })
+                .map(|_| Ok(()))
+                .unwrap_or(Err("missing codex.sse_event".to_string()))
+        });
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn process_sse_emits_completed_telemetry() {
+        let provider = model_provider();
+        let otel_event_manager = otel_event_manager();
+        let _ = run_sse_allow_errors(
+            vec![json!({
+                "type": "response.completed",
+                "response": {
+                    "id": "resp1",
+                    "usage": {
+                        "input_tokens": 3,
+                        "input_tokens_details": { "cached_tokens": 1 },
+                        "output_tokens": 5,
+                        "output_tokens_details": { "reasoning_tokens": 2 },
+                        "total_tokens": 9
+                    }
+                }
+            })],
+            provider,
+            otel_event_manager,
+        )
+        .await;
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.sse_event")
+                        && line.contains("event.kind=response.completed")
+                        && line.contains("input_token_count=3")
+                        && line.contains("output_token_count=5")
+                        && line.contains("cached_token_count=1")
+                        && line.contains("reasoning_token_count=2")
+                        && line.contains("tool_token_count=9")
+                })
+                .map(|_| Ok(()))
+                .unwrap_or(Err("missing response.completed telemetry".to_string()))
+        });
+    }
+
     // ────────────────────────────
     // Tests from `implement-test-for-responses-api-sse-parser`
     // ────────────────────────────
@@ -934,30 +1320,8 @@ mod tests {
         let sse2 = format!("event: response.output_item.done\ndata: {item2}\n\n");
         let sse3 = format!("event: response.completed\ndata: {completed}\n\n");
 
-        let provider = ModelProviderInfo {
-            name: "test".to_string(),
-            base_url: Some("https://test.com".to_string()),
-            env_key: Some("TEST_API_KEY".to_string()),
-            env_key_instructions: None,
-            wire_api: WireApi::Responses,
-            query_params: None,
-            http_headers: None,
-            env_http_headers: None,
-            request_max_retries: Some(0),
-            stream_max_retries: Some(0),
-            stream_idle_timeout_ms: Some(1000),
-            requires_openai_auth: false,
-        };
-
-        let otel_event_manager = OtelEventManager::new(
-            ConversationId::new(),
-            "test",
-            "test",
-            None,
-            Some(AuthMode::ChatGPT),
-            false,
-            "test".to_string(),
-        );
+        let provider = model_provider();
+        let otel_event_manager = otel_event_manager();
 
         let events = collect_events(
             &[sse1.as_bytes(), sse2.as_bytes(), sse3.as_bytes()],
@@ -1005,30 +1369,8 @@ mod tests {
         .to_string();
 
         let sse1 = format!("event: response.output_item.done\ndata: {item1}\n\n");
-        let provider = ModelProviderInfo {
-            name: "test".to_string(),
-            base_url: Some("https://test.com".to_string()),
-            env_key: Some("TEST_API_KEY".to_string()),
-            env_key_instructions: None,
-            wire_api: WireApi::Responses,
-            query_params: None,
-            http_headers: None,
-            env_http_headers: None,
-            request_max_retries: Some(0),
-            stream_max_retries: Some(0),
-            stream_idle_timeout_ms: Some(1000),
-            requires_openai_auth: false,
-        };
-
-        let otel_event_manager = OtelEventManager::new(
-            ConversationId::new(),
-            "test",
-            "test",
-            None,
-            Some(AuthMode::ChatGPT),
-            false,
-            "test".to_string(),
-        );
+        let provider = model_provider();
+        let otel_event_manager = otel_event_manager();
 
         let events = collect_events(&[sse1.as_bytes()], provider, otel_event_manager).await;
 
@@ -1049,30 +1391,8 @@ mod tests {
         let raw_error = r#"{"type":"response.failed","sequence_number":3,"response":{"id":"resp_689bcf18d7f08194bf3440ba62fe05d803fee0cdac429894","object":"response","created_at":1755041560,"status":"failed","background":false,"error":{"code":"rate_limit_exceeded","message":"Rate limit reached for gpt-5 in organization org-AAA on tokens per min (TPM): Limit 30000, Used 22999, Requested 12528. Please try again in 11.054s. Visit https://platform.openai.com/account/rate-limits to learn more."}, "usage":null,"user":null,"metadata":{}}}"#;
 
         let sse1 = format!("event: response.failed\ndata: {raw_error}\n\n");
-        let provider = ModelProviderInfo {
-            name: "test".to_string(),
-            base_url: Some("https://test.com".to_string()),
-            env_key: Some("TEST_API_KEY".to_string()),
-            env_key_instructions: None,
-            wire_api: WireApi::Responses,
-            query_params: None,
-            http_headers: None,
-            env_http_headers: None,
-            request_max_retries: Some(0),
-            stream_max_retries: Some(0),
-            stream_idle_timeout_ms: Some(1000),
-            requires_openai_auth: false,
-        };
-
-        let otel_event_manager = OtelEventManager::new(
-            ConversationId::new(),
-            "test",
-            "test",
-            None,
-            Some(AuthMode::ChatGPT),
-            false,
-            "test".to_string(),
-        );
+        let provider = model_provider();
+        let otel_event_manager = otel_event_manager();
 
         let events = collect_events(&[sse1.as_bytes()], provider, otel_event_manager).await;
 
@@ -1164,30 +1484,8 @@ mod tests {
             let mut evs = vec![case.event];
             evs.push(completed.clone());
 
-            let provider = ModelProviderInfo {
-                name: "test".to_string(),
-                base_url: Some("https://test.com".to_string()),
-                env_key: Some("TEST_API_KEY".to_string()),
-                env_key_instructions: None,
-                wire_api: WireApi::Responses,
-                query_params: None,
-                http_headers: None,
-                env_http_headers: None,
-                request_max_retries: Some(0),
-                stream_max_retries: Some(0),
-                stream_idle_timeout_ms: Some(1000),
-                requires_openai_auth: false,
-            };
-
-            let otel_event_manager = OtelEventManager::new(
-                ConversationId::new(),
-                "test",
-                "test",
-                None,
-                Some(AuthMode::ChatGPT),
-                false,
-                "test".to_string(),
-            );
+            let provider = model_provider();
+            let otel_event_manager = otel_event_manager();
 
             let out = run_sse(evs, provider, otel_event_manager).await;
             assert_eq!(out.len(), case.expected_len, "case {}", case.name);

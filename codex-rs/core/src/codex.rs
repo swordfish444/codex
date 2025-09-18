@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::path::Path;
 use std::fmt::Debug;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -467,7 +467,7 @@ impl Session {
             config.approval_policy,
             config.sandbox_policy.clone(),
             config.mcp_servers.keys().map(|k| k.as_str()).collect(),
-            config.active_profile.clone()
+            config.active_profile.clone(),
         );
 
         // Now that the conversation id is final (may have been updated by resume),
@@ -3540,19 +3540,30 @@ mod tests {
     use super::*;
     use crate::config::ConfigOverrides;
     use crate::config::ConfigToml;
+    use crate::exec::ExecParams;
     use crate::protocol::CompactedItem;
     use crate::protocol::InitialHistory;
     use crate::protocol::ResumedHistory;
+    use crate::turn_diff_tracker::TurnDiffTracker;
     use codex_protocol::mcp_protocol::AuthMode;
     use codex_protocol::models::ContentItem;
+    use codex_protocol::models::LocalShellAction;
+    use codex_protocol::models::LocalShellExecAction;
+    use codex_protocol::models::LocalShellStatus;
+    use codex_protocol::models::ResponseInputItem;
+    use codex_protocol::models::ResponseItem;
+    use codex_protocol::protocol::ReviewDecision;
     use mcp_types::ContentBlock;
     use mcp_types::TextContent;
     use pretty_assertions::assert_eq;
     use serde::Deserialize;
     use serde_json::json;
+    use std::path::Path;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::Duration as StdDuration;
+    use tempfile::tempdir;
+    use tracing_test::traced_test;
 
     #[test]
     fn reconstruct_history_matches_live_compactions() {
@@ -3593,6 +3604,52 @@ mod tests {
 
         let actual = tokio_test::block_on(async { session.state.lock().await.history.contents() });
         assert_eq!(expected, actual);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[traced_test]
+    async fn session_new_emits_conversation_start_event() {
+        let (tx_event, _rx_event) = async_channel::unbounded();
+        let codex_home = tempfile::tempdir().expect("create temp dir");
+        let config = Config::load_from_base_config_with_overrides(
+            ConfigToml::default(),
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )
+        .expect("load default test config");
+        let codex_home_path = config.codex_home.clone();
+        let config = Arc::new(config);
+        let auth_manager = AuthManager::shared(codex_home_path);
+        let configure_session = ConfigureSession {
+            provider: config.model_provider.clone(),
+            model: config.model.clone(),
+            model_reasoning_effort: config.model_reasoning_effort,
+            model_reasoning_summary: config.model_reasoning_summary,
+            user_instructions: config.user_instructions.clone(),
+            base_instructions: config.base_instructions.clone(),
+            approval_policy: config.approval_policy,
+            sandbox_policy: config.sandbox_policy.clone(),
+            notify: config.notify.clone(),
+            cwd: config.cwd.clone(),
+        };
+
+        let _ = Session::new(
+            configure_session,
+            Arc::clone(&config),
+            auth_manager,
+            tx_event,
+            InitialHistory::New,
+        )
+        .await
+        .expect("session setup succeeds");
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .find(|line| line.contains("codex.conversation_starts"))
+                .map(|_| Ok(()))
+                .unwrap_or_else(|| Err("expected codex.conversation_starts event".to_string()))
+        });
     }
 
     #[test]
@@ -3990,6 +4047,7 @@ mod tests {
 
         let mut turn_diff_tracker = TurnDiffTracker::new();
 
+        let tool_name = "shell";
         let sub_id = "test-sub".to_string();
         let call_id = "test-call".to_string();
 
@@ -3998,6 +4056,7 @@ mod tests {
             &session,
             &turn_context,
             &mut turn_diff_tracker,
+            tool_name,
             sub_id,
             call_id,
         )
@@ -4012,7 +4071,7 @@ mod tests {
             policy = turn_context.approval_policy
         );
 
-        pretty_assertions::assert_eq!(output.content, expected);
+        assert_eq!(output.content, expected);
 
         // Now retry the same command WITHOUT escalated permissions; should succeed.
         // Force DangerFullAccess to avoid platform sandbox dependencies in tests.
@@ -4023,6 +4082,7 @@ mod tests {
             &session,
             &turn_context,
             &mut turn_diff_tracker,
+            tool_name,
             "test-sub".to_string(),
             "test-call-2".to_string(),
         )
@@ -4049,5 +4109,785 @@ mod tests {
         pretty_assertions::assert_eq!(exec_output.metadata, ResponseExecMetadata { exit_code: 0 });
         assert!(exec_output.output.contains("hi"));
         pretty_assertions::assert_eq!(output.success, Some(true));
+    }
+
+    fn exec_params(command: Vec<String>, cwd: &Path) -> ExecParams {
+        ExecParams {
+            command,
+            cwd: cwd.to_path_buf(),
+            timeout_ms: None,
+            env: std::collections::HashMap::new(),
+            with_escalated_permissions: None,
+            justification: None,
+        }
+    }
+
+    async fn respond_to_pending_approval(
+        session: Arc<Session>,
+        sub_id: String,
+        decision: ReviewDecision,
+    ) {
+        for _ in 0..100 {
+            let requested = session
+                .state
+                .lock()
+                .await
+                .pending_approvals
+                .contains_key(&sub_id);
+            if requested {
+                session.notify_approval(&sub_id, decision).await;
+                return;
+            }
+            tokio::time::sleep(StdDuration::from_millis(10)).await;
+        }
+        panic!("approval {sub_id} was never requested");
+    }
+
+    async fn run_handle_container_exec(
+        session: Arc<Session>,
+        turn_context: &TurnContext,
+        params: ExecParams,
+        tool_name: &str,
+        sub_id: &str,
+        call_id: &str,
+        approval: Option<ReviewDecision>,
+    ) -> ResponseInputItem {
+        let approval_task = approval.map(|decision| {
+            tokio::spawn(respond_to_pending_approval(
+                Arc::clone(&session),
+                sub_id.to_owned(),
+                decision,
+            ))
+        });
+
+        let mut tracker = TurnDiffTracker::new();
+        let response = handle_container_exec_with_params(
+            params,
+            session.as_ref(),
+            turn_context,
+            &mut tracker,
+            &tool_name,
+            sub_id.to_owned(),
+            call_id.to_owned(),
+        )
+        .await;
+
+        if let Some(task) = approval_task {
+            task.await.expect("approval task completed");
+        }
+
+        response
+    }
+
+    async fn run_handle_sandbox(
+        session: Arc<Session>,
+        turn_context: &TurnContext,
+        params: ExecParams,
+        exec_command_context: ExecCommandContext,
+        sandbox_type: SandboxType,
+        approval: Option<ReviewDecision>,
+    ) -> ResponseInputItem {
+        let sub_id = exec_command_context.sub_id.clone();
+        let approval_task = approval.map(|decision| {
+            tokio::spawn(respond_to_pending_approval(
+                Arc::clone(&session),
+                sub_id.clone(),
+                decision,
+            ))
+        });
+
+        let mut tracker = TurnDiffTracker::new();
+        let otel_event_manager = turn_context.client.get_otel_event_manager();
+        let response = handle_sandbox_error(
+            "shell",
+            &mut tracker,
+            params,
+            exec_command_context,
+            SandboxErr::Signal(9),
+            sandbox_type,
+            session.as_ref(),
+            turn_context,
+            &otel_event_manager,
+        )
+        .await;
+
+        if let Some(task) = approval_task {
+            task.await.expect("approval task completed");
+        }
+
+        response
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn handle_response_item_records_tool_result_for_custom_tool_call() {
+        let mut tracker = TurnDiffTracker::new();
+        let (session, turn_context) = make_session_and_context();
+
+        let call_id = "custom-tool-call".to_string();
+        let tool_name = "unsupported_tool".to_string();
+        let tool_input = "{\"key\":\"value\"}".to_string();
+
+        let item = ResponseItem::CustomToolCall {
+            id: Some("item".to_string()),
+            status: None,
+            call_id: call_id.clone(),
+            name: tool_name.clone(),
+            input: tool_input.clone(),
+        };
+        let result = handle_response_item(&session, &turn_context, &mut tracker, "subtask", item)
+            .await
+            .expect("handle_response_item succeeds");
+
+        match result {
+            Some(ResponseInputItem::CustomToolCallOutput { output, .. }) => {
+                assert_eq!(format!("unsupported custom tool call: {tool_name}"), output);
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+
+        logs_assert(|lines: &[&str]| {
+            let line = lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.tool_result") && line.contains("call_id=custom-tool-call")
+                })
+                .ok_or_else(|| "missing codex.tool_result event".to_string())?;
+
+            if !line.contains("tool_name=unsupported_tool") {
+                return Err("missing tool_name field".to_string());
+            }
+            if !line.contains("arguments={\"key\":\"value\"}") {
+                return Err("missing arguments field".to_string());
+            }
+            if !line.contains("output=unsupported custom tool call: unsupported_tool") {
+                return Err("missing output field".to_string());
+            }
+            if !line.contains("success=true") {
+                return Err("missing success field".to_string());
+            }
+
+            Ok(())
+        });
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn handle_response_item_records_tool_result_for_function_call() {
+        let mut tracker = TurnDiffTracker::new();
+        let (session, turn_context) = make_session_and_context();
+
+        let call_id = "function-call".to_string();
+        let tool_name = "nonexistent".to_string();
+        let arguments = "{\"value\":1}".to_string();
+        let sub_id = "function-sub";
+
+        let item = ResponseItem::FunctionCall {
+            id: Some("item".to_string()),
+            name: tool_name.clone(),
+            arguments: arguments.clone(),
+            call_id: call_id.clone(),
+        };
+        let result = handle_response_item(&session, &turn_context, &mut tracker, sub_id, item)
+            .await
+            .expect("handle_response_item succeeds");
+
+        match result {
+            Some(ResponseInputItem::FunctionCallOutput { output, .. }) => {
+                assert_eq!(format!("unsupported call: {tool_name}"), output.content);
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+
+        logs_assert(|lines: &[&str]| {
+            let line = lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.tool_result") && line.contains("call_id=function-call")
+                })
+                .ok_or_else(|| "missing codex.tool_result event".to_string())?;
+
+            if !line.contains("tool_name=nonexistent") {
+                return Err("missing tool_name field".to_string());
+            }
+            if !line.contains("arguments={\"value\":1}") {
+                return Err("missing arguments field".to_string());
+            }
+            if !line.contains("output=unsupported call: nonexistent") {
+                return Err("missing output field".to_string());
+            }
+            if !line.contains("success=false") {
+                return Err("missing success field".to_string());
+            }
+
+            Ok(())
+        });
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn handle_response_item_records_tool_result_for_local_shell_missing_ids() {
+        let mut tracker = TurnDiffTracker::new();
+        let (session, turn_context) = make_session_and_context();
+
+        let sub_id = "shell-sub";
+
+        let item = ResponseItem::LocalShellCall {
+            id: None,
+            call_id: None,
+            status: LocalShellStatus::Completed,
+            action: LocalShellAction::Exec(LocalShellExecAction {
+                command: vec!["/bin/echo".to_string(), "hello".to_string()],
+                timeout_ms: None,
+                working_directory: None,
+                env: None,
+                user: None,
+            }),
+        };
+        let result = handle_response_item(&session, &turn_context, &mut tracker, sub_id, item)
+            .await
+            .expect("handle_response_item succeeds");
+
+        match result {
+            Some(ResponseInputItem::FunctionCallOutput { output, call_id }) => {
+                assert!(call_id.is_empty());
+                assert_eq!("LocalShellCall without call_id or id", output.content);
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+
+        logs_assert(|lines: &[&str]| {
+            let line = lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.tool_result")
+                        && line.contains("tool_name=local_shell")
+                        && line.contains("output=LocalShellCall without call_id or id")
+                })
+                .ok_or_else(|| "missing codex.tool_result event".to_string())?;
+
+            if !line.contains("call_id=") {
+                return Err("missing call_id field".to_string());
+            }
+            if !line.contains("arguments=") {
+                return Err("missing arguments field".to_string());
+            }
+            if !line.contains("success=false") {
+                return Err("missing success field".to_string());
+            }
+
+            Ok(())
+        });
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn handle_response_item_records_tool_result_for_local_shell_call() {
+        let mut tracker = TurnDiffTracker::new();
+        let (session, turn_context) = make_session_and_context();
+        let session = Arc::new(session);
+        let turn_context = Arc::new(turn_context);
+
+        let call_id = "shell-call".to_string();
+        let sub_id = "shell-sub";
+
+        let item = ResponseItem::LocalShellCall {
+            id: Some("item".to_string()),
+            call_id: Some(call_id.clone()),
+            status: LocalShellStatus::Completed,
+            action: LocalShellAction::Exec(LocalShellExecAction {
+                command: vec!["/bin/echo".to_string(), "shell".to_string()],
+                timeout_ms: None,
+                working_directory: None,
+                env: None,
+                user: None,
+            }),
+        };
+        let result = handle_response_item(&session, &turn_context, &mut tracker, sub_id, item)
+            .await
+            .expect("handle_response_item succeeds");
+
+        match result {
+            Some(ResponseInputItem::FunctionCallOutput { output, .. }) => {
+                assert_eq!(Some(true), output.success);
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+
+        logs_assert(|lines: &[&str]| {
+            let line = lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.tool_result") && line.contains("call_id=shell-call")
+                })
+                .ok_or_else(|| "missing codex.tool_result event".to_string())?;
+
+            if !line.contains("tool_name=local_shell") {
+                return Err("missing tool_name field".to_string());
+            }
+            if !line.contains("arguments=/bin/echo shell") {
+                return Err("missing arguments field".to_string());
+            }
+            let output_idx = line
+                .find("output=")
+                .ok_or_else(|| "missing output field".to_string())?;
+            if line[output_idx + "output=".len()..].is_empty() {
+                return Err("empty output field".to_string());
+            }
+            if !line.contains("success=true") {
+                return Err("missing success field".to_string());
+            }
+
+            Ok(())
+        });
+    }
+
+    fn tool_decision_assertion<'a>(
+        call_id: &'a str,
+        expected_decision: &'a str,
+        expected_source: &'a str,
+    ) -> impl Fn(&[&str]) -> Result<(), String> + 'a {
+        let call_id = call_id.to_string();
+        let expected_decision = expected_decision.to_string();
+        let expected_source = expected_source.to_string();
+
+        move |lines: &[&str]| {
+            let line = lines
+                .iter()
+                .find(|line| {
+                    line.contains("codex.tool_decision")
+                        && line.contains(&format!("call_id={call_id}"))
+                })
+                .ok_or_else(|| format!("missing codex.tool_decision event for {call_id}"))?;
+
+            let lower = line.to_lowercase();
+            if !lower.contains("tool_name=shell") {
+                return Err(format!("missing tool_name for {call_id}"));
+            }
+            if !lower.contains(&format!("decision={}", expected_decision)) {
+                return Err(format!("unexpected decision for {call_id}"));
+            }
+            if !lower.contains(&format!("source={}", expected_source)) {
+                return Err(format!("unexpected source for {call_id}"));
+            }
+
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[traced_test]
+    async fn handle_container_exec_autoapprove_from_config_records_tool_decision() {
+        let (session, mut turn_context) = make_session_and_context();
+        turn_context.approval_policy = AskForApproval::OnRequest;
+        turn_context.sandbox_policy = SandboxPolicy::DangerFullAccess;
+
+        let command = vec!["/bin/echo".to_string(), "hello".to_string()];
+        let params = exec_params(command, &turn_context.cwd);
+
+        let _response = run_handle_container_exec(
+            Arc::new(session),
+            &turn_context,
+            params,
+            "shell",
+            "auto_config_sub",
+            "auto_config_call",
+            None,
+        )
+        .await;
+
+        logs_assert(tool_decision_assertion(
+            "auto_config_call",
+            "approved",
+            "config",
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[traced_test]
+    async fn handle_container_exec_apply_patch_user_autoapprove_records_tool_decision() {
+        let (session, mut turn_context) = make_session_and_context();
+        turn_context.approval_policy = AskForApproval::UnlessTrusted;
+        let temp_dir = tempdir().expect("create apply_patch temp dir");
+        turn_context.cwd = temp_dir.path().to_path_buf();
+
+        let patch =
+            "*** Begin Patch\n*** Add File: new_file.txt\n+hello\n*** End Patch\n".to_string();
+        let params = ExecParams {
+            command: vec!["apply_patch".to_string(), patch],
+            cwd: turn_context.cwd.clone(),
+            timeout_ms: None,
+            env: std::collections::HashMap::new(),
+            with_escalated_permissions: None,
+            justification: None,
+        };
+
+        let _response = run_handle_container_exec(
+            Arc::new(session),
+            &turn_context,
+            params,
+            "shell",
+            "auto_user_sub",
+            "auto_user_call",
+            Some(ReviewDecision::Approved),
+        )
+        .await;
+
+        logs_assert(tool_decision_assertion(
+            "auto_user_call",
+            "approved",
+            "user",
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[traced_test]
+    async fn handle_container_exec_user_approved_records_tool_decision() {
+        let (session, mut turn_context) = make_session_and_context();
+        turn_context.approval_policy = AskForApproval::UnlessTrusted;
+
+        let params = exec_params(
+            vec!["/bin/echo".to_string(), "approved".to_string()],
+            &turn_context.cwd,
+        );
+
+        let _response = run_handle_container_exec(
+            Arc::new(session),
+            &turn_context,
+            params,
+            "shell",
+            "user_approved_sub",
+            "user_approved_call",
+            Some(ReviewDecision::Approved),
+        )
+        .await;
+
+        logs_assert(tool_decision_assertion(
+            "user_approved_call",
+            "approved",
+            "user",
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[traced_test]
+    async fn handle_container_exec_user_approved_for_session_records_tool_decision() {
+        let (session, mut turn_context) = make_session_and_context();
+        turn_context.approval_policy = AskForApproval::UnlessTrusted;
+
+        let command = vec!["/bin/echo".to_string(), "persist".to_string()];
+        let params = exec_params(command.clone(), &turn_context.cwd);
+
+        let session = Arc::new(session);
+
+        let _response = run_handle_container_exec(
+            session.clone(),
+            &turn_context,
+            params,
+            "shell",
+            "user_approved_session_sub",
+            "user_approved_session_call",
+            Some(ReviewDecision::ApprovedForSession),
+        )
+        .await;
+
+        logs_assert(tool_decision_assertion(
+            "user_approved_session_call",
+            "approvedforsession",
+            "user",
+        ));
+
+        let state = session.state.lock().await;
+        assert!(state.approved_commands.contains(&command));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[traced_test]
+    async fn handle_container_exec_user_denies_records_tool_decision() {
+        let (session, mut turn_context) = make_session_and_context();
+        turn_context.approval_policy = AskForApproval::UnlessTrusted;
+
+        let params = exec_params(
+            vec!["/bin/echo".to_string(), "deny".to_string()],
+            &turn_context.cwd,
+        );
+
+        let response = run_handle_container_exec(
+            Arc::new(session),
+            &turn_context,
+            params,
+            "shell",
+            "user_denied_sub",
+            "user_denied_call",
+            Some(ReviewDecision::Denied),
+        )
+        .await;
+
+        logs_assert(tool_decision_assertion(
+            "user_denied_call",
+            "denied",
+            "user",
+        ));
+
+        match response {
+            ResponseInputItem::FunctionCallOutput { output, .. } => {
+                assert_eq!("exec command rejected by user", output.content);
+                assert_eq!(None, output.success);
+            }
+            other => panic!("unexpected response for denied branch: {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[traced_test]
+    async fn handle_container_exec_user_aborts_records_tool_decision() {
+        let (session, mut turn_context) = make_session_and_context();
+        turn_context.approval_policy = AskForApproval::UnlessTrusted;
+
+        let params = exec_params(
+            vec!["/bin/echo".to_string(), "abort".to_string()],
+            &turn_context.cwd,
+        );
+
+        let response = run_handle_container_exec(
+            Arc::new(session),
+            &turn_context,
+            params,
+            "shell",
+            "user_abort_sub",
+            "user_abort_call",
+            Some(ReviewDecision::Abort),
+        )
+        .await;
+
+        logs_assert(tool_decision_assertion("user_abort_call", "abort", "user"));
+
+        match response {
+            ResponseInputItem::FunctionCallOutput { output, .. } => {
+                assert_eq!("exec command aborted by user", output.content);
+                assert_eq!(None, output.success);
+            }
+            other => panic!("unexpected response for abort branch: {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[traced_test]
+    async fn handle_sandbox_error_user_approves_retry_records_tool_decision() {
+        let (session, mut turn_context) = make_session_and_context();
+        turn_context.approval_policy = AskForApproval::UnlessTrusted;
+
+        let command = vec!["/bin/echo".to_string(), "retry".to_string()];
+        let params = exec_params(command.clone(), &turn_context.cwd);
+        let exec_command_context = ExecCommandContext {
+            sub_id: "sandbox_retry_sub".to_string(),
+            call_id: "sandbox_retry_call".to_string(),
+            command_for_display: command.clone(),
+            cwd: turn_context.cwd.clone(),
+            apply_patch: None,
+        };
+
+        let session = Arc::new(session);
+
+        let response = run_handle_sandbox(
+            Arc::clone(&session),
+            &turn_context,
+            params,
+            exec_command_context,
+            SandboxType::MacosSeatbelt,
+            Some(ReviewDecision::Approved),
+        )
+        .await;
+
+        logs_assert(tool_decision_assertion(
+            "sandbox_retry_call",
+            "approved",
+            "user",
+        ));
+
+        match response {
+            ResponseInputItem::FunctionCallOutput { output, .. } => {
+                assert_eq!(Some(true), output.success);
+            }
+            other => panic!("unexpected response for sandbox retry: {other:?}"),
+        }
+
+        let state = session.state.lock().await;
+        assert!(state.approved_commands.contains(&command));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[traced_test]
+    async fn handle_sandbox_error_user_approves_for_session_records_tool_decision() {
+        let (session, mut turn_context) = make_session_and_context();
+        turn_context.approval_policy = AskForApproval::UnlessTrusted;
+
+        let command = vec!["/bin/echo".to_string(), "persist".to_string()];
+        let params = exec_params(command.clone(), &turn_context.cwd);
+        let exec_command_context = ExecCommandContext {
+            sub_id: "sandbox_session_sub".to_string(),
+            call_id: "sandbox_session_call".to_string(),
+            command_for_display: command.clone(),
+            cwd: turn_context.cwd.clone(),
+            apply_patch: None,
+        };
+
+        let session = Arc::new(session);
+
+        let response = run_handle_sandbox(
+            Arc::clone(&session),
+            &turn_context,
+            params,
+            exec_command_context,
+            SandboxType::MacosSeatbelt,
+            Some(ReviewDecision::ApprovedForSession),
+        )
+        .await;
+
+        logs_assert(tool_decision_assertion(
+            "sandbox_session_call",
+            "approvedforsession",
+            "user",
+        ));
+
+        match response {
+            ResponseInputItem::FunctionCallOutput { output, .. } => {
+                assert_eq!(Some(true), output.success);
+            }
+            other => {
+                panic!("unexpected response for sandbox approved session retry: {other:?}")
+            }
+        }
+
+        let state = session.state.lock().await;
+        assert!(state.approved_commands.contains(&command));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[traced_test]
+    async fn handle_sandbox_error_user_denies_records_tool_decision() {
+        let (session, mut turn_context) = make_session_and_context();
+        turn_context.approval_policy = AskForApproval::UnlessTrusted;
+
+        let command = vec!["/bin/echo".to_string(), "deny".to_string()];
+        let params = exec_params(command.clone(), &turn_context.cwd);
+        let exec_command_context = ExecCommandContext {
+            sub_id: "sandbox_deny_sub".to_string(),
+            call_id: "sandbox_deny_call".to_string(),
+            command_for_display: command.clone(),
+            cwd: turn_context.cwd.clone(),
+            apply_patch: None,
+        };
+
+        let session = Arc::new(session);
+
+        let response = run_handle_sandbox(
+            Arc::clone(&session),
+            &turn_context,
+            params,
+            exec_command_context,
+            SandboxType::MacosSeatbelt,
+            Some(ReviewDecision::Denied),
+        )
+        .await;
+
+        logs_assert(tool_decision_assertion(
+            "sandbox_deny_call",
+            "denied",
+            "user",
+        ));
+
+        match response {
+            ResponseInputItem::FunctionCallOutput { output, .. } => {
+                assert_eq!("exec command rejected by user", output.content);
+                assert_eq!(None, output.success);
+            }
+            other => panic!("unexpected response for sandbox deny: {other:?}"),
+        }
+
+        let state = session.state.lock().await;
+        assert!(!state.approved_commands.contains(&command));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[traced_test]
+    async fn handle_sandbox_error_user_aborts_records_tool_decision() {
+        let (session, mut turn_context) = make_session_and_context();
+        turn_context.approval_policy = AskForApproval::UnlessTrusted;
+
+        let command = vec!["/bin/echo".to_string(), "abort".to_string()];
+        let params = exec_params(command.clone(), &turn_context.cwd);
+        let exec_command_context = ExecCommandContext {
+            sub_id: "sandbox_abort_sub".to_string(),
+            call_id: "sandbox_abort_call".to_string(),
+            command_for_display: command,
+            cwd: turn_context.cwd.clone(),
+            apply_patch: None,
+        };
+
+        let session = Arc::new(session);
+
+        let response = run_handle_sandbox(
+            session,
+            &turn_context,
+            params,
+            exec_command_context,
+            SandboxType::MacosSeatbelt,
+            Some(ReviewDecision::Abort),
+        )
+        .await;
+
+        logs_assert(tool_decision_assertion(
+            "sandbox_abort_call",
+            "abort",
+            "user",
+        ));
+
+        match response {
+            ResponseInputItem::FunctionCallOutput { output, .. } => {
+                assert_eq!("exec command rejected by user", output.content);
+                assert_eq!(None, output.success);
+            }
+            other => panic!("unexpected response for sandbox abort: {other:?}"),
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[tokio::test(flavor = "current_thread")]
+    #[traced_test]
+    async fn handle_container_exec_config_reject_records_tool_decision() {
+        let (session, mut turn_context) = make_session_and_context();
+        turn_context.approval_policy = AskForApproval::Never;
+        turn_context.sandbox_policy = SandboxPolicy::ReadOnly;
+
+        let params = exec_params(
+            vec!["/bin/echo".to_string(), "reject".to_string()],
+            &turn_context.cwd,
+        );
+
+        let response = run_handle_container_exec(
+            Arc::new(session),
+            &turn_context,
+            params,
+            "shell",
+            "config_reject_sub",
+            "config_reject_call",
+            None,
+        )
+        .await;
+
+        logs_assert(tool_decision_assertion(
+            "config_reject_call",
+            "denied",
+            "config",
+        ));
+
+        match response {
+            ResponseInputItem::FunctionCallOutput { output, .. } => {
+                assert!(output.content.starts_with("exec command rejected"));
+                assert_eq!(None, output.success);
+            }
+            other => panic!("unexpected response for reject branch: {other:?}"),
+        }
     }
 }
