@@ -1245,16 +1245,7 @@ pub enum TurnAbortReason {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::FunctionCallOutputPayload;
-    use crate::models::LocalShellAction;
-    use crate::models::LocalShellExecAction;
-    use crate::models::LocalShellStatus;
-    use crate::models::ReasoningItemContent;
-    use crate::models::ReasoningItemReasoningSummary;
-    use crate::models::WebSearchAction;
     use serde_json::json;
-    use std::collections::HashMap;
-    use std::path::PathBuf;
     use tempfile::NamedTempFile;
 
     /// Serialize Event to verify that its JSON representation has the expected
@@ -1376,517 +1367,277 @@ mod tests {
         parsed
     }
 
-    fn parse_rollout_item(case: &str, raw: &str, expected_timestamp: &str) -> RolloutItem {
-        let parsed = parse_rollout_line(raw, case);
+    #[derive(Debug, Clone, Copy)]
+    enum ExpectedItemKind {
+        SessionMeta,
+        Response,
+        Event,
+        Compacted,
+        TurnContext,
+    }
+
+    struct RolloutFixtureCase {
+        name: &'static str,
+        raw: &'static str,
+        expected_kind: ExpectedItemKind,
+    }
+
+    #[test]
+    fn deserialize_rollout_fixtures() {
+        use std::collections::BTreeSet;
+        use std::iter::FromIterator;
+
+        const TIMESTAMP: &str = "2025-01-02T03:04:05.678Z";
+
+        let cases = [
+            RolloutFixtureCase {
+                name: "session_meta/with_git",
+                raw: include_str!("../tests/fixtures/rollouts/session_meta/with_git.json"),
+                expected_kind: ExpectedItemKind::SessionMeta,
+            },
+            RolloutFixtureCase {
+                name: "session_meta/without_git",
+                raw: include_str!("../tests/fixtures/rollouts/session_meta/without_git.json"),
+                expected_kind: ExpectedItemKind::SessionMeta,
+            },
+            RolloutFixtureCase {
+                name: "response_item/message",
+                raw: include_str!("../tests/fixtures/rollouts/response_item/message.json"),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/reasoning",
+                raw: include_str!("../tests/fixtures/rollouts/response_item/reasoning.json"),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/local_shell_call",
+                raw: include_str!("../tests/fixtures/rollouts/response_item/local_shell_call.json"),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/function_call",
+                raw: include_str!("../tests/fixtures/rollouts/response_item/function_call.json"),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/function_call_output",
+                raw: include_str!(
+                    "../tests/fixtures/rollouts/response_item/function_call_output.json"
+                ),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/custom_tool_call",
+                raw: include_str!("../tests/fixtures/rollouts/response_item/custom_tool_call.json"),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/custom_tool_call_output",
+                raw: include_str!(
+                    "../tests/fixtures/rollouts/response_item/custom_tool_call_output.json"
+                ),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/web_search_call",
+                raw: include_str!("../tests/fixtures/rollouts/response_item/web_search_call.json"),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "response_item/other",
+                raw: include_str!("../tests/fixtures/rollouts/response_item/other.json"),
+                expected_kind: ExpectedItemKind::Response,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/user_message",
+                raw: include_str!("../tests/fixtures/rollouts/event_msg/user_message.json"),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/agent_message",
+                raw: include_str!("../tests/fixtures/rollouts/event_msg/agent_message.json"),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/agent_reasoning",
+                raw: include_str!("../tests/fixtures/rollouts/event_msg/agent_reasoning.json"),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/agent_reasoning_raw_content",
+                raw: include_str!(
+                    "../tests/fixtures/rollouts/event_msg/agent_reasoning_raw_content.json"
+                ),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/token_count_info",
+                raw: include_str!("../tests/fixtures/rollouts/event_msg/token_count_info.json"),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/token_count_none",
+                raw: include_str!("../tests/fixtures/rollouts/event_msg/token_count_none.json"),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/entered_review_mode",
+                raw: include_str!("../tests/fixtures/rollouts/event_msg/entered_review_mode.json"),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/exited_review_mode",
+                raw: include_str!("../tests/fixtures/rollouts/event_msg/exited_review_mode.json"),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "event_msg/turn_aborted",
+                raw: include_str!("../tests/fixtures/rollouts/event_msg/turn_aborted.json"),
+                expected_kind: ExpectedItemKind::Event,
+            },
+            RolloutFixtureCase {
+                name: "misc/compacted",
+                raw: include_str!("../tests/fixtures/rollouts/misc/compacted.json"),
+                expected_kind: ExpectedItemKind::Compacted,
+            },
+            RolloutFixtureCase {
+                name: "misc/turn_context_workspace",
+                raw: include_str!("../tests/fixtures/rollouts/misc/turn_context_workspace.json"),
+                expected_kind: ExpectedItemKind::TurnContext,
+            },
+            RolloutFixtureCase {
+                name: "misc/turn_context_read_only",
+                raw: include_str!("../tests/fixtures/rollouts/misc/turn_context_read_only.json"),
+                expected_kind: ExpectedItemKind::TurnContext,
+            },
+        ];
+
+        let mut session_meta_git = BTreeSet::new();
+        let mut session_meta_instructions = BTreeSet::new();
+        let mut response_variants = BTreeSet::new();
+        let mut event_variants = BTreeSet::new();
+        let mut turn_context_policies = BTreeSet::new();
+        let mut turn_context_modes = BTreeSet::new();
+        let mut saw_compacted = false;
+
+        for case in cases {
+            let parsed = parse_rollout_line(case.raw, case.name);
+            assert_eq!(
+                parsed.timestamp, TIMESTAMP,
+                "case {} parsed unexpected timestamp",
+                case.name
+            );
+
+            match (case.expected_kind, parsed.item) {
+                (ExpectedItemKind::SessionMeta, RolloutItem::SessionMeta(line)) => {
+                    session_meta_git.insert(line.git.is_some());
+                    session_meta_instructions.insert(line.meta.instructions.is_some());
+                }
+                (ExpectedItemKind::Response, RolloutItem::ResponseItem(item)) => {
+                    let variant = match item {
+                        ResponseItem::Message { .. } => "message",
+                        ResponseItem::Reasoning { .. } => "reasoning",
+                        ResponseItem::LocalShellCall { .. } => "local_shell_call",
+                        ResponseItem::FunctionCall { .. } => "function_call",
+                        ResponseItem::FunctionCallOutput { .. } => "function_call_output",
+                        ResponseItem::CustomToolCall { .. } => "custom_tool_call",
+                        ResponseItem::CustomToolCallOutput { .. } => "custom_tool_call_output",
+                        ResponseItem::WebSearchCall { .. } => "web_search_call",
+                        ResponseItem::Other => "other",
+                    };
+                    response_variants.insert(variant);
+                }
+                (ExpectedItemKind::Event, RolloutItem::EventMsg(event)) => {
+                    let variant = match event {
+                        EventMsg::UserMessage(_) => "user_message",
+                        EventMsg::AgentMessage(_) => "agent_message",
+                        EventMsg::AgentReasoning(_) => "agent_reasoning",
+                        EventMsg::AgentReasoningRawContent(_) => "agent_reasoning_raw_content",
+                        EventMsg::TokenCount(_) => "token_count",
+                        EventMsg::EnteredReviewMode(_) => "entered_review_mode",
+                        EventMsg::ExitedReviewMode(_) => "exited_review_mode",
+                        EventMsg::TurnAborted(_) => "turn_aborted",
+                        other => panic!(
+                            "case {} contained unexpected event variant {:?}",
+                            case.name, other
+                        ),
+                    };
+                    event_variants.insert(variant);
+                }
+                (ExpectedItemKind::Compacted, RolloutItem::Compacted(_)) => {
+                    saw_compacted = true;
+                }
+                (ExpectedItemKind::TurnContext, RolloutItem::TurnContext(item)) => {
+                    turn_context_policies.insert(item.approval_policy.to_string());
+                    let mode = match &item.sandbox_policy {
+                        SandboxPolicy::DangerFullAccess => "danger_full_access",
+                        SandboxPolicy::ReadOnly => "read_only",
+                        SandboxPolicy::WorkspaceWrite { .. } => "workspace_write",
+                    };
+                    turn_context_modes.insert(mode);
+                }
+                (expected, actual) => {
+                    panic!(
+                        "case {} expected {:?} but parsed {:?}",
+                        case.name, expected, actual
+                    );
+                }
+            }
+        }
+
         assert_eq!(
-            parsed.timestamp, expected_timestamp,
-            "case {case} parsed unexpected timestamp"
+            session_meta_git,
+            BTreeSet::from_iter([false, true]),
+            "expected both presence and absence of git metadata"
         );
-        parsed.item
-    }
-
-    fn assert_session_meta_case(
-        case: &str,
-        raw: &str,
-        expected_timestamp: &str,
-        assertion: impl FnOnce(SessionMetaLine),
-    ) {
-        let item = parse_rollout_item(case, raw, expected_timestamp);
-        match item {
-            RolloutItem::SessionMeta(actual) => assertion(actual),
-            other => panic!("case {case} parsed as unexpected item {other:?}"),
-        }
-    }
-
-    fn assert_response_item_case(
-        case: &str,
-        raw: &str,
-        expected_timestamp: &str,
-        expected: ResponseItem,
-    ) {
-        let item = parse_rollout_item(case, raw, expected_timestamp);
-        match item {
-            RolloutItem::ResponseItem(actual) => assert_eq!(actual, expected, "case {case}"),
-            other => panic!("case {case} parsed as unexpected item {other:?}"),
-        }
-    }
-
-    fn parse_event_case(case: &str, raw: &str, expected_timestamp: &str) -> EventMsg {
-        let item = parse_rollout_item(case, raw, expected_timestamp);
-        match item {
-            RolloutItem::EventMsg(actual) => actual,
-            other => panic!("case {case} returned unexpected item {other:?}"),
-        }
-    }
-
-    fn assert_compacted_case(
-        case: &str,
-        raw: &str,
-        expected_timestamp: &str,
-        assertion: impl FnOnce(CompactedItem),
-    ) {
-        let item = parse_rollout_item(case, raw, expected_timestamp);
-        match item {
-            RolloutItem::Compacted(actual) => assertion(actual),
-            other => panic!("case {case} parsed as unexpected item {other:?}"),
-        }
-    }
-
-    fn assert_turn_context_case(
-        case: &str,
-        raw: &str,
-        expected_timestamp: &str,
-        assertion: impl FnOnce(TurnContextItem),
-    ) {
-        let item = parse_rollout_item(case, raw, expected_timestamp);
-        match item {
-            RolloutItem::TurnContext(actual) => assertion(actual),
-            other => panic!("case {case} parsed as unexpected item {other:?}"),
-        }
-    }
-
-    #[test]
-    fn deserialize_rollout_session_meta_lines() {
-        let timestamp = "2025-01-02T03:04:05.678Z";
-        let conversation_id = ConversationId(uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"));
-        let case = "with_git";
-        assert_session_meta_case(
-            case,
-            include_str!("../tests/fixtures/rollouts/session_meta/with_git.json"),
-            timestamp,
-            |actual| {
-                let SessionMetaLine { meta, git } = actual;
-                let SessionMeta {
-                    id,
-                    timestamp: meta_timestamp,
-                    cwd,
-                    originator,
-                    cli_version,
-                    instructions,
-                } = meta;
-                assert_eq!(id, conversation_id, "case {case}");
-                assert_eq!(meta_timestamp, timestamp, "case {case}");
-                assert_eq!(cwd, PathBuf::from("/workspace"), "case {case}");
-                assert_eq!(originator, "codex-cli", "case {case}");
-                assert_eq!(cli_version, "1.0.0", "case {case}");
-                assert_eq!(
-                    instructions,
-                    Some("Remember the tests".to_string()),
-                    "case {case}"
-                );
-                let git = git.expect("case with_git expected git info");
-                assert_eq!(git.commit_hash.as_deref(), Some("abc123"), "case {case}");
-                assert_eq!(git.branch.as_deref(), Some("main"), "case {case}");
-                assert_eq!(
-                    git.repository_url.as_deref(),
-                    Some("https://example.com/repo.git"),
-                    "case {case}"
-                );
-            },
+        assert_eq!(
+            session_meta_instructions,
+            BTreeSet::from_iter([false, true]),
+            "expected both presence and absence of instructions"
         );
-
-        let case = "without_git";
-        assert_session_meta_case(
-            case,
-            include_str!("../tests/fixtures/rollouts/session_meta/without_git.json"),
-            timestamp,
-            |actual| {
-                let SessionMetaLine { meta, git } = actual;
-                let SessionMeta {
-                    id,
-                    timestamp: meta_timestamp,
-                    cwd,
-                    originator,
-                    cli_version,
-                    instructions,
-                } = meta;
-                assert_eq!(id, conversation_id, "case {case}");
-                assert_eq!(meta_timestamp, timestamp, "case {case}");
-                assert_eq!(cwd, PathBuf::from("/workspace"), "case {case}");
-                assert_eq!(originator, "codex-cli", "case {case}");
-                assert_eq!(cli_version, "1.0.0", "case {case}");
-                assert!(
-                    instructions.is_none(),
-                    "case {case} expected no instructions"
-                );
-                assert!(git.is_none(), "case {case} expected no git info");
-            },
+        assert_eq!(
+            response_variants,
+            BTreeSet::from_iter([
+                "custom_tool_call",
+                "custom_tool_call_output",
+                "function_call",
+                "function_call_output",
+                "local_shell_call",
+                "message",
+                "other",
+                "reasoning",
+                "web_search_call",
+            ]),
+            "response fixture coverage mismatch"
         );
-    }
-
-    #[test]
-    fn deserialize_rollout_response_item_lines() {
-        let timestamp = "2025-01-02T03:04:05.678Z";
-
-        assert_response_item_case(
-            "message",
-            include_str!("../tests/fixtures/rollouts/response_item/message.json"),
-            timestamp,
-            ResponseItem::Message {
-                id: Some("legacy-message".to_string()),
-                role: "assistant".to_string(),
-                content: vec![ContentItem::OutputText {
-                    text: "Hello from assistant".to_string(),
-                }],
-            },
+        assert_eq!(
+            event_variants,
+            BTreeSet::from_iter([
+                "agent_message",
+                "agent_reasoning",
+                "agent_reasoning_raw_content",
+                "entered_review_mode",
+                "exited_review_mode",
+                "token_count",
+                "turn_aborted",
+                "user_message",
+            ]),
+            "event fixture coverage mismatch"
         );
-
-        assert_response_item_case(
-            "reasoning",
-            include_str!("../tests/fixtures/rollouts/response_item/reasoning.json"),
-            timestamp,
-            ResponseItem::Reasoning {
-                id: "reasoning-1".to_string(),
-                summary: vec![ReasoningItemReasoningSummary::SummaryText {
-                    text: "Summarized thoughts".to_string(),
-                }],
-                content: Some(vec![ReasoningItemContent::ReasoningText {
-                    text: "Detailed reasoning".to_string(),
-                }]),
-                encrypted_content: Some("encrypted".to_string()),
-            },
+        assert!(
+            saw_compacted,
+            "expected compacted rollout case to be covered"
         );
-
-        assert_response_item_case(
-            "local_shell_call",
-            include_str!("../tests/fixtures/rollouts/response_item/local_shell_call.json"),
-            timestamp,
-            ResponseItem::LocalShellCall {
-                id: Some("legacy-shell-call".to_string()),
-                call_id: Some("shell-call-1".to_string()),
-                status: LocalShellStatus::Completed,
-                action: LocalShellAction::Exec(LocalShellExecAction {
-                    command: vec!["ls".to_string(), "-la".to_string()],
-                    timeout_ms: Some(1200),
-                    working_directory: Some("/workspace".to_string()),
-                    env: Some(HashMap::from([(
-                        "PATH".to_string(),
-                        "/usr/bin".to_string(),
-                    )])),
-                    user: Some("codex".to_string()),
-                }),
-            },
+        assert_eq!(
+            turn_context_policies,
+            BTreeSet::from_iter(["never".to_string(), "on-request".to_string()]),
+            "turn context approval policies mismatch"
         );
-
-        assert_response_item_case(
-            "function_call",
-            include_str!("../tests/fixtures/rollouts/response_item/function_call.json"),
-            timestamp,
-            ResponseItem::FunctionCall {
-                id: Some("legacy-function".to_string()),
-                name: "shell".to_string(),
-                arguments: "{\"command\":[\"echo\",\"hi\"]}".to_string(),
-                call_id: "call-123".to_string(),
-            },
-        );
-
-        assert_response_item_case(
-            "function_call_output",
-            include_str!("../tests/fixtures/rollouts/response_item/function_call_output.json"),
-            timestamp,
-            ResponseItem::FunctionCallOutput {
-                call_id: "call-123".to_string(),
-                output: FunctionCallOutputPayload {
-                    content: "{\"stdout\":\"done\"}".to_string(),
-                    success: None,
-                },
-            },
-        );
-
-        assert_response_item_case(
-            "custom_tool_call",
-            include_str!("../tests/fixtures/rollouts/response_item/custom_tool_call.json"),
-            timestamp,
-            ResponseItem::CustomToolCall {
-                id: Some("legacy-tool".to_string()),
-                status: Some("completed".to_string()),
-                call_id: "tool-456".to_string(),
-                name: "my_tool".to_string(),
-                input: "{\"foo\":1}".to_string(),
-            },
-        );
-
-        assert_response_item_case(
-            "custom_tool_call_output",
-            include_str!("../tests/fixtures/rollouts/response_item/custom_tool_call_output.json"),
-            timestamp,
-            ResponseItem::CustomToolCallOutput {
-                call_id: "tool-456".to_string(),
-                output: "tool finished".to_string(),
-            },
-        );
-
-        assert_response_item_case(
-            "web_search_call",
-            include_str!("../tests/fixtures/rollouts/response_item/web_search_call.json"),
-            timestamp,
-            ResponseItem::WebSearchCall {
-                id: Some("legacy-search".to_string()),
-                status: Some("completed".to_string()),
-                action: WebSearchAction::Search {
-                    query: "weather in SF".to_string(),
-                },
-            },
-        );
-
-        assert_response_item_case(
-            "other",
-            include_str!("../tests/fixtures/rollouts/response_item/other.json"),
-            timestamp,
-            ResponseItem::Other,
-        );
-    }
-
-    #[test]
-    fn deserialize_rollout_event_msg_lines() {
-        let timestamp = "2025-01-02T03:04:05.678Z";
-
-        let case = "user_message";
-        match parse_event_case(
-            case,
-            include_str!("../tests/fixtures/rollouts/event_msg/user_message.json"),
-            timestamp,
-        ) {
-            EventMsg::UserMessage(actual) => {
-                let expected = UserMessageEvent {
-                    message: "Please help".to_string(),
-                    kind: Some(InputMessageKind::Plain),
-                    images: Some(vec!["data:image/png;base64,AAA".to_string()]),
-                };
-                assert_eq!(actual, expected, "case {case}");
-            }
-            other => panic!("case {case} returned unexpected event {other:?}"),
-        }
-
-        let case = "agent_message";
-        match parse_event_case(
-            case,
-            include_str!("../tests/fixtures/rollouts/event_msg/agent_message.json"),
-            timestamp,
-        ) {
-            EventMsg::AgentMessage(actual) => {
-                let expected = AgentMessageEvent {
-                    message: "Sure thing".to_string(),
-                };
-                assert_eq!(actual, expected, "case {case}");
-            }
-            other => panic!("case {case} returned unexpected event {other:?}"),
-        }
-
-        let case = "agent_reasoning";
-        match parse_event_case(
-            case,
-            include_str!("../tests/fixtures/rollouts/event_msg/agent_reasoning.json"),
-            timestamp,
-        ) {
-            EventMsg::AgentReasoning(actual) => {
-                let expected = AgentReasoningEvent {
-                    text: "Thinking...".to_string(),
-                };
-                assert_eq!(actual, expected, "case {case}");
-            }
-            other => panic!("case {case} returned unexpected event {other:?}"),
-        }
-
-        let case = "agent_reasoning_raw_content";
-        match parse_event_case(
-            case,
-            include_str!("../tests/fixtures/rollouts/event_msg/agent_reasoning_raw_content.json"),
-            timestamp,
-        ) {
-            EventMsg::AgentReasoningRawContent(actual) => {
-                let expected = AgentReasoningRawContentEvent {
-                    text: "raw reasoning".to_string(),
-                };
-                assert_eq!(actual, expected, "case {case}");
-            }
-            other => panic!("case {case} returned unexpected event {other:?}"),
-        }
-
-        let case = "token_count_info";
-        match parse_event_case(
-            case,
-            include_str!("../tests/fixtures/rollouts/event_msg/token_count_info.json"),
-            timestamp,
-        ) {
-            EventMsg::TokenCount(actual) => {
-                let expected = TokenCountEvent {
-                    info: Some(TokenUsageInfo {
-                        total_token_usage: TokenUsage {
-                            input_tokens: 120,
-                            cached_input_tokens: 10,
-                            output_tokens: 30,
-                            reasoning_output_tokens: 5,
-                            total_tokens: 165,
-                        },
-                        last_token_usage: TokenUsage {
-                            input_tokens: 20,
-                            cached_input_tokens: 0,
-                            output_tokens: 15,
-                            reasoning_output_tokens: 5,
-                            total_tokens: 40,
-                        },
-                        model_context_window: Some(16000),
-                    }),
-                };
-                assert_eq!(actual, expected, "case {case}");
-            }
-            other => panic!("case {case} returned unexpected event {other:?}"),
-        }
-
-        let case = "token_count_none";
-        match parse_event_case(
-            case,
-            include_str!("../tests/fixtures/rollouts/event_msg/token_count_none.json"),
-            timestamp,
-        ) {
-            EventMsg::TokenCount(actual) => {
-                let expected = TokenCountEvent { info: None };
-                assert_eq!(actual, expected, "case {case}");
-            }
-            other => panic!("case {case} returned unexpected event {other:?}"),
-        }
-
-        let case = "entered_review_mode";
-        match parse_event_case(
-            case,
-            include_str!("../tests/fixtures/rollouts/event_msg/entered_review_mode.json"),
-            timestamp,
-        ) {
-            EventMsg::EnteredReviewMode(actual) => {
-                let expected = ReviewRequest {
-                    prompt: "Need review".to_string(),
-                    user_facing_hint: "double-check work".to_string(),
-                };
-                assert_eq!(actual, expected, "case {case}");
-            }
-            other => panic!("case {case} returned unexpected event {other:?}"),
-        }
-
-        let case = "exited_review_mode";
-        match parse_event_case(
-            case,
-            include_str!("../tests/fixtures/rollouts/event_msg/exited_review_mode.json"),
-            timestamp,
-        ) {
-            EventMsg::ExitedReviewMode(actual) => {
-                let expected = ExitedReviewModeEvent {
-                    review_output: Some(ReviewOutputEvent {
-                        findings: vec![ReviewFinding {
-                            title: "Bug".to_string(),
-                            body: "Found an issue".to_string(),
-                            confidence_score: 0.4,
-                            priority: 1,
-                            code_location: ReviewCodeLocation {
-                                absolute_file_path: PathBuf::from("/workspace/src/lib.rs"),
-                                line_range: ReviewLineRange { start: 1, end: 3 },
-                            },
-                        }],
-                        overall_correctness: "needs_changes".to_string(),
-                        overall_explanation: "Please fix".to_string(),
-                        overall_confidence_score: 0.9,
-                    }),
-                };
-                assert_eq!(actual, expected, "case {case}");
-            }
-            other => panic!("case {case} returned unexpected event {other:?}"),
-        }
-
-        let case = "turn_aborted";
-        match parse_event_case(
-            case,
-            include_str!("../tests/fixtures/rollouts/event_msg/turn_aborted.json"),
-            timestamp,
-        ) {
-            EventMsg::TurnAborted(actual) => {
-                let expected = TurnAbortedEvent {
-                    reason: TurnAbortReason::Interrupted,
-                };
-                assert_eq!(actual, expected, "case {case}");
-            }
-            other => panic!("case {case} returned unexpected event {other:?}"),
-        }
-    }
-
-    #[test]
-    fn deserialize_rollout_misc_lines() {
-        let timestamp = "2025-01-02T03:04:05.678Z";
-
-        assert_compacted_case(
-            "compacted",
-            include_str!("../tests/fixtures/rollouts/misc/compacted.json"),
-            timestamp,
-            |actual| {
-                assert_eq!(actual.message, "Turn summary", "case compacted");
-            },
-        );
-
-        let case = "turn_context_workspace";
-        assert_turn_context_case(
-            case,
-            include_str!("../tests/fixtures/rollouts/misc/turn_context_workspace.json"),
-            timestamp,
-            |actual| {
-                assert_eq!(actual.cwd, PathBuf::from("/workspace"), "case {case}");
-                assert_eq!(
-                    actual.approval_policy,
-                    AskForApproval::OnRequest,
-                    "case {case}"
-                );
-                match actual.sandbox_policy {
-                    SandboxPolicy::WorkspaceWrite {
-                        writable_roots,
-                        network_access,
-                        exclude_tmpdir_env_var,
-                        exclude_slash_tmp,
-                    } => {
-                        assert_eq!(
-                            writable_roots,
-                            vec![PathBuf::from("/workspace/tmp")],
-                            "case {case}"
-                        );
-                        assert!(network_access, "case {case} expected network access");
-                        assert!(
-                            !exclude_tmpdir_env_var,
-                            "case {case} expected TMPDIR env var to stay writable"
-                        );
-                        assert!(exclude_slash_tmp, "case {case} expected /tmp exclusion");
-                    }
-                    other => panic!("case {case} parsed unexpected sandbox policy {other:?}"),
-                }
-                assert_eq!(actual.model, "gpt-5", "case {case}");
-                assert_eq!(
-                    actual.effort,
-                    Some(ReasoningEffortConfig::High),
-                    "case {case}"
-                );
-                assert_eq!(
-                    actual.summary,
-                    ReasoningSummaryConfig::Detailed,
-                    "case {case}"
-                );
-            },
-        );
-
-        let case = "turn_context_read_only";
-        assert_turn_context_case(
-            case,
-            include_str!("../tests/fixtures/rollouts/misc/turn_context_read_only.json"),
-            timestamp,
-            |actual| {
-                assert_eq!(actual.cwd, PathBuf::from("/workspace"), "case {case}");
-                assert_eq!(actual.approval_policy, AskForApproval::Never, "case {case}");
-                match actual.sandbox_policy {
-                    SandboxPolicy::ReadOnly => {}
-                    other => panic!("case {case} parsed unexpected sandbox policy {other:?}"),
-                }
-                assert_eq!(actual.model, "gpt-5", "case {case}");
-                assert!(
-                    actual.effort.is_none(),
-                    "case {case} expected no effort override"
-                );
-                assert_eq!(actual.summary, ReasoningSummaryConfig::Auto, "case {case}");
-            },
+        assert_eq!(
+            turn_context_modes,
+            BTreeSet::from_iter(["read_only", "workspace_write"]),
+            "turn context sandbox modes mismatch"
         );
     }
 }
