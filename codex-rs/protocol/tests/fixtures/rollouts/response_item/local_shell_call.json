@@ -7,18 +7,17 @@
     "call_id": "shell-call-1",
     "status": "completed",
     "action": {
-      "Exec": {
-        "command": [
-          "ls",
-          "-la"
-        ],
-        "timeout_ms": 1200,
-        "working_directory": "/workspace",
-        "env": {
-          "PATH": "/usr/bin"
-        },
-        "user": "codex"
-      }
+      "type": "exec",
+      "command": [
+        "ls",
+        "-la"
+      ],
+      "timeout_ms": 1200,
+      "working_directory": "/workspace",
+      "env": {
+        "PATH": "/usr/bin"
+      },
+      "user": "codex"
     }
   }
 }

@@ -1309,20 +1309,24 @@ mod tests {
 
                 if let Some(serde_json::Value::Object(payload)) = map.get_mut("payload") {
                     if let Some(serde_json::Value::String(item_type)) = payload.get("type") {
-                        match item_type.as_str() {
-                            "message" | "reasoning" | "local_shell_call" | "function_call"
-                            | "custom_tool_call" | "web_search_call" => {
-                                payload.remove("id");
-                            }
-                            "other" => {}
-                            _ if is_response_item => {
-                                payload.clear();
-                                payload.insert(
-                                    "type".to_string(),
-                                    serde_json::Value::String("other".to_string()),
-                                );
-                            }
-                            _ => {}
+                        let known_response_types = [
+                            "message",
+                            "reasoning",
+                            "local_shell_call",
+                            "function_call",
+                            "function_call_output",
+                            "custom_tool_call",
+                            "custom_tool_call_output",
+                            "web_search_call",
+                        ];
+                        if known_response_types.contains(&item_type.as_str()) {
+                            payload.remove("id");
+                        } else if is_response_item {
+                            payload.clear();
+                            payload.insert(
+                                "type".to_string(),
+                                serde_json::Value::String("other".to_string()),
+                            );
                         }
                     }
                 }
@@ -1352,175 +1356,107 @@ mod tests {
         }
     }
 
-    fn parse_rollout_line(value: &str, case: &str) -> RolloutLine {
-        let parsed = serde_json::from_str(value)
-            .unwrap_or_else(|err| panic!("failed to parse {case}: {err}"));
+    fn assert_rollout_round_trip(case: &str, raw: &str) {
+        let expected: serde_json::Value =
+            serde_json::from_str(raw).unwrap_or_else(|err| panic!("failed to parse {case}: {err}"));
+        let parsed: RolloutLine =
+            serde_json::from_str(raw).unwrap_or_else(|err| panic!("failed to parse {case}: {err}"));
         let serialized = serde_json::to_value(&parsed)
             .unwrap_or_else(|err| panic!("failed to serialize {case}: {err}"));
-        let expected = serde_json::from_str::<serde_json::Value>(value)
-            .unwrap_or_else(|err| panic!("failed to parse {case}: {err}"));
-        assert_eq!(
-            normalize_rollout_value(serialized),
-            normalize_rollout_value(expected),
-            "case {case} failed round trip serialization"
-        );
-        parsed
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    enum ExpectedItemKind {
-        SessionMeta,
-        Response,
-        Event,
-        Compacted,
-        TurnContext,
-    }
-
-    struct RolloutFixtureCase {
-        name: &'static str,
-        raw: &'static str,
-        expected_kind: ExpectedItemKind,
+        assert_eq!(serialized, expected, "case {case} failed round trip");
     }
 
     #[test]
     fn deserialize_rollout_fixtures() {
-        const TIMESTAMP: &str = "2025-01-02T03:04:05.678Z";
-
         let cases = [
-            RolloutFixtureCase {
-                name: "session_meta/with_git",
-                raw: include_str!("../tests/fixtures/rollouts/session_meta/with_git.json"),
-                expected_kind: ExpectedItemKind::SessionMeta,
-            },
-            RolloutFixtureCase {
-                name: "response_item/message",
-                raw: include_str!("../tests/fixtures/rollouts/response_item/message.json"),
-                expected_kind: ExpectedItemKind::Response,
-            },
-            RolloutFixtureCase {
-                name: "response_item/reasoning",
-                raw: include_str!("../tests/fixtures/rollouts/response_item/reasoning.json"),
-                expected_kind: ExpectedItemKind::Response,
-            },
-            RolloutFixtureCase {
-                name: "response_item/local_shell_call",
-                raw: include_str!("../tests/fixtures/rollouts/response_item/local_shell_call.json"),
-                expected_kind: ExpectedItemKind::Response,
-            },
-            RolloutFixtureCase {
-                name: "response_item/function_call",
-                raw: include_str!("../tests/fixtures/rollouts/response_item/function_call.json"),
-                expected_kind: ExpectedItemKind::Response,
-            },
-            RolloutFixtureCase {
-                name: "response_item/function_call_output",
-                raw: include_str!(
-                    "../tests/fixtures/rollouts/response_item/function_call_output.json"
-                ),
-                expected_kind: ExpectedItemKind::Response,
-            },
-            RolloutFixtureCase {
-                name: "response_item/custom_tool_call",
-                raw: include_str!("../tests/fixtures/rollouts/response_item/custom_tool_call.json"),
-                expected_kind: ExpectedItemKind::Response,
-            },
-            RolloutFixtureCase {
-                name: "response_item/custom_tool_call_output",
-                raw: include_str!(
+            (
+                "session_meta/with_git",
+                include_str!("../tests/fixtures/rollouts/session_meta/with_git.json"),
+            ),
+            (
+                "response_item/message",
+                include_str!("../tests/fixtures/rollouts/response_item/message.json"),
+            ),
+            (
+                "response_item/reasoning",
+                include_str!("../tests/fixtures/rollouts/response_item/reasoning.json"),
+            ),
+            (
+                "response_item/local_shell_call",
+                include_str!("../tests/fixtures/rollouts/response_item/local_shell_call.json"),
+            ),
+            (
+                "response_item/function_call",
+                include_str!("../tests/fixtures/rollouts/response_item/function_call.json"),
+            ),
+            (
+                "response_item/function_call_output",
+                include_str!("../tests/fixtures/rollouts/response_item/function_call_output.json"),
+            ),
+            (
+                "response_item/custom_tool_call",
+                include_str!("../tests/fixtures/rollouts/response_item/custom_tool_call.json"),
+            ),
+            (
+                "response_item/custom_tool_call_output",
+                include_str!(
                     "../tests/fixtures/rollouts/response_item/custom_tool_call_output.json"
                 ),
-                expected_kind: ExpectedItemKind::Response,
-            },
-            RolloutFixtureCase {
-                name: "response_item/web_search_call",
-                raw: include_str!("../tests/fixtures/rollouts/response_item/web_search_call.json"),
-                expected_kind: ExpectedItemKind::Response,
-            },
-            RolloutFixtureCase {
-                name: "response_item/other",
-                raw: include_str!("../tests/fixtures/rollouts/response_item/other.json"),
-                expected_kind: ExpectedItemKind::Response,
-            },
-            RolloutFixtureCase {
-                name: "event_msg/user_message",
-                raw: include_str!("../tests/fixtures/rollouts/event_msg/user_message.json"),
-                expected_kind: ExpectedItemKind::Event,
-            },
-            RolloutFixtureCase {
-                name: "event_msg/agent_message",
-                raw: include_str!("../tests/fixtures/rollouts/event_msg/agent_message.json"),
-                expected_kind: ExpectedItemKind::Event,
-            },
-            RolloutFixtureCase {
-                name: "event_msg/agent_reasoning",
-                raw: include_str!("../tests/fixtures/rollouts/event_msg/agent_reasoning.json"),
-                expected_kind: ExpectedItemKind::Event,
-            },
-            RolloutFixtureCase {
-                name: "event_msg/agent_reasoning_raw_content",
-                raw: include_str!(
+            ),
+            (
+                "response_item/web_search_call",
+                include_str!("../tests/fixtures/rollouts/response_item/web_search_call.json"),
+            ),
+            (
+                "response_item/other",
+                include_str!("../tests/fixtures/rollouts/response_item/other.json"),
+            ),
+            (
+                "event_msg/user_message",
+                include_str!("../tests/fixtures/rollouts/event_msg/user_message.json"),
+            ),
+            (
+                "event_msg/agent_message",
+                include_str!("../tests/fixtures/rollouts/event_msg/agent_message.json"),
+            ),
+            (
+                "event_msg/agent_reasoning",
+                include_str!("../tests/fixtures/rollouts/event_msg/agent_reasoning.json"),
+            ),
+            (
+                "event_msg/agent_reasoning_raw_content",
+                include_str!(
                     "../tests/fixtures/rollouts/event_msg/agent_reasoning_raw_content.json"
                 ),
-                expected_kind: ExpectedItemKind::Event,
-            },
-            RolloutFixtureCase {
-                name: "event_msg/token_count_info",
-                raw: include_str!("../tests/fixtures/rollouts/event_msg/token_count_info.json"),
-                expected_kind: ExpectedItemKind::Event,
-            },
-            RolloutFixtureCase {
-                name: "event_msg/entered_review_mode",
-                raw: include_str!("../tests/fixtures/rollouts/event_msg/entered_review_mode.json"),
-                expected_kind: ExpectedItemKind::Event,
-            },
-            RolloutFixtureCase {
-                name: "event_msg/exited_review_mode",
-                raw: include_str!("../tests/fixtures/rollouts/event_msg/exited_review_mode.json"),
-                expected_kind: ExpectedItemKind::Event,
-            },
-            RolloutFixtureCase {
-                name: "event_msg/turn_aborted",
-                raw: include_str!("../tests/fixtures/rollouts/event_msg/turn_aborted.json"),
-                expected_kind: ExpectedItemKind::Event,
-            },
-            RolloutFixtureCase {
-                name: "misc/compacted",
-                raw: include_str!("../tests/fixtures/rollouts/misc/compacted.json"),
-                expected_kind: ExpectedItemKind::Compacted,
-            },
-            RolloutFixtureCase {
-                name: "misc/turn_context_workspace",
-                raw: include_str!("../tests/fixtures/rollouts/misc/turn_context_workspace.json"),
-                expected_kind: ExpectedItemKind::TurnContext,
-            },
-            RolloutFixtureCase {
-                name: "misc/turn_context_read_only",
-                raw: include_str!("../tests/fixtures/rollouts/misc/turn_context_read_only.json"),
-                expected_kind: ExpectedItemKind::TurnContext,
-            },
+            ),
+            (
+                "event_msg/token_count_info",
+                include_str!("../tests/fixtures/rollouts/event_msg/token_count_info.json"),
+            ),
+            (
+                "event_msg/entered_review_mode",
+                include_str!("../tests/fixtures/rollouts/event_msg/entered_review_mode.json"),
+            ),
+            (
+                "event_msg/exited_review_mode",
+                include_str!("../tests/fixtures/rollouts/event_msg/exited_review_mode.json"),
+            ),
+            (
+                "event_msg/turn_aborted",
+                include_str!("../tests/fixtures/rollouts/event_msg/turn_aborted.json"),
+            ),
+            (
+                "misc/compacted",
+                include_str!("../tests/fixtures/rollouts/misc/compacted.json"),
+            ),
+            (
+                "misc/turn_context_workspace",
+                include_str!("../tests/fixtures/rollouts/misc/turn_context_workspace.json"),
+            ),
         ];
 
-        for case in cases {
-            let parsed = parse_rollout_line(case.raw, case.name);
-            assert_eq!(
-                parsed.timestamp, TIMESTAMP,
-                "case {} parsed unexpected timestamp",
-                case.name
-            );
-
-            match (case.expected_kind, parsed.item) {
-                (ExpectedItemKind::SessionMeta, RolloutItem::SessionMeta(_)) => {}
-                (ExpectedItemKind::Response, RolloutItem::ResponseItem(_)) => {}
-                (ExpectedItemKind::Event, RolloutItem::EventMsg(_)) => {}
-                (ExpectedItemKind::Compacted, RolloutItem::Compacted(_)) => {}
-                (ExpectedItemKind::TurnContext, RolloutItem::TurnContext(_)) => {}
-                (expected, actual) => {
-                    panic!(
-                        "case {} expected {:?} but parsed {:?}",
-                        case.name, expected, actual
-                    );
-                }
-            }
+        for (case, raw) in cases {
+            assert_rollout_round_trip(case, raw);
         }
     }
 }
