@@ -159,6 +159,15 @@ pub async fn run_fixture(dir: impl AsRef<Path>) -> Result<HarnessData> {
         events.push(next);
     }
 
+    loop {
+        let extra = match timeout(Duration::from_millis(200), codex.next_event()).await {
+            Ok(Ok(event)) => event,
+            Ok(Err(err)) => anyhow::bail!("error receiving extra event: {err}"),
+            Err(_) => break,
+        };
+        events.push(extra);
+    }
+
     let received = server
         .received_requests()
         .await
