@@ -1398,12 +1398,14 @@ impl ChatWidget {
         self.bottom_pane.insert_str(text);
     }
 
+    #[cfg(not(target_env = "musl"))]
     pub(crate) fn replace_transcription(&mut self, id: &str, text: &str) {
         self.bottom_pane.replace_transcription(id, text);
         // Ensure the UI redraws to reflect the updated transcription.
         self.request_redraw();
     }
 
+    #[cfg(not(target_env = "musl"))]
     pub(crate) fn update_transcription_in_place(&mut self, id: &str, text: &str) -> bool {
         let updated = self.bottom_pane.update_transcription_in_place(id, text);
         if updated {
@@ -1412,6 +1414,7 @@ impl ChatWidget {
         updated
     }
 
+    #[cfg(not(target_env = "musl"))]
     pub(crate) fn remove_transcription_placeholder(&mut self, id: &str) {
         self.bottom_pane.remove_transcription_placeholder(id);
         // Ensure the UI redraws to reflect placeholder removal.

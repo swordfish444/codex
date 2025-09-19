@@ -250,12 +250,14 @@ impl BottomPane {
         self.request_redraw();
     }
 
+    #[cfg(not(target_env = "musl"))]
     pub(crate) fn replace_transcription(&mut self, id: &str, text: &str) {
         self.composer.replace_transcription(id, text);
         self.composer.sync_popups();
         self.request_redraw();
     }
 
+    #[cfg(not(target_env = "musl"))]
     pub(crate) fn update_transcription_in_place(&mut self, id: &str, text: &str) -> bool {
         let updated = self.composer.update_transcription_in_place(id, text);
         if updated {
@@ -265,6 +267,7 @@ impl BottomPane {
         updated
     }
 
+    #[cfg(not(target_env = "musl"))]
     pub(crate) fn remove_transcription_placeholder(&mut self, id: &str) {
         self.composer.remove_transcription_placeholder(id);
         self.composer.sync_popups();

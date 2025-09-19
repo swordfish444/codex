@@ -1217,14 +1217,17 @@ impl ChatComposer {
         });
     }
 
+    #[cfg(not(target_env = "musl"))]
     pub fn replace_transcription(&mut self, id: &str, text: &str) {
         let _ = self.textarea.replace_element_by_id(id, text);
     }
 
+    #[cfg(not(target_env = "musl"))]
     pub fn update_transcription_in_place(&mut self, id: &str, text: &str) -> bool {
         self.textarea.update_named_element_by_id(id, text)
     }
 
+    #[cfg(not(target_env = "musl"))]
     pub fn remove_transcription_placeholder(&mut self, id: &str) {
         let _ = self.textarea.replace_element_by_id(id, "");
     }
