@@ -43,10 +43,12 @@ use crate::ui_consts::LIVE_PREFIX_COLS;
 use codex_file_search::FileMatch;
 use std::cell::RefCell;
 use std::collections::HashMap;
+#[cfg(not(target_env = "musl"))]
 use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(not(target_env = "musl"))]
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -487,6 +489,11 @@ impl ChatComposer {
                 false
             }
         }
+    }
+
+    #[cfg(target_env = "musl")]
+    fn start_recording_with_placeholder(&mut self) -> bool {
+        false
     }
 
     /// Process the space-hold timer if elapsed and start recording.
