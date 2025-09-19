@@ -18,6 +18,7 @@ use std::sync::atomic::AtomicU16;
 use std::sync::atomic::Ordering;
 use tracing::error;
 use tracing::info;
+use tracing::trace;
 
 pub struct RecordedAudio {
     pub data: Vec<i16>,
@@ -344,6 +345,7 @@ async fn transcribe_bytes(wav_bytes: Vec<u8>) -> Result<String, String> {
     let (bearer_token, chatgpt_account_id) = resolve_auth().await?;
 
     let client = reqwest::Client::new();
+    let audio_bytes = wav_bytes.len();
     let part = reqwest::multipart::Part::bytes(wav_bytes)
         .file_name("audio.wav")
         .mime_str("audio/wav")
@@ -361,6 +363,11 @@ async fn transcribe_bytes(wav_bytes: Vec<u8>) -> Result<String, String> {
     if let Some(acc) = chatgpt_account_id {
         req = req.header("chatgpt-account-id", acc);
     }
+
+    let audio_kib = audio_bytes as f32 / 1024.0;
+    trace!(
+        "sending transcription request: duration={duration_seconds:.2}s audio={audio_kib:.1}KiB"
+    );
 
     let resp = req
         .send()

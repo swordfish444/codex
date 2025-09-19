@@ -1515,7 +1515,7 @@ impl ChatComposer {
         let tx = self.app_event_tx.clone();
         tokio::spawn(async move {
             use std::time::Duration;
-            let width: usize = 12;
+            let width: usize = 4;
             // Bar glyphs low→high; single-line sparkline that scrolls left.
             // let symbols: Vec<char> = "·•●⬤".chars().collect();
             let symbols: Vec<char> = "⠤⠴⠶⠷⡷⡿⣿".chars().collect();
