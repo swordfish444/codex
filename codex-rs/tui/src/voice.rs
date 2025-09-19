@@ -98,7 +98,12 @@ impl VoiceCapture {
     }
 }
 
-pub fn transcribe_async(id: String, audio: RecordedAudio, tx: AppEventSender) {
+pub fn transcribe_async(
+    id: String,
+    audio: RecordedAudio,
+    context: Option<String>,
+    tx: AppEventSender,
+) {
     std::thread::spawn(move || {
         // Enforce minimum duration to avoid garbage outputs.
         const MIN_DURATION_SECONDS: f32 = 1.0;
@@ -133,8 +138,8 @@ pub fn transcribe_async(id: String, audio: RecordedAudio, tx: AppEventSender) {
 
         let tx2 = tx.clone();
         let id2 = id.clone();
-        let res: Result<String, String> =
-            rt.block_on(async move { transcribe_bytes(wav_bytes).await });
+        let res: Result<String, String> = rt
+            .block_on(async move { transcribe_bytes(wav_bytes, context, duration_seconds).await });
 
         match res {
             Ok(text) => {
@@ -341,18 +346,26 @@ async fn resolve_auth() -> Result<(String, Option<String>), String> {
     Ok((token, account_id))
 }
 
-async fn transcribe_bytes(wav_bytes: Vec<u8>) -> Result<String, String> {
+async fn transcribe_bytes(
+    wav_bytes: Vec<u8>,
+    context: Option<String>,
+    duration_seconds: f32,
+) -> Result<String, String> {
     let (bearer_token, chatgpt_account_id) = resolve_auth().await?;
 
     let client = reqwest::Client::new();
     let audio_bytes = wav_bytes.len();
+    let prompt_for_log = context.as_deref().unwrap_or("").to_string();
     let part = reqwest::multipart::Part::bytes(wav_bytes)
         .file_name("audio.wav")
         .mime_str("audio/wav")
         .map_err(|e| format!("failed to set mime: {e}"))?;
-    let form = reqwest::multipart::Form::new()
+    let mut form = reqwest::multipart::Form::new()
         .text("model", "gpt-4o-transcribe")
         .part("file", part);
+    if let Some(context) = context {
+        form = form.text("prompt", context);
+    }
 
     let mut req = client
         .post("https://api.openai.com/v1/audio/transcriptions")
@@ -366,7 +379,7 @@ async fn transcribe_bytes(wav_bytes: Vec<u8>) -> Result<String, String> {
 
     let audio_kib = audio_bytes as f32 / 1024.0;
     trace!(
-        "sending transcription request: duration={duration_seconds:.2}s audio={audio_kib:.1}KiB"
+        "sending transcription request: duration={duration_seconds:.2}s audio={audio_kib:.1}KiB prompt={prompt_for_log}"
     );
 
     let resp = req

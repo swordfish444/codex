@@ -701,6 +701,14 @@ impl TextArea {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn named_element_range(&self, id: &str) -> Option<std::ops::Range<usize>> {
+        self.elements
+            .iter()
+            .find(|e| e.id.as_deref() == Some(id))
+            .map(|e| e.range.clone())
+    }
+
     fn add_element_with_id(&mut self, range: Range<usize>, id: Option<String>) {
         let elem = TextElement { range, id };
         self.elements.push(elem);

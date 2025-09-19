@@ -1458,12 +1458,20 @@ impl ChatComposer {
                     Some(id) => id,
                     None => self.next_id(),
                 };
+
+                let placeholder_range = self.textarea.named_element_range(&id);
+                let prompt_source = if let Some(range) = &placeholder_range {
+                    self.textarea.text()[..range.start].to_string()
+                } else {
+                    self.textarea.text().to_string()
+                };
+
                 // Initialize with first spinner frame immediately.
                 let _ = self.textarea.update_named_element_by_id(&id, "⠋");
                 // Spawn animated braille spinner until transcription finishes (or times out).
                 self.spawn_transcribing_spinner(id.clone());
                 let tx = self.app_event_tx.clone();
-                crate::voice::transcribe_async(id, audio, tx);
+                crate::voice::transcribe_async(id, audio, Some(prompt_source), tx);
                 true
             }
             Err(e) => {
