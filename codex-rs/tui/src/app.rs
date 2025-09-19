@@ -349,12 +349,15 @@ impl App {
             AppEvent::UpdateSandboxPolicy(policy) => {
                 self.chat_widget.set_sandbox_policy(policy);
             }
+            #[cfg(not(target_env = "musl"))]
             AppEvent::TranscriptionComplete { id, text } => {
                 self.chat_widget.replace_transcription(&id, &text);
             }
+            #[cfg(not(target_env = "musl"))]
             AppEvent::TranscriptionFailed { id, error: _ } => {
                 self.chat_widget.remove_transcription_placeholder(&id);
             }
+            #[cfg(not(target_env = "musl"))]
             AppEvent::RecordingMeter { id, text } => {
                 // Update in place to preserve the element id for subsequent frames.
                 let updated = self.chat_widget.update_transcription_in_place(&id, &text);

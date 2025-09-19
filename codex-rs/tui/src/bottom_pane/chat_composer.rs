@@ -88,6 +88,7 @@ pub(crate) struct ChatComposer {
     frame_requester: FrameRequester,
     #[cfg(not(target_env = "musl"))]
     voice: Option<crate::voice::VoiceCapture>,
+    #[cfg(not(target_env = "musl"))]
     recording_placeholder_id: Option<String>,
     attached_images: Vec<AttachedImage>,
     placeholder_text: String,
@@ -145,6 +146,7 @@ impl ChatComposer {
             frame_requester,
             #[cfg(not(target_env = "musl"))]
             voice: None,
+            #[cfg(not(target_env = "musl"))]
             recording_placeholder_id: None,
             attached_images: Vec::new(),
             placeholder_text,
@@ -456,11 +458,6 @@ impl ChatComposer {
         }
     }
 
-    #[cfg(target_env = "musl")]
-    fn stop_recording_and_start_transcription(&mut self) -> bool {
-        false
-    }
-
     /// Start voice capture and insert a placeholder element for the live meter.
     /// Returns true if recording began and UI should redraw; false on failure.
     #[cfg(not(target_env = "musl"))]
@@ -490,11 +487,6 @@ impl ChatComposer {
                 false
             }
         }
-    }
-
-    #[cfg(target_env = "musl")]
-    fn start_recording_with_placeholder(&mut self) -> bool {
-        false
     }
 
     /// Process the space-hold timer if elapsed and start recording.
@@ -1121,6 +1113,7 @@ impl ChatComposer {
         false
     }
 
+    #[cfg(not(target_env = "musl"))]
     fn spawn_recording_meter(
         &self,
         id: String,
@@ -1196,6 +1189,7 @@ impl ChatComposer {
         });
     }
 
+    #[cfg(not(target_env = "musl"))]
     fn spawn_transcribing_spinner(&self, id: String) {
         let tx = self.app_event_tx.clone();
         tokio::spawn(async move {
