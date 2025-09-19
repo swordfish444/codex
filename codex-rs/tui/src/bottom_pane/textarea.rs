@@ -687,9 +687,9 @@ impl TextArea {
             .iter()
             .position(|e| e.id.as_deref() == Some(id))
         {
-            let start = self.elements[elem_idx].range.start;
             let old_range = self.elements[elem_idx].range.clone();
-            self.replace_range_raw(old_range.clone(), text);
+            let start = old_range.start;
+            self.replace_range_raw(old_range, text);
             // After replace_range_raw, the old element entry was removed if fully overlapped.
             // Re-add an updated element with the same id and new range.
             let new_end = start + text.len();

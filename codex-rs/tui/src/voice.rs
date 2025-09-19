@@ -169,16 +169,14 @@ fn build_input_stream(
     data: Arc<Mutex<Vec<i16>>>,
     last_peak: Arc<AtomicU16>,
 ) -> Result<cpal::Stream, String> {
-    let data_cb = data.clone();
-    let last_peak_cb = last_peak.clone();
     match config.sample_format() {
         cpal::SampleFormat::F32 => device
             .build_input_stream(
                 &config.clone().into(),
                 move |input: &[f32], _| {
                     let peak = peak_f32(input);
-                    last_peak_cb.store(peak, Ordering::Relaxed);
-                    if let Ok(mut buf) = data_cb.lock() {
+                    last_peak.store(peak, Ordering::Relaxed);
+                    if let Ok(mut buf) = data.lock() {
                         for &s in input {
                             buf.push(f32_to_i16(s));
                         }
@@ -193,8 +191,8 @@ fn build_input_stream(
                 &config.clone().into(),
                 move |input: &[i16], _| {
                     let peak = peak_i16(input);
-                    last_peak_cb.store(peak, Ordering::Relaxed);
-                    if let Ok(mut buf) = data_cb.lock() {
+                    last_peak.store(peak, Ordering::Relaxed);
+                    if let Ok(mut buf) = data.lock() {
                         buf.extend_from_slice(input);
                     }
                 },
@@ -206,9 +204,9 @@ fn build_input_stream(
             .build_input_stream(
                 &config.clone().into(),
                 move |input: &[u16], _| {
-                    if let Ok(mut buf) = data_cb.lock() {
+                    if let Ok(mut buf) = data.lock() {
                         let peak = convert_u16_to_i16_and_peak(input, &mut buf);
-                        last_peak_cb.store(peak, Ordering::Relaxed);
+                        last_peak.store(peak, Ordering::Relaxed);
                     }
                 },
                 move |err| error!("audio input error: {err}"),
