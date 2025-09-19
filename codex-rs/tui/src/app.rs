@@ -31,7 +31,6 @@ use std::thread;
 use std::time::Duration;
 use tokio::select;
 use tokio::sync::mpsc::unbounded_channel;
-// use uuid::Uuid;
 
 pub(crate) struct App {
     pub(crate) server: Arc<ConversationManager>,
@@ -358,7 +357,7 @@ impl App {
                 self.chat_widget.remove_transcription_placeholder(&id);
             }
             #[cfg(not(target_env = "musl"))]
-            AppEvent::RecordingMeter { id, text } => {
+            AppEvent::UpdateRecordingMeter { id, text } => {
                 // Update in place to preserve the element id for subsequent frames.
                 let updated = self.chat_widget.update_transcription_in_place(&id, &text);
                 if updated {

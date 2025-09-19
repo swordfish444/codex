@@ -681,7 +681,7 @@ impl TextArea {
 
     /// Update the element's text in place, preserving its id so callers can
     /// update it again later (e.g. recording -> transcribing -> final).
-    #[cfg(not(target_env = "musl"))]
+    #[allow(dead_code)]
     pub fn update_named_element_by_id(&mut self, id: &str, text: &str) -> bool {
         if let Some(elem_idx) = self
             .elements

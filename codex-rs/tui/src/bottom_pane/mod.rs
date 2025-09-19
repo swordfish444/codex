@@ -162,6 +162,7 @@ impl BottomPane {
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> InputResult {
         // Do not globally intercept space; only composer handles hold-to-talk.
         // While recording, route all keys to the composer so it can stop on release or next key.
+        #[cfg(not(target_env = "musl"))]
         if self.composer.is_recording() {
             let (_ir, needs_redraw) = self.composer.handle_key_event(key_event);
             if needs_redraw {
@@ -250,33 +251,10 @@ impl BottomPane {
         self.request_redraw();
     }
 
-    #[cfg(not(target_env = "musl"))]
-    pub(crate) fn replace_transcription(&mut self, id: &str, text: &str) {
-        self.composer.replace_transcription(id, text);
-        self.composer.sync_popups();
-        self.request_redraw();
-    }
-
-    #[cfg(not(target_env = "musl"))]
-    pub(crate) fn update_transcription_in_place(&mut self, id: &str, text: &str) -> bool {
-        let updated = self.composer.update_transcription_in_place(id, text);
-        if updated {
-            self.composer.sync_popups();
-            self.request_redraw();
-        }
-        updated
-    }
-
-    #[cfg(not(target_env = "musl"))]
-    pub(crate) fn remove_transcription_placeholder(&mut self, id: &str) {
-        self.composer.remove_transcription_placeholder(id);
-        self.composer.sync_popups();
-        self.request_redraw();
-    }
-
     // Space hold timeout is handled inside ChatComposer via an internal timer.
     pub(crate) fn pre_draw_tick(&mut self) {
         // Allow composer to process any time-based transitions before drawing
+        #[cfg(not(target_env = "musl"))]
         self.composer.process_space_hold_trigger();
         self.composer.sync_popups();
     }
@@ -514,6 +492,30 @@ impl BottomPane {
 
     pub(crate) fn take_recent_submission_images(&mut self) -> Vec<PathBuf> {
         self.composer.take_recent_submission_images()
+    }
+}
+
+#[cfg(not(target_env = "musl"))]
+impl BottomPane {
+    pub(crate) fn replace_transcription(&mut self, id: &str, text: &str) {
+        self.composer.replace_transcription(id, text);
+        self.composer.sync_popups();
+        self.request_redraw();
+    }
+
+    pub(crate) fn update_transcription_in_place(&mut self, id: &str, text: &str) -> bool {
+        let updated = self.composer.update_transcription_in_place(id, text);
+        if updated {
+            self.composer.sync_popups();
+            self.request_redraw();
+        }
+        updated
+    }
+
+    pub(crate) fn remove_transcription_placeholder(&mut self, id: &str) {
+        self.composer.remove_transcription_placeholder(id);
+        self.composer.sync_popups();
+        self.request_redraw();
     }
 }
 
