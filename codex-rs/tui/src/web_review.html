@@ -28,7 +28,7 @@
 
         .app-root {
             display: flex;
-            flex-direction: row;
+            flex-direction: column;
             min-height: 100vh;
         }
 
@@ -38,15 +38,6 @@
             flex-direction: column;
             min-width: 0;
             background: #1f2937;
-        }
-
-        .top-bar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 16px 20px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-            gap: 16px;
         }
 
         .repo-name {
@@ -61,7 +52,8 @@
         }
 
         .view-toggle button,
-        .sidebar button {
+        .review-toolbar button,
+        .review-modal-footer button {
             padding: 6px 12px;
             background: rgba(255, 255, 255, 0.06);
             color: #f9fafb;
@@ -73,19 +65,22 @@
         }
 
         .view-toggle button.active,
-        .sidebar button.primary {
+        .review-toolbar button.primary,
+        .review-modal-footer button.primary {
             background: #2563eb;
             border-color: #1d4ed8;
         }
 
         .view-toggle button:disabled,
-        .sidebar button:disabled {
+        .review-toolbar button:disabled,
+        .review-modal-footer button:disabled {
             opacity: 0.6;
             cursor: not-allowed;
         }
 
         .view-toggle button:hover:not(:disabled),
-        .sidebar button:hover:not(:disabled) {
+        .review-toolbar button:hover:not(:disabled),
+        .review-modal-footer button:hover:not(:disabled) {
             background: rgba(37, 99, 235, 0.25);
             border-color: rgba(37, 99, 235, 0.5);
         }
@@ -261,27 +256,144 @@
             white-space: pre-wrap;
         }
 
-        .sidebar {
-            width: 360px;
-            background: #0f172a;
-            border-left: 1px solid rgba(255, 255, 255, 0.08);
+        .review-toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 10;
             display: flex;
             flex-direction: column;
-            padding: 20px;
-            gap: 20px;
+            gap: 8px;
+            padding: 12px 20px;
+            background: #0f172a;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 4px 16px rgba(15, 23, 42, 0.45);
         }
 
-        .sidebar-section {
+        .toolbar-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .toolbar-meta {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex: 1 1 auto;
+            flex-wrap: wrap;
+        }
+
+        .toolbar-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .toolbar-summary,
+        .toolbar-comments {
             display: flex;
             flex-direction: column;
             gap: 10px;
         }
 
-        .sidebar-section h2 {
+        .toolbar-summary h2,
+        .toolbar-comments h2 {
             margin: 0;
             font-size: 15px;
             font-weight: 600;
             color: #f9fafb;
+        }
+
+        .toolbar-comment-list {
+            max-height: 240px;
+            overflow-y: auto;
+        }
+
+        .toolbar-hint {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .review-modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(8, 13, 23, 0.72);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 32px 20px;
+            z-index: 60;
+        }
+
+        .review-modal {
+            width: min(720px, 100%);
+            max-height: min(92vh, 800px);
+            background: #0f172a;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 16px;
+            box-shadow: 0 24px 64px rgba(3, 7, 18, 0.6);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .review-modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 24px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            gap: 12px;
+        }
+
+        .review-modal-title {
+            margin: 0;
+            font-size: 17px;
+            font-weight: 600;
+            color: #f9fafb;
+        }
+
+        .review-modal-close {
+            background: none;
+            border: none;
+            color: rgba(148, 163, 184, 0.9);
+            cursor: pointer;
+            font-size: 13px;
+            padding: 4px 6px;
+        }
+
+        .review-modal-close:hover:not(:disabled) {
+            color: #e5e7eb;
+        }
+
+        .review-modal-close:disabled {
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .review-modal-body {
+            padding: 20px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            overflow-y: auto;
+        }
+
+        .review-modal-footer {
+            padding: 16px 24px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .review-modal-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
         }
 
         textarea,
@@ -304,6 +416,8 @@
 
         textarea.summary-input {
             min-height: 120px;
+            width: 100%;
+            box-sizing: border-box;
         }
 
         .comment-form {
@@ -346,7 +460,7 @@
             gap: 12px;
             flex: 1 1 auto;
             overflow-y: auto;
-            max-height: 35vh;
+            max-height: 240px;
         }
 
         .comment-group {
@@ -472,14 +586,26 @@
         }
 
         @media (max-width: 1024px) {
-            .app-root {
-                flex-direction: column;
+            .toolbar-row {
+                align-items: flex-start;
             }
 
-            .sidebar {
-                width: auto;
-                border-left: none;
-                border-top: 1px solid rgba(255, 255, 255, 0.08);
+            .toolbar-actions {
+                width: 100%;
+                justify-content: flex-start;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .toolbar-meta {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+            }
+
+            .toolbar-actions {
+                flex-direction: column;
+                align-items: stretch;
             }
         }
     </style>
@@ -1219,6 +1345,141 @@
                 );
             }
 
+            function SubmitReviewModal(props) {
+                const {
+                    summary,
+                    setSummary,
+                    disableInputs,
+                    onClose,
+                    onSubmit,
+                    comments,
+                    onRemoveComment,
+                    onFocusComment,
+                    activeChangeKey,
+                    status,
+                    submitLabel,
+                } = props;
+                return e(
+                    'div',
+                    { className: 'review-modal-overlay' },
+                    e(
+                        'div',
+                        { className: 'review-modal' },
+                        [
+                            e(
+                                'div',
+                                { className: 'review-modal-header' },
+                                [
+                                    e('h2', { className: 'review-modal-title' }, 'Finish your review'),
+                                    e(
+                                        'button',
+                                        {
+                                            type: 'button',
+                                            className: 'review-modal-close',
+                                            onClick: onClose,
+                                            disabled: disableInputs,
+                                        },
+                                        'Close'
+                                    ),
+                                ]
+                            ),
+                            e(
+                                'div',
+                                { className: 'review-modal-body' },
+                                [
+                                    status.message
+                                        ? e(
+                                              'div',
+                                              {
+                                                  className:
+                                                      'status-message' +
+                                                      (status.state === 'error'
+                                                          ? ' error'
+                                                          : status.state === 'success'
+                                                          ? ' success'
+                                                          : ''),
+                                              },
+                                              status.message
+                                          )
+                                        : null,
+                                    e(
+                                        'div',
+                                        { className: 'toolbar-summary' },
+                                        [
+                                            e('h2', null, 'Summary'),
+                                            e('textarea', {
+                                                className: 'summary-input',
+                                                placeholder: 'High level summary of the review…',
+                                                value: summary,
+                                                disabled: disableInputs,
+                                                onChange: function (event) {
+                                                    setSummary(event.target.value);
+                                                },
+                                                onKeyDown: function (event) {
+                                                    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                                                        event.preventDefault();
+                                                        if (!disableInputs) {
+                                                            onSubmit();
+                                                        }
+                                                    }
+                                                },
+                                            }),
+                                        ]
+                                    ),
+                                    e('div', { className: 'toolbar-hint' }, 'Click a line to open an inline comment form in the diff.'),
+                                    e(
+                                        'div',
+                                        { className: 'toolbar-comments' },
+                                        [
+                                            e('h2', null, 'Comments'),
+                                            e(
+                                                'div',
+                                                { className: 'toolbar-comment-list' },
+                                                e(CommentList, {
+                                                    comments: comments,
+                                                    onRemoveComment: onRemoveComment,
+                                                    onFocusComment: onFocusComment,
+                                                    activeChangeKey: activeChangeKey,
+                                                })
+                                            ),
+                                        ]
+                                    ),
+                                ]
+                            ),
+                            e(
+                                'div',
+                                { className: 'review-modal-footer' },
+                                e(
+                                    'div',
+                                    { className: 'review-modal-actions' },
+                                    [
+                                        e(
+                                            'button',
+                                            {
+                                                type: 'button',
+                                                onClick: onClose,
+                                                disabled: disableInputs,
+                                            },
+                                            'Back to review'
+                                        ),
+                                        e(
+                                            'button',
+                                            {
+                                                type: 'button',
+                                                className: 'primary',
+                                                disabled: disableInputs,
+                                                onClick: onSubmit,
+                                            },
+                                            submitLabel
+                                        ),
+                                    ]
+                                )
+                            ),
+                        ]
+                    )
+                );
+            }
+
             function App() {
                 const [loading, setLoading] = useState(true);
                 const [error, setError] = useState(null);
@@ -1229,6 +1490,7 @@
                 const [comments, setComments] = useState([]);
                 const [status, setStatus] = useState({ state: 'idle', message: '' });
                 const [activeChangeKey, setActiveChangeKey] = useState(null);
+                const [showSubmitModal, setShowSubmitModal] = useState(false);
                 const commentIdRef = useRef(1);
                 const focusTimeoutRef = useRef(null);
                 const statusRef = useRef('idle');
@@ -1502,6 +1764,21 @@
                 }, []);
 
                 const disableInputs = status.state === 'submitting' || status.state === 'success';
+                const submitButtonLabel =
+                    status.state === 'submitting'
+                        ? 'Submitting…'
+                        : status.state === 'success'
+                        ? 'Submitted'
+                        : 'Submit review';
+
+                useEffect(
+                    function () {
+                        if (status.state === 'success' || status.state === 'cancelled') {
+                            setShowSubmitModal(false);
+                        }
+                    },
+                    [status.state]
+                );
 
                 if (loading) {
                     return e('div', { className: 'center-screen' }, 'Loading diff…');
@@ -1517,47 +1794,103 @@
                     [
                         e(
                             'div',
-                            { className: 'diff-column' },
+                            { className: 'review-toolbar' },
                             [
                                 e(
                                     'div',
-                                    { className: 'top-bar' },
+                                    { className: 'toolbar-row' },
                                     [
                                         e(
                                             'div',
-                                            { className: 'repo-name' },
-                                            repoPath ? 'Reviewing ' + repoPath : 'Review diff'
+                                            { className: 'toolbar-meta' },
+                                            [
+                                                e(
+                                                    'div',
+                                                    { className: 'repo-name' },
+                                                    repoPath ? 'Reviewing ' + repoPath : 'Review diff'
+                                                ),
+                                                e(
+                                                    'div',
+                                                    { className: 'view-toggle' },
+                                                    [
+                                                        e(
+                                                            'button',
+                                                            {
+                                                                type: 'button',
+                                                                className: viewType === 'split' ? 'active' : '',
+                                                                onClick: function () {
+                                                                    setViewType('split');
+                                                                },
+                                                            },
+                                                            'Split view'
+                                                        ),
+                                                        e(
+                                                            'button',
+                                                            {
+                                                                type: 'button',
+                                                                className: viewType === 'unified' ? 'active' : '',
+                                                                onClick: function () {
+                                                                    setViewType('unified');
+                                                                },
+                                                            },
+                                                            'Unified view'
+                                                        ),
+                                                    ]
+                                                ),
+                                            ]
                                         ),
                                         e(
                                             'div',
-                                            { className: 'view-toggle' },
+                                            { className: 'toolbar-actions' },
                                             [
                                                 e(
                                                     'button',
                                                     {
                                                         type: 'button',
-                                                        className: viewType === 'split' ? 'active' : '',
+                                                        className: 'primary',
+                                                        disabled: disableInputs,
                                                         onClick: function () {
-                                                            setViewType('split');
+                                                            if (!disableInputs) {
+                                                                setShowSubmitModal(true);
+                                                            }
                                                         },
                                                     },
-                                                    'Split view'
+                                                    submitButtonLabel
                                                 ),
                                                 e(
                                                     'button',
                                                     {
                                                         type: 'button',
-                                                        className: viewType === 'unified' ? 'active' : '',
-                                                        onClick: function () {
-                                                            setViewType('unified');
-                                                        },
+                                                        disabled: status.state === 'submitting',
+                                                        onClick: handleCancelReview,
                                                     },
-                                                    'Unified view'
+                                                    'Cancel review'
                                                 ),
                                             ]
                                         ),
                                     ]
                                 ),
+                                status.message
+                                    ? e(
+                                          'div',
+                                          {
+                                              className:
+                                                  'status-message' +
+                                                  (status.state === 'error'
+                                                      ? ' error'
+                                                      : status.state === 'success'
+                                                      ? ' success'
+                                                      : ''),
+                                          },
+                                          status.message
+                                      )
+                                    : null,
+                            ]
+                        ),
+                        e(
+                            'div',
+                            { className: 'diff-column' },
+                            [
                                 e(
                                     'div',
                                     { className: 'diff-scroll' },
@@ -1581,100 +1914,25 @@
                                 ),
                             ]
                         ),
-                        e(
-                            'aside',
-                            { className: 'sidebar' },
-                            [
-                                e(
-                                    'div',
-                                    { className: 'sidebar-section' },
-                                    [
-                                        e('h2', null, 'Summary'),
-                                        e('textarea', {
-                                            className: 'summary-input',
-                                            placeholder: 'High level summary of the review…',
-                                            value: summary,
-                                            disabled: disableInputs,
-                                            onChange: function (event) {
-                                                setSummary(event.target.value);
-                                            },
-                                            onKeyDown: function (event) {
-                                                if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                                                    event.preventDefault();
-                                                    if (!disableInputs) {
-                                                        handleSubmitReview();
-                                                    }
-                                                }
-                                            },
-                                        }),
-                                    ]
-                                ),
-                                e(
-                                    'div',
-                                    { className: 'sidebar-section' },
-                                    e('div', { className: 'empty-state' }, 'Click a line to open an inline comment form in the diff.')
-                                ),
-                                e(
-                                    'div',
-                                    { className: 'sidebar-section' },
-                                    [
-                                        e('h2', null, 'Comments'),
-                                        e(CommentList, {
-                                            comments: comments,
-                                            onRemoveComment: handleRemoveComment,
-                                            onFocusComment: handleFocusComment,
-                                            activeChangeKey: activeChangeKey,
-                                        }),
-                                    ]
-                                ),
-                                e(
-                                    'div',
-                                    { className: 'sidebar-section' },
-                                    [
-                                        e(
-                                            'div',
-                                            { className: 'comment-actions' },
-                                            [
-                                                e(
-                                                    'button',
-                                                    {
-                                                        type: 'button',
-                                                        className: 'primary',
-                                                        disabled: disableInputs,
-                                                        onClick: handleSubmitReview,
-                                                    },
-                                                    status.state === 'submitting' ? 'Submitting…' : 'Submit review'
-                                                ),
-                                                e(
-                                                    'button',
-                                                    {
-                                                        type: 'button',
-                                                        disabled: status.state === 'submitting',
-                                                        onClick: handleCancelReview,
-                                                    },
-                                                    'Cancel review'
-                                                ),
-                                            ]
-                                        ),
-                                        status.message
-                                            ? e(
-                                                  'div',
-                                                  {
-                                                      className:
-                                                          'status-message' +
-                                                          (status.state === 'error'
-                                                              ? ' error'
-                                                              : status.state === 'success'
-                                                              ? ' success'
-                                                              : ''),
-                                                  },
-                                                  status.message
-                                              )
-                                            : null,
-                                    ]
-                                ),
-                            ]
-                        ),
+                        showSubmitModal
+                            ? e(SubmitReviewModal, {
+                                  summary: summary,
+                                  setSummary: setSummary,
+                                  disableInputs: disableInputs,
+                                  onClose: function () {
+                                      if (!disableInputs) {
+                                          setShowSubmitModal(false);
+                                      }
+                                  },
+                                  onSubmit: handleSubmitReview,
+                                  comments: comments,
+                                  onRemoveComment: handleRemoveComment,
+                                  onFocusComment: handleFocusComment,
+                                  activeChangeKey: activeChangeKey,
+                                  status: status,
+                                  submitLabel: submitButtonLabel,
+                              })
+                            : null,
                     ]
                 );
             }
