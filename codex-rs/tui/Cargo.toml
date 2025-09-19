@@ -87,6 +87,7 @@ unicode-width = "0.1"
 url = "2"
 pathdiff = "0.2"
 
+[target.'cfg(not(target_env = "musl"))'.dependencies]
 cpal = "0.15"
 hound = "3.5"
 

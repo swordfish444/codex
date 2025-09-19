@@ -86,6 +86,7 @@ pub(crate) struct ChatComposer {
     token_usage_info: Option<TokenUsageInfo>,
     has_focus: bool,
     frame_requester: FrameRequester,
+    #[cfg(not(target_env = "musl"))]
     voice: Option<crate::voice::VoiceCapture>,
     recording_placeholder_id: Option<String>,
     attached_images: Vec<AttachedImage>,
@@ -142,6 +143,7 @@ impl ChatComposer {
             token_usage_info: None,
             has_focus: has_input_focus,
             frame_requester,
+            #[cfg(not(target_env = "musl"))]
             voice: None,
             recording_placeholder_id: None,
             attached_images: Vec::new(),
@@ -176,9 +178,12 @@ impl ChatComposer {
     }
 
     pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
-        // Hide the cursor while recording voice input.
-        if self.voice.is_some() {
-            return None;
+        #[cfg(not(target_env = "musl"))]
+        {
+            // Hide the cursor while recording voice input.
+            if self.voice.is_some() {
+                return None;
+            }
         }
         let popup_constraint = match &self.active_popup {
             ActivePopup::Command(popup) => {
@@ -233,6 +238,7 @@ impl ChatComposer {
     }
 
     pub fn handle_paste(&mut self, pasted: String) -> bool {
+        #[cfg(not(target_env = "musl"))]
         if self.voice.is_some() {
             return false;
         }
@@ -359,6 +365,7 @@ impl ChatComposer {
         // Timer-based conversion is handled in the pre-draw tick.
         // If recording, attempt to stop on Space release, or on the next key press
         // (some terminals do not emit Release events).
+        #[cfg(not(target_env = "musl"))]
         if self.voice.is_some() {
             let should_stop = match key_event.kind {
                 KeyEventKind::Release => matches!(key_event.code, KeyCode::Char(' ')),
@@ -405,6 +412,7 @@ impl ChatComposer {
 
     /// Stop recording if active, update the placeholder, and spawn background transcription.
     /// Returns true if the UI should redraw.
+    #[cfg(not(target_env = "musl"))]
     fn stop_recording_and_start_transcription(&mut self) -> bool {
         let Some(vc) = self.voice.take() else {
             return false;
@@ -448,8 +456,14 @@ impl ChatComposer {
         }
     }
 
+    #[cfg(target_env = "musl")]
+    fn stop_recording_and_start_transcription(&mut self) -> bool {
+        false
+    }
+
     /// Start voice capture and insert a placeholder element for the live meter.
     /// Returns true if recording began and UI should redraw; false on failure.
+    #[cfg(not(target_env = "musl"))]
     fn start_recording_with_placeholder(&mut self) -> bool {
         match crate::voice::VoiceCapture::start() {
             Ok(vc) => {
@@ -478,12 +492,26 @@ impl ChatComposer {
         }
     }
 
+    #[cfg(target_env = "musl")]
+    fn start_recording_with_placeholder(&mut self) -> bool {
+        false
+    }
+
     /// Process the space-hold timer if elapsed and start recording.
     pub(crate) fn process_space_hold_trigger(&mut self) {
+        #[cfg(not(target_env = "musl"))]
         if let Some(flag) = self.space_hold_trigger.as_ref()
             && flag.load(Ordering::Relaxed)
             && self.space_hold_started_at.is_some()
             && self.voice.is_none()
+        {
+            let _ = self.on_space_hold_timeout();
+        }
+
+        #[cfg(target_env = "musl")]
+        if let Some(flag) = self.space_hold_trigger.as_ref()
+            && flag.load(Ordering::Relaxed)
+            && self.space_hold_started_at.is_some()
         {
             let _ = self.on_space_hold_timeout();
         }
@@ -1059,6 +1087,7 @@ impl ChatComposer {
 
     /// Called when the 500ms space hold timeout elapses. If still pending and matching id,
     /// remove the inserted space and begin voice capture.
+    #[cfg(not(target_env = "musl"))]
     pub(crate) fn on_space_hold_timeout(&mut self) -> bool {
         if self.voice.is_some() {
             return false;
@@ -1077,6 +1106,19 @@ impl ChatComposer {
         } else {
             false
         }
+    }
+
+    #[cfg(target_env = "musl")]
+    pub(crate) fn on_space_hold_timeout(&mut self) -> bool {
+        if self.space_hold_started_at.is_some() {
+            if let Some(id) = self.space_hold_element_id.take() {
+                let _ = self.textarea.replace_element_by_id(&id, " ");
+            }
+            self.space_hold_started_at = None;
+            self.space_hold_trigger = None;
+            return true;
+        }
+        false
     }
 
     fn spawn_recording_meter(
@@ -1584,8 +1626,14 @@ impl ChatComposer {
         self.has_focus = has_focus;
     }
 
+    #[cfg(not(target_env = "musl"))]
     pub(crate) fn is_recording(&self) -> bool {
         self.voice.is_some()
+    }
+
+    #[cfg(target_env = "musl")]
+    pub(crate) fn is_recording(&self) -> bool {
+        false
     }
 
     pub fn set_task_running(&mut self, running: bool) {
@@ -1736,12 +1784,15 @@ impl Drop for ChatComposer {
         for (_id, flag) in self.spinner_stop_flags.drain() {
             flag.store(true, Ordering::Relaxed);
         }
-        // If recording is active, stop capture and clean up placeholder.
-        if let Some(vc) = self.voice.take()
-            && let Ok(_audio) = vc.stop()
-            && let Some(id) = self.recording_placeholder_id.take()
+        #[cfg(not(target_env = "musl"))]
         {
-            let _ = self.textarea.replace_element_by_id(&id, "");
+            // If recording is active, stop capture and clean up placeholder.
+            if let Some(vc) = self.voice.take()
+                && let Ok(_audio) = vc.stop()
+                && let Some(id) = self.recording_placeholder_id.take()
+            {
+                let _ = self.textarea.replace_element_by_id(&id, "");
+            }
         }
     }
 }
