@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -43,6 +44,7 @@ use codex_core::protocol::WebSearchBeginEvent;
 use codex_core::protocol::WebSearchEndEvent;
 use codex_protocol::mcp_protocol::ConversationId;
 use codex_protocol::parse_command::ParsedCommand;
+use crossterm::Command;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -63,6 +65,7 @@ use crate::bottom_pane::BottomPane;
 use crate::bottom_pane::BottomPaneParams;
 use crate::bottom_pane::CancellationEvent;
 use crate::bottom_pane::InputResult;
+use crate::bottom_pane::ReviewModalState;
 use crate::bottom_pane::SelectionAction;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
@@ -70,6 +73,7 @@ use crate::bottom_pane::custom_prompt_view::CustomPromptView;
 use crate::bottom_pane::popup_consts::STANDARD_POPUP_HINT_LINE;
 use crate::clipboard_paste::paste_image_to_temp_png;
 use crate::diff_render::display_path_for;
+use crate::get_git_diff::DiffFormat;
 use crate::get_git_diff::get_git_diff;
 use crate::history_cell;
 use crate::history_cell::AgentMessageCell;
@@ -81,6 +85,8 @@ use crate::markdown::append_markdown;
 use crate::slash_command::SlashCommand;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
+use crate::web_review::ReviewServerHandle;
+use crate::web_review::{self};
 // streaming internals are provided by crate::streaming and crate::markdown_stream
 use crate::user_approval_widget::ApprovalRequest;
 mod interrupts;
@@ -217,6 +223,10 @@ pub(crate) struct ChatWidget {
     // List of ghost commits corresponding to each turn.
     ghost_snapshots: Vec<GhostCommit>,
     ghost_snapshots_disabled: bool,
+
+    // Review server handle
+    review_server: Option<ReviewServerHandle>,
+    review_server_launching: bool,
 }
 
 struct UserMessage {
@@ -811,6 +821,8 @@ impl ChatWidget {
             is_review_mode: false,
             ghost_snapshots: Vec::new(),
             ghost_snapshots_disabled: true,
+            review_server: None,
+            review_server_launching: false,
         }
     }
 
@@ -872,6 +884,8 @@ impl ChatWidget {
             is_review_mode: false,
             ghost_snapshots: Vec::new(),
             ghost_snapshots_disabled: true,
+            review_server: None,
+            review_server_launching: false,
         }
     }
 
@@ -1011,7 +1025,7 @@ impl ChatWidget {
                 self.add_diff_in_progress();
                 let tx = self.app_event_tx.clone();
                 tokio::spawn(async move {
-                    let text = match get_git_diff().await {
+                    let text = match get_git_diff(DiffFormat::Ansi).await {
                         Ok((is_git_repo, diff_text)) => {
                             if is_git_repo {
                                 diff_text
@@ -1022,6 +1036,32 @@ impl ChatWidget {
                         Err(e) => format!("Failed to compute diff: {e}"),
                     };
                     tx.send(AppEvent::DiffResult(text));
+                });
+            }
+            SlashCommand::Opine => {
+                if self.review_server_launching || self.review_server.is_some() {
+                    self.add_info_message(
+                        "A web review session is already running.".to_string(),
+                        None,
+                    );
+                    return;
+                }
+                self.review_server_launching = true;
+                self.bottom_pane
+                    .show_review_modal(ReviewModalState::Launching);
+                let tx = self.app_event_tx.clone();
+                tokio::spawn(async move {
+                    match web_review::start_review_server(tx.clone()).await {
+                        Ok(review) => {
+                            let web_review::ReviewServer { handle, url } = review;
+                            tx.send(AppEvent::ReviewServerStarted { url, handle });
+                        }
+                        Err(err) => {
+                            tx.send(AppEvent::ReviewServerFailed {
+                                message: err.message(),
+                            });
+                        }
+                    }
                 });
             }
             SlashCommand::Mention => {
@@ -1439,6 +1479,50 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    pub(crate) fn on_review_server_started(&mut self, url: String, handle: ReviewServerHandle) {
+        self.review_server_launching = false;
+        self.clear_review_server();
+        self.review_server = Some(handle);
+        self.bottom_pane
+            .show_review_modal(ReviewModalState::Active { url: url.clone() });
+
+        let can_open_browser = std::env::var_os("CODEX_SANDBOX").is_none_or(|v| v != "seatbelt")
+            && std::env::var_os("CODEX_SANDBOX_NETWORK_DISABLED").is_none_or(|v| v != "1");
+        let open_result = if can_open_browser {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| webbrowser::open(&url)))
+        } else {
+            Ok(Ok(()))
+        };
+        match open_result {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                self.add_error_message(format!("Failed to launch browser automatically: {err}"));
+            }
+            Err(_) => {
+                self.add_error_message("Failed to launch browser automatically.".to_string());
+            }
+        }
+    }
+
+    pub(crate) fn on_review_server_failed(&mut self, message: String) {
+        self.review_server_launching = false;
+        self.clear_review_server();
+        self.add_error_message(message);
+    }
+
+    pub(crate) fn on_review_submitted(&mut self, composer_text: String) {
+        self.review_server_launching = false;
+        self.clear_review_server();
+        self.bottom_pane.set_composer_text(composer_text);
+        steal_terminal_focus();
+    }
+
+    pub(crate) fn on_review_cancelled(&mut self) {
+        self.review_server_launching = false;
+        self.clear_review_server();
+        steal_terminal_focus();
+    }
+
     pub(crate) fn add_status_output(&mut self) {
         let default_usage;
         let usage_ref = if let Some(ti) = &self.token_info {
@@ -1638,6 +1722,13 @@ impl ChatWidget {
     /// Replace the composer content with the provided text and reset cursor.
     pub(crate) fn set_composer_text(&mut self, text: String) {
         self.bottom_pane.set_composer_text(text);
+    }
+
+    fn clear_review_server(&mut self) {
+        if let Some(mut handle) = self.review_server.take() {
+            handle.shutdown();
+        }
+        self.bottom_pane.hide_review_modal();
     }
 
     pub(crate) fn show_esc_backtrack_hint(&mut self) {
@@ -1993,6 +2084,32 @@ fn extract_first_bold(s: &str) -> Option<String> {
     None
 }
 
+fn steal_terminal_focus() {
+    let _ = ratatui::crossterm::execute!(io::stdout(), StealFocus);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StealFocus;
+
+// OSC 1337 is iTerm2-specific; other terminals ignore this focus request.
+impl Command for StealFocus {
+    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+        write!(f, "\x1b]1337;StealFocus\x07")
+    }
+
+    #[cfg(windows)]
+    fn execute_winapi(&self) -> std::io::Result<()> {
+        Err(std::io::Error::other(
+            "tried to execute StealFocus using WinAPI; use ANSI instead",
+        ))
+    }
+
+    #[cfg(windows)]
+    fn is_ansi_code_supported(&self) -> bool {
+        true
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn show_review_commit_picker_with_entries(
     chat: &mut ChatWidget,
@@ -2038,3 +2155,9 @@ pub(crate) fn show_review_commit_picker_with_entries(
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+impl Drop for ChatWidget {
+    fn drop(&mut self) {
+        self.clear_review_server();
+    }
+}

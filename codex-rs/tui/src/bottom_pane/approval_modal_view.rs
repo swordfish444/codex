@@ -41,6 +41,14 @@ impl ApprovalModalView {
 }
 
 impl BottomPaneView for ApprovalModalView {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         self.current.handle_key_event(key_event);
         self.maybe_advance();

@@ -20,6 +20,7 @@ pub enum SlashCommand {
     Compact,
     Undo,
     Diff,
+    Opine,
     Mention,
     Status,
     Mcp,
@@ -40,7 +41,8 @@ impl SlashCommand {
             SlashCommand::Undo => "restore the workspace to the last Codex snapshot",
             SlashCommand::Quit => "exit Codex",
             SlashCommand::Diff => "show git diff (including untracked files)",
-            SlashCommand::Mention => "mention a file",
+            SlashCommand::Opine => "open the web review interface",
+            SlashCommand::Mention => "start a mention",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::Model => "choose what model and reasoning effort to use",
             SlashCommand::Approvals => "choose what Codex can do without approval",
@@ -69,6 +71,7 @@ impl SlashCommand {
             | SlashCommand::Review
             | SlashCommand::Logout => false,
             SlashCommand::Diff
+            | SlashCommand::Opine
             | SlashCommand::Mention
             | SlashCommand::Status
             | SlashCommand::Mcp

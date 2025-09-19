@@ -27,6 +27,7 @@ mod list_selection_view;
 pub(crate) use list_selection_view::SelectionViewParams;
 mod paste_burst;
 pub mod popup_consts;
+mod review_modal_view;
 mod scroll_state;
 mod selection_popup_common;
 mod textarea;
@@ -45,6 +46,8 @@ use crate::status_indicator_widget::StatusIndicatorWidget;
 use approval_modal_view::ApprovalModalView;
 pub(crate) use list_selection_view::SelectionAction;
 pub(crate) use list_selection_view::SelectionItem;
+pub(crate) use review_modal_view::ReviewModalState;
+use review_modal_view::ReviewModalView;
 
 /// Pane displayed in the lower half of the chat UI.
 pub(crate) struct BottomPane {
@@ -339,6 +342,31 @@ impl BottomPane {
     pub(crate) fn show_selection_view(&mut self, params: list_selection_view::SelectionViewParams) {
         let view = list_selection_view::ListSelectionView::new(params, self.app_event_tx.clone());
         self.push_view(Box::new(view));
+    }
+
+    pub(crate) fn show_review_modal(&mut self, state: ReviewModalState) {
+        if let Some(view) = self.active_view.as_mut()
+            && let Some(review_view) = view.as_any_mut().downcast_mut::<ReviewModalView>()
+        {
+            review_view.set_state(state);
+            self.request_redraw();
+            return;
+        }
+
+        let view = ReviewModalView::new(state, self.app_event_tx.clone());
+        self.pause_status_timer_for_modal();
+        self.active_view = Some(Box::new(view));
+        self.request_redraw();
+    }
+
+    pub(crate) fn hide_review_modal(&mut self) {
+        if let Some(view) = self.active_view.as_ref()
+            && view.as_any().is::<ReviewModalView>()
+        {
+            self.active_view = None;
+            self.on_active_view_complete();
+            self.request_redraw();
+        }
     }
 
     /// Update the queued messages shown under the status header.

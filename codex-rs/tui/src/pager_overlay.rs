@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::history_cell::HistoryCell;
+use crate::key_hint;
 use crate::render::line_utils::push_owned_lines;
 use crate::tui;
 use crate::tui::TuiEvent;
@@ -11,9 +12,6 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
-use ratatui::style::Style;
-use ratatui::style::Styled;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -61,14 +59,13 @@ const PAGER_KEY_HINTS: &[(&str, &str)] = &[
 
 // Render a single line of key hints from (key, description) pairs.
 fn render_key_hints(area: Rect, buf: &mut Buffer, pairs: &[(&str, &str)]) {
-    let key_hint_style = Style::default().fg(Color::Cyan);
     let mut spans: Vec<Span<'static>> = vec![" ".into()];
     let mut first = true;
     for (key, desc) in pairs {
         if !first {
             spans.push("   ".into());
         }
-        spans.push(Span::from(key.to_string()).set_style(key_hint_style));
+        spans.push(key_hint::plain(*key));
         spans.push(" ".into());
         spans.push(Span::from(desc.to_string()));
         first = false;

@@ -298,6 +298,18 @@ impl App {
                 ));
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::ReviewServerStarted { url, handle } => {
+                self.chat_widget.on_review_server_started(url, handle);
+            }
+            AppEvent::ReviewServerFailed { message } => {
+                self.chat_widget.on_review_server_failed(message);
+            }
+            AppEvent::ReviewSubmitted { composer_text } => {
+                self.chat_widget.on_review_submitted(composer_text);
+            }
+            AppEvent::ReviewCancelled => {
+                self.chat_widget.on_review_cancelled();
+            }
             AppEvent::StartFileSearch(query) => {
                 if !query.is_empty() {
                     self.file_search.on_user_query(query);

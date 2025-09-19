@@ -975,6 +975,7 @@ dependencies = [
  "supports-color",
  "tempfile",
  "textwrap 0.16.2",
+ "tiny_http",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -984,6 +985,7 @@ dependencies = [
  "unicode-width 0.1.14",
  "url",
  "vt100",
+ "webbrowser",
 ]
 
 [[package]]

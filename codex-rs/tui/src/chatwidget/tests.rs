@@ -337,6 +337,8 @@ fn make_chatwidget_manual() -> (
         is_review_mode: false,
         ghost_snapshots: Vec::new(),
         ghost_snapshots_disabled: false,
+        review_server: None,
+        review_server_launching: false,
     };
     (widget, rx, op_rx)
 }

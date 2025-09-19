@@ -10,6 +10,7 @@ use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
 use codex_common::fuzzy_match::fuzzy_match;
 use codex_protocol::custom_prompts::CustomPrompt;
+use std::cmp::Ordering;
 use std::collections::HashSet;
 
 /// A selectable item in the popup: either a built-in command or a user prompt.
@@ -131,16 +132,15 @@ impl CommandPopup {
         }
         // When filtering, sort by ascending score and then by name for stability.
         out.sort_by(|a, b| {
-            a.2.cmp(&b.2).then_with(|| {
-                let an = match a.0 {
-                    CommandItem::Builtin(c) => c.command(),
-                    CommandItem::UserPrompt(i) => &self.prompts[i].name,
-                };
-                let bn = match b.0 {
-                    CommandItem::Builtin(c) => c.command(),
-                    CommandItem::UserPrompt(i) => &self.prompts[i].name,
-                };
-                an.cmp(bn)
+            a.2.cmp(&b.2).then_with(|| match (&a.0, &b.0) {
+                (CommandItem::Builtin(a_cmd), CommandItem::Builtin(b_cmd)) => {
+                    self.builtin_index(*a_cmd).cmp(&self.builtin_index(*b_cmd))
+                }
+                (CommandItem::Builtin(_), CommandItem::UserPrompt(_)) => Ordering::Less,
+                (CommandItem::UserPrompt(_), CommandItem::Builtin(_)) => Ordering::Greater,
+                (CommandItem::UserPrompt(a_idx), CommandItem::UserPrompt(b_idx)) => {
+                    self.prompts[*a_idx].name.cmp(&self.prompts[*b_idx].name)
+                }
             })
         });
         out
@@ -174,6 +174,13 @@ impl CommandPopup {
                 }
             })
             .collect()
+    }
+
+    fn builtin_index(&self, command: SlashCommand) -> usize {
+        self.builtins
+            .iter()
+            .position(|(_, cmd)| *cmd == command)
+            .unwrap_or(usize::MAX)
     }
 
     /// Move the selection cursor one step up.

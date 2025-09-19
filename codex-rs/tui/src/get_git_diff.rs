@@ -8,21 +8,42 @@
 use std::io;
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 use tokio::process::Command;
+
+/// The format to use when emitting diff output.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DiffFormat {
+    /// Emit ANSI-colored diffs (used by the `/diff` overlay).
+    Ansi,
+    /// Emit plain-text diffs (used by the web review API).
+    Plain,
+}
+
+impl DiffFormat {
+    fn color_arg(self) -> &'static str {
+        match self {
+            DiffFormat::Ansi => "always",
+            DiffFormat::Plain => "never",
+        }
+    }
+}
 
 /// Return value of [`get_git_diff`].
 ///
 /// * `bool` – Whether the current working directory is inside a Git repo.
 /// * `String` – The concatenated diff (may be empty).
-pub(crate) async fn get_git_diff() -> io::Result<(bool, String)> {
+pub(crate) async fn get_git_diff(format: DiffFormat) -> io::Result<(bool, String)> {
     // First check if we are inside a Git repository.
     if !inside_git_repo().await? {
         return Ok((false, String::new()));
     }
 
     // Run tracked diff and untracked file listing in parallel.
+    let color_flag: Arc<str> = format!("--color={}", format.color_arg()).into();
+    let diff_args = ["diff", color_flag.as_ref()];
     let (tracked_diff_res, untracked_output_res) = tokio::join!(
-        run_git_capture_diff(&["diff", "--color"]),
+        run_git_capture_diff(&diff_args),
         run_git_capture_stdout(&["ls-files", "--others", "--exclude-standard"]),
     );
     let tracked_diff = tracked_diff_res?;
@@ -43,9 +64,17 @@ pub(crate) async fn get_git_diff() -> io::Result<(bool, String)> {
         .filter(|s| !s.is_empty())
     {
         let null_path = null_path.clone();
+        let color = color_flag.clone();
         let file = file.to_string();
         join_set.spawn(async move {
-            let args = ["diff", "--color", "--no-index", "--", &null_path, &file];
+            let args = [
+                "diff",
+                color.as_ref(),
+                "--no-index",
+                "--",
+                &null_path,
+                &file,
+            ];
             run_git_capture_diff(&args).await
         });
     }

@@ -41,6 +41,25 @@ pub(crate) enum AppEvent {
     /// Result of computing a `/diff` command.
     DiffResult(String),
 
+    /// The `/review` server started successfully.
+    ReviewServerStarted {
+        url: String,
+        handle: crate::web_review::ReviewServerHandle,
+    },
+
+    /// The `/review` server failed to start.
+    ReviewServerFailed {
+        message: String,
+    },
+
+    /// Review comments submitted from the web UI.
+    ReviewSubmitted {
+        composer_text: String,
+    },
+
+    /// Review cancelled from the web UI.
+    ReviewCancelled,
+
     InsertHistoryCell(Box<dyn HistoryCell>),
 
     StartCommitAnimation,

@@ -1,0 +1,1687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex Review</title>
+    <link rel="stylesheet" href="https://unpkg.com/react-diff-view/style/index.css" />
+    <style>
+        :root {
+            color-scheme: light dark;
+            --diff-background-color: #0f172a;
+            --diff-text-color: #e2e8f0;
+            --diff-font-family: 'JetBrains Mono', 'Fira Code', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            --diff-selection-background-color: rgba(96, 165, 250, 0.35);
+            --diff-gutter-delete-background-color: rgba(185, 28, 28, 0.35);
+            --diff-gutter-insert-background-color: rgba(22, 163, 74, 0.35);
+            --diff-code-delete-background-color: rgba(239, 68, 68, 0.18);
+            --diff-code-insert-background-color: rgba(34, 197, 94, 0.18);
+            --diff-code-selected-background-color: rgba(96, 165, 250, 0.22);
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #060b1a;
+            color: #e2e8f0;
+        }
+
+        .app-root {
+            display: flex;
+            flex-direction: row;
+            min-height: 100vh;
+        }
+
+        .diff-column {
+            flex: 1 1 auto;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            background: #1f2937;
+        }
+
+        .top-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            gap: 16px;
+        }
+
+        .repo-name {
+            font-weight: 600;
+            font-size: 16px;
+            color: #f3f4f6;
+        }
+
+        .view-toggle {
+            display: flex;
+            gap: 8px;
+        }
+
+        .view-toggle button,
+        .sidebar button {
+            padding: 6px 12px;
+            background: rgba(255, 255, 255, 0.06);
+            color: #f9fafb;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.15s ease, border 0.15s ease;
+        }
+
+        .view-toggle button.active,
+        .sidebar button.primary {
+            background: #2563eb;
+            border-color: #1d4ed8;
+        }
+
+        .view-toggle button:disabled,
+        .sidebar button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .view-toggle button:hover:not(:disabled),
+        .sidebar button:hover:not(:disabled) {
+            background: rgba(37, 99, 235, 0.25);
+            border-color: rgba(37, 99, 235, 0.5);
+        }
+
+        .diff-scroll {
+            flex: 1 1 auto;
+            overflow: auto;
+            padding: 12px 16px 24px 16px;
+        }
+
+        .file-diff {
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            background: #111827;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+        }
+
+        .file-diff > header {
+            padding: 14px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .file-path {
+            font-weight: 500;
+            font-size: 15px;
+            color: #f9fafb;
+            word-break: break-all;
+        }
+
+        .file-meta {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .diff {
+            border-radius: 0 0 10px 10px;
+            overflow: hidden;
+            font-size: 13px;
+            color: var(--diff-text-color);
+        }
+
+        .diff tr.line-has-comment .diff-code,
+        .diff tr.line-has-comment .diff-gutter {
+            background-color: rgba(96, 165, 250, 0.15);
+        }
+
+        .diff tr.line-active-comment .diff-code,
+        .diff tr.line-active-comment .diff-gutter {
+            background-color: rgba(96, 165, 250, 0.35);
+            box-shadow: inset 3px 0 0 #2563eb;
+        }
+
+        .gutter-button {
+            all: unset;
+            display: block;
+            width: 100%;
+            text-align: right;
+            cursor: pointer;
+            color: inherit;
+        }
+
+        .gutter-button:focus-visible {
+            outline: 2px solid rgba(96, 165, 250, 0.8);
+            outline-offset: 2px;
+        }
+
+        .diff pre,
+        .diff code,
+        .diff td {
+            color: inherit;
+        }
+
+        .line-comment-widget {
+            margin: 12px 0;
+            padding: 4px 6px;
+            background: linear-gradient(160deg, rgba(15, 23, 42, 0.96), rgba(17, 24, 39, 0.9));
+            border: 1px solid rgba(96, 165, 250, 0.35);
+            border-radius: 12px;
+            box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.45);
+        }
+
+        .line-comment {
+            margin-bottom: 16px;
+        }
+
+        .line-comment:last-child {
+            margin-bottom: 0;
+        }
+
+        .line-comment-draft {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            background: rgba(15, 23, 42, 0.82);
+            border-radius: 10px;
+            padding: 6px 8px;
+            border: none;
+        }
+
+        .line-comment-draft textarea {
+            width: 100%;
+            box-sizing: border-box;
+            background: rgba(15, 23, 42, 0.9);
+            color: #f8fafc;
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-size: 13px;
+            line-height: 1.45;
+            transition: border-color 0.15s ease;
+        }
+
+        .line-comment-draft textarea::placeholder {
+            color: rgba(148, 163, 184, 0.6);
+        }
+
+        .line-comment-draft textarea:focus {
+            outline: none;
+            border-color: rgba(96, 165, 250, 0.6);
+            box-shadow: none;
+        }
+
+        .draft-side-toggle {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 4px;
+            font-size: 12px;
+            color: rgba(226, 232, 240, 0.85);
+        }
+
+        .draft-side-toggle label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.7);
+            border: 1px solid rgba(148, 163, 184, 0.14);
+        }
+
+        .draft-side-toggle input[type='radio'] {
+            accent-color: #2563eb;
+        }
+
+        .line-comment-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            font-weight: 600;
+            color: rgba(221, 234, 255, 0.8);
+            margin-bottom: 6px;
+        }
+
+        .small-link {
+            background: none;
+            border: none;
+            padding: 0;
+            color: #93c5fd;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .line-comment-body {
+            font-size: 13px;
+            color: #e5e7eb;
+            white-space: pre-wrap;
+        }
+
+        .sidebar {
+            width: 360px;
+            background: #0f172a;
+            border-left: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            gap: 20px;
+        }
+
+        .sidebar-section {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .sidebar-section h2 {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 600;
+            color: #f9fafb;
+        }
+
+        textarea,
+        input,
+        select {
+            background: rgba(255, 255, 255, 0.05);
+            color: #f3f4f6;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-size: 14px;
+            resize: vertical;
+        }
+
+        textarea:focus,
+        input:focus,
+        select:focus {
+            outline: 2px solid rgba(37, 99, 235, 0.6);
+        }
+
+        textarea.summary-input {
+            min-height: 120px;
+        }
+
+        .comment-form {
+            background: rgba(37, 99, 235, 0.15);
+            border: 1px solid rgba(37, 99, 235, 0.4);
+            border-radius: 8px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .comment-form h3 {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .comment-form .line-info {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .comment-form .radio-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .comment-form label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+        }
+
+        .comment-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            flex: 1 1 auto;
+            overflow-y: auto;
+            max-height: 35vh;
+        }
+
+        .comment-group {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 10px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .comment-group-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #bfdbfe;
+        }
+
+        .comment-card {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            border-radius: 6px;
+            padding: 8px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .comment-card-active {
+            border-color: rgba(96, 165, 250, 0.8);
+            box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.35);
+        }
+
+        .comment-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .comment-card-body {
+            font-size: 13px;
+            color: #e5e7eb;
+            white-space: pre-wrap;
+        }
+
+        .comment-actions {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 4px;
+        }
+
+        .comment-actions button {
+            padding: 6px 14px;
+            background: rgba(148, 163, 184, 0.1);
+            color: #e2e8f0;
+            border: 1px solid rgba(148, 163, 184, 0.16);
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.15s ease, border 0.15s ease, color 0.15s ease;
+        }
+
+        .comment-actions button.primary {
+            background: #2563eb;
+            border-color: #1d4ed8;
+            color: #f8fafc;
+        }
+
+        .comment-actions button:hover:not(:disabled) {
+            background: rgba(148, 163, 184, 0.18);
+            border-color: rgba(148, 163, 184, 0.22);
+        }
+
+        .comment-actions button.primary:hover:not(:disabled) {
+            background: #1d4ed8;
+            border-color: #1e40af;
+        }
+
+        .comment-actions button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .comment-actions button:focus-visible {
+            outline: 2px solid rgba(96, 165, 250, 0.65);
+            outline-offset: 2px;
+        }
+
+        .empty-state {
+            padding: 12px;
+            border: 1px dashed rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .status-message {
+            font-size: 13px;
+            line-height: 1.5;
+            color: rgba(255, 255, 255, 0.75);
+        }
+
+        .status-message.error {
+            color: #fca5a5;
+        }
+
+        .status-message.success {
+            color: #86efac;
+        }
+
+        .center-screen {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #0f172a;
+            font-size: 15px;
+        }
+
+        @media (max-width: 1024px) {
+            .app-root {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: auto;
+                border-left: none;
+                border-top: 1px solid rgba(255, 255, 255, 0.08);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module">
+        (async function () {
+            let reactImport;
+            try {
+                reactImport = await import('https://esm.sh/react@18.2.0');
+            } catch (error) {
+                console.error('Failed to import React', error);
+                throw error;
+            }
+            let reactDomImport;
+            try {
+                reactDomImport = await import('https://esm.sh/react-dom@18.2.0/client');
+            } catch (error) {
+                console.error('Failed to import ReactDOM', error);
+                throw error;
+            }
+            let diffModule;
+            try {
+                diffModule = await import('https://esm.sh/react-diff-view@3.3.2?deps=react@18.2.0');
+            } catch (error) {
+                console.error('Failed to import react-diff-view', error);
+            }
+            const React = reactImport.default || reactImport;
+            const { useState, useEffect, useMemo, useCallback, useRef } = React;
+            const ReactDOMModule = reactDomImport.default || reactDomImport;
+            const createRoot = ReactDOMModule.createRoot || reactDomImport.createRoot;
+            if (!createRoot) {
+                throw new Error('ReactDOM.createRoot is unavailable');
+            }
+            window.React = React;
+            window.ReactDOM = ReactDOMModule;
+            const diffLibGlobal =
+                diffModule ||
+                window.ReactDiffView ||
+                window.ReactDiffViewBundle ||
+                window.reactDiffView ||
+                window['react-diff-view'];
+            const diffLib = diffLibGlobal && (diffLibGlobal.default || diffLibGlobal);
+            if (!diffLib) {
+                throw new Error('react-diff-view failed to load');
+            }
+            const { Diff, Hunk, parseDiff, getChangeKey } = diffLib;
+            const e = React.createElement;
+
+            function formatFileLabel(file) {
+                const oldPath = file.oldPath && file.oldPath !== '/dev/null' ? file.oldPath : null;
+                const newPath = file.newPath && file.newPath !== '/dev/null' ? file.newPath : null;
+                if (oldPath && newPath && oldPath !== newPath) {
+                    return oldPath + ' → ' + newPath;
+                }
+                return newPath || oldPath || '(unknown file)';
+            }
+
+            function commentPathForFile(file) {
+                if (file.newPath && file.newPath !== '/dev/null') {
+                    return file.newPath;
+                }
+                if (file.oldPath && file.oldPath !== '/dev/null') {
+                    return file.oldPath;
+                }
+                return file.newPath || file.oldPath || 'unknown';
+            }
+
+            function normalizeSide(viewType, change, side) {
+                if (side === 'old' || side === 'left') {
+                    return 'left';
+                }
+                if (side === 'new' || side === 'right') {
+                    return 'right';
+                }
+                if (change.type === 'delete') {
+                    return 'left';
+                }
+                if (viewType === 'unified') {
+                    return 'right';
+                }
+                return 'right';
+            }
+
+            function computeLineForSide(side, oldLineNumber, newLineNumber, fallbackLine) {
+                if (side === 'left') {
+                    return oldLineNumber != null ? oldLineNumber : newLineNumber != null ? newLineNumber : fallbackLine;
+                }
+                return newLineNumber != null ? newLineNumber : oldLineNumber != null ? oldLineNumber : fallbackLine;
+            }
+
+            function computeLineRangeForSegments(segments, side) {
+                const values = segments
+                    .map(function (segment) {
+                        return computeLineForSide(
+                            side,
+                            segment.oldLineNumber,
+                            segment.newLineNumber,
+                            segment.fallbackLine
+                        );
+                    })
+                    .filter(function (lineNumber) {
+                        return lineNumber != null;
+                    });
+                if (!values.length) {
+                    return null;
+                }
+                const sorted = values.slice().sort(function (a, b) {
+                    return a - b;
+                });
+                return { start: sorted[0], end: sorted[sorted.length - 1] };
+            }
+
+            function formatRangeLabel(range) {
+                if (!range) {
+                    return '';
+                }
+                if (range.start === range.end) {
+                    return 'L' + range.start;
+                }
+                return 'L' + range.start + '-' + range.end;
+            }
+
+            function FileDiff(props) {
+                const {
+                    file,
+                    viewType,
+                    onRequestComment,
+                    onRemoveComment,
+                    onCommentTextChange,
+                    onCommentSideChange,
+                    onSaveComment,
+                    disableInteractions,
+                    comments,
+                    activeChangeKey,
+                } = props;
+                const fileComments = useMemo(function () {
+                    return comments.filter(function (comment) {
+                        return comment.path === file.commentPath;
+                    });
+                }, [comments, file.commentPath]);
+
+                const changeEntries = useMemo(function () {
+                    const entries = [];
+                    file.hunks.forEach(function (hunk) {
+                        hunk.changes.forEach(function (change) {
+                            entries.push({ change: change, key: getChangeKey(change) });
+                        });
+                    });
+                    return entries;
+                }, [file.hunks]);
+
+                const changeOrderMap = useMemo(function () {
+                    const map = new Map();
+                    changeEntries.forEach(function (entry, index) {
+                        map.set(entry.key, { index: index, change: entry.change });
+                    });
+                    return map;
+                }, [changeEntries]);
+
+                const buildSelectionData = useCallback(
+                    function (startIndex, endIndex, side) {
+                        if (!changeEntries.length) {
+                            return null;
+                        }
+                        const low = Math.min(startIndex, endIndex);
+                        const high = Math.max(startIndex, endIndex);
+                        const items = [];
+                        for (let idx = low; idx <= high; idx += 1) {
+                            const entry = changeEntries[idx];
+                            if (!entry) {
+                                continue;
+                            }
+                            const change = entry.change;
+                            const oldLineNumber = change.oldLineNumber != null ? change.oldLineNumber : null;
+                            const newLineNumber = change.newLineNumber != null ? change.newLineNumber : null;
+                            const fallbackLine = change.lineNumber != null ? change.lineNumber : null;
+                            const lineNumber = computeLineForSide(
+                                side,
+                                oldLineNumber,
+                                newLineNumber,
+                                fallbackLine
+                            );
+                            if (lineNumber == null) {
+                                continue;
+                            }
+                            items.push({
+                                key: entry.key,
+                                lineNumber: lineNumber,
+                                oldLineNumber: oldLineNumber,
+                                newLineNumber: newLineNumber,
+                                fallbackLine: fallbackLine,
+                            });
+                        }
+                        if (!items.length) {
+                            return null;
+                        }
+                        const ordered = startIndex <= endIndex ? items : items.slice().reverse();
+                        const changeKeys = ordered.map(function (item) {
+                            return item.key;
+                        });
+                        const lineNumbers = ordered.map(function (item) {
+                            return item.lineNumber;
+                        });
+                        const lineStart = Math.min.apply(null, lineNumbers);
+                        const lineEnd = Math.max.apply(null, lineNumbers);
+                        const anchorItem = ordered.find(function (item) {
+                            return item.lineNumber === lineEnd;
+                        });
+                        return {
+                            changeKeys: changeKeys,
+                            anchorChangeKey:
+                                anchorItem && anchorItem.key
+                                    ? anchorItem.key
+                                    : ordered[ordered.length - 1].key,
+                            lineStart: lineStart,
+                            lineEnd: lineEnd,
+                            segments: ordered.map(function (item) {
+                                return {
+                                    oldLineNumber: item.oldLineNumber,
+                                    newLineNumber: item.newLineNumber,
+                                    fallbackLine: item.fallbackLine,
+                                };
+                            }),
+                        };
+                    },
+                    [changeEntries]
+                );
+
+                const [selection, setSelection] = useState(null);
+                const selectionRef = useRef(null);
+
+                useEffect(
+                    function () {
+                        selectionRef.current = selection;
+                    },
+                    [selection]
+                );
+
+                const finalizeSelection = useCallback(
+                    function () {
+                        const current = selectionRef.current;
+                        if (!current || !current.data) {
+                            setSelection(null);
+                            return;
+                        }
+                        onRequestComment(file, current.data, current.side);
+                        setSelection(null);
+                    },
+                    [file, onRequestComment]
+                );
+
+                useEffect(
+                    function () {
+                        if (!selection) {
+                            return;
+                        }
+                        const handleMouseUp = function (event) {
+                            if (event.button !== 0) {
+                                return;
+                            }
+                            finalizeSelection();
+                        };
+                        const handleKeyDown = function (event) {
+                            if (event.key === 'Escape') {
+                                setSelection(null);
+                            }
+                        };
+                        window.addEventListener('mouseup', handleMouseUp);
+                        window.addEventListener('keydown', handleKeyDown);
+                        return function () {
+                            window.removeEventListener('mouseup', handleMouseUp);
+                            window.removeEventListener('keydown', handleKeyDown);
+                        };
+                    },
+                    [selection, finalizeSelection]
+                );
+
+                const handleSelectionStart = useCallback(
+                    function ({ change, side, event }) {
+                        if (!change || disableInteractions) {
+                            return;
+                        }
+                        if (event && event.button !== 0) {
+                            return;
+                        }
+                        const defaultSide = side || (change.type === 'delete' ? 'left' : 'right');
+                        const normalizedSide = normalizeSide(viewType, change, defaultSide);
+                        const key = getChangeKey(change);
+                        const entry = changeOrderMap.get(key);
+                        if (!entry) {
+                            return;
+                        }
+                        if (event) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                        }
+                        const data = buildSelectionData(entry.index, entry.index, normalizedSide);
+                        if (!data) {
+                            return;
+                        }
+                        setSelection({
+                            startIndex: entry.index,
+                            currentIndex: entry.index,
+                            side: normalizedSide,
+                            data: data,
+                        });
+                    },
+                    [disableInteractions, viewType, changeOrderMap, buildSelectionData]
+                );
+
+                const handleSelectionExtend = useCallback(
+                    function ({ change, side, event }) {
+                        if (!change || disableInteractions) {
+                            return;
+                        }
+                        if (!event || event.buttons !== 1) {
+                            return;
+                        }
+                        event.preventDefault();
+                        setSelection(function (prev) {
+                            if (!prev) {
+                                return prev;
+                            }
+                            const defaultSide = side || (change.type === 'delete' ? 'left' : 'right');
+                            const normalizedSide = normalizeSide(viewType, change, defaultSide);
+                            if (normalizedSide !== prev.side) {
+                                return prev;
+                            }
+                            const key = getChangeKey(change);
+                            const entry = changeOrderMap.get(key);
+                            if (!entry) {
+                                return prev;
+                            }
+                            const data = buildSelectionData(prev.startIndex, entry.index, prev.side);
+                            if (!data) {
+                                return prev;
+                            }
+                            return {
+                                startIndex: prev.startIndex,
+                                currentIndex: entry.index,
+                                side: prev.side,
+                                data: data,
+                            };
+                        });
+                    },
+                    [disableInteractions, viewType, changeOrderMap, buildSelectionData]
+                );
+
+                const handleSelectionComplete = useCallback(
+                    function (event) {
+                        if (event && event.button !== 0) {
+                            return;
+                        }
+                        finalizeSelection();
+                    },
+                    [finalizeSelection]
+                );
+
+                const selectionKeys = selection && selection.data ? selection.data.changeKeys : [];
+
+                const selectedKeys = useMemo(function () {
+                    const keySet = new Set();
+                    fileComments.forEach(function (comment) {
+                        comment.changeKeys.forEach(function (key) {
+                            keySet.add(key);
+                        });
+                    });
+                    selectionKeys.forEach(function (key) {
+                        keySet.add(key);
+                    });
+                    return Array.from(keySet);
+                }, [fileComments, selectionKeys]);
+
+                const selectedSet = useMemo(function () {
+                    return new Set(selectedKeys);
+                }, [selectedKeys]);
+
+                const activeKeySet = useMemo(function () {
+                    if (!activeChangeKey) {
+                        return new Set();
+                    }
+                    const active = fileComments.find(function (comment) {
+                        return comment.anchorChangeKey === activeChangeKey;
+                    });
+                    if (!active) {
+                        return new Set();
+                    }
+                    return new Set(active.changeKeys);
+                }, [fileComments, activeChangeKey]);
+
+                const widgets = useMemo(
+                    function () {
+                        if (!fileComments.length) {
+                            return undefined;
+                        }
+                        const grouped = {};
+                        fileComments.forEach(function (comment) {
+                            const anchor = comment.anchorChangeKey;
+                            if (!grouped[anchor]) {
+                                grouped[anchor] = [];
+                            }
+                            const elements = grouped[anchor];
+                            const rangeLabel = formatRangeLabel({ start: comment.lineStart, end: comment.lineEnd });
+                            if (comment.status === 'draft') {
+                                const baseRange = computeLineRangeForSegments(comment.segments, 'left');
+                                const newRange = computeLineRangeForSegments(comment.segments, 'right');
+                                elements.push(
+                                    e(
+                                        'div',
+                                        { className: 'line-comment line-comment-draft', key: comment.id },
+                                        [
+                                            e(
+                                                'div',
+                                                { className: 'line-comment-header' },
+                                                'Draft comment – ' + rangeLabel + ' (' + comment.side + ')'
+                                            ),
+                                            baseRange && newRange
+                                                ? e(
+                                                      'div',
+                                                      { className: 'draft-side-toggle' },
+                                                      [
+                                                          e(
+                                                              'label',
+                                                              null,
+                                                              [
+                                                                  e('input', {
+                                                                      type: 'radio',
+                                                                      name: 'draft-side-' + comment.id,
+                                                                      value: 'left',
+                                                                      checked: comment.side === 'left',
+                                                                      disabled: disableInteractions,
+                                                                      onChange: function () {
+                                                                          onCommentSideChange(comment.id, 'left');
+                                                                      },
+                                                                  }),
+                                                                  'Base ' + formatRangeLabel(baseRange),
+                                                              ]
+                                                          ),
+                                                          e(
+                                                              'label',
+                                                              null,
+                                                              [
+                                                                  e('input', {
+                                                                      type: 'radio',
+                                                                      name: 'draft-side-' + comment.id,
+                                                                      value: 'right',
+                                                                      checked: comment.side === 'right',
+                                                                      disabled: disableInteractions,
+                                                                      onChange: function () {
+                                                                          onCommentSideChange(comment.id, 'right');
+                                                                      },
+                                                                  }),
+                                                                  'Change ' + formatRangeLabel(newRange),
+                                                              ]
+                                                          ),
+                                                      ]
+                                                  )
+                                                : null,
+                                            e('textarea', {
+                                                value: comment.text,
+                                                rows: 4,
+                                                placeholder: 'What should change?',
+                                                onChange: function (event) {
+                                                    onCommentTextChange(comment.id, event.target.value);
+                                                },
+                                                onKeyDown: function (event) {
+                                                    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                                                        event.preventDefault();
+                                                        onSaveComment(comment.id);
+                                                    }
+                                                },
+                                                autoFocus: true,
+                                                disabled: disableInteractions,
+                                            }),
+                                            e(
+                                                'div',
+                                                { className: 'comment-actions' },
+                                                [
+                                                    e(
+                                                        'button',
+                                                        {
+                                                            type: 'button',
+                                                            className: 'primary',
+                                                            disabled: disableInteractions,
+                                                            onClick: function () {
+                                                                onSaveComment(comment.id);
+                                                            },
+                                                        },
+                                                        'Save comment'
+                                                    ),
+                                                    e(
+                                                        'button',
+                                                        {
+                                                            type: 'button',
+                                                            disabled: disableInteractions,
+                                                            onClick: function () {
+                                                                onRemoveComment(comment.id);
+                                                            },
+                                                        },
+                                                        'Cancel'
+                                                    ),
+                                                ]
+                                            ),
+                                        ]
+                                    )
+                                );
+                            } else {
+                                elements.push(
+                                    e(
+                                        'div',
+                                        { className: 'line-comment', key: comment.id },
+                                        [
+                                            e(
+                                                'div',
+                                                { className: 'line-comment-header' },
+                                                [
+                                                    rangeLabel + ' (' + comment.side + ')',
+                                                    e(
+                                                        'button',
+                                                        {
+                                                            type: 'button',
+                                                            className: 'small-link',
+                                                            disabled: disableInteractions,
+                                                            onClick: function () {
+                                                                onRemoveComment(comment.id);
+                                                            },
+                                                        },
+                                                        'Remove'
+                                                    ),
+                                                ]
+                                            ),
+                                            e('div', { className: 'line-comment-body' }, comment.text),
+                                        ]
+                                    )
+                                );
+                            }
+                        });
+                        const mapped = {};
+                        Object.keys(grouped).forEach(function (key) {
+                            mapped[key] = e('div', { className: 'line-comment-widget', key: key }, grouped[key]);
+                        });
+                        return mapped;
+                    },
+                    [fileComments, onCommentSideChange, onCommentTextChange, onSaveComment, onRemoveComment, disableInteractions]
+                );
+
+                const generateLineClassName = useCallback(
+                    function ({ changes, defaultGenerate }) {
+                        const base = typeof defaultGenerate === 'function' ? defaultGenerate() : '';
+                        let className = base || '';
+                        const keysForLine = changes
+                            .filter(Boolean)
+                            .map(function (change) {
+                                return 'line-key-' + getChangeKey(change);
+                            })
+                            .join(' ');
+                        if (keysForLine) {
+                            className = className ? className + ' ' + keysForLine : keysForLine;
+                        }
+                        const hasComment = changes.some(function (change) {
+                            if (!change) {
+                                return false;
+                            }
+                            return selectedSet.has(getChangeKey(change));
+                        });
+                        if (hasComment) {
+                            className = className ? className + ' line-has-comment' : 'line-has-comment';
+                        }
+                        const isActive = changes.some(function (change) {
+                            if (!change) {
+                                return false;
+                            }
+                            return activeKeySet.has(getChangeKey(change));
+                        });
+                        if (isActive) {
+                            className = className ? className + ' line-active-comment' : 'line-active-comment';
+                        }
+                        return className;
+                    },
+                    [selectedSet, activeKeySet]
+                );
+
+                const effectiveDiffType = file.type === 'add' || file.type === 'delete' ? 'modify' : file.type;
+
+                return e(
+                    'section',
+                    { className: 'file-diff', key: file.displayPath },
+                    [
+                        e(
+                            'header',
+                            null,
+                            [
+                                e('span', { className: 'file-path' }, file.displayPath),
+                            ]
+                        ),
+                        e(
+                            Diff,
+                            {
+                                viewType: viewType,
+                                diffType: effectiveDiffType,
+                                hunks: file.hunks,
+                                widgets: widgets,
+                                selectedChanges: selectedKeys,
+                                gutterType: 'default',
+                                generateLineClassName: generateLineClassName,
+                                renderGutter: function ({ change, side, renderDefault }) {
+                                    const content = renderDefault ? renderDefault() : null;
+                                    if (!change) {
+                                        return content;
+                                    }
+                                    return e(
+                                        'button',
+                                        {
+                                            type: 'button',
+                                            className: 'gutter-button',
+                                            disabled: disableInteractions,
+                                            onMouseDown: function (event) {
+                                                handleSelectionStart({ change: change, side: side, event: event });
+                                            },
+                                            onMouseEnter: function (event) {
+                                                handleSelectionExtend({ change: change, side: side, event: event });
+                                            },
+                                            onMouseUp: function (event) {
+                                                handleSelectionComplete(event);
+                                            },
+                                        },
+                                        content
+                                    );
+                                },
+                            },
+                            function (hunks) {
+                                return hunks.map(function (hunk) {
+                                    return e(Hunk, {
+                                        key: hunk.content,
+                                        hunk: hunk,
+                                        gutterEvents: {
+                                            onMouseDown: handleSelectionStart,
+                                            onMouseEnter: handleSelectionExtend,
+                                            onMouseUp: handleSelectionComplete,
+                                        },
+                                        codeEvents: {
+                                            onMouseDown: handleSelectionStart,
+                                            onMouseEnter: handleSelectionExtend,
+                                            onMouseUp: handleSelectionComplete,
+                                        },
+                                    });
+                                });
+                            }
+                        ),
+                    ]
+                );
+            }
+
+            function CommentList(props) {
+                const { comments, onRemoveComment, onFocusComment, activeChangeKey } = props;
+                const savedComments = comments.filter(function (comment) {
+                    return comment.status === 'saved';
+                });
+                if (!savedComments.length) {
+                    return e(
+                        'div',
+                        { className: 'empty-state' },
+                        'No saved comments yet. Click a line in the diff to add one.'
+                    );
+                }
+                const grouped = savedComments.reduce(function (acc, comment) {
+                    if (!acc[comment.path]) {
+                        acc[comment.path] = [];
+                    }
+                    acc[comment.path].push(comment);
+                    return acc;
+                }, {});
+                const paths = Object.keys(grouped).sort();
+                return e(
+                    'div',
+                    { className: 'comment-list' },
+                    paths.map(function (path) {
+                        const items = grouped[path];
+                        return e(
+                            'div',
+                            { className: 'comment-group', key: path },
+                            [
+                                e('div', { className: 'comment-group-title' }, path),
+                                items.map(function (comment) {
+                                    const active = comment.anchorChangeKey === activeChangeKey;
+                                    const rangeLabel = formatRangeLabel({
+                                        start: comment.lineStart,
+                                        end: comment.lineEnd,
+                                    });
+                                    return e(
+                                        'div',
+                                        {
+                                            className: 'comment-card' + (active ? ' comment-card-active' : ''),
+                                            key: comment.id,
+                                        },
+                                        [
+                                            e(
+                                                'div',
+                                                { className: 'comment-card-header' },
+                                                rangeLabel + ' (' + comment.side + ')'
+                                            ),
+                                            e('div', { className: 'comment-card-body' }, comment.text),
+                                            e(
+                                                'div',
+                                                { className: 'comment-actions' },
+                                                [
+                                                    e(
+                                                        'button',
+                                                        {
+                                                            type: 'button',
+                                                            onClick: function () {
+                                                                onFocusComment(comment);
+                                                            },
+                                                        },
+                                                        'View in diff'
+                                                    ),
+                                                    e(
+                                                        'button',
+                                                        {
+                                                            type: 'button',
+                                                            onClick: function () {
+                                                                onRemoveComment(comment.id);
+                                                            },
+                                                        },
+                                                        'Remove'
+                                                    ),
+                                                ]
+                                            ),
+                                        ]
+                                    );
+                                }),
+                            ]
+                        );
+                    })
+                );
+            }
+
+            function App() {
+                const [loading, setLoading] = useState(true);
+                const [error, setError] = useState(null);
+                const [files, setFiles] = useState([]);
+                const [repoPath, setRepoPath] = useState(null);
+                const [viewType, setViewType] = useState('split');
+                const [summary, setSummary] = useState('');
+                const [comments, setComments] = useState([]);
+                const [status, setStatus] = useState({ state: 'idle', message: '' });
+                const [activeChangeKey, setActiveChangeKey] = useState(null);
+                const commentIdRef = useRef(1);
+                const focusTimeoutRef = useRef(null);
+                const statusRef = useRef('idle');
+
+                useEffect(
+                    function () {
+                        fetch('/api/diff')
+                            .then(function (response) {
+                                if (!response.ok) {
+                                    throw new Error('Failed to load diff (' + response.status + ')');
+                                }
+                                return response.json();
+                            })
+                            .then(function (body) {
+                                const parsed = parseDiff(body.diff || '', { nearbySequences: 'zip' });
+                                const decorated = parsed.map(function (file) {
+                                    return Object.assign({}, file, {
+                                        displayPath: formatFileLabel(file),
+                                        commentPath: commentPathForFile(file),
+                                    });
+                                });
+                                setFiles(decorated);
+                                if (body.repo_path) {
+                                    setRepoPath(body.repo_path);
+                                }
+                                document.title = 'Codex Review' + (body.repo_path ? ' – ' + body.repo_path : '');
+                            })
+                            .catch(function (err) {
+                                console.error(err);
+                                setError(err.message || 'Failed to load diff');
+                            })
+                            .finally(function () {
+                                setLoading(false);
+                            });
+                    },
+                    []
+                );
+
+                useEffect(
+                    function () {
+                        statusRef.current = status.state;
+                    },
+                    [status.state]
+                );
+
+                useEffect(
+                    function () {
+                        const handleBeforeUnload = function () {
+                            if (statusRef.current === 'success') {
+                                return;
+                            }
+                            try {
+                                const blob = new Blob([JSON.stringify({ cancelled: true })], {
+                                    type: 'application/json',
+                                });
+                                navigator.sendBeacon('/api/cancel', blob);
+                            } catch (err) {
+                                // ignore
+                            }
+                        };
+                        window.addEventListener('beforeunload', handleBeforeUnload);
+                        return function () {
+                            window.removeEventListener('beforeunload', handleBeforeUnload);
+                        };
+                    },
+                    []
+                );
+
+                useEffect(
+                    function () {
+                        return function () {
+                            if (focusTimeoutRef.current) {
+                                clearTimeout(focusTimeoutRef.current);
+                            }
+                        };
+                    },
+                    []
+                );
+
+                const handleRequestComment = useCallback(
+                    function (file, selection, side) {
+                        if (status.state === 'success' || status.state === 'submitting' || status.state === 'cancelled') {
+                            return;
+                        }
+                        if (!selection) {
+                            return;
+                        }
+                        setActiveChangeKey(selection.anchorChangeKey);
+                        setComments(function (prev) {
+                            let updated = false;
+                            const next = prev.map(function (comment) {
+                                if (comment.anchorChangeKey === selection.anchorChangeKey && comment.status === 'draft') {
+                                    updated = true;
+                                    return Object.assign({}, comment, {
+                                        path: file.commentPath,
+                                        displayPath: file.displayPath,
+                                        side: side,
+                                        changeKeys: selection.changeKeys,
+                                        anchorChangeKey: selection.anchorChangeKey,
+                                        segments: selection.segments,
+                                        lineStart: selection.lineStart,
+                                        lineEnd: selection.lineEnd,
+                                    });
+                                }
+                                return comment;
+                            });
+                            if (updated) {
+                                return next;
+                            }
+                            const id = commentIdRef.current++;
+                            const newComment = {
+                                id: id,
+                                path: file.commentPath,
+                                displayPath: file.displayPath,
+                                changeKeys: selection.changeKeys,
+                                anchorChangeKey: selection.anchorChangeKey,
+                                segments: selection.segments,
+                                side: side,
+                                lineStart: selection.lineStart,
+                                lineEnd: selection.lineEnd,
+                                text: '',
+                                status: 'draft',
+                            };
+                            return next.concat(newComment);
+                        });
+                    },
+                    [status.state]
+                );
+
+                const handleCommentTextChange = useCallback(function (commentId, value) {
+                    setComments(function (prev) {
+                        return prev.map(function (comment) {
+                            if (comment.id !== commentId) {
+                                return comment;
+                            }
+                            return Object.assign({}, comment, { text: value });
+                        });
+                    });
+                }, []);
+
+                const handleCommentSideChange = useCallback(function (commentId, side) {
+                    setComments(function (prev) {
+                        return prev.map(function (comment) {
+                            if (comment.id !== commentId) {
+                                return comment;
+                            }
+                            const range = computeLineRangeForSegments(comment.segments, side);
+                            if (!range) {
+                                return comment;
+                            }
+                            return Object.assign({}, comment, {
+                                side: side,
+                                lineStart: range.start,
+                                lineEnd: range.end,
+                            });
+                        });
+                    });
+                }, []);
+
+                const handleSaveComment = useCallback(function (commentId) {
+                    setComments(function (prev) {
+                        return prev.map(function (comment) {
+                            if (comment.id !== commentId) {
+                                return comment;
+                            }
+                            const text = comment.text.trim();
+                            if (!text) {
+                                return comment;
+                            }
+                            return Object.assign({}, comment, { text: text, status: 'saved' });
+                        });
+                    });
+                }, []);
+
+                const handleRemoveComment = useCallback(function (commentId) {
+                    setComments(function (prev) {
+                        const target = prev.find(function (comment) {
+                            return comment.id === commentId;
+                        });
+                        if (target && target.anchorChangeKey === activeChangeKey) {
+                            setActiveChangeKey(null);
+                        }
+                        return prev.filter(function (comment) {
+                            return comment.id !== commentId;
+                        });
+                    });
+                }, [activeChangeKey]);
+
+                const handleFocusComment = useCallback(
+                    function (comment) {
+                        setActiveChangeKey(comment.anchorChangeKey);
+                        const target = document.querySelector('.line-key-' + comment.anchorChangeKey);
+                        if (target && target.scrollIntoView) {
+                            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                        if (focusTimeoutRef.current) {
+                            clearTimeout(focusTimeoutRef.current);
+                        }
+                        focusTimeoutRef.current = setTimeout(function () {
+                            setActiveChangeKey(null);
+                            focusTimeoutRef.current = null;
+                        }, 1600);
+                    },
+                    []
+                );
+
+                const handleSubmitReview = useCallback(
+                    function () {
+                        if (comments.some(function (comment) { return comment.status === 'draft'; })) {
+                            setStatus({ state: 'error', message: 'Finish or cancel inline drafts before submitting your review.' });
+                            return;
+                        }
+                        setStatus({ state: 'submitting', message: '' });
+                        const payloadComments = comments
+                            .filter(function (comment) {
+                                return comment.status === 'saved';
+                            })
+                            .map(function (comment) {
+                                const start = Math.min(comment.lineStart, comment.lineEnd);
+                                const end = Math.max(comment.lineStart, comment.lineEnd);
+                                return {
+                                    path: comment.path,
+                                    line_start: start,
+                                    line_end: end,
+                                    side: comment.side,
+                                    text: comment.text,
+                                };
+                            });
+                        fetch('/api/submit', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                summary: summary,
+                                comments: payloadComments,
+                            }),
+                        })
+                            .then(function (response) {
+                                if (!response.ok) {
+                                    throw new Error('Submit failed (' + response.status + ')');
+                                }
+                                setStatus({ state: 'success', message: 'Review submitted. You can return to the TUI to send it.' });
+                                try {
+                                    window.close();
+                                } catch (err) {
+                                    // ignore close failures (e.g., opened manually)
+                                }
+                            })
+                            .catch(function (err) {
+                                console.error(err);
+                                setStatus({ state: 'error', message: err.message || 'Failed to submit review.' });
+                            });
+                    },
+                    [summary, comments]
+                );
+
+                const handleCancelReview = useCallback(function () {
+                    fetch('/api/cancel', { method: 'POST' })
+                        .catch(function () {
+                            // ignore network errors on cancel
+                        })
+                        .finally(function () {
+                            setStatus({ state: 'cancelled', message: 'Review cancelled. You can close this window.' });
+                            setTimeout(function () {
+                                try {
+                                    window.close();
+                                } catch (err) {
+                                    // ignore close failures
+                                }
+                            }, 400);
+                        });
+                }, []);
+
+                const disableInputs = status.state === 'submitting' || status.state === 'success';
+
+                if (loading) {
+                    return e('div', { className: 'center-screen' }, 'Loading diff…');
+                }
+
+                if (error) {
+                    return e('div', { className: 'center-screen' }, 'Error: ' + error);
+                }
+
+                return e(
+                    'div',
+                    { className: 'app-root' },
+                    [
+                        e(
+                            'div',
+                            { className: 'diff-column' },
+                            [
+                                e(
+                                    'div',
+                                    { className: 'top-bar' },
+                                    [
+                                        e(
+                                            'div',
+                                            { className: 'repo-name' },
+                                            repoPath ? 'Reviewing ' + repoPath : 'Review diff'
+                                        ),
+                                        e(
+                                            'div',
+                                            { className: 'view-toggle' },
+                                            [
+                                                e(
+                                                    'button',
+                                                    {
+                                                        type: 'button',
+                                                        className: viewType === 'split' ? 'active' : '',
+                                                        onClick: function () {
+                                                            setViewType('split');
+                                                        },
+                                                    },
+                                                    'Split view'
+                                                ),
+                                                e(
+                                                    'button',
+                                                    {
+                                                        type: 'button',
+                                                        className: viewType === 'unified' ? 'active' : '',
+                                                        onClick: function () {
+                                                            setViewType('unified');
+                                                        },
+                                                    },
+                                                    'Unified view'
+                                                ),
+                                            ]
+                                        ),
+                                    ]
+                                ),
+                                e(
+                                    'div',
+                                    { className: 'diff-scroll' },
+                                    files.length
+                                        ? files.map(function (file) {
+                                          return e(FileDiff, {
+                                              key: file.displayPath,
+                                              file: file,
+                                              viewType: viewType,
+                                              onRequestComment: handleRequestComment,
+                                              onRemoveComment: handleRemoveComment,
+                                              onCommentTextChange: handleCommentTextChange,
+                                              onCommentSideChange: handleCommentSideChange,
+                                              onSaveComment: handleSaveComment,
+                                              disableInteractions: disableInputs,
+                                              comments: comments,
+                                              activeChangeKey: activeChangeKey,
+                                          });
+                                          })
+                                        : e('div', { className: 'empty-state' }, 'No changes found in the working tree.')
+                                ),
+                            ]
+                        ),
+                        e(
+                            'aside',
+                            { className: 'sidebar' },
+                            [
+                                e(
+                                    'div',
+                                    { className: 'sidebar-section' },
+                                    [
+                                        e('h2', null, 'Summary'),
+                                        e('textarea', {
+                                            className: 'summary-input',
+                                            placeholder: 'High level summary of the review…',
+                                            value: summary,
+                                            disabled: disableInputs,
+                                            onChange: function (event) {
+                                                setSummary(event.target.value);
+                                            },
+                                            onKeyDown: function (event) {
+                                                if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                                                    event.preventDefault();
+                                                    if (!disableInputs) {
+                                                        handleSubmitReview();
+                                                    }
+                                                }
+                                            },
+                                        }),
+                                    ]
+                                ),
+                                e(
+                                    'div',
+                                    { className: 'sidebar-section' },
+                                    e('div', { className: 'empty-state' }, 'Click a line to open an inline comment form in the diff.')
+                                ),
+                                e(
+                                    'div',
+                                    { className: 'sidebar-section' },
+                                    [
+                                        e('h2', null, 'Comments'),
+                                        e(CommentList, {
+                                            comments: comments,
+                                            onRemoveComment: handleRemoveComment,
+                                            onFocusComment: handleFocusComment,
+                                            activeChangeKey: activeChangeKey,
+                                        }),
+                                    ]
+                                ),
+                                e(
+                                    'div',
+                                    { className: 'sidebar-section' },
+                                    [
+                                        e(
+                                            'div',
+                                            { className: 'comment-actions' },
+                                            [
+                                                e(
+                                                    'button',
+                                                    {
+                                                        type: 'button',
+                                                        className: 'primary',
+                                                        disabled: disableInputs,
+                                                        onClick: handleSubmitReview,
+                                                    },
+                                                    status.state === 'submitting' ? 'Submitting…' : 'Submit review'
+                                                ),
+                                                e(
+                                                    'button',
+                                                    {
+                                                        type: 'button',
+                                                        disabled: status.state === 'submitting',
+                                                        onClick: handleCancelReview,
+                                                    },
+                                                    'Cancel review'
+                                                ),
+                                            ]
+                                        ),
+                                        status.message
+                                            ? e(
+                                                  'div',
+                                                  {
+                                                      className:
+                                                          'status-message' +
+                                                          (status.state === 'error'
+                                                              ? ' error'
+                                                              : status.state === 'success'
+                                                              ? ' success'
+                                                              : ''),
+                                                  },
+                                                  status.message
+                                              )
+                                            : null,
+                                    ]
+                                ),
+                            ]
+                        ),
+                    ]
+                );
+            }
+
+            const root = createRoot(document.getElementById('root'));
+            root.render(e(App));
+        })();
+    </script>
+</body>
+</html>
