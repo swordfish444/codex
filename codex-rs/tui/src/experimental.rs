@@ -11,20 +11,12 @@ pub struct Feature {
 
 /// Central registry of experimental features.
 /// Add new toggles here and gate UI code using `is_enabled(cfg, feature.key)`.
-pub const ALL_FEATURES: &[Feature] = &[
-    Feature {
-        key: "compact-status-indicator",
-        name: "Compact status indicator",
-        description: "Use a more compact, single-line working indicator.",
-        default_on: false,
-    },
-    Feature {
-        key: "alt-diff-pager",
-        name: "Alternative diff pager",
-        description: "Try a new diff layout and navigation.",
-        default_on: false,
-    },
-];
+pub const ALL_FEATURES: &[Feature] = &[Feature {
+    key: "comment",
+    name: "/comment command",
+    description: "Enable a /comment command that opens a browser",
+    default_on: false,
+}];
 
 fn default_for(key: &str) -> bool {
     ALL_FEATURES

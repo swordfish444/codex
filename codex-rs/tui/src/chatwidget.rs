@@ -695,6 +695,7 @@ impl ChatWidget {
                 enhanced_keys_supported,
                 placeholder_text: placeholder,
                 disable_paste_burst: config.disable_paste_burst,
+                include_comment_command: crate::experimental::is_enabled(&config, "comment"),
             }),
             active_exec_cell: None,
             config: config.clone(),
@@ -752,6 +753,7 @@ impl ChatWidget {
                 enhanced_keys_supported,
                 placeholder_text: placeholder,
                 disable_paste_burst: config.disable_paste_burst,
+                include_comment_command: crate::experimental::is_enabled(&config, "comment"),
             }),
             active_exec_cell: None,
             config: config.clone(),
@@ -931,6 +933,31 @@ impl ChatWidget {
             }
             SlashCommand::Mcp => {
                 self.add_mcp_output();
+            }
+            SlashCommand::Comment => {
+                use std::process::Command as ProcessCommand;
+                let url = "http://localhost:3000";
+                let result = {
+                    #[cfg(target_os = "macos")]
+                    {
+                        ProcessCommand::new("open").arg(url).spawn()
+                    }
+                    #[cfg(target_os = "windows")]
+                    {
+                        ProcessCommand::new("cmd")
+                            .args(["/C", "start", url])
+                            .spawn()
+                    }
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    {
+                        ProcessCommand::new("xdg-open").arg(url).spawn()
+                    }
+                };
+                if let Err(e) = result {
+                    self.add_error_message(format!("Failed to open browser: {e}"));
+                } else {
+                    self.add_info_message("Opening comments page in browser".to_string(), None);
+                }
             }
             SlashCommand::Experimental => {
                 self.open_experimental_popup();
@@ -1470,6 +1497,9 @@ impl ChatWidget {
         flags: std::collections::HashMap<String, bool>,
     ) {
         self.config.experimental_flags = flags;
+        let include_comment = crate::experimental::is_enabled(&self.config, "comment");
+        self.bottom_pane
+            .set_include_comment_command(include_comment);
     }
 
     /// Set the model in the widget's config copy.

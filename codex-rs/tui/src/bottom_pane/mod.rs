@@ -76,6 +76,7 @@ pub(crate) struct BottomPaneParams {
     pub(crate) enhanced_keys_supported: bool,
     pub(crate) placeholder_text: String,
     pub(crate) disable_paste_burst: bool,
+    pub(crate) include_comment_command: bool,
 }
 
 impl BottomPane {
@@ -89,6 +90,7 @@ impl BottomPane {
                 enhanced_keys_supported,
                 params.placeholder_text,
                 params.disable_paste_burst,
+                params.include_comment_command,
             ),
             view_stack: Vec::new(),
             app_event_tx: params.app_event_tx,
@@ -267,6 +269,11 @@ impl BottomPane {
 
     pub(crate) fn insert_str(&mut self, text: &str) {
         self.composer.insert_str(text);
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_include_comment_command(&mut self, include: bool) {
+        self.composer.set_include_comment_command(include);
         self.request_redraw();
     }
 
@@ -542,6 +549,7 @@ mod tests {
             enhanced_keys_supported: false,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
+            include_comment_command: false,
         });
         pane.push_approval_request(exec_request());
         assert_eq!(CancellationEvent::Handled, pane.on_ctrl_c());
@@ -562,6 +570,7 @@ mod tests {
             enhanced_keys_supported: false,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
+            include_comment_command: false,
         });
 
         // Create an approval modal (active view).
@@ -593,6 +602,7 @@ mod tests {
             enhanced_keys_supported: false,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
+            include_comment_command: false,
         });
 
         // Start a running task so the status indicator is active above the composer.
@@ -661,6 +671,7 @@ mod tests {
             enhanced_keys_supported: false,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
+            include_comment_command: false,
         });
 
         // Begin a task: show initial status.
@@ -692,6 +703,7 @@ mod tests {
             enhanced_keys_supported: false,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
+            include_comment_command: false,
         });
 
         // Activate spinner (status view replaces composer) with no live ring.
@@ -743,6 +755,7 @@ mod tests {
             enhanced_keys_supported: false,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
+            include_comment_command: false,
         });
 
         pane.set_task_running(true);

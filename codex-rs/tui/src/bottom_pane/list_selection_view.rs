@@ -632,6 +632,7 @@ mod tests {
             enhanced_keys_supported: false,
             placeholder_text: String::new(),
             disable_paste_burst: false,
+            include_comment_command: false,
         });
 
         // Toggle first item off with Space
