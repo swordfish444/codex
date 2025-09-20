@@ -1343,7 +1343,7 @@ impl ChatWidget {
                 description,
                 is_current,
                 actions,
-                close_on_select: true,
+                dimiss_on_select: true,
                 search_value: None,
             });
         }
@@ -1389,7 +1389,7 @@ impl ChatWidget {
                 description,
                 is_current,
                 actions,
-                close_on_select: true,
+                dimiss_on_select: true,
                 search_value: None,
             });
         }
@@ -1528,7 +1528,7 @@ impl ChatWidget {
                     }));
                 },
             )],
-            close_on_select: true,
+            dimiss_on_select: true,
             search_value: None,
         });
 
@@ -1542,7 +1542,7 @@ impl ChatWidget {
                     tx.send(AppEvent::OpenReviewBranchPicker(cwd.clone()));
                 }
             })],
-            close_on_select: false,
+            dimiss_on_select: false,
             search_value: None,
         });
 
@@ -1553,7 +1553,7 @@ impl ChatWidget {
             actions: vec![Box::new(move |tx| {
                 tx.send(AppEvent::OpenReviewCustomPrompt);
             })],
-            close_on_select: false,
+            dimiss_on_select: false,
             search_value: None,
         });
 
@@ -1590,7 +1590,7 @@ impl ChatWidget {
                         },
                     }));
                 })],
-                close_on_select: true,
+                dimiss_on_select: true,
                 search_value: Some(option),
             });
         }

@@ -28,7 +28,7 @@ pub(crate) struct SelectionItem {
     pub description: Option<String>,
     pub is_current: bool,
     pub actions: Vec<SelectionAction>,
-    pub close_on_select: bool,
+    pub dimiss_on_select: bool,
     pub search_value: Option<String>,
 }
 
@@ -178,7 +178,7 @@ impl ListSelectionView {
             for act in &item.actions {
                 act(&self.app_event_tx);
             }
-            if item.close_on_select {
+            if item.dimiss_on_select {
                 self.complete = true;
             }
         } else {
@@ -424,7 +424,7 @@ mod tests {
                 description: Some("Codex can read files".to_string()),
                 is_current: true,
                 actions: vec![],
-                close_on_select: true,
+                dimiss_on_select: true,
                 search_value: None,
             },
             SelectionItem {
@@ -432,7 +432,7 @@ mod tests {
                 description: Some("Codex can edit files".to_string()),
                 is_current: false,
                 actions: vec![],
-                close_on_select: true,
+                dimiss_on_select: true,
                 search_value: None,
             },
         ];
@@ -496,7 +496,7 @@ mod tests {
             description: Some("Codex can read files".to_string()),
             is_current: false,
             actions: vec![],
-            close_on_select: true,
+            dimiss_on_select: true,
             search_value: None,
         }];
         let mut view = ListSelectionView::new(
