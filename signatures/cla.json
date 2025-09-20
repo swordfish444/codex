@@ -3295,6 +3295,14 @@
       "created_at": "2025-09-20T13:38:44Z",
       "repoId": 965415649,
       "pullRequestNo": 3982
+    },
+    {
+      "name": "david-strejc",
+      "id": 6084451,
+      "comment_id": 3314894786,
+      "created_at": "2025-09-20T10:55:53Z",
+      "repoId": 965415649,
+      "pullRequestNo": 3979
     }
   ]
 }
