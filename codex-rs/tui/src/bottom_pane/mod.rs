@@ -24,8 +24,9 @@ mod command_popup;
 pub mod custom_prompt_view;
 mod file_search_popup;
 mod list_selection_view;
+pub(crate) use list_selection_view::SelectionViewParams;
 mod paste_burst;
-mod popup_consts;
+pub mod popup_consts;
 mod scroll_state;
 mod selection_popup_common;
 mod textarea;
@@ -184,7 +185,7 @@ impl BottomPane {
                 self.view_stack.clear();
                 self.on_active_view_complete();
             } else {
-                let idx = reinsertion_index.min(self.view_stack.len());
+                let idx = reinsertion_index;
                 self.view_stack.insert(idx, view);
             }
             self.request_redraw();
@@ -350,26 +351,8 @@ impl BottomPane {
     }
 
     /// Show a generic list selection view with the provided items.
-    pub(crate) fn show_selection_view(
-        &mut self,
-        title: String,
-        subtitle: Option<String>,
-        footer_hint: Option<String>,
-        items: Vec<SelectionItem>,
-        is_searchable: bool,
-        search_placeholder: Option<String>,
-        empty_message: Option<String>,
-    ) {
-        let view = list_selection_view::ListSelectionView::new(
-            title,
-            subtitle,
-            footer_hint,
-            items,
-            is_searchable,
-            search_placeholder,
-            empty_message,
-            self.app_event_tx.clone(),
-        );
+    pub(crate) fn show_selection_view(&mut self, params: list_selection_view::SelectionViewParams) {
+        let view = list_selection_view::ListSelectionView::new(params, self.app_event_tx.clone());
         self.push_view(Box::new(view));
     }
 

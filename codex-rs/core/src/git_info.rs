@@ -492,24 +492,23 @@ pub fn resolve_root_git_project_for_trust(cwd: &Path) -> Option<PathBuf> {
 
 /// Returns a list of local git branches.
 /// Includes the default branch at the beginning of the list, if it exists.
-pub async fn local_git_branches(cwd: &PathBuf) -> Vec<String> {
-    let out = std::process::Command::new("git")
-        .args(["branch", "--format=%(refname:short)"])
-        .current_dir(cwd)
-        .output();
-
-    let mut branches: Vec<String> = match out {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+pub async fn local_git_branches(cwd: &Path) -> Vec<String> {
+    let mut branches: Vec<String> = if let Some(out) =
+        run_git_command_with_timeout(&["branch", "--format=%(refname:short)"], cwd).await
+        && out.status.success()
+    {
+        String::from_utf8_lossy(&out.stdout)
             .lines()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .collect(),
-        _ => Vec::new(),
+            .collect()
+    } else {
+        Vec::new()
     };
 
     branches.sort_unstable();
 
-    if let Some(base) = get_default_branch_local(cwd.as_path()).await
+    if let Some(base) = get_default_branch_local(cwd).await
         && let Some(pos) = branches.iter().position(|name| name == &base)
     {
         let base_branch = branches.remove(pos);
@@ -520,17 +519,11 @@ pub async fn local_git_branches(cwd: &PathBuf) -> Vec<String> {
 }
 
 /// Returns the current checked out branch name.
-pub fn current_branch_name(cwd: &PathBuf) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(["branch", "--show-current"])
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-
+pub async fn current_branch_name(cwd: &Path) -> Option<String> {
+    let out = run_git_command_with_timeout(&["branch", "--show-current"], cwd).await?;
     if !out.status.success() {
         return None;
     }
-
     String::from_utf8(out.stdout)
         .ok()
         .map(|s| s.trim().to_string())

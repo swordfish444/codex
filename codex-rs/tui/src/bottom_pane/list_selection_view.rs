@@ -28,8 +28,19 @@ pub(crate) struct SelectionItem {
     pub description: Option<String>,
     pub is_current: bool,
     pub actions: Vec<SelectionAction>,
-    pub dimiss_on_select: bool,
+    pub dismiss_on_select: bool,
     pub search_value: Option<String>,
+}
+
+#[derive(Default)]
+pub(crate) struct SelectionViewParams {
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub footer_hint: Option<String>,
+    pub items: Vec<SelectionItem>,
+    pub is_searchable: bool,
+    pub search_placeholder: Option<String>,
+    pub empty_message: Option<String>,
 }
 
 pub(crate) struct ListSelectionView {
@@ -57,32 +68,23 @@ impl ListSelectionView {
         para.render(area, buf);
     }
 
-    pub fn new(
-        title: String,
-        subtitle: Option<String>,
-        footer_hint: Option<String>,
-        items: Vec<SelectionItem>,
-        is_searchable: bool,
-        search_placeholder: Option<String>,
-        empty_message: Option<String>,
-        app_event_tx: AppEventSender,
-    ) -> Self {
+    pub fn new(params: SelectionViewParams, app_event_tx: AppEventSender) -> Self {
         let mut s = Self {
-            title,
-            subtitle,
-            footer_hint,
-            items,
+            title: params.title,
+            subtitle: params.subtitle,
+            footer_hint: params.footer_hint,
+            items: params.items,
             state: ScrollState::new(),
             complete: false,
             app_event_tx,
-            is_searchable,
+            is_searchable: params.is_searchable,
             search_query: String::new(),
-            search_placeholder: if is_searchable {
-                search_placeholder
+            search_placeholder: if params.is_searchable {
+                params.search_placeholder
             } else {
                 None
             },
-            empty_message,
+            empty_message: params.empty_message,
             filtered_indices: Vec::new(),
         };
         s.apply_filter();
@@ -119,10 +121,8 @@ impl ListSelectionView {
                         search_value.to_lowercase().contains(&query_lower)
                     } else {
                         let mut matches = item.name.to_lowercase().contains(&query_lower);
-                        if !matches {
-                            if let Some(desc) = &item.description {
-                                matches = desc.to_lowercase().contains(&query_lower);
-                            }
+                        if !matches && let Some(desc) = &item.description {
+                            matches = desc.to_lowercase().contains(&query_lower);
                         }
                         matches
                     };
@@ -156,6 +156,33 @@ impl ListSelectionView {
         self.state.ensure_visible(len, visible);
     }
 
+    fn build_rows(&self) -> Vec<GenericDisplayRow> {
+        self.filtered_indices
+            .iter()
+            .enumerate()
+            .filter_map(|(visible_idx, actual_idx)| {
+                self.items.get(*actual_idx).map(|item| {
+                    let is_selected = self.state.selected_idx == Some(visible_idx);
+                    let prefix = if is_selected { '>' } else { ' ' };
+                    let name = item.name.as_str();
+                    let name_with_marker = if item.is_current {
+                        format!("{name} (current)")
+                    } else {
+                        item.name.clone()
+                    };
+                    let n = visible_idx + 1;
+                    let display_name = format!("{prefix} {n}. {name_with_marker}");
+                    GenericDisplayRow {
+                        name: display_name,
+                        match_indices: None,
+                        is_current: item.is_current,
+                        description: item.description.clone(),
+                    }
+                })
+            })
+            .collect()
+    }
+
     fn move_up(&mut self) {
         let len = self.visible_len();
         self.state.move_up_wrap(len);
@@ -178,7 +205,7 @@ impl ListSelectionView {
             for act in &item.actions {
                 act(&self.app_event_tx);
             }
-            if item.dimiss_on_select {
+            if item.dismiss_on_select {
                 self.complete = true;
             }
         } else {
@@ -242,30 +269,7 @@ impl BottomPaneView for ListSelectionView {
     fn desired_height(&self, width: u16) -> u16 {
         // Measure wrapped height for up to MAX_POPUP_ROWS items at the given width.
         // Build the same display rows used by the renderer so wrapping math matches.
-        let rows: Vec<GenericDisplayRow> = self
-            .filtered_indices
-            .iter()
-            .enumerate()
-            .filter_map(|(visible_idx, actual_idx)| {
-                self.items.get(*actual_idx).map(|item| {
-                    let is_selected = self.state.selected_idx == Some(visible_idx);
-                    let prefix = if is_selected { '>' } else { ' ' };
-                    let name_with_marker = if item.is_current {
-                        format!("{} (current)", item.name)
-                    } else {
-                        item.name.clone()
-                    };
-                    let display_name =
-                        format!("{} {}. {}", prefix, visible_idx + 1, name_with_marker);
-                    GenericDisplayRow {
-                        name: display_name,
-                        match_indices: None,
-                        is_current: item.is_current,
-                        description: item.description.clone(),
-                    }
-                })
-            })
-            .collect();
+        let rows = self.build_rows();
 
         let rows_height = measure_rows_height(&rows, &self.state, MAX_POPUP_ROWS, width);
 
@@ -356,30 +360,7 @@ impl BottomPaneView for ListSelectionView {
                 .saturating_sub(footer_reserved),
         };
 
-        let rows: Vec<GenericDisplayRow> = self
-            .filtered_indices
-            .iter()
-            .enumerate()
-            .filter_map(|(visible_idx, actual_idx)| {
-                self.items.get(*actual_idx).map(|item| {
-                    let is_selected = self.state.selected_idx == Some(visible_idx);
-                    let prefix = if is_selected { '>' } else { ' ' };
-                    let name_with_marker = if item.is_current {
-                        format!("{} (current)", item.name)
-                    } else {
-                        item.name.clone()
-                    };
-                    let display_name =
-                        format!("{} {}. {}", prefix, visible_idx + 1, name_with_marker);
-                    GenericDisplayRow {
-                        name: display_name,
-                        match_indices: None,
-                        is_current: item.is_current,
-                        description: item.description.clone(),
-                    }
-                })
-            })
-            .collect();
+        let rows = self.build_rows();
         if rows_area.height > 0 {
             render_rows(
                 rows_area,
@@ -410,7 +391,7 @@ mod tests {
     use super::BottomPaneView;
     use super::*;
     use crate::app_event::AppEvent;
-    use crate::chatwidget::STANDARD_POPUP_HINT_LINE;
+    use crate::bottom_pane::popup_consts::STANDARD_POPUP_HINT_LINE;
     use insta::assert_snapshot;
     use ratatui::layout::Rect;
     use tokio::sync::mpsc::unbounded_channel;
@@ -424,7 +405,7 @@ mod tests {
                 description: Some("Codex can read files".to_string()),
                 is_current: true,
                 actions: vec![],
-                dimiss_on_select: true,
+                dismiss_on_select: true,
                 search_value: None,
             },
             SelectionItem {
@@ -432,18 +413,18 @@ mod tests {
                 description: Some("Codex can edit files".to_string()),
                 is_current: false,
                 actions: vec![],
-                dimiss_on_select: true,
+                dismiss_on_select: true,
                 search_value: None,
             },
         ];
         ListSelectionView::new(
-            "Select Approval Mode".to_string(),
-            subtitle.map(str::to_string),
-            Some(STANDARD_POPUP_HINT_LINE.to_string()),
-            items,
-            false,
-            None,
-            None,
+            SelectionViewParams {
+                title: "Select Approval Mode".to_string(),
+                subtitle: subtitle.map(str::to_string),
+                footer_hint: Some(STANDARD_POPUP_HINT_LINE.to_string()),
+                items,
+                ..Default::default()
+            },
             tx,
         )
     }
@@ -496,17 +477,19 @@ mod tests {
             description: Some("Codex can read files".to_string()),
             is_current: false,
             actions: vec![],
-            dimiss_on_select: true,
+            dismiss_on_select: true,
             search_value: None,
         }];
         let mut view = ListSelectionView::new(
-            "Select Approval Mode".to_string(),
-            None,
-            Some(STANDARD_POPUP_HINT_LINE.to_string()),
-            items,
-            true,
-            Some("Type to search branches".to_string()),
-            Some("no matches".to_string()),
+            SelectionViewParams {
+                title: "Select Approval Mode".to_string(),
+                footer_hint: Some(STANDARD_POPUP_HINT_LINE.to_string()),
+                items,
+                is_searchable: true,
+                search_placeholder: Some("Type to search branches".to_string()),
+                empty_message: Some("no matches".to_string()),
+                ..Default::default()
+            },
             tx,
         );
         view.set_search_query("filters".to_string());

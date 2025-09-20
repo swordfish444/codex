@@ -12,7 +12,7 @@ use ratatui::widgets::StatefulWidgetRef;
 use ratatui::widgets::Widget;
 use std::cell::RefCell;
 
-use crate::chatwidget::STANDARD_POPUP_HINT_LINE;
+use super::popup_consts::STANDARD_POPUP_HINT_LINE;
 
 use super::CancellationEvent;
 use super::bottom_pane_view::BottomPaneView;
@@ -184,7 +184,7 @@ impl BottomPaneView for CustomPromptView {
 
         let hint_y = hint_blank_y.saturating_add(1);
         if hint_y < area.y.saturating_add(area.height) {
-            Paragraph::new(STANDARD_POPUP_HINT_LINE.to_string()).render(
+            Paragraph::new(STANDARD_POPUP_HINT_LINE).render(
                 Rect {
                     x: area.x,
                     y: hint_y,

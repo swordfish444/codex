@@ -64,7 +64,9 @@ use crate::bottom_pane::CancellationEvent;
 use crate::bottom_pane::InputResult;
 use crate::bottom_pane::SelectionAction;
 use crate::bottom_pane::SelectionItem;
+use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::custom_prompt_view::CustomPromptView;
+use crate::bottom_pane::popup_consts::STANDARD_POPUP_HINT_LINE;
 use crate::clipboard_paste::paste_image_to_temp_png;
 use crate::diff_render::display_path_for;
 use crate::get_git_diff::get_git_diff;
@@ -99,8 +101,7 @@ use codex_core::protocol::AskForApproval;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol_config_types::ReasoningEffort as ReasoningEffortConfig;
 use codex_file_search::FileMatch;
-
-pub(crate) const STANDARD_POPUP_HINT_LINE: &str = "Press Enter to confirm or Esc to go back";
+use std::path::Path;
 
 // Track information about an in-flight exec command.
 struct RunningCommand {
@@ -1343,20 +1344,20 @@ impl ChatWidget {
                 description,
                 is_current,
                 actions,
-                dimiss_on_select: true,
+                dismiss_on_select: true,
                 search_value: None,
             });
         }
 
-        self.bottom_pane.show_selection_view(
-            "Select model and reasoning level".to_string(),
-            Some("Switch between OpenAI models for this and future Codex CLI session".to_string()),
-            Some(STANDARD_POPUP_HINT_LINE.to_string()),
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: "Select model and reasoning level".to_string(),
+            subtitle: Some(
+                "Switch between OpenAI models for this and future Codex CLI session".to_string(),
+            ),
+            footer_hint: Some(STANDARD_POPUP_HINT_LINE.to_string()),
             items,
-            false,
-            None,
-            None,
-        );
+            ..Default::default()
+        });
     }
 
     /// Open a popup to choose the approvals mode (ask for approval policy + sandbox policy).
@@ -1389,20 +1390,17 @@ impl ChatWidget {
                 description,
                 is_current,
                 actions,
-                dimiss_on_select: true,
+                dismiss_on_select: true,
                 search_value: None,
             });
         }
 
-        self.bottom_pane.show_selection_view(
-            "Select Approval Mode".to_string(),
-            None,
-            Some(STANDARD_POPUP_HINT_LINE.to_string()),
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: "Select Approval Mode".to_string(),
+            footer_hint: Some(STANDARD_POPUP_HINT_LINE.to_string()),
             items,
-            false,
-            None,
-            None,
-        );
+            ..Default::default()
+        });
     }
 
     /// Set the approval policy in the widget's config copy.
@@ -1528,7 +1526,7 @@ impl ChatWidget {
                     }));
                 },
             )],
-            dimiss_on_select: true,
+            dismiss_on_select: true,
             search_value: None,
         });
 
@@ -1542,7 +1540,7 @@ impl ChatWidget {
                     tx.send(AppEvent::OpenReviewBranchPicker(cwd.clone()));
                 }
             })],
-            dimiss_on_select: false,
+            dismiss_on_select: false,
             search_value: None,
         });
 
@@ -1553,25 +1551,23 @@ impl ChatWidget {
             actions: vec![Box::new(move |tx| {
                 tx.send(AppEvent::OpenReviewCustomPrompt);
             })],
-            dimiss_on_select: false,
+            dismiss_on_select: false,
             search_value: None,
         });
 
-        self.bottom_pane.show_selection_view(
-            "Select a review preset".into(),
-            None,
-            Some(STANDARD_POPUP_HINT_LINE.to_string()),
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: "Select a review preset".into(),
+            footer_hint: Some(STANDARD_POPUP_HINT_LINE.to_string()),
             items,
-            false,
-            None,
-            None,
-        );
+            ..Default::default()
+        });
     }
 
-    pub(crate) async fn show_review_branch_picker(&mut self, cwd: &PathBuf) {
+    pub(crate) async fn show_review_branch_picker(&mut self, cwd: &Path) {
         let branches = local_git_branches(cwd).await;
-        let current_branch =
-            current_branch_name(cwd).unwrap_or_else(|| "(detached HEAD)".to_string());
+        let current_branch = current_branch_name(cwd)
+            .await
+            .unwrap_or_else(|| "(detached HEAD)".to_string());
         let mut items: Vec<SelectionItem> = Vec::with_capacity(branches.len());
 
         for option in branches {
@@ -1590,20 +1586,20 @@ impl ChatWidget {
                         },
                     }));
                 })],
-                dimiss_on_select: true,
+                dismiss_on_select: true,
                 search_value: Some(option),
             });
         }
 
-        self.bottom_pane.show_selection_view(
-            "Select a base branch".to_string(),
-            None,
-            Some(STANDARD_POPUP_HINT_LINE.to_string()),
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: "Select a base branch".to_string(),
+            footer_hint: Some(STANDARD_POPUP_HINT_LINE.to_string()),
             items,
-            true,
-            Some("Type to search branches".to_string()),
-            Some("no matches".to_string()),
-        );
+            is_searchable: true,
+            search_placeholder: Some("Type to search branches".to_string()),
+            empty_message: Some("no matches".to_string()),
+            ..Default::default()
+        });
     }
 
     pub(crate) fn show_review_custom_prompt(&mut self) {
