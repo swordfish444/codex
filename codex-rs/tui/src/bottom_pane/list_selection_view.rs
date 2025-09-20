@@ -23,6 +23,11 @@ use super::selection_popup_common::render_rows;
 /// One selectable item in the generic selection list.
 pub(crate) type SelectionAction = Box<dyn Fn(&AppEventSender) + Send + Sync>;
 
+/// Callback invoked when a multi‑select view is accepted.
+/// The provided `Vec<usize>` contains the indices (into the `items` vector)
+/// of all entries that are currently checked.
+pub(crate) type MultiSelectAcceptAction = Box<dyn Fn(&AppEventSender, &Vec<usize>) + Send + Sync>;
+
 pub(crate) struct SelectionItem {
     pub name: String,
     pub description: Option<String>,
@@ -41,6 +46,12 @@ pub(crate) struct SelectionViewParams {
     pub is_searchable: bool,
     pub search_placeholder: Option<String>,
     pub empty_message: Option<String>,
+    /// When true, the list supports toggling multiple items via Space and
+    /// submitting all selections with Enter.
+    pub is_multi_select: bool,
+    /// Optional callback invoked on Enter when `is_multi_select` is true.
+    /// If `None`, accepting the view will simply dismiss it.
+    pub on_accept_multi: Option<MultiSelectAcceptAction>,
 }
 
 pub(crate) struct ListSelectionView {
@@ -56,6 +67,10 @@ pub(crate) struct ListSelectionView {
     search_placeholder: Option<String>,
     empty_message: Option<String>,
     filtered_indices: Vec<usize>,
+    is_multi_select: bool,
+    /// Set of item indices (into `items`) that are currently checked.
+    checked: std::collections::HashSet<usize>,
+    on_accept_multi: Option<MultiSelectAcceptAction>,
 }
 
 impl ListSelectionView {
@@ -86,7 +101,18 @@ impl ListSelectionView {
             },
             empty_message: params.empty_message,
             filtered_indices: Vec::new(),
+            is_multi_select: params.is_multi_select,
+            checked: Default::default(),
+            on_accept_multi: params.on_accept_multi,
         };
+        if s.is_multi_select {
+            // Seed checked set from items marked as current.
+            for (idx, it) in s.items.iter().enumerate() {
+                if it.is_current {
+                    s.checked.insert(idx);
+                }
+            }
+        }
         s.apply_filter();
         s
     }
@@ -165,13 +191,27 @@ impl ListSelectionView {
                     let is_selected = self.state.selected_idx == Some(visible_idx);
                     let prefix = if is_selected { '>' } else { ' ' };
                     let name = item.name.as_str();
-                    let name_with_marker = if item.is_current {
+                    let name_with_marker = if self.is_multi_select {
+                        // In multi‑select mode, `is_current` seeds the initial checkbox
+                        // state and is reflected via [x]/[ ] rather than "(current)".
+                        item.name.clone()
+                    } else if item.is_current {
                         format!("{name} (current)")
                     } else {
                         item.name.clone()
                     };
                     let n = visible_idx + 1;
-                    let display_name = format!("{prefix} {n}. {name_with_marker}");
+                    let display_name = if self.is_multi_select {
+                        let actual = *actual_idx;
+                        let checked = if self.checked.contains(&actual) {
+                            "[x]"
+                        } else {
+                            "[ ]"
+                        };
+                        format!("{prefix} {n}. {checked} {name_with_marker}")
+                    } else {
+                        format!("{prefix} {n}. {name_with_marker}")
+                    };
                     GenericDisplayRow {
                         name: display_name,
                         match_indices: None,
@@ -198,6 +238,16 @@ impl ListSelectionView {
     }
 
     fn accept(&mut self) {
+        if self.is_multi_select {
+            if let Some(cb) = &self.on_accept_multi {
+                let mut selected: Vec<usize> = self.checked.iter().copied().collect();
+                selected.sort_unstable();
+                cb(&self.app_event_tx, &selected);
+            }
+            self.complete = true;
+            return;
+        }
+
         if let Some(idx) = self.state.selected_idx
             && let Some(actual_idx) = self.filtered_indices.get(idx)
             && let Some(item) = self.items.get(*actual_idx)
@@ -230,6 +280,20 @@ impl BottomPaneView for ListSelectionView {
                 code: KeyCode::Down,
                 ..
             } => self.move_down(),
+            KeyEvent {
+                code: KeyCode::Char(' '),
+                ..
+            } if self.is_multi_select => {
+                if let Some(visible_idx) = self.state.selected_idx
+                    && let Some(actual_idx) = self.filtered_indices.get(visible_idx)
+                {
+                    if self.checked.contains(actual_idx) {
+                        self.checked.remove(actual_idx);
+                    } else {
+                        self.checked.insert(*actual_idx);
+                    }
+                }
+            }
             KeyEvent {
                 code: KeyCode::Backspace,
                 ..
@@ -391,9 +455,13 @@ mod tests {
     use super::BottomPaneView;
     use super::*;
     use crate::app_event::AppEvent;
+    use crate::bottom_pane::BottomPane;
+    use crate::bottom_pane::BottomPaneParams;
     use crate::bottom_pane::popup_consts::STANDARD_POPUP_HINT_LINE;
+    use crate::tui::FrameRequester;
     use insta::assert_snapshot;
     use ratatui::layout::Rect;
+    // KeyEvent::new suffices; the view doesn't check kind/state.
     use tokio::sync::mpsc::unbounded_channel;
 
     fn make_selection_view(subtitle: Option<&str>) -> ListSelectionView {
@@ -496,5 +564,99 @@ mod tests {
 
         let lines = render_lines(&view);
         assert!(lines.contains("▌ filters"));
+    }
+
+    #[test]
+    fn multi_select_toggles_and_accepts() {
+        use std::sync::Arc;
+        use std::sync::Mutex;
+
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let items = vec![
+            SelectionItem {
+                name: "Read Only".to_string(),
+                description: Some("Codex can read files".to_string()),
+                is_current: true, // pre-checked via seed
+                actions: vec![],
+                dismiss_on_select: false,
+                search_value: None,
+            },
+            SelectionItem {
+                name: "Full Access".to_string(),
+                description: Some("Codex can edit files".to_string()),
+                is_current: false,
+                actions: vec![],
+                dismiss_on_select: false,
+                search_value: None,
+            },
+            SelectionItem {
+                name: "Third".to_string(),
+                description: None,
+                is_current: false,
+                actions: vec![],
+                dismiss_on_select: false,
+                search_value: None,
+            },
+        ];
+
+        let accepted: Arc<Mutex<Option<Vec<usize>>>> = Arc::new(Mutex::new(None));
+        let accepted_clone = accepted.clone();
+
+        let mut view = ListSelectionView::new(
+            SelectionViewParams {
+                title: "Experimental features".to_string(),
+                footer_hint: Some(STANDARD_POPUP_HINT_LINE.to_string()),
+                items,
+                is_multi_select: true,
+                on_accept_multi: Some(Box::new(move |_tx, selected| {
+                    *accepted_clone.lock().unwrap() = Some(selected.clone());
+                })),
+                ..Default::default()
+            },
+            tx,
+        );
+
+        // Initially, first item should be checked ([x]) via is_current seed
+        let initial = render_lines(&view);
+        assert!(initial.contains("1. [x] Read Only"));
+        assert!(initial.contains("2. [ ] Full Access"));
+
+        // Build a minimal BottomPane to deliver key events to the view.
+        let (tx2_raw, _rx2) = unbounded_channel::<AppEvent>();
+        let tx2 = AppEventSender::new(tx2_raw);
+        let mut pane = BottomPane::new(BottomPaneParams {
+            app_event_tx: tx2,
+            frame_requester: FrameRequester::test_dummy(),
+            has_input_focus: true,
+            enhanced_keys_supported: false,
+            placeholder_text: String::new(),
+            disable_paste_burst: false,
+        });
+
+        // Toggle first item off with Space
+        view.handle_key_event(
+            &mut pane,
+            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        );
+        let after_toggle = render_lines(&view);
+        assert!(after_toggle.contains("1. [ ] Read Only"));
+
+        // Move to second item and toggle it on
+        view.handle_key_event(&mut pane, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        view.handle_key_event(
+            &mut pane,
+            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        );
+        let after_second = render_lines(&view);
+        assert!(after_second.contains("2. [x] Full Access"));
+
+        // Accept selection with Enter: should call the callback with [1]
+        assert!(!view.is_complete());
+        view.handle_key_event(&mut pane, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(view.is_complete());
+
+        let accepted_vec = accepted.lock().unwrap().clone().unwrap();
+        assert_eq!(accepted_vec, vec![1]);
     }
 }

@@ -9,6 +9,7 @@ use crate::history_cell::HistoryCell;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol_config_types::ReasoningEffort;
+use std::collections::HashMap;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
@@ -73,4 +74,10 @@ pub(crate) enum AppEvent {
 
     /// Open the custom prompt option from the review popup.
     OpenReviewCustomPrompt,
+
+    /// Update the current experimental feature flags in memory.
+    UpdateExperimentalFlags(HashMap<String, bool>),
+
+    /// Persist experimental feature flags into config.toml under [tui.experimental].
+    PersistExperimentalFlags(HashMap<String, bool>),
 }

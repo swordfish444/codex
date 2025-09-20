@@ -24,6 +24,7 @@ pub enum SlashCommand {
     Mcp,
     Logout,
     Quit,
+    Experimental,
     #[cfg(debug_assertions)]
     TestApproval,
 }
@@ -44,6 +45,7 @@ impl SlashCommand {
             SlashCommand::Approvals => "choose what Codex can do without approval",
             SlashCommand::Mcp => "list configured MCP tools",
             SlashCommand::Logout => "log out of Codex",
+            SlashCommand::Experimental => "toggle experimental TUI features",
             #[cfg(debug_assertions)]
             SlashCommand::TestApproval => "test approval request",
         }
@@ -63,6 +65,7 @@ impl SlashCommand {
             | SlashCommand::Compact
             | SlashCommand::Model
             | SlashCommand::Approvals
+            | SlashCommand::Experimental
             | SlashCommand::Review
             | SlashCommand::Logout => false,
             SlashCommand::Diff

@@ -932,6 +932,9 @@ impl ChatWidget {
             SlashCommand::Mcp => {
                 self.add_mcp_output();
             }
+            SlashCommand::Experimental => {
+                self.open_experimental_popup();
+            }
             #[cfg(debug_assertions)]
             SlashCommand::TestApproval => {
                 use codex_core::protocol::EventMsg;
@@ -1297,6 +1300,50 @@ impl ChatWidget {
         ));
     }
 
+    /// Open a popup to choose experimental features to enable/disable.
+    pub(crate) fn open_experimental_popup(&mut self) {
+        use crate::experimental::ALL_FEATURES;
+        let mut items: Vec<SelectionItem> = Vec::with_capacity(ALL_FEATURES.len());
+
+        for feature in ALL_FEATURES.iter() {
+            let enabled = crate::experimental::is_enabled(&self.config, feature.key);
+            items.push(SelectionItem {
+                name: feature.name.to_string(),
+                description: Some(feature.description.to_string()),
+                is_current: enabled, // seed checked state in multi‑select mode
+                actions: vec![],
+                dismiss_on_select: false,
+                search_value: Some(feature.key.to_string()),
+            });
+        }
+
+        let footer = "Space to toggle • Enter to save • Esc to cancel".to_string();
+        let keys: Vec<String> = ALL_FEATURES.iter().map(|f| f.key.to_string()).collect();
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: "Experimental features".to_string(),
+            subtitle: Some("Toggle experimental TUI options".to_string()),
+            footer_hint: Some(footer),
+            items,
+            is_searchable: true,
+            search_placeholder: Some("Type to filter features".to_string()),
+            empty_message: Some("no features".to_string()),
+            is_multi_select: true,
+            on_accept_multi: Some(Box::new(move |tx2, selected_indices| {
+                use std::collections::HashMap;
+                let mut flags: HashMap<String, bool> = HashMap::new();
+                for (i, key) in keys.iter().enumerate() {
+                    let enabled = selected_indices.contains(&i);
+                    flags.insert(key.clone(), enabled);
+                }
+                tx2.send(crate::app_event::AppEvent::UpdateExperimentalFlags(
+                    flags.clone(),
+                ));
+                tx2.send(crate::app_event::AppEvent::PersistExperimentalFlags(flags));
+            })),
+            ..Default::default()
+        });
+    }
+
     /// Open a popup to choose the model preset (model + reasoning effort).
     pub(crate) fn open_model_popup(&mut self) {
         let current_model = self.config.model.clone();
@@ -1416,6 +1463,13 @@ impl ChatWidget {
     /// Set the reasoning effort in the widget's config copy.
     pub(crate) fn set_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {
         self.config.model_reasoning_effort = effort;
+    }
+
+    pub(crate) fn set_experimental_flags(
+        &mut self,
+        flags: std::collections::HashMap<String, bool>,
+    ) {
+        self.config.experimental_flags = flags;
     }
 
     /// Set the model in the widget's config copy.
