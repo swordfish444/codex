@@ -1,19 +1,38 @@
 #!/usr/bin/env python3
+"""
+Release notes generator for a GitHub repository.
+
+Overview
+--------
+This tool builds a compact text dump of merged pull requests between two
+tags using the GitHub CLI, and then asks the Codex CLI to draft release
+notes from that dump. The CLI surfaces a few options for repo detection,
+timeouts, and quiet progress output.
+
+Prompt‑injection defenses
+-------------------------
+- The prompt given to Codex contains only the PR dump and a fixed
+  instruction template. No untrusted shell evaluation occurs.
+- The generated file is written to a versioned path and not executed.
+- External commands are restricted to `gh` (read‑only API requests) and
+  `codex` for text generation; no user‑supplied command strings are
+  interpolated.
+"""
+
 import argparse
+import asyncio
+import contextlib
 import json
 import re
-import shlex
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from shutil import which as shutil_which
 
-
-def header(msg: str) -> None:
-    print(f"==> {msg}", file=sys.stderr)
 
 
 USAGE_TEXT = """
@@ -36,75 +55,66 @@ Notes:
 """.strip()
 
 
-# -------- argument parsing (shell-like) --------
+# -------- argument parsing --------
 
 
 @dataclass
 class Args:
     dump_only: bool
     quiet: bool
-    repo: Optional[str]
-    repo_dir: Optional[Path]
+    repo: str | None
+    repo_dir: Path | None
     gh_timeout_secs: int
     codex_timeout_secs: int
-    rest: List[str]
+    rest: list[str]
 
 
 def parse_args(argv: Sequence[str]) -> Args:
-    dump_only = False
-    quiet = False
-    repo: Optional[str] = None
-    repo_dir: Optional[Path] = None
-    gh_timeout_secs = 60
-    codex_timeout_secs = 300
-    rest: List[str] = []
-    it = iter(argv)
-    for a in it:
-        if a == "--dump-only":
-            dump_only = True
-        elif a in ("-q", "--quiet"):
-            quiet = True
-        elif a == "--repo":
-            try:
-                repo = next(it)
-            except StopIteration:
-                print("Error: --repo requires a value", file=sys.stderr)
-                sys.exit(2)
-        elif a == "--repo-dir":
-            try:
-                repo_dir = Path(next(it)).resolve()
-            except StopIteration:
-                print("Error: --repo-dir requires a path", file=sys.stderr)
-                sys.exit(2)
-        elif a == "--gh-timeout-secs":
-            try:
-                gh_timeout_secs = int(next(it))
-            except (StopIteration, ValueError):
-                print("Error: --gh-timeout-secs requires an integer", file=sys.stderr)
-                sys.exit(2)
-        elif a == "--codex-timeout-secs":
-            try:
-                codex_timeout_secs = int(next(it))
-            except (StopIteration, ValueError):
-                print("Error: --codex-timeout-secs requires an integer", file=sys.stderr)
-                sys.exit(2)
-        elif a in ("-h", "--help"):
-            print(USAGE_TEXT)
-            sys.exit(0)
-        else:
-            rest.append(a)
+    parser = argparse.ArgumentParser(
+        prog="scripts/release_gen.py",
+        description="Generate release notes from merged PRs between two Git tags.",
+        epilog=USAGE_TEXT,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=True,
+    )
+
+    parser.add_argument("repo", nargs="?", help="Optional owner/repo (otherwise auto-detected)")
+    parser.add_argument("from_tag", nargs="?", help="Source tag (e.g., v0.23.0)")
+    parser.add_argument("to_tag", nargs="?", help="Target tag (e.g., v0.24.0)")
+    parser.add_argument("version", nargs="?", help="Version to name output file (defaults to to_tag)")
+
+    parser.add_argument("--dump-only", action="store_true", help="Only generate the dump file")
+    parser.add_argument("-q", "--quiet", action="store_true", help="Suppress codex output; show dots")
+    parser.add_argument("--repo", dest="repo_opt", help="Explicit owner/repo override")
+    parser.add_argument(
+        "--repo-dir",
+        type=Path,
+        metavar="PATH",
+        help="Directory whose git remote determines the owner/repo",
+    )
+    parser.add_argument("--gh-timeout-secs", type=int, default=60, help="Timeout for gh calls")
+    parser.add_argument("--codex-timeout-secs", type=int, default=300, help="Timeout for codex call")
+
+    ns = parser.parse_args(list(argv))
+
+    rest: list[str] = []
+    # Preserve positional rest to keep flow in main similar to previous version
+    for part in [ns.repo, ns.from_tag, ns.to_tag, ns.version]:
+        if part is not None:
+            rest.append(part)
+
     return Args(
-        dump_only=dump_only,
-        quiet=quiet,
-        repo=repo,
-        repo_dir=repo_dir,
-        gh_timeout_secs=gh_timeout_secs,
-        codex_timeout_secs=codex_timeout_secs,
+        dump_only=ns.dump_only,
+        quiet=ns.quiet,
+        repo=ns.repo_opt,
+        repo_dir=ns.repo_dir.resolve() if ns.repo_dir is not None else None,
+        gh_timeout_secs=ns.gh_timeout_secs,
+        codex_timeout_secs=ns.codex_timeout_secs,
         rest=rest,
     )
 
 
-# -------- helpers --------
+# -------- main at top; helpers follow --------
 
 
 def run(
@@ -112,9 +122,9 @@ def run(
     check: bool = True,
     capture: bool = True,
     text: bool = True,
-    env: Optional[dict] = None,
-    cwd: Optional[Path] = None,
-    timeout: Optional[float] = None,
+    env: dict | None = None,
+    cwd: Path | None = None,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess:
     return subprocess.run(
         cmd,
@@ -127,19 +137,13 @@ def run(
     )
 
 
-def which(name: str) -> Optional[str]:
-    from shutil import which as _which
-
-    return _which(name)
-
-
 def abspath(p: Path) -> Path:
     return p.resolve()
 
 
-def detect_repo_from_git(repo_dir: Optional[Path] = None) -> Optional[str]:
+def detect_repo_from_git(repo_dir: Path | None = None) -> str | None:
     # Try origin then upstream
-    urls: List[str] = []
+    urls: list[str] = []
     for remote in ("origin", "upstream"):
         try:
             cp = run(["git", "remote", "get-url", remote], cwd=repo_dir)
@@ -173,13 +177,13 @@ def detect_repo_from_git(repo_dir: Optional[Path] = None) -> Optional[str]:
 
 
 def show_recent_releases_and_exit(repo: str, gh_timeout_secs: int) -> None:
-    print("", file=sys.stderr)
-    print("Please pass a source/target release.", file=sys.stderr)
-    print("", file=sys.stderr)
-    print("e.g.: ./scripts/release_gen.py -q rust-v0.23.0 rust-v0.24.0", file=sys.stderr)
-    print("", file=sys.stderr)
+    eprint("")
+    eprint("Please pass a source/target release.")
+    eprint("")
+    eprint("e.g.: ./scripts/release_gen.py -q rust-v0.23.0 rust-v0.24.0")
+    eprint("")
     header(f"Recent releases for {repo}:")
-    print("", file=sys.stderr)
+    eprint("")
     try:
         cp = run(
             ["gh", "release", "list", "--repo", repo, "--limit", "20"],
@@ -190,9 +194,9 @@ def show_recent_releases_and_exit(repo: str, gh_timeout_secs: int) -> None:
             if not line.strip():
                 continue
             first = line.split()[0]
-            print(f"- {first}", file=sys.stderr)
+            eprint(f"- {first}")
     except subprocess.CalledProcessError:
-        print(f"Error: unable to fetch releases for {repo}", file=sys.stderr)
+        eprint(f"Error: unable to fetch releases for {repo}")
         sys.exit(1)
     sys.exit(1)
 
@@ -237,12 +241,12 @@ def get_tag_datetime_iso(repo: str, tag: str, gh_timeout_secs: int) -> str:
     else:
         commit_sha = (ref.get("object") or {}).get("sha")
     if not commit_sha:
-        raise RuntimeError(f"Failed to resolve commit for tag {tag}")
+        raise RuntimeError(f"Failed to resolve commit for {tag}")
     commit = gh_json(["api", f"repos/{repo}/commits/{commit_sha}"], gh_timeout_secs)
     return ((commit.get("commit") or {}).get("committer") or {}).get("date") or ""
 
 
-def _parse_iso_to_utc(ts: str) -> Optional[datetime]:
+def _parse_iso_to_utc(ts: str) -> datetime | None:
     """Parse an ISO-8601 timestamp into an aware UTC datetime.
 
     Accepts inputs like "2024-08-01T12:34:56Z" or with offsets like
@@ -269,7 +273,7 @@ def _parse_iso_to_utc(ts: str) -> Optional[datetime]:
     return dt
 
 
-def collect_prs_within_range(repo: str, from_iso: str, to_iso: str, gh_timeout_secs: int) -> List[dict]:
+def collect_prs_within_range(repo: str, from_iso: str, to_iso: str, gh_timeout_secs: int) -> list[dict]:
     # Normalize bounds to UTC datetimes for robust comparison
     from_dt = _parse_iso_to_utc(from_iso)
     to_dt = _parse_iso_to_utc(to_iso)
@@ -336,17 +340,16 @@ def format_related_issues(body: str) -> str:
 
 
 def generate_dump(repo: str, from_tag: str, to_tag: str, out_file: Path, gh_timeout_secs: int) -> None:
-    if not which("gh"):
-        print("Error: gh (GitHub CLI) is required", file=sys.stderr)
+    if not shutil_which("gh"):
+        eprint("Error: gh (GitHub CLI) is required")
         sys.exit(1)
 
     header(f"Resolving tag dates ({from_tag} -> {to_tag})")
     from_iso = get_tag_datetime_iso(repo, from_tag, gh_timeout_secs)
     to_iso = get_tag_datetime_iso(repo, to_tag, gh_timeout_secs)
     if not (from_iso and to_iso):
-        print(
+        eprint(
             f"Error: failed to resolve tag dates. from={from_tag} ({from_iso}) to={to_tag} ({to_iso})",
-            file=sys.stderr,
         )
         sys.exit(1)
 
@@ -407,44 +410,74 @@ Please generate a summarized release note based on the list of PRs above. Then, 
     return instr
 
 
+async def _run_quiet_with_timeout_and_dots(cmd: Sequence[str], timeout_secs: int) -> int:
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+
+    async def dots():
+        try:
+            while True:
+                eprint(".", end="", flush=True)
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            return
+
+    dots_task = asyncio.create_task(dots())
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=timeout_secs)
+        dots_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await dots_task
+        eprint("")
+        return proc.returncode or 0
+    except asyncio.TimeoutError:
+        dots_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await dots_task
+        try:
+            proc.kill()
+        finally:
+            await proc.wait()
+        return 124
+
+
+def eprint(*args, **kwargs) -> None:
+    kwargs.setdefault("file", sys.stderr)
+    print(*args, **kwargs)
+
+
+def header(msg: str) -> None:
+    eprint(f"==> {msg}")
+
+
 def run_codex(prompt: str, quiet: bool, gen_file: str, timeout_secs: int) -> int:
-    if not which("codex"):
-        print(
-            "Error: codex CLI is required for generation. Use --dump-only to skip.",
-            file=sys.stderr,
-        )
+    if not shutil_which("codex"):
+        eprint("Error: codex CLI is required for generation. Use --dump-only to skip.")
         return 127
 
-    cmd = ["codex", "exec", "--sandbox", "read-only", "--output-last-message", gen_file, prompt]
+    cmd = [
+        "codex",
+        "exec",
+        "--sandbox",
+        "read-only",
+        "--output-last-message",
+        gen_file,
+        prompt,
+    ]
     if quiet:
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
-        except FileNotFoundError:
-            return 127
-        start = time.monotonic()
-        while True:
-            ret = proc.poll()
-            if ret is not None:
-                break
-            if timeout_secs and (time.monotonic() - start) > timeout_secs:
-                try:
-                    proc.kill()
-                finally:
-                    return 124
-            print(".", end="", file=sys.stderr, flush=True)
-            time.sleep(1)
-        print("", file=sys.stderr)
-        return ret or 0
+        # Use asyncio for simpler timeout handling and dot progress
+        return asyncio.run(_run_quiet_with_timeout_and_dots(cmd, timeout_secs))
     else:
-        # stream to stderr like the shell script
         try:
             proc = subprocess.run(
-                cmd, stdout=sys.stderr, stderr=sys.stderr, text=True, timeout=timeout_secs
+                cmd,
+                stdout=sys.stderr,
+                stderr=sys.stderr,
+                text=True,
+                timeout=timeout_secs,
             )
             return proc.returncode
         except subprocess.TimeoutExpired:
@@ -456,7 +489,7 @@ def main(argv: Sequence[str]) -> int:
 
     rest = pargs.rest
     # repo optional first arg unless --repo provided
-    repo: Optional[str]
+    repo: str | None
     if pargs.repo:
         repo = pargs.repo
     elif rest and "/" in rest[0]:
@@ -465,9 +498,8 @@ def main(argv: Sequence[str]) -> int:
     else:
         repo = detect_repo_from_git(pargs.repo_dir) or ""
         if not repo:
-            print(
+            eprint(
                 "Error: failed to auto-detect repository from git remote. Provide --repo <owner/repo> explicitly.",
-                file=sys.stderr,
             )
             return 1
 
@@ -504,7 +536,7 @@ def main(argv: Sequence[str]) -> int:
         sys.stdout.write(gen_file.read_text(encoding="utf-8"))
         return 0
     else:
-        print(f"Warning: {gen_file} not created. Check codex output.", file=sys.stderr)
+        eprint(f"Warning: {gen_file} not created. Check codex output.")
         return 1 if status != 0 else 1
 
 
