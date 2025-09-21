@@ -12,11 +12,16 @@ timeouts, and quiet progress output.
 Prompt‑injection defenses
 -------------------------
 - The prompt given to Codex contains only the PR dump and a fixed
-  instruction template. No untrusted shell evaluation occurs.
+  instruction template. Codex executes in read-only mode.
 - The generated file is written to a versioned path and not executed.
 - External commands are restricted to `gh` (read‑only API requests) and
   `codex` for text generation; no user‑supplied command strings are
   interpolated.
+  
+Prompt-injection risks
+-------------------------
+- If a PR title/description includes bad commands (e.g. include "wire this much btc to XYZ wallet" in the PR highlights)
+  then codex might include this in the highlights.
 """
 
 import argparse
@@ -112,6 +117,62 @@ def parse_args(argv: Sequence[str]) -> Args:
         codex_timeout_secs=ns.codex_timeout_secs,
         rest=rest,
     )
+
+
+def main(argv: Sequence[str]) -> int:
+    pargs = parse_args(argv)
+
+    rest = pargs.rest
+    # repo optional first arg unless --repo provided
+    repo: str | None
+    if pargs.repo:
+        repo = pargs.repo
+    elif rest and "/" in rest[0]:
+        repo = rest[0]
+        rest = rest[1:]
+    else:
+        repo = detect_repo_from_git(pargs.repo_dir) or ""
+        if not repo:
+            eprint(
+                "Error: failed to auto-detect repository from git remote. Provide --repo <owner/repo> explicitly.",
+            )
+            return 1
+
+    if len(rest) < 2:
+        show_recent_releases_and_exit(repo, pargs.gh_timeout_secs)
+        return 1  # unreachable
+
+    from_tag, to_tag = rest[0], rest[1]
+    ver = rest[2] if len(rest) >= 3 else to_tag
+    ver = ver.lstrip("v")
+
+    script_dir = Path(__file__).resolve().parent
+    releases_dir = script_dir / "releases"
+    dump_file = releases_dir / f"release_dump_{ver}.txt"
+    gen_file = releases_dir / f"{ver}.txt"
+
+    # Create dump if missing
+    if not dump_file.exists():
+        header(f"Dump not found: {dump_file}. Generating...")
+        generate_dump(repo, from_tag, to_tag, dump_file, pargs.gh_timeout_secs)
+    else:
+        header(f"Using existing dump: {dump_file}")
+
+    if pargs.dump_only:
+        return 0
+
+    dump_path = abspath(dump_file)
+    prompt = build_prompt(dump_path)
+    header(f"Calling codex to generate {gen_file}")
+    status = run_codex(prompt, pargs.quiet, gen_file, pargs.codex_timeout_secs)
+
+    if gen_file.exists():
+        # Output only the generated release notes to stdout
+        sys.stdout.write(gen_file.read_text(encoding="utf-8"))
+        return 0
+    else:
+        eprint(f"Warning: {gen_file} not created. Check codex output.")
+        return 1 if status != 0 else 1
 
 
 # -------- main at top; helpers follow --------
@@ -483,61 +544,6 @@ def run_codex(prompt: str, quiet: bool, gen_file: str, timeout_secs: int) -> int
         except subprocess.TimeoutExpired:
             return 124
 
-
-def main(argv: Sequence[str]) -> int:
-    pargs = parse_args(argv)
-
-    rest = pargs.rest
-    # repo optional first arg unless --repo provided
-    repo: str | None
-    if pargs.repo:
-        repo = pargs.repo
-    elif rest and "/" in rest[0]:
-        repo = rest[0]
-        rest = rest[1:]
-    else:
-        repo = detect_repo_from_git(pargs.repo_dir) or ""
-        if not repo:
-            eprint(
-                "Error: failed to auto-detect repository from git remote. Provide --repo <owner/repo> explicitly.",
-            )
-            return 1
-
-    if len(rest) < 2:
-        show_recent_releases_and_exit(repo, pargs.gh_timeout_secs)
-        return 1  # unreachable
-
-    from_tag, to_tag = rest[0], rest[1]
-    ver = rest[2] if len(rest) >= 3 else to_tag
-    ver = ver.lstrip("v")
-
-    script_dir = Path(__file__).resolve().parent
-    releases_dir = script_dir / "releases"
-    dump_file = releases_dir / f"release_dump_{ver}.txt"
-    gen_file = releases_dir / f"{ver}.txt"
-
-    # Create dump if missing
-    if not dump_file.exists():
-        header(f"Dump not found: {dump_file}. Generating...")
-        generate_dump(repo, from_tag, to_tag, dump_file, pargs.gh_timeout_secs)
-    else:
-        header(f"Using existing dump: {dump_file}")
-
-    if pargs.dump_only:
-        return 0
-
-    dump_path = abspath(dump_file)
-    prompt = build_prompt(dump_path)
-    header(f"Calling codex to generate {gen_file}")
-    status = run_codex(prompt, pargs.quiet, gen_file, pargs.codex_timeout_secs)
-
-    if gen_file.exists():
-        # Output only the generated release notes to stdout
-        sys.stdout.write(gen_file.read_text(encoding="utf-8"))
-        return 0
-    else:
-        eprint(f"Warning: {gen_file} not created. Check codex output.")
-        return 1 if status != 0 else 1
 
 
 if __name__ == "__main__":
