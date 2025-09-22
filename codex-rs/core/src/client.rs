@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::AuthManager;
 use crate::auth::CodexAuth;
+use crate::error_codes::CONTEXT_LENGTH_EXCEEDED;
 use bytes::Bytes;
 use codex_protocol::mcp_protocol::AuthMode;
 use codex_protocol::mcp_protocol::ConversationId;
@@ -659,7 +660,11 @@ async fn process_sse<S>(
                             Ok(error) => {
                                 let delay = try_parse_retry_after(&error);
                                 let message = error.message.unwrap_or_default();
-                                response_error = Some(CodexErr::Stream(message, delay));
+                                if error.code.as_deref() == Some(CONTEXT_LENGTH_EXCEEDED) {
+                                    response_error = Some(CodexErr::ContextLengthExceeded(message));
+                                } else {
+                                    response_error = Some(CodexErr::Stream(message, delay));
+                                }
                             }
                             Err(e) => {
                                 debug!("failed to parse ErrorResponse: {e}");

@@ -796,3 +796,132 @@ async fn auto_compact_allows_multiple_attempts_when_interleaved_with_other_turn_
         "second auto compact request should reuse summarization instructions"
     );
 }
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compact_trims_history_on_context_limit_error() {
+    non_sandbox_test!();
+
+    let server = start_mock_server().await;
+
+    // Minimal completes for two initial user turns.
+    let sse_user_done = sse(vec![ev_completed("r-user")]);
+
+    // First compact attempt fails with context length exceeded.
+    let sse_compact_fail = sse(vec![serde_json::json!({
+        "type": "response.failed",
+        "response": { "error": { "code": "context_length_exceeded", "message": "too big" } }
+    })]);
+
+    // Second compact attempt succeeds.
+    let sse_compact_ok = sse(vec![
+        ev_assistant_message("m-sum", SUMMARY_TEXT),
+        ev_completed("r-sum"),
+    ]);
+
+    // Matchers for the two user turns and two compact attempts.
+    let m_user1 = |req: &Request| {
+        let body = std::str::from_utf8(&req.body).unwrap_or("");
+        body.contains("\"text\":\"u1\"") && !body.contains(SUMMARIZE_TRIGGER)
+    };
+    mount_sse_once(&server, m_user1, sse_user_done.clone()).await;
+
+    let m_user2 = |req: &Request| {
+        let body = std::str::from_utf8(&req.body).unwrap_or("");
+        body.contains("\"text\":\"u2\"") && !body.contains(SUMMARIZE_TRIGGER)
+    };
+    mount_sse_once(&server, m_user2, sse_user_done.clone()).await;
+
+    // First compact attempt: includes the trigger and will fail.
+    let m_compact1 = |req: &Request| {
+        let body = std::str::from_utf8(&req.body).unwrap_or("");
+        body.contains(SUMMARIZE_TRIGGER)
+    };
+    mount_sse_once(&server, m_compact1, sse_compact_fail).await;
+
+    // Second compact attempt: also includes trigger; succeeds.
+    let m_compact2 = |req: &Request| {
+        let body = std::str::from_utf8(&req.body).unwrap_or("");
+        body.contains(SUMMARIZE_TRIGGER)
+    };
+    mount_sse_once(&server, m_compact2, sse_compact_ok).await;
+
+    // Build conversation
+    let model_provider = ModelProviderInfo {
+        base_url: Some(format!("{}/v1", server.uri())),
+        ..built_in_model_providers()["openai"].clone()
+    };
+    let home = TempDir::new().unwrap();
+    let mut config = load_default_config_for_test(&home);
+    config.model_provider = model_provider;
+    let conversation_manager = ConversationManager::with_auth(CodexAuth::from_api_key("dummy"));
+    let codex = conversation_manager
+        .new_conversation(config)
+        .await
+        .unwrap()
+        .conversation;
+
+    // Two user turns to seed history.
+    codex
+        .submit(Op::UserInput {
+            items: vec![InputItem::Text { text: "u1".into() }],
+        })
+        .await
+        .unwrap();
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+    codex
+        .submit(Op::UserInput {
+            items: vec![InputItem::Text { text: "u2".into() }],
+        })
+        .await
+        .unwrap();
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+    // Request compaction: first attempt fails with context_length_exceeded; retry trims history and succeeds.
+    codex.submit(Op::Compact).await.unwrap();
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+    // Inspect requests to verify that there were two compaction attempts and the
+    // second had a smaller input array than the first.
+    let requests = server.received_requests().await.unwrap();
+    let mut compact_bodies: Vec<serde_json::Value> = Vec::new();
+    for req in &requests {
+        let body = req.body_json::<serde_json::Value>().unwrap();
+        let is_compact = body
+            .get("input")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter().any(|it| {
+                    it.get("type").and_then(|t| t.as_str()) == Some("message")
+                        && it
+                            .get("content")
+                            .and_then(|c| c.as_array())
+                            .and_then(|a| a.first())
+                            .and_then(|t| t.get("text"))
+                            .and_then(|t| t.as_str())
+                            .map(|t| t.contains(SUMMARIZE_TRIGGER))
+                            .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+        if is_compact {
+            compact_bodies.push(body);
+        }
+    }
+    assert!(
+        compact_bodies.len() >= 2,
+        "expected at least two compact attempts (fail then success)"
+    );
+    let n = compact_bodies.len();
+    let len1 = compact_bodies[n - 2]["input"]
+        .as_array()
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let len2 = compact_bodies[n - 1]["input"]
+        .as_array()
+        .map(|a| a.len())
+        .unwrap_or(0);
+    assert!(
+        len2 + 1 == len1,
+        "second compact attempt should trim exactly one item: {len1} -> {len2}"
+    );
+}

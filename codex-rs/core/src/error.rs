@@ -104,6 +104,10 @@ pub enum CodexErr {
     #[error("codex-linux-sandbox was required but not provided")]
     LandlockSandboxExecutableNotProvided,
 
+    /// Provider reported the input exceeds the model's context window.
+    #[error("context_length_exceeded: {0}")]
+    ContextLengthExceeded(String),
+
     // -----------------------------------------------------------------
     // Automatic conversions for common external error types
     // -----------------------------------------------------------------

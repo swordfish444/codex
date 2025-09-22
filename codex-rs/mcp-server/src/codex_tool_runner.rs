@@ -276,6 +276,7 @@ async fn run_codex_tool_session_inner(
                     | EventMsg::WebSearchEnd(_)
                     | EventMsg::GetHistoryEntryResponse(_)
                     | EventMsg::PlanUpdate(_)
+                    | EventMsg::CompactApprovalRequest(_)
                     | EventMsg::TurnAborted(_)
                     | EventMsg::ConversationPath(_)
                     | EventMsg::UserMessage(_)

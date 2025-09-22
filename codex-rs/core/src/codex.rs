@@ -80,12 +80,14 @@ use crate::parse_command::parse_command;
 use crate::plan_tool::handle_update_plan;
 use crate::project_doc::get_user_instructions;
 use crate::protocol::AgentMessageDeltaEvent;
+use crate::protocol::AgentMessageEvent;
 use crate::protocol::AgentReasoningDeltaEvent;
 use crate::protocol::AgentReasoningRawContentDeltaEvent;
 use crate::protocol::AgentReasoningSectionBreakEvent;
 use crate::protocol::ApplyPatchApprovalRequestEvent;
 use crate::protocol::AskForApproval;
 use crate::protocol::BackgroundEventEvent;
+use crate::protocol::CompactApprovalRequestEvent;
 use crate::protocol::ErrorEvent;
 use crate::protocol::Event;
 use crate::protocol::EventMsg;
@@ -1459,6 +1461,39 @@ async fn submission_loop(
                 };
                 sess.send_event(event).await;
             }
+            Op::CompactApproval { id: _, decision } => {
+                // If approved, reuse the same logic as Op::Compact: try to
+                // inject the compact trigger into the current task; if there is
+                // no running task, spawn a compact task.
+                if matches!(
+                    decision,
+                    ReviewDecision::Approved | ReviewDecision::ApprovedForSession
+                ) {
+                    // Visual indicator so the user sees compaction start.
+                    let start_msg = Event {
+                        id: sub.id.clone(),
+                        msg: EventMsg::AgentMessage(AgentMessageEvent {
+                            message: "Compacting conversation…".to_string(),
+                        }),
+                    };
+                    sess.send_event(start_msg).await;
+
+                    if let Err(items) = sess
+                        .inject_input(vec![InputItem::Text {
+                            text: compact::COMPACT_TRIGGER_TEXT.to_string(),
+                        }])
+                        .await
+                    {
+                        compact::spawn_compact_task(
+                            sess.clone(),
+                            Arc::clone(&turn_context),
+                            sub.id,
+                            items,
+                        )
+                        .await;
+                    }
+                }
+            }
             Op::Compact => {
                 // Attempt to inject input into current task
                 if let Err(items) = sess
@@ -1984,6 +2019,19 @@ async fn run_turn(
                 return Err(e);
             }
             Err(e) => {
+                // If we hit a context/window limit error, ask the UI to
+                // offer a compact confirmation and stop retrying this turn.
+                if matches!(e, CodexErr::ContextLengthExceeded(_)) {
+                    let event = Event {
+                        id: sub_id.clone(),
+                        msg: EventMsg::CompactApprovalRequest(CompactApprovalRequestEvent {
+                            reason: "The chat has exceeded its limits. To continue, you need to compact the chat. Confirm running compact?".to_string(),
+                        }),
+                    };
+                    sess.send_event(event).await;
+                    // Non-transient – do not retry this turn further; let UI prompt.
+                    return Err(e);
+                }
                 // Use the configured provider-specific stream retry budget.
                 let max_retries = turn_context.client.get_provider().stream_max_retries();
                 if retries < max_retries {

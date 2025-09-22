@@ -115,14 +115,13 @@ async fn run_compact_task_inner(
 ) {
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
     let instructions_override = compact_instructions;
-    let turn_input = sess
-        .turn_input_with_history(vec![initial_input_for_turn.clone().into()])
-        .await;
 
-    let prompt = Prompt {
-        input: turn_input,
-        tools: Vec::new(),
-        base_instructions_override: Some(instructions_override),
+    // Build an in-memory snapshot of the current history; attempts will pop
+    // from this vector on context-length errors without modifying the session
+    // transcript.
+    let mut working_history = {
+        let state = sess.state.lock().await;
+        state.history.contents()
     };
 
     let max_retries = turn_context.client.get_provider().stream_max_retries();
@@ -139,6 +138,17 @@ async fn run_compact_task_inner(
     sess.persist_rollout_items(&[rollout_item]).await;
 
     loop {
+        // Build prompt input = history + compact trigger
+        let mut turn_input: Vec<ResponseItem> = Vec::with_capacity(working_history.len() + 1);
+        turn_input.extend_from_slice(&working_history);
+        turn_input.push(initial_input_for_turn.clone().into());
+
+        let prompt = Prompt {
+            input: turn_input,
+            tools: Vec::new(),
+            base_instructions_override: Some(instructions_override.clone()),
+        };
+
         let attempt_result = drain_to_completed(&sess, turn_context.as_ref(), &prompt).await;
 
         match attempt_result {
@@ -149,6 +159,28 @@ async fn run_compact_task_inner(
                 return;
             }
             Err(e) => {
+                // Special-case compaction overflows: trim and retry immediately with no backoff.
+                if matches!(e, CodexErr::ContextLengthExceeded(_)) {
+                    if working_history.pop().is_some() {
+                        sess.notify_stream_error(
+                            &sub_id,
+                            "compact input exceeds context window; retrying with 1 fewer item…",
+                        )
+                        .await;
+                        continue;
+                    } else {
+                        let event = Event {
+                            id: sub_id.clone(),
+                            msg: EventMsg::Error(ErrorEvent {
+                                message:
+                                    "Unable to compact: context window too small for any history"
+                                        .to_string(),
+                            }),
+                        };
+                        sess.send_event(event).await;
+                        return;
+                    }
+                }
                 if retries < max_retries {
                     retries += 1;
                     let delay = backoff(retries);

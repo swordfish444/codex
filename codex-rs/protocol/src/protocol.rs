@@ -140,6 +140,15 @@ pub enum Op {
         decision: ReviewDecision,
     },
 
+    /// Approve or deny running a compact operation recommended by the agent.
+    CompactApproval {
+        /// The id of the submission we are responding to (the event that
+        /// requested approval).
+        id: String,
+        /// The user's decision.
+        decision: ReviewDecision,
+    },
+
     /// Append an entry to the persistent cross-session message history.
     ///
     /// Note the entry is not guaranteed to be logged if the user has
@@ -478,6 +487,10 @@ pub enum EventMsg {
 
     ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent),
 
+    /// Request user confirmation to run a compact operation to reduce the
+    /// conversation context after encountering model context/window limits.
+    CompactApprovalRequest(CompactApprovalRequestEvent),
+
     BackgroundEvent(BackgroundEventEvent),
 
     /// Notification that a model stream experienced an error or disconnect
@@ -538,6 +551,12 @@ pub struct TaskCompleteEvent {
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct TaskStartedEvent {
     pub model_context_window: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+pub struct CompactApprovalRequestEvent {
+    /// Human‑readable reason to show in the UI.
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, TS)]

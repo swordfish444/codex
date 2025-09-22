@@ -21,12 +21,26 @@ use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
 use crate::error::CodexErr;
 use crate::error::Result;
+use crate::error_codes::CONTEXT_LENGTH_EXCEEDED;
 use crate::model_family::ModelFamily;
 use crate::openai_tools::create_tools_json_for_chat_completions_api;
 use crate::util::backoff;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ReasoningItemContent;
 use codex_protocol::models::ResponseItem;
+
+// Minimal error body used to parse structured provider error codes on
+// Chat Completions non‑2xx responses.
+#[derive(serde::Deserialize)]
+struct ChatErrorBody {
+    error: ChatErrorInner,
+}
+
+#[derive(serde::Deserialize)]
+struct ChatErrorInner {
+    code: Option<String>,
+    message: Option<String>,
+}
 
 /// Implementation for the classic Chat Completions API.
 pub(crate) async fn stream_chat_completions(
@@ -309,6 +323,16 @@ pub(crate) async fn stream_chat_completions(
                 let status = res.status();
                 if !(status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()) {
                     let body = (res.text().await).unwrap_or_default();
+
+                    // Attempt to parse a structured error and map known codes.
+                    if let Ok(parsed) = serde_json::from_str::<ChatErrorBody>(&body)
+                        && parsed.error.code.as_deref() == Some(CONTEXT_LENGTH_EXCEEDED)
+                    {
+                        return Err(CodexErr::ContextLengthExceeded(
+                            parsed.error.message.unwrap_or_default(),
+                        ));
+                    }
+
                     return Err(CodexErr::UnexpectedStatus(status, body));
                 }
 

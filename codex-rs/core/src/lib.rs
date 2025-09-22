@@ -54,6 +54,7 @@ pub use conversation_manager::NewConversation;
 pub use auth::AuthManager;
 pub use auth::CodexAuth;
 pub mod default_client;
+pub mod error_codes;
 pub mod model_family;
 mod openai_model_info;
 mod openai_tools;
