@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::fs::File;
 use std::mem;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -15,6 +16,7 @@ use codex_core::WireApi;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::Op;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use serde_json::json;
 use tempfile::TempDir;
@@ -41,57 +43,12 @@ pub struct HarnessData {
 }
 
 pub async fn run_fixture(dir: impl AsRef<Path>) -> Result<HarnessData> {
-    let dir = dir.as_ref();
-
-    let sse_path = dir.join("response_events.json");
-    let sse_sequences = load_sse_sequences(&sse_path)
-        .with_context(|| format!("load SSE fixture from {}", sse_path.display()))?;
-    let sequence_count = sse_sequences.len();
-
-    let prompts_path = dir.join("user_prompts.json");
-    let prompts_file = File::open(&prompts_path)
-        .with_context(|| format!("open prompts fixture {}", prompts_path.display()))?;
-    let prompt_ops: Vec<Op> = serde_json::from_reader(prompts_file)
-        .with_context(|| format!("parse prompts fixture {}", prompts_path.display()))?;
-
-    let expected_request_path = dir.join("expected_request.json");
-    let expected_request_file = File::open(&expected_request_path).with_context(|| {
-        format!(
-            "open expected request fixture {}",
-            expected_request_path.display()
-        )
-    })?;
-    let expected_request: Value =
-        serde_json::from_reader(expected_request_file).with_context(|| {
-            format!(
-                "parse expected request fixture {}",
-                expected_request_path.display()
-            )
-        })?;
-
-    let expected_events_path = dir.join("expected_events.json");
-    let expected_events_file = File::open(&expected_events_path).with_context(|| {
-        format!(
-            "open expected events fixture {}",
-            expected_events_path.display()
-        )
-    })?;
-    let expected_events: Vec<Value> =
-        serde_json::from_reader(expected_events_file).with_context(|| {
-            format!(
-                "parse expected events fixture {}",
-                expected_events_path.display()
-            )
-        })?;
-
-    let expected = HarnessOutputs {
-        request: expected_request,
-        events: expected_events,
-    };
+    let fixture = HarnessFixture::load(dir.as_ref())?;
+    let sequence_count = fixture.sse_sequences.len();
 
     let server = MockServer::start().await;
 
-    let responder_state = Arc::new(Mutex::new(VecDeque::from(sse_sequences)));
+    let responder_state = Arc::new(Mutex::new(VecDeque::from(fixture.sse_sequences)));
     let responder = SequentialSseResponder {
         bodies: responder_state.clone(),
     };
@@ -139,14 +96,14 @@ pub async fn run_fixture(dir: impl AsRef<Path>) -> Result<HarnessData> {
     }];
     let codex = new_conversation.conversation;
 
-    for op in &prompt_ops {
+    for op in &fixture.prompt_ops {
         codex
             .submit(op.clone())
             .await
             .with_context(|| format!("submit op {op:?}"))?;
     }
 
-    let expected_event_count = expected.events.len();
+    let expected_event_count = fixture.expected.events.len();
     anyhow::ensure!(
         expected_event_count >= events.len(),
         "expected events fixture must include at least the session configured event"
@@ -206,7 +163,76 @@ pub async fn run_fixture(dir: impl AsRef<Path>) -> Result<HarnessData> {
         events: sanitized_events,
     };
 
-    Ok(HarnessData { actual, expected })
+    Ok(HarnessData {
+        actual,
+        expected: fixture.expected,
+    })
+}
+
+struct HarnessFixture {
+    prompt_ops: Vec<Op>,
+    expected: HarnessOutputs,
+    sse_sequences: Vec<String>,
+}
+
+impl HarnessFixture {
+    fn load(dir: &Path) -> Result<Self> {
+        let paths = HarnessFixturePaths::new(dir.to_path_buf());
+        let sse_sequences = load_sse_sequences(&paths.response_events)
+            .with_context(|| paths.context_message("load SSE fixture"))?;
+        let prompt_ops: Vec<Op> = load_json(&paths.user_prompts, "user prompts")?;
+        let expected_request: Value = load_json(&paths.expected_request, "expected request")?;
+        let expected_events: Vec<Value> = load_json(&paths.expected_events, "expected events")?;
+
+        let expected = HarnessOutputs {
+            request: expected_request,
+            events: expected_events,
+        };
+
+        Ok(Self {
+            prompt_ops,
+            expected,
+            sse_sequences,
+        })
+    }
+}
+
+struct HarnessFixturePaths {
+    dir: PathBuf,
+    response_events: PathBuf,
+    user_prompts: PathBuf,
+    expected_request: PathBuf,
+    expected_events: PathBuf,
+}
+
+impl HarnessFixturePaths {
+    fn new(dir: PathBuf) -> Self {
+        let response_events = dir.join("response_events.json");
+        let user_prompts = dir.join("user_prompts.json");
+        let expected_request = dir.join("expected_request.json");
+        let expected_events = dir.join("expected_events.json");
+        Self {
+            dir,
+            response_events,
+            user_prompts,
+            expected_request,
+            expected_events,
+        }
+    }
+
+    fn context_message(&self, action: &str) -> String {
+        format!("{action} for fixture {}", self.dir.display())
+    }
+}
+
+fn load_json<T>(path: &Path, description: &str) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    let file = File::open(path)
+        .with_context(|| format!("open {description} fixture {}", path.display()))?;
+    serde_json::from_reader(file)
+        .with_context(|| format!("parse {description} fixture {}", path.display()))
 }
 
 struct SequentialSseResponder {
@@ -302,26 +328,26 @@ fn sanitize_events(events: Vec<Event>, replacements: &[(String, &'static str)]) 
             let mut value = serde_json::to_value(event).expect("serialize event");
             sanitize_value(&mut value, replacements);
 
-            if let Some(msg) = value.get_mut("msg") {
-                if let Some(msg_obj) = msg.as_object_mut() {
-                    let msg_type = msg_obj
-                        .get("type")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default();
-                    if msg_type == "session_configured" {
+            if let Some(msg) = value.get_mut("msg")
+                && let Some(msg_obj) = msg.as_object_mut()
+            {
+                let msg_type = msg_obj
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if msg_type == "session_configured" {
+                    msg_obj.insert(
+                        "session_id".to_string(),
+                        Value::String("<session>".to_string()),
+                    );
+                    if msg_obj.contains_key("history_log_id") {
+                        msg_obj.insert("history_log_id".to_string(), json!(0));
+                    }
+                    if msg_obj.contains_key("rollout_path") {
                         msg_obj.insert(
-                            "session_id".to_string(),
-                            Value::String("<session>".to_string()),
+                            "rollout_path".to_string(),
+                            Value::String("<rollout>".to_string()),
                         );
-                        if msg_obj.contains_key("history_log_id") {
-                            msg_obj.insert("history_log_id".to_string(), json!(0));
-                        }
-                        if msg_obj.contains_key("rollout_path") {
-                            msg_obj.insert(
-                                "rollout_path".to_string(),
-                                Value::String("<rollout>".to_string()),
-                            );
-                        }
                     }
                 }
             }
@@ -333,13 +359,13 @@ fn sanitize_events(events: Vec<Event>, replacements: &[(String, &'static str)]) 
 
 fn sanitize_request(mut value: Value, replacements: &[(String, &'static str)]) -> Value {
     sanitize_value(&mut value, replacements);
-    if let Some(obj) = value.as_object_mut() {
-        if obj.contains_key("prompt_cache_key") {
-            obj.insert(
-                "prompt_cache_key".to_string(),
-                Value::String("<prompt_cache_key>".to_string()),
-            );
-        }
+    if let Some(obj) = value.as_object_mut()
+        && obj.contains_key("prompt_cache_key")
+    {
+        obj.insert(
+            "prompt_cache_key".to_string(),
+            Value::String("<prompt_cache_key>".to_string()),
+        );
     }
     value
 }

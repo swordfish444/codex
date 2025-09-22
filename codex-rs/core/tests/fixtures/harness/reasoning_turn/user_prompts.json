@@ -1,0 +1,11 @@
+[
+  {
+    "type": "user_input",
+    "items": [
+      {
+        "type": "text",
+        "text": "Explain the difference between sunrise and sunset."
+      }
+    ]
+  }
+]

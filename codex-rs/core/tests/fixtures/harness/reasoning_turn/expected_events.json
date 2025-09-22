@@ -1,0 +1,85 @@
+[
+  {
+    "id": "",
+    "msg": {
+      "history_entry_count": 0,
+      "history_log_id": 0,
+      "model": "gpt-5",
+      "rollout_path": "<rollout>",
+      "session_id": "<session>",
+      "type": "session_configured"
+    }
+  },
+  {
+    "id": "0",
+    "msg": {
+      "model_context_window": 272000,
+      "type": "task_started"
+    }
+  },
+  {
+    "id": "0",
+    "msg": {
+      "delta": "Considering Earth's rotation.",
+      "type": "agent_reasoning_delta"
+    }
+  },
+  {
+    "id": "0",
+    "msg": {
+      "delta": " Sunlight scatters differently.",
+      "type": "agent_reasoning_delta"
+    }
+  },
+  {
+    "id": "0",
+    "msg": {
+      "delta": "Sunrise happens when your location rotates into sunlight.",
+      "type": "agent_message_delta"
+    }
+  },
+  {
+    "id": "0",
+    "msg": {
+      "delta": " Sunset is the reverse, heading into night.",
+      "type": "agent_message_delta"
+    }
+  },
+  {
+    "id": "0",
+    "msg": {
+      "message": "Sunrise is when your spot on Earth rotates into daylight; sunset is the same rotation carrying you back into the planet's shadow. The colors differ because morning light travels through cooler, cleaner air, while evenings pass through dustier skies.",
+      "type": "agent_message"
+    }
+  },
+  {
+    "id": "0",
+    "msg": {
+      "info": {
+        "last_token_usage": {
+          "cached_input_tokens": 0,
+          "input_tokens": 18,
+          "output_tokens": 32,
+          "reasoning_output_tokens": 6,
+          "total_tokens": 50
+        },
+        "model_context_window": 272000,
+        "total_token_usage": {
+          "cached_input_tokens": 0,
+          "input_tokens": 18,
+          "output_tokens": 32,
+          "reasoning_output_tokens": 6,
+          "total_tokens": 50
+        }
+      },
+      "type": "token_count"
+    }
+  },
+  {
+    "id": "0",
+    "msg": {
+      "last_agent_message": "Sunrise is when your spot on Earth rotates into daylight; sunset is the same rotation carrying you back into the planet's shadow. The colors differ because morning light travels through cooler, cleaner air, while evenings pass through dustier skies.",
+      "type": "task_complete"
+    }
+  }
+]

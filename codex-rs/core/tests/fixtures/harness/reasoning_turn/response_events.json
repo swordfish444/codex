@@ -1,0 +1,56 @@
+[
+  {
+    "type": "response.created",
+    "response": {
+      "id": "resp_reason"
+    }
+  },
+  {
+    "type": "response.reasoning_summary_part.added"
+  },
+  {
+    "type": "response.reasoning_summary_text.delta",
+    "delta": "Considering Earth's rotation."
+  },
+  {
+    "type": "response.reasoning_summary_text.delta",
+    "delta": " Sunlight scatters differently."
+  },
+  {
+    "type": "response.output_text.delta",
+    "delta": "Sunrise happens when your location rotates into sunlight."
+  },
+  {
+    "type": "response.output_text.delta",
+    "delta": " Sunset is the reverse, heading into night."
+  },
+  {
+    "type": "response.output_item.done",
+    "item": {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Sunrise is when your spot on Earth rotates into daylight; sunset is the same rotation carrying you back into the planet's shadow. The colors differ because morning light travels through cooler, cleaner air, while evenings pass through dustier skies."
+        }
+      ]
+    }
+  },
+  {
+    "type": "response.completed",
+    "response": {
+      "id": "resp_reason",
+      "usage": {
+        "input_tokens": 18,
+        "input_tokens_details": null,
+        "output_tokens": 32,
+        "output_tokens_details": {
+          "reasoning_tokens": 6
+        },
+        "total_tokens": 50,
+        "reasoning_tokens": 10
+      }
+    }
+  }
+]
