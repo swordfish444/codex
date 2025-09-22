@@ -56,7 +56,7 @@ pub(crate) fn apply_sandbox_policy_to_current_thread(
 ///
 /// # Errors
 /// Returns [`CodexErr::Sandbox`] variants when the ruleset fails to apply.
-fn install_filesystem_landlock_rules_on_current_thread(writable_roots: Vec<PathBuf>) -> Result<()> {
+fn install_filesystem_landlock_rules_on_current_thread(writable_roots: &[PathBuf]) -> Result<()> {
     let abi = ABI::V5;
     let access_rw = AccessFs::from_all(abi);
     let access_ro = AccessFs::from_read(abi);
