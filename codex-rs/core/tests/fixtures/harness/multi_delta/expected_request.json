@@ -16,7 +16,6 @@
     {
       "content": [
         {
-          "text": "<environment_context>\n  <cwd><CWD></cwd>\n  <approval_policy>on-request</approval_policy>\n  <sandbox_mode>read-only</sandbox_mode>\n  <network_access>restricted</network_access>\n  <shell>zsh</shell>\n</environment_context>",
           "type": "input_text"
         }
       ],
