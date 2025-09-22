@@ -14,6 +14,8 @@ use codex_cli::login::run_login_with_chatgpt;
 use codex_cli::login::run_logout;
 use codex_cli::proto;
 use codex_common::CliConfigOverrides;
+use codex_core::config::find_codex_home;
+use codex_core::config::load_config_from_toml;
 use codex_exec::Cli as ExecCli;
 use codex_responses_api_proxy::Args as ResponsesApiProxyArgs;
 use codex_tui::AppExitInfo;
@@ -84,6 +86,9 @@ enum Subcommand {
 
     /// Resume a previous interactive session (picker by default; use --last to continue the most recent).
     Resume(ResumeCommand),
+
+    /// Validate the configuration file.
+    Config,
 
     /// Internal: generate TypeScript protocol bindings.
     #[clap(hide = true)]
@@ -312,6 +317,31 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
         }
         Some(Subcommand::Completion(completion_cli)) => {
             print_completion(completion_cli);
+        }
+        Some(Subcommand::Config) => {
+            let cli_overrides = match root_config_overrides.parse_overrides() {
+                Ok(overrides) => overrides,
+                Err(err) => {
+                    eprintln!("Error parsing -c overrides: {err}");
+                    std::process::exit(1);
+                }
+            };
+
+            let codex_home = match find_codex_home() {
+                Ok(path) => path,
+                Err(err) => {
+                    eprintln!("Error finding codex home: {err}");
+                    std::process::exit(1);
+                }
+            };
+
+            match load_config_from_toml(&codex_home, cli_overrides) {
+                Ok(_) => println!("Configuration validated successfully"),
+                Err(err) => {
+                    eprintln!("Config validation error: {err}");
+                    std::process::exit(3);
+                }
+            }
         }
         Some(Subcommand::Debug(debug_args)) => match debug_args.cmd {
             DebugCommand::Seatbelt(mut seatbelt_cli) => {
