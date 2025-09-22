@@ -24,7 +24,7 @@ use codex_core::config_types::ReasoningSummaryFormat;
 use codex_core::plan_tool::PlanItemArg;
 use codex_core::plan_tool::StepStatus;
 use codex_core::plan_tool::UpdatePlanArgs;
-use codex_core::project_doc::discover_project_doc_paths;
+use codex_core::project_doc::discover_user_instruction_paths;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::McpInvocation;
 use codex_core::protocol::RateLimitSnapshotEvent;
@@ -1159,45 +1159,11 @@ pub(crate) fn new_status_output(
     lines.push(vec!["  • Sandbox: ".into(), sandbox_name.into()].into());
 
     // AGENTS.md files discovered via core's project_doc logic
-    let agents_list = {
-        match discover_project_doc_paths(config) {
-            Ok(paths) => {
-                let mut rels: Vec<String> = Vec::new();
-                for p in paths {
-                    let display = if let Some(parent) = p.parent() {
-                        if parent == config.cwd {
-                            "AGENTS.md".to_string()
-                        } else {
-                            let mut cur = config.cwd.as_path();
-                            let mut ups = 0usize;
-                            let mut reached = false;
-                            while let Some(c) = cur.parent() {
-                                if cur == parent {
-                                    reached = true;
-                                    break;
-                                }
-                                cur = c;
-                                ups += 1;
-                            }
-                            if reached {
-                                let up = format!("..{}", std::path::MAIN_SEPARATOR);
-                                format!("{}AGENTS.md", up.repeat(ups))
-                            } else if let Ok(stripped) = p.strip_prefix(&config.cwd) {
-                                stripped.display().to_string()
-                            } else {
-                                p.display().to_string()
-                            }
-                        }
-                    } else {
-                        p.display().to_string()
-                    };
-                    rels.push(display);
-                }
-                rels
-            }
-            Err(_) => Vec::new(),
-        }
-    };
+    let agents_paths = discover_user_instruction_paths(config).unwrap_or_default();
+    let agents_list: Vec<String> = agents_paths
+        .into_iter()
+        .map(|path| format_agent_path(config, &path))
+        .collect();
     if agents_list.is_empty() {
         lines.push("  • AGENTS files: (none)".into());
     } else {
@@ -1284,6 +1250,23 @@ pub(crate) fn new_status_output(
     ]));
 
     PlainHistoryCell { lines }
+}
+
+fn format_agent_path(config: &Config, path: &Path) -> String {
+    if let Ok(relative) = path.strip_prefix(&config.cwd) {
+        return relative.display().to_string();
+    }
+
+    if let Some(rel) = relativize_to_home(path) {
+        if rel.as_os_str().is_empty() {
+            return "~".to_string();
+        }
+
+        let sep = std::path::MAIN_SEPARATOR;
+        return format!("~{sep}{}", rel.display());
+    }
+
+    path.display().to_string()
 }
 
 /// Render a summary of configured MCP servers from the current `Config`.

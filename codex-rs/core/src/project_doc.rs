@@ -173,6 +173,30 @@ pub fn discover_project_doc_paths(config: &Config) -> std::io::Result<Vec<PathBu
     Ok(found)
 }
 
+/// Discover every source of user instructions that will be sent to the model.
+///
+/// This includes the global `CODEX_HOME/AGENTS.md` file (when present and
+/// non-empty) followed by the project docs located via
+/// [`discover_project_doc_paths`]. The resulting list mirrors the order used
+/// when composing the final instruction string.
+pub fn discover_user_instruction_paths(config: &Config) -> std::io::Result<Vec<PathBuf>> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+
+    if config.user_instructions.is_some() {
+        let candidate = config.codex_home.join("AGENTS.md");
+        if let Ok(md) = std::fs::symlink_metadata(&candidate) {
+            let ft = md.file_type();
+            if ft.is_file() || ft.is_symlink() {
+                paths.push(candidate);
+            }
+        }
+    }
+
+    paths.extend(discover_project_doc_paths(config)?);
+
+    Ok(paths)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,5 +370,63 @@ mod tests {
 
         let res = get_user_instructions(&cfg).await.expect("doc expected");
         assert_eq!(res, "root doc\n\ncrate doc");
+    }
+
+    #[test]
+    fn discover_user_instruction_paths_includes_codex_home_doc() {
+        let codex_home = tempfile::tempdir().expect("codex_home");
+        fs::write(codex_home.path().join("AGENTS.md"), "codex home doc").unwrap();
+
+        let workspace = tempfile::tempdir().expect("workspace");
+
+        let mut config = Config::load_from_base_config_with_overrides(
+            ConfigToml::default(),
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )
+        .expect("config");
+
+        config.cwd = workspace.path().to_path_buf();
+        config.project_doc_max_bytes = 4096;
+
+        let paths = discover_user_instruction_paths(&config).expect("paths");
+        assert_eq!(paths, vec![codex_home.path().join("AGENTS.md")]);
+    }
+
+    #[test]
+    fn discover_user_instruction_paths_preserves_ordering() {
+        let codex_home = tempfile::tempdir().expect("codex_home");
+        fs::write(codex_home.path().join("AGENTS.md"), "codex home doc").unwrap();
+
+        let repo = tempfile::tempdir().expect("repo");
+        std::fs::write(
+            repo.path().join(".git"),
+            "gitdir: /path/to/actual/git/dir\n",
+        )
+        .unwrap();
+        fs::write(repo.path().join("AGENTS.md"), "root doc").unwrap();
+
+        let nested = repo.path().join("crate");
+        std::fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("AGENTS.md"), "nested doc").unwrap();
+
+        let mut config = Config::load_from_base_config_with_overrides(
+            ConfigToml::default(),
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )
+        .expect("config");
+        config.cwd = nested.clone();
+        config.project_doc_max_bytes = 4096;
+
+        let paths = discover_user_instruction_paths(&config).expect("paths");
+        assert_eq!(
+            paths,
+            vec![
+                codex_home.path().join("AGENTS.md"),
+                repo.path().join("AGENTS.md"),
+                nested.join("AGENTS.md"),
+            ]
+        );
     }
 }
