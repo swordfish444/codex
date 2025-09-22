@@ -379,6 +379,7 @@ fn sanitize_value(value: &mut Value, replacements: &[(String, &'static str)]) {
                     current = current.replace(pattern, replacement);
                 }
             }
+            normalize_line_endings(&mut current);
             *s = current;
         }
         Value::Array(items) => {
@@ -392,5 +393,12 @@ fn sanitize_value(value: &mut Value, replacements: &[(String, &'static str)]) {
             }
         }
         _ => {}
+    }
+}
+
+fn normalize_line_endings(text: &mut String) {
+    if text.contains('\r') {
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        *text = normalized;
     }
 }
