@@ -103,7 +103,7 @@ pub async fn run_main<T: Reporter>(
         &search_directory,
         exclude,
         threads,
-        cancel_flag,
+        &cancel_flag,
         compute_indices,
     )?;
     let match_count = matches.len();
@@ -127,7 +127,7 @@ pub fn run(
     search_directory: &Path,
     exclude: Vec<String>,
     threads: NonZero<usize>,
-    cancel_flag: Arc<AtomicBool>,
+    cancel_flag: &Arc<AtomicBool>,
     compute_indices: bool,
 ) -> anyhow::Result<FileSearchResults> {
     let pattern = create_pattern(pattern_text);
@@ -183,7 +183,7 @@ pub fn run(
         const CHECK_INTERVAL: usize = 1024;
         let mut processed = 0;
 
-        let cancel = cancel_flag.clone();
+        let cancel = Arc::clone(cancel_flag);
 
         Box::new(move |entry| {
             if let Some(path) = get_file_path(&entry, search_directory) {

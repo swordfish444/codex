@@ -306,9 +306,8 @@ pub(crate) struct TurnContext {
 }
 
 impl TurnContext {
-    fn resolve_path(&self, path: Option<String>) -> PathBuf {
-        path.as_ref()
-            .map(PathBuf::from)
+    fn resolve_path(&self, path: Option<&str>) -> PathBuf {
+        path.map(PathBuf::from)
             .map_or_else(|| self.cwd.clone(), |p| self.cwd.join(p))
     }
 }
@@ -1038,7 +1037,7 @@ impl Session {
     /// Spawn the configured notifier (if any) with the given JSON payload as
     /// the last argument. Failures are logged but otherwise ignored so that
     /// notification issues do not interfere with the main workflow.
-    fn maybe_notify(&self, notification: UserNotification) {
+    fn maybe_notify(&self, notification: &UserNotification) {
         let Some(notify_command) = &self.notify else {
             return;
         };
@@ -1047,7 +1046,7 @@ impl Session {
             return;
         }
 
-        let Ok(json) = serde_json::to_string(&notification) else {
+        let Ok(json) = serde_json::to_string(notification) else {
             error!("failed to serialise notification payload");
             return;
         };
@@ -1104,14 +1103,14 @@ pub(crate) struct AgentTask {
 impl AgentTask {
     fn spawn(
         sess: Arc<Session>,
-        turn_context: Arc<TurnContext>,
+        turn_context: &Arc<TurnContext>,
         sub_id: String,
         input: Vec<InputItem>,
     ) -> Self {
         let handle = {
             let sess = sess.clone();
             let sub_id = sub_id.clone();
-            let tc = Arc::clone(&turn_context);
+            let tc = Arc::clone(turn_context);
             tokio::spawn(async move { run_task(sess, tc, sub_id, input).await }).abort_handle()
         };
         Self {
@@ -1124,14 +1123,14 @@ impl AgentTask {
 
     fn review(
         sess: Arc<Session>,
-        turn_context: Arc<TurnContext>,
+        turn_context: &Arc<TurnContext>,
         sub_id: String,
         input: Vec<InputItem>,
     ) -> Self {
         let handle = {
             let sess = sess.clone();
             let sub_id = sub_id.clone();
-            let tc = Arc::clone(&turn_context);
+            let tc = Arc::clone(turn_context);
             tokio::spawn(async move { run_task(sess, tc, sub_id, input).await }).abort_handle()
         };
         Self {
@@ -1144,7 +1143,7 @@ impl AgentTask {
 
     fn compact(
         sess: Arc<Session>,
-        turn_context: Arc<TurnContext>,
+        turn_context: &Arc<TurnContext>,
         sub_id: String,
         input: Vec<InputItem>,
         compact_instructions: String,
@@ -1152,7 +1151,7 @@ impl AgentTask {
         let handle = {
             let sess = sess.clone();
             let sub_id = sub_id.clone();
-            let tc = Arc::clone(&turn_context);
+            let tc = Arc::clone(turn_context);
             tokio::spawn(async move {
                 compact::run_compact_task(sess, tc, sub_id, input, compact_instructions).await
             })
@@ -1291,8 +1290,7 @@ async fn submission_loop(
                 // attempt to inject input into current task
                 if let Err(items) = sess.inject_input(items).await {
                     // no current task, spawn a new one
-                    let task =
-                        AgentTask::spawn(sess.clone(), Arc::clone(&turn_context), sub.id, items);
+                    let task = AgentTask::spawn(sess.clone(), &turn_context, sub.id, items);
                     sess.set_task(task).await;
                 }
             }
@@ -1368,8 +1366,7 @@ async fn submission_loop(
                     turn_context = Arc::new(fresh_turn_context);
 
                     // no current task, spawn a new one with the per‑turn context
-                    let task =
-                        AgentTask::spawn(sess.clone(), Arc::clone(&turn_context), sub.id, items);
+                    let task = AgentTask::spawn(sess.clone(), &turn_context, sub.id, items);
                     sess.set_task(task).await;
                 }
             }
@@ -1618,7 +1615,7 @@ async fn spawn_review_thread(
 
     // Clone sub_id for the upcoming announcement before moving it into the task.
     let sub_id_for_event = sub_id.clone();
-    let task = AgentTask::review(sess.clone(), tc.clone(), sub_id, input);
+    let task = AgentTask::review(sess.clone(), &tc, sub_id, input);
     sess.set_task(task).await;
 
     // Announce entering review mode so UIs can switch modes.
@@ -1748,7 +1745,7 @@ async fn run_task(
                     .unwrap_or(i64::MAX);
                 let total_usage_tokens = total_token_usage
                     .as_ref()
-                    .map(|usage| usage.tokens_in_context_window());
+                    .map(codex_protocol::protocol::TokenUsage::tokens_in_context_window);
                 let token_limit_reached = total_usage_tokens
                     .map(|tokens| (tokens as i64) >= limit)
                     .unwrap_or(false);
@@ -1884,7 +1881,7 @@ async fn run_task(
                     last_agent_message = get_last_assistant_message_from_turn(
                         &items_to_record_in_conversation_history,
                     );
-                    sess.maybe_notify(UserNotification::AgentTurnComplete {
+                    sess.maybe_notify(&UserNotification::AgentTurnComplete {
                         turn_id: sub_id.clone(),
                         input_messages: turn_input_messages,
                         last_assistant_message: last_agent_message.clone(),
@@ -2254,7 +2251,7 @@ async fn handle_response_item(
                     turn_diff_tracker,
                     sub_id.to_string(),
                     name,
-                    arguments,
+                    &arguments,
                     call_id,
                 )
                 .await,
@@ -2427,7 +2424,7 @@ async fn handle_function_call(
     turn_diff_tracker: &mut TurnDiffTracker,
     sub_id: String,
     name: String,
-    arguments: String,
+    arguments: &str,
     call_id: String,
 ) -> ResponseInputItem {
     match name.as_str() {
@@ -2458,7 +2455,7 @@ async fn handle_function_call(
                 timeout_ms: Option<u64>,
             }
 
-            let args = match serde_json::from_str::<UnifiedExecArgs>(&arguments) {
+            let args = match serde_json::from_str::<UnifiedExecArgs>(arguments) {
                 Ok(args) => args,
                 Err(err) => {
                     return ResponseInputItem::FunctionCallOutput {
@@ -2485,7 +2482,7 @@ async fn handle_function_call(
             struct SeeImageArgs {
                 path: String,
             }
-            let args = match serde_json::from_str::<SeeImageArgs>(&arguments) {
+            let args = match serde_json::from_str::<SeeImageArgs>(arguments) {
                 Ok(a) => a,
                 Err(e) => {
                     return ResponseInputItem::FunctionCallOutput {
@@ -2497,7 +2494,7 @@ async fn handle_function_call(
                     };
                 }
             };
-            let abs = turn_context.resolve_path(Some(args.path));
+            let abs = turn_context.resolve_path(Some(&args.path));
             let output = match sess
                 .inject_input(vec![InputItem::LocalImage { path: abs }])
                 .await
@@ -2514,7 +2511,7 @@ async fn handle_function_call(
             ResponseInputItem::FunctionCallOutput { call_id, output }
         }
         "apply_patch" => {
-            let args = match serde_json::from_str::<ApplyPatchToolArgs>(&arguments) {
+            let args = match serde_json::from_str::<ApplyPatchToolArgs>(arguments) {
                 Ok(a) => a,
                 Err(e) => {
                     return ResponseInputItem::FunctionCallOutput {
@@ -2547,7 +2544,7 @@ async fn handle_function_call(
         "update_plan" => handle_update_plan(sess, arguments, sub_id, call_id).await,
         EXEC_COMMAND_TOOL_NAME => {
             // TODO(mbolin): Sandbox check.
-            let exec_params = match serde_json::from_str::<ExecCommandParams>(&arguments) {
+            let exec_params = match serde_json::from_str::<ExecCommandParams>(arguments) {
                 Ok(params) => params,
                 Err(e) => {
                     return ResponseInputItem::FunctionCallOutput {
@@ -2570,7 +2567,7 @@ async fn handle_function_call(
             }
         }
         WRITE_STDIN_TOOL_NAME => {
-            let write_stdin_params = match serde_json::from_str::<WriteStdinParams>(&arguments) {
+            let write_stdin_params = match serde_json::from_str::<WriteStdinParams>(arguments) {
                 Ok(params) => params,
                 Err(e) => {
                     return ResponseInputItem::FunctionCallOutput {
@@ -2599,7 +2596,13 @@ async fn handle_function_call(
                     // TODO(mbolin): Determine appropriate timeout for tool call.
                     let timeout = None;
                     handle_mcp_tool_call(
-                        sess, &sub_id, call_id, server, tool_name, arguments, timeout,
+                        sess,
+                        &sub_id,
+                        call_id,
+                        server,
+                        tool_name,
+                        arguments.to_string(),
+                        timeout,
                     )
                     .await
                 }
@@ -2673,7 +2676,7 @@ async fn handle_custom_tool_call(
 fn to_exec_params(params: ShellToolCallParams, turn_context: &TurnContext) -> ExecParams {
     ExecParams {
         command: params.command,
-        cwd: turn_context.resolve_path(params.workdir.clone()),
+        cwd: turn_context.resolve_path(params.workdir.as_deref()),
         timeout_ms: params.timeout_ms,
         env: create_env(&turn_context.shell_environment_policy),
         with_escalated_permissions: params.with_escalated_permissions,
@@ -2682,12 +2685,12 @@ fn to_exec_params(params: ShellToolCallParams, turn_context: &TurnContext) -> Ex
 }
 
 fn parse_container_exec_arguments(
-    arguments: String,
+    arguments: &str,
     turn_context: &TurnContext,
     call_id: &str,
 ) -> Result<ExecParams, Box<ResponseInputItem>> {
     // parse command
-    match serde_json::from_str::<ShellToolCallParams>(&arguments) {
+    match serde_json::from_str::<ShellToolCallParams>(arguments) {
         Ok(shell_tool_call_params) => Ok(to_exec_params(shell_tool_call_params, turn_context)),
         Err(e) => {
             // allow model to re-sample

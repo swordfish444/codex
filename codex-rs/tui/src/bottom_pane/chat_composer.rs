@@ -162,7 +162,7 @@ impl ChatComposer {
         textarea_rect.width = textarea_rect.width.saturating_sub(LIVE_PREFIX_COLS);
         textarea_rect.x = textarea_rect.x.saturating_add(LIVE_PREFIX_COLS);
         let state = self.textarea_state.borrow();
-        self.textarea.cursor_pos_with_state(textarea_rect, &state)
+        self.textarea.cursor_pos_with_state(textarea_rect, *state)
     }
 
     /// Returns true if the composer currently contains no user input.
@@ -206,7 +206,7 @@ impl ChatComposer {
             let placeholder = format!("[Pasted Content {char_count} chars]");
             self.textarea.insert_element(&placeholder);
             self.pending_pastes.push((placeholder, pasted));
-        } else if char_count > 1 && self.handle_paste_image_path(pasted.clone()) {
+        } else if char_count > 1 && self.handle_paste_image_path(&pasted) {
             self.textarea.insert_str(" ");
         } else {
             self.textarea.insert_str(&pasted);
@@ -224,8 +224,8 @@ impl ChatComposer {
         true
     }
 
-    pub fn handle_paste_image_path(&mut self, pasted: String) -> bool {
-        let Some(path_buf) = normalize_pasted_path(&pasted) else {
+    pub fn handle_paste_image_path(&mut self, pasted: &str) -> bool {
+        let Some(path_buf) = normalize_pasted_path(pasted) else {
             return false;
         };
 
@@ -252,12 +252,12 @@ impl ChatComposer {
     }
 
     /// Replace the entire composer content with `text` and reset cursor.
-    pub(crate) fn set_text_content(&mut self, text: String) {
+    pub(crate) fn set_text_content(&mut self, text: &str) {
         // Clear any existing content, placeholders, and attachments first.
         self.textarea.set_text("");
         self.pending_pastes.clear();
         self.attached_images.clear();
-        self.textarea.set_text(&text);
+        self.textarea.set_text(text);
         self.textarea.set_cursor(0);
         self.sync_command_popup();
         self.sync_file_search_popup();
@@ -297,19 +297,19 @@ impl ChatComposer {
     }
 
     /// Integrate results from an asynchronous file search.
-    pub(crate) fn on_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
+    pub(crate) fn on_file_search_result(&mut self, query: &str, matches: Vec<FileMatch>) {
         // Only apply if user is still editing a token starting with `query`.
         let current_opt = Self::current_at_token(&self.textarea);
         let Some(current_token) = current_opt else {
             return;
         };
 
-        if !current_token.starts_with(&query) {
+        if !current_token.starts_with(query) {
             return;
         }
 
         if let ActivePopup::File(popup) = &mut self.active_popup {
-            popup.set_matches(&query, matches);
+            popup.set_matches(query, matches);
         }
     }
 
@@ -381,7 +381,7 @@ impl ChatComposer {
                 // Ensure popup filtering/selection reflects the latest composer text
                 // before applying completion.
                 let first_line = self.textarea.text().lines().next().unwrap_or("");
-                popup.on_composer_text_change(first_line.to_string());
+                popup.on_composer_text_change(first_line);
                 if let Some(sel) = popup.selected_item() {
                     match sel {
                         CommandItem::Builtin(cmd) => {
@@ -420,9 +420,9 @@ impl ChatComposer {
                     self.textarea.set_text("");
                     // Capture any needed data from popup before clearing it.
                     let prompt_content = match sel {
-                        CommandItem::UserPrompt(idx) => {
-                            popup.prompt_content(idx).map(|s| s.to_string())
-                        }
+                        CommandItem::UserPrompt(idx) => popup
+                            .prompt_content(idx)
+                            .map(std::string::ToString::to_string),
                         _ => None,
                     };
                     // Hide popup since an action has been dispatched.
@@ -550,7 +550,7 @@ impl ChatComposer {
                         let format_label = match Path::new(&sel_path)
                             .extension()
                             .and_then(|e| e.to_str())
-                            .map(|s| s.to_ascii_lowercase())
+                            .map(str::to_ascii_lowercase)
                         {
                             Some(ext) if ext == "png" => "PNG",
                             Some(ext) if ext == "jpg" || ext == "jpeg" => "JPEG",
@@ -617,7 +617,7 @@ impl ChatComposer {
             text[safe_cursor..]
                 .chars()
                 .next()
-                .map(|c| c.is_whitespace())
+                .map(char::is_whitespace)
                 .unwrap_or(false)
         } else {
             false
@@ -645,7 +645,7 @@ impl ChatComposer {
         let ws_len_right: usize = after_cursor
             .chars()
             .take_while(|c| c.is_whitespace())
-            .map(|c| c.len_utf8())
+            .map(char::len_utf8)
             .sum();
         let start_right = safe_cursor + ws_len_right;
         let end_right_rel = text[start_right..]
@@ -910,7 +910,8 @@ impl ChatComposer {
                             if !grab.grabbed.is_empty() {
                                 self.textarea.replace_range(grab.start_byte..safe_cur, "");
                             }
-                            self.paste_burst.begin_with_retro_grabbed(grab.grabbed, now);
+                            self.paste_burst
+                                .begin_with_retro_grabbed(&grab.grabbed, now);
                             self.paste_burst.append_char_to_buffer(ch, now);
                             return (InputResult::None, true);
                         }
@@ -1092,9 +1093,8 @@ impl ChatComposer {
                     .nth(occ_before)
                 {
                     break 'out Some((remove_idx, ph.clone()));
-                } else {
-                    break 'out Some((i, ph.clone()));
                 }
+                break 'out Some((i, ph.clone()));
             }
             None
         };
@@ -1150,7 +1150,7 @@ impl ChatComposer {
         match &mut self.active_popup {
             ActivePopup::Command(popup) => {
                 if input_starts_with_slash {
-                    popup.on_composer_text_change(first_line.to_string());
+                    popup.on_composer_text_change(first_line);
                 } else {
                     self.active_popup = ActivePopup::None;
                 }
@@ -1158,7 +1158,7 @@ impl ChatComposer {
             _ => {
                 if input_starts_with_slash {
                     let mut command_popup = CommandPopup::new(self.custom_prompts.clone());
-                    command_popup.on_composer_text_change(first_line.to_string());
+                    command_popup.on_composer_text_change(first_line);
                     self.active_popup = ActivePopup::Command(command_popup);
                 }
             }

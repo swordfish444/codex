@@ -372,7 +372,7 @@ pub async fn find_conversation_path_by_id_str(
         &root,
         exclude,
         threads,
-        cancel,
+        &cancel,
         compute_indices,
     )
     .map_err(|e| io::Error::other(format!("file search failed: {e}")))?;

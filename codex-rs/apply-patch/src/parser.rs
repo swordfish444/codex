@@ -112,6 +112,7 @@ pub fn parse_patch(patch: &str) -> Result<ApplyPatchArgs, ParseError> {
     parse_patch_text(patch, mode)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum ParseMode {
     /// Parse the patch text argument as is.
     Strict,

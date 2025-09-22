@@ -188,10 +188,8 @@ impl App {
                 }
                 TuiEvent::Draw => {
                     self.chat_widget.maybe_post_pending_notification(tui);
-                    if self
-                        .chat_widget
-                        .handle_paste_burst_tick(tui.frame_requester())
-                    {
+                    let frame_requester = tui.frame_requester();
+                    if self.chat_widget.handle_paste_burst_tick(&frame_requester) {
                         return Ok(true);
                     }
                     tui.draw(
@@ -300,11 +298,11 @@ impl App {
             }
             AppEvent::StartFileSearch(query) => {
                 if !query.is_empty() {
-                    self.file_search.on_user_query(query);
+                    self.file_search.on_user_query(&query);
                 }
             }
             AppEvent::FileSearchResult { query, matches } => {
-                self.chat_widget.apply_file_search_result(query, matches);
+                self.chat_widget.apply_file_search_result(&query, matches);
             }
             AppEvent::UpdateReasoningEffort(effort) => {
                 self.on_update_reasoning_effort(effort);
@@ -338,12 +336,12 @@ impl App {
                             "failed to persist model selection"
                         );
                         if let Some(profile) = profile {
-                            self.chat_widget.add_error_message(format!(
-                                "Failed to save model for profile `{profile}`: {err}"
-                            ));
+                            let message =
+                                format!("Failed to save model for profile `{profile}`: {err}");
+                            self.chat_widget.add_error_message(&message);
                         } else {
-                            self.chat_widget
-                                .add_error_message(format!("Failed to save default model: {err}"));
+                            let message = format!("Failed to save default model: {err}");
+                            self.chat_widget.add_error_message(&message);
                         }
                     }
                 }

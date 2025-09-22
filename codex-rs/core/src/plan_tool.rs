@@ -65,7 +65,7 @@ At most one step can be in_progress at a time.
 /// than forcing it to come up and document a plan (TBD how that affects performance).
 pub(crate) async fn handle_update_plan(
     session: &Session,
-    arguments: String,
+    arguments: &str,
     sub_id: String,
     call_id: String,
 ) -> ResponseInputItem {
@@ -91,10 +91,10 @@ pub(crate) async fn handle_update_plan(
 }
 
 fn parse_update_plan_arguments(
-    arguments: String,
+    arguments: &str,
     call_id: &str,
 ) -> Result<UpdatePlanArgs, Box<ResponseInputItem>> {
-    match serde_json::from_str::<UpdatePlanArgs>(&arguments) {
+    match serde_json::from_str::<UpdatePlanArgs>(arguments) {
         Ok(args) => Ok(args),
         Err(e) => {
             let output = ResponseInputItem::FunctionCallOutput {

@@ -17,7 +17,7 @@ use codex_core::protocol::ExecCommandOutputDeltaEvent;
 use codex_core::protocol::ExecOutputStream;
 use codex_core::protocol::SandboxPolicy;
 
-fn collect_stdout_events(rx: Receiver<Event>) -> Vec<u8> {
+fn collect_stdout_events(rx: &Receiver<Event>) -> Vec<u8> {
     let mut out = Vec::new();
     while let Ok(ev) = rx.try_recv() {
         if let EventMsg::ExecCommandOutputDelta(ExecCommandOutputDeltaEvent {
@@ -79,7 +79,7 @@ async fn test_exec_stdout_stream_events_echo() {
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.stdout.text, "hello-world\n");
 
-    let streamed = collect_stdout_events(rx);
+    let streamed = collect_stdout_events(&rx);
     // We should have received at least the same contents (possibly in one chunk)
     assert_eq!(String::from_utf8_lossy(&streamed), "hello-world\n");
 }

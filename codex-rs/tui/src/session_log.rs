@@ -45,7 +45,7 @@ impl SessionLogger {
         Ok(())
     }
 
-    fn write_json_line(&self, value: serde_json::Value) {
+    fn write_json_line(&self, value: &serde_json::Value) {
         let Some(mutex) = self.file.get() else {
             return;
         };
@@ -53,7 +53,7 @@ impl SessionLogger {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         };
-        match serde_json::to_string(&value) {
+        match serde_json::to_string(value) {
             Ok(serialized) => {
                 if let Err(e) = guard.write_all(serialized.as_bytes()) {
                     tracing::warn!("session log write error: {}", e);
@@ -119,7 +119,7 @@ pub(crate) fn maybe_init(config: &Config) {
         "model_provider_id": config.model_provider_id,
         "model_provider_name": config.model_provider.name,
     });
-    LOGGER.write_json_line(header);
+    LOGGER.write_json_line(&header);
 }
 
 pub(crate) fn log_inbound_app_event(event: &AppEvent) {
@@ -138,7 +138,7 @@ pub(crate) fn log_inbound_app_event(event: &AppEvent) {
                 "dir": "to_tui",
                 "kind": "new_session",
             });
-            LOGGER.write_json_line(value);
+            LOGGER.write_json_line(&value);
         }
         AppEvent::InsertHistoryCell(cell) => {
             let value = json!({
@@ -147,7 +147,7 @@ pub(crate) fn log_inbound_app_event(event: &AppEvent) {
                 "kind": "insert_history_cell",
                 "lines": cell.transcript_lines().len(),
             });
-            LOGGER.write_json_line(value);
+            LOGGER.write_json_line(&value);
         }
         AppEvent::StartFileSearch(query) => {
             let value = json!({
@@ -156,7 +156,7 @@ pub(crate) fn log_inbound_app_event(event: &AppEvent) {
                 "kind": "file_search_start",
                 "query": query,
             });
-            LOGGER.write_json_line(value);
+            LOGGER.write_json_line(&value);
         }
         AppEvent::FileSearchResult { query, matches } => {
             let value = json!({
@@ -166,7 +166,7 @@ pub(crate) fn log_inbound_app_event(event: &AppEvent) {
                 "query": query,
                 "matches": matches.len(),
             });
-            LOGGER.write_json_line(value);
+            LOGGER.write_json_line(&value);
         }
         // Noise or control flow – record variant only
         other => {
@@ -176,7 +176,7 @@ pub(crate) fn log_inbound_app_event(event: &AppEvent) {
                 "kind": "app_event",
                 "variant": format!("{other:?}").split('(').next().unwrap_or("app_event"),
             });
-            LOGGER.write_json_line(value);
+            LOGGER.write_json_line(&value);
         }
     }
 }
@@ -197,7 +197,7 @@ pub(crate) fn log_session_end() {
         "dir": "meta",
         "kind": "session_end",
     });
-    LOGGER.write_json_line(value);
+    LOGGER.write_json_line(&value);
 }
 
 fn write_record<T>(dir: &str, kind: &str, obj: &T)
@@ -210,5 +210,5 @@ where
         "kind": kind,
         "payload": obj,
     });
-    LOGGER.write_json_line(value);
+    LOGGER.write_json_line(&value);
 }

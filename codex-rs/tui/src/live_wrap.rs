@@ -170,14 +170,13 @@ impl RowBuilder {
             if suffix.is_empty() {
                 // Fits entirely; keep in buffer (do not push yet) so we can append more later.
                 break;
-            } else {
-                // Emit wrapped prefix as a non-explicit row and continue with the remainder.
-                self.rows.push(Row {
-                    text: prefix,
-                    explicit_break: false,
-                });
-                self.current_line = suffix.to_string();
             }
+            // Emit wrapped prefix as a non-explicit row and continue with the remainder.
+            self.rows.push(Row {
+                text: prefix,
+                explicit_break: false,
+            });
+            self.current_line = suffix.to_string();
         }
     }
 }

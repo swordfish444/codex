@@ -403,7 +403,7 @@ fn sanitize_json_schema(value: &mut JsonValue) {
             let mut ty = map
                 .get("type")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+                .map(std::string::ToString::to_string);
 
             // If type is an array (union), pick first supported; else leave to inference
             if ty.is_none()

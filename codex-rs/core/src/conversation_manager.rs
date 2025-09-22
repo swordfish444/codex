@@ -148,7 +148,7 @@ impl ConversationManager {
     ) -> CodexResult<NewConversation> {
         // Compute the prefix up to the cut point.
         let history = RolloutRecorder::get_rollout_history(&path).await?;
-        let history = truncate_before_nth_user_message(history, nth_user_message);
+        let history = truncate_before_nth_user_message(&history, nth_user_message);
 
         // Spawn a new conversation with the computed initial history.
         let auth_manager = self.auth_manager.clone();
@@ -163,7 +163,7 @@ impl ConversationManager {
 
 /// Return a prefix of `items` obtained by cutting strictly before the nth user message
 /// (0-based) and all items that follow it.
-fn truncate_before_nth_user_message(history: InitialHistory, n: usize) -> InitialHistory {
+fn truncate_before_nth_user_message(history: &InitialHistory, n: usize) -> InitialHistory {
     // Work directly on rollout items, and cut the vector at the nth user message input.
     let items: Vec<RolloutItem> = history.get_rollout_items();
 
@@ -253,7 +253,7 @@ mod tests {
             .cloned()
             .map(RolloutItem::ResponseItem)
             .collect();
-        let truncated = truncate_before_nth_user_message(InitialHistory::Forked(initial), 1);
+        let truncated = truncate_before_nth_user_message(&InitialHistory::Forked(initial), 1);
         let got_items = truncated.get_rollout_items();
         let expected_items = vec![
             RolloutItem::ResponseItem(items[0].clone()),
@@ -270,7 +270,7 @@ mod tests {
             .cloned()
             .map(RolloutItem::ResponseItem)
             .collect();
-        let truncated2 = truncate_before_nth_user_message(InitialHistory::Forked(initial2), 2);
+        let truncated2 = truncate_before_nth_user_message(&InitialHistory::Forked(initial2), 2);
         assert!(matches!(truncated2, InitialHistory::New));
     }
 
@@ -289,7 +289,7 @@ mod tests {
             .map(RolloutItem::ResponseItem)
             .collect();
 
-        let truncated = truncate_before_nth_user_message(InitialHistory::Forked(rollout_items), 1);
+        let truncated = truncate_before_nth_user_message(&InitialHistory::Forked(rollout_items), 1);
         let got_items = truncated.get_rollout_items();
 
         let expected: Vec<RolloutItem> = vec![

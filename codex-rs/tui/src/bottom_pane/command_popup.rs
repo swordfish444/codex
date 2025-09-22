@@ -65,7 +65,7 @@ impl CommandPopup {
     /// passed in is expected to start with a leading '/'. Everything after the
     /// *first* '/" on the *first* line becomes the active filter that is used
     /// to narrow down the list of available commands.
-    pub(crate) fn on_composer_text_change(&mut self, text: String) {
+    pub(crate) fn on_composer_text_change(&mut self, text: &str) {
         let first_line = text.lines().next().unwrap_or("");
 
         if let Some(stripped) = first_line.strip_prefix('/') {
@@ -224,7 +224,7 @@ mod tests {
         let mut popup = CommandPopup::new(Vec::new());
         // Simulate the composer line starting with '/in' so the popup filters
         // matching commands by prefix.
-        popup.on_composer_text_change("/in".to_string());
+        popup.on_composer_text_change("/in");
 
         // Access the filtered list via the selected command and ensure that
         // one of the matches is the new "init" command.
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn selecting_init_by_exact_match() {
         let mut popup = CommandPopup::new(Vec::new());
-        popup.on_composer_text_change("/init".to_string());
+        popup.on_composer_text_change("/init");
 
         // When an exact match exists, the selected command should be that
         // command by default.
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn model_is_first_suggestion_for_mo() {
         let mut popup = CommandPopup::new(Vec::new());
-        popup.on_composer_text_change("/mo".to_string());
+        popup.on_composer_text_change("/mo");
         let matches = popup.filtered_items();
         match matches.first() {
             Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "model"),
@@ -287,7 +287,9 @@ mod tests {
         let mut prompt_names: Vec<String> = items
             .into_iter()
             .filter_map(|it| match it {
-                CommandItem::UserPrompt(i) => popup.prompt_name(i).map(|s| s.to_string()),
+                CommandItem::UserPrompt(i) => {
+                    popup.prompt_name(i).map(std::string::ToString::to_string)
+                }
                 _ => None,
             })
             .collect();

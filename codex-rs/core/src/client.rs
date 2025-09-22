@@ -335,9 +335,10 @@ impl ModelClient {
                                 // Prefer the plan_type provided in the error message if present
                                 // because it's more up to date than the one encoded in the auth
                                 // token.
-                                let plan_type = error
-                                    .plan_type
-                                    .or_else(|| auth.as_ref().and_then(|a| a.get_plan_type()));
+                                let plan_type = error.plan_type.or_else(|| {
+                                    auth.as_ref()
+                                        .and_then(super::auth::CodexAuth::get_plan_type)
+                                });
                                 let resets_in_seconds = error.resets_in_seconds;
                                 return Err(CodexErr::UsageLimitReached(UsageLimitReachedError {
                                     plan_type,

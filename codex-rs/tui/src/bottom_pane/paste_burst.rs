@@ -149,9 +149,9 @@ impl PasteBurst {
     }
 
     /// Begin buffering with retroactively grabbed text.
-    pub fn begin_with_retro_grabbed(&mut self, grabbed: String, now: Instant) {
+    pub fn begin_with_retro_grabbed(&mut self, grabbed: &str, now: Instant) {
         if !grabbed.is_empty() {
-            self.buffer.push_str(&grabbed);
+            self.buffer.push_str(grabbed);
         }
         self.active = true;
         self.burst_window_until = Some(now + PASTE_ENTER_SUPPRESS_WINDOW);
@@ -183,10 +183,10 @@ impl PasteBurst {
         let start_byte = retro_start_index(before, retro_chars);
         let grabbed = before[start_byte..].to_string();
         let looks_pastey =
-            grabbed.chars().any(|c| c.is_whitespace()) || grabbed.chars().count() >= 16;
+            grabbed.chars().any(char::is_whitespace) || grabbed.chars().count() >= 16;
         if looks_pastey {
             // Note: caller is responsible for removing this slice from UI text.
-            self.begin_with_retro_grabbed(grabbed.clone(), now);
+            self.begin_with_retro_grabbed(&grabbed, now);
             Some(RetroGrab {
                 start_byte,
                 grabbed,

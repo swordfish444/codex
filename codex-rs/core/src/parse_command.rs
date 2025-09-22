@@ -40,7 +40,7 @@ impl From<ParsedCommand> for codex_protocol::parse_command::ParsedCommand {
 }
 
 fn shlex_join(tokens: &[String]) -> String {
-    shlex_try_join(tokens.iter().map(|s| s.as_str()))
+    shlex_try_join(tokens.iter().map(std::string::String::as_str))
         .unwrap_or_else(|_| "<command included NUL byte>".to_string())
 }
 
@@ -74,14 +74,18 @@ mod tests {
     use super::*;
 
     fn shlex_split_safe(s: &str) -> Vec<String> {
-        shlex_split(s).unwrap_or_else(|| s.split_whitespace().map(|s| s.to_string()).collect())
+        shlex_split(s).unwrap_or_else(|| {
+            s.split_whitespace()
+                .map(std::string::ToString::to_string)
+                .collect()
+        })
     }
 
     fn vec_str(args: &[&str]) -> Vec<String> {
-        args.iter().map(|s| s.to_string()).collect()
+        args.iter().map(std::string::ToString::to_string).collect()
     }
 
-    fn assert_parsed(args: &[String], expected: Vec<ParsedCommand>) {
+    fn assert_parsed(args: &[String], expected: &[ParsedCommand]) {
         let out = parse_command(args);
         assert_eq!(out, expected);
     }
@@ -90,7 +94,7 @@ mod tests {
     fn git_status_is_unknown() {
         assert_parsed(
             &vec_str(&["git", "status"]),
-            vec![ParsedCommand::Unknown {
+            &[ParsedCommand::Unknown {
                 cmd: "git status".to_string(),
             }],
         );
@@ -101,7 +105,7 @@ mod tests {
         let inner = "git status | wc -l";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Unknown {
+            &[ParsedCommand::Unknown {
                 cmd: "git status".to_string(),
             }],
         );
@@ -112,7 +116,7 @@ mod tests {
         let inner = "echo foo > bar";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Unknown {
+            &[ParsedCommand::Unknown {
                 cmd: "echo foo > bar".to_string(),
             }],
         );
@@ -124,7 +128,7 @@ mod tests {
             "rg --version && node -v && pnpm -v && rg --files | wc -l && rg --files | head -n 40";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![
+            &[
                 // Expect commands in left-to-right execution order
                 ParsedCommand::Search {
                     cmd: "rg --version".to_string(),
@@ -154,7 +158,7 @@ mod tests {
         let inner = "rg -n \"navigate-to-route\" -S";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "rg -n navigate-to-route -S".to_string(),
                 query: Some("navigate-to-route".to_string()),
                 path: None,
@@ -168,7 +172,7 @@ mod tests {
         let inner = "rg -n \"BUG|FIXME|TODO|XXX|HACK\" -S | head -n 200";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![
+            &[
                 ParsedCommand::Search {
                     cmd: "rg -n 'BUG|FIXME|TODO|XXX|HACK' -S".to_string(),
                     query: Some("BUG|FIXME|TODO|XXX|HACK".to_string()),
@@ -186,7 +190,7 @@ mod tests {
         let inner = "rg --files webview/src | sed -n";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "rg --files webview/src".to_string(),
                 query: None,
                 path: Some("webview".to_string()),
@@ -199,7 +203,7 @@ mod tests {
         let inner = "rg --files | head -n 50";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![
+            &[
                 ParsedCommand::Search {
                     cmd: "rg --files".to_string(),
                     query: None,
@@ -217,7 +221,7 @@ mod tests {
         let inner = "cat webview/README.md";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: inner.to_string(),
                 name: "README.md".to_string(),
             }],
@@ -228,7 +232,7 @@ mod tests {
     fn cd_then_cat_is_single_read() {
         assert_parsed(
             &shlex_split_safe("cd foo && cat foo.txt"),
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: "cat foo.txt".to_string(),
                 name: "foo.txt".to_string(),
             }],
@@ -240,7 +244,7 @@ mod tests {
         // Ensure a leading `cd` inside bash -lc is dropped when followed by another command.
         assert_parsed(
             &shlex_split_safe("bash -lc 'cd foo && bar'"),
-            vec![ParsedCommand::Unknown {
+            &[ParsedCommand::Unknown {
                 cmd: "bar".to_string(),
             }],
         );
@@ -250,7 +254,7 @@ mod tests {
     fn bash_cd_then_cat_is_read() {
         assert_parsed(
             &shlex_split_safe("bash -lc 'cd foo && cat foo.txt'"),
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: "cat foo.txt".to_string(),
                 name: "foo.txt".to_string(),
             }],
@@ -262,7 +266,7 @@ mod tests {
         let inner = "ls -la | sed -n '1,120p'";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::ListFiles {
+            &[ParsedCommand::ListFiles {
                 cmd: "ls -la".to_string(),
                 path: None,
             }],
@@ -274,7 +278,7 @@ mod tests {
         let inner = "head -n 50 Cargo.toml";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: inner.to_string(),
                 name: "Cargo.toml".to_string(),
             }],
@@ -286,7 +290,7 @@ mod tests {
         let inner = "cat tui/Cargo.toml | sed -n '1,200p'";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: inner.to_string(),
                 name: "Cargo.toml".to_string(),
             }],
@@ -298,7 +302,7 @@ mod tests {
         let inner = "tail -n +522 README.md";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: inner.to_string(),
                 name: "README.md".to_string(),
             }],
@@ -322,7 +326,7 @@ mod tests {
     fn supports_npm_run_build_is_unknown() {
         assert_parsed(
             &vec_str(&["npm", "run", "build"]),
-            vec![ParsedCommand::Unknown {
+            &[ParsedCommand::Unknown {
                 cmd: "npm run build".to_string(),
             }],
         );
@@ -332,7 +336,7 @@ mod tests {
     fn supports_grep_recursive_current_dir() {
         assert_parsed(
             &vec_str(&["grep", "-R", "CODEX_SANDBOX_ENV_VAR", "-n", "."]),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "grep -R CODEX_SANDBOX_ENV_VAR -n .".to_string(),
                 query: Some("CODEX_SANDBOX_ENV_VAR".to_string()),
                 path: Some(".".to_string()),
@@ -350,7 +354,7 @@ mod tests {
                 "-n",
                 "core/src/spawn.rs",
             ]),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "grep -R CODEX_SANDBOX_ENV_VAR -n core/src/spawn.rs".to_string(),
                 query: Some("CODEX_SANDBOX_ENV_VAR".to_string()),
                 path: Some("spawn.rs".to_string()),
@@ -364,7 +368,7 @@ mod tests {
         // Previously, grep queries were passed through short_display_path, which is incorrect.
         assert_parsed(
             &shlex_split_safe("grep -R src/main.rs -n ."),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "grep -R src/main.rs -n .".to_string(),
                 query: Some("src/main.rs".to_string()),
                 path: Some(".".to_string()),
@@ -376,7 +380,7 @@ mod tests {
     fn supports_grep_weird_backtick_in_query() {
         assert_parsed(
             &shlex_split_safe("grep -R COD`EX_SANDBOX -n"),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "grep -R 'COD`EX_SANDBOX' -n".to_string(),
                 query: Some("COD`EX_SANDBOX".to_string()),
                 path: None,
@@ -388,7 +392,7 @@ mod tests {
     fn supports_cd_and_rg_files() {
         assert_parsed(
             &shlex_split_safe("cd codex-rs && rg --files"),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "rg --files".to_string(),
                 query: None,
                 path: None,
@@ -480,7 +484,7 @@ mod tests {
         let inner = "nl -ba core/src/parse_command.rs | sed -n '1200,1720p'";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: inner.to_string(),
                 name: "parse_command.rs".to_string(),
             }],
@@ -492,7 +496,7 @@ mod tests {
         let inner = "sed -n '2000,2200p' tui/src/history_cell.rs";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: inner.to_string(),
                 name: "history_cell.rs".to_string(),
             }],
@@ -505,7 +509,7 @@ mod tests {
             r#"printf "\n===== ansi-escape/Cargo.toml =====\n"; cat -- ansi-escape/Cargo.toml"#;
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: "cat -- ansi-escape/Cargo.toml".to_string(),
                 name: "Cargo.toml".to_string(),
             }],
@@ -518,7 +522,7 @@ mod tests {
         let inner = "yes | rg --files";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "rg --files".to_string(),
                 query: None,
                 path: None,
@@ -534,7 +538,7 @@ mod tests {
         );
         assert_parsed(
             &args,
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: "sed -n '260,640p' exec/src/event_processor_with_human_output.rs".to_string(),
                 name: "event_processor_with_human_output.rs".to_string(),
             }],
@@ -545,7 +549,7 @@ mod tests {
     fn preserves_rg_with_spaces() {
         assert_parsed(
             &shlex_split_safe("yes | rg -n 'foo bar' -S"),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "rg -n 'foo bar' -S".to_string(),
                 query: Some("foo bar".to_string()),
                 path: None,
@@ -557,7 +561,7 @@ mod tests {
     fn ls_with_glob() {
         assert_parsed(
             &shlex_split_safe("ls -I '*.test.js'"),
-            vec![ParsedCommand::ListFiles {
+            &[ParsedCommand::ListFiles {
                 cmd: "ls -I '*.test.js'".to_string(),
                 path: None,
             }],
@@ -568,7 +572,7 @@ mod tests {
     fn trim_on_semicolon() {
         assert_parsed(
             &shlex_split_safe("rg foo ; echo done"),
-            vec![
+            &[
                 ParsedCommand::Search {
                     cmd: "rg foo".to_string(),
                     query: Some("foo".to_string()),
@@ -586,7 +590,7 @@ mod tests {
         // Ensure we split commands on the logical OR operator as well.
         assert_parsed(
             &shlex_split_safe("rg foo || echo done"),
-            vec![
+            &[
                 ParsedCommand::Search {
                     cmd: "rg foo".to_string(),
                     query: Some("foo".to_string()),
@@ -641,7 +645,7 @@ mod tests {
             },
         ];
 
-        assert_parsed(&args, expected);
+        assert_parsed(&args, &expected);
     }
 
     #[test]
@@ -649,7 +653,7 @@ mod tests {
         // `true` should be dropped from parsed sequences
         assert_parsed(
             &shlex_split_safe("true && rg --files"),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "rg --files".to_string(),
                 query: None,
                 path: None,
@@ -658,7 +662,7 @@ mod tests {
 
         assert_parsed(
             &shlex_split_safe("rg --files && true"),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "rg --files".to_string(),
                 query: None,
                 path: None,
@@ -671,7 +675,7 @@ mod tests {
         let inner = "true && rg --files";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "rg --files".to_string(),
                 query: None,
                 path: None,
@@ -681,7 +685,7 @@ mod tests {
         let inner2 = "rg --files || true";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner2]),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "rg --files".to_string(),
                 query: None,
                 path: None,
@@ -693,7 +697,7 @@ mod tests {
     fn shorten_path_on_windows() {
         assert_parsed(
             &shlex_split_safe(r#"cat "pkg\src\main.rs""#),
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: r#"cat "pkg\\src\\main.rs""#.to_string(),
                 name: "main.rs".to_string(),
             }],
@@ -704,7 +708,7 @@ mod tests {
     fn head_with_no_space() {
         assert_parsed(
             &shlex_split_safe("bash -lc 'head -n50 Cargo.toml'"),
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: "head -n50 Cargo.toml".to_string(),
                 name: "Cargo.toml".to_string(),
             }],
@@ -717,7 +721,7 @@ mod tests {
         let inner = "rg --files | head -n 1";
         assert_parsed(
             &shlex_split_safe(inner),
-            vec![
+            &[
                 ParsedCommand::Search {
                     cmd: "rg --files".to_string(),
                     query: None,
@@ -734,7 +738,7 @@ mod tests {
     fn tail_with_no_space() {
         assert_parsed(
             &shlex_split_safe("bash -lc 'tail -n+10 README.md'"),
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: "tail -n+10 README.md".to_string(),
                 name: "README.md".to_string(),
             }],
@@ -745,7 +749,7 @@ mod tests {
     fn grep_with_query_and_path() {
         assert_parsed(
             &shlex_split_safe("grep -R TODO src"),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "grep -R TODO src".to_string(),
                 query: Some("TODO".to_string()),
                 path: Some("src".to_string()),
@@ -757,7 +761,7 @@ mod tests {
     fn rg_with_equals_style_flags() {
         assert_parsed(
             &shlex_split_safe("rg --colors=never -n foo src"),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "rg '--colors=never' -n foo src".to_string(),
                 query: Some("foo".to_string()),
                 path: Some("src".to_string()),
@@ -770,7 +774,7 @@ mod tests {
         // cat -- <file> should be treated as a read of that file
         assert_parsed(
             &shlex_split_safe("cat -- ./-strange-file-name"),
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: "cat -- ./-strange-file-name".to_string(),
                 name: "-strange-file-name".to_string(),
             }],
@@ -779,7 +783,7 @@ mod tests {
         // sed -n <range> <file> should be treated as a read of <file>
         assert_parsed(
             &shlex_split_safe("sed -n '12,20p' Cargo.toml"),
-            vec![ParsedCommand::Read {
+            &[ParsedCommand::Read {
                 cmd: "sed -n '12,20p' Cargo.toml".to_string(),
                 name: "Cargo.toml".to_string(),
             }],
@@ -791,7 +795,7 @@ mod tests {
         // When an `nl` stage has only flags, it should be dropped from the summary
         assert_parsed(
             &shlex_split_safe("rg --files | nl -ba"),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "rg --files".to_string(),
                 query: None,
                 path: None,
@@ -803,7 +807,7 @@ mod tests {
     fn ls_with_time_style_and_path() {
         assert_parsed(
             &shlex_split_safe("ls --time-style=long-iso ./dist"),
-            vec![ParsedCommand::ListFiles {
+            &[ParsedCommand::ListFiles {
                 cmd: "ls '--time-style=long-iso' ./dist".to_string(),
                 // short_display_path drops "dist" and shows "." as the last useful segment
                 path: Some(".".to_string()),
@@ -815,7 +819,7 @@ mod tests {
     fn fd_file_finder_variants() {
         assert_parsed(
             &shlex_split_safe("fd -t f src/"),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "fd -t f src/".to_string(),
                 query: None,
                 path: Some("src".to_string()),
@@ -825,7 +829,7 @@ mod tests {
         // fd with query and path should capture both
         assert_parsed(
             &shlex_split_safe("fd main src"),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "fd main src".to_string(),
                 query: Some("main".to_string()),
                 path: Some("src".to_string()),
@@ -837,7 +841,7 @@ mod tests {
     fn find_basic_name_filter() {
         assert_parsed(
             &shlex_split_safe("find . -name '*.rs'"),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "find . -name '*.rs'".to_string(),
                 query: Some("*.rs".to_string()),
                 path: Some(".".to_string()),
@@ -849,7 +853,7 @@ mod tests {
     fn find_type_only_path() {
         assert_parsed(
             &shlex_split_safe("find src -type f"),
-            vec![ParsedCommand::Search {
+            &[ParsedCommand::Search {
                 cmd: "find src -type f".to_string(),
                 query: None,
                 path: Some("src".to_string()),
@@ -894,16 +898,16 @@ fn simplify_once(commands: &[ParsedCommand]) -> Option<Vec<ParsedCommand>> {
 
     // echo ... && ...rest => ...rest
     if let ParsedCommand::Unknown { cmd } = &commands[0]
-        && shlex_split(cmd).is_some_and(|t| t.first().map(|s| s.as_str()) == Some("echo"))
+        && shlex_split(cmd)
+            .is_some_and(|t| t.first().map(std::string::String::as_str) == Some("echo"))
     {
         return Some(commands[1..].to_vec());
     }
 
     // cd foo && [any command] => [any command] (keep non-cd when a cd is followed by something)
     if let Some(idx) = commands.iter().position(|pc| match pc {
-        ParsedCommand::Unknown { cmd } => {
-            shlex_split(cmd).is_some_and(|t| t.first().map(|s| s.as_str()) == Some("cd"))
-        }
+        ParsedCommand::Unknown { cmd } => shlex_split(cmd)
+            .is_some_and(|t| t.first().map(std::string::String::as_str) == Some("cd")),
         _ => false,
     }) && commands.len() > idx + 1
     {
@@ -1035,7 +1039,7 @@ fn short_display_path(path: &str) -> String {
     });
     parts
         .next()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .unwrap_or_else(|| trimmed.to_string())
 }
 
@@ -1190,8 +1194,8 @@ fn parse_bash_lc_commands(original: &[String]) -> Option<Vec<ParsedCommand>> {
                         if had_connectors {
                             let has_pipe = script_tokens.iter().any(|t| t == "|");
                             let has_sed_n = script_tokens.windows(2).any(|w| {
-                                w.first().map(|s| s.as_str()) == Some("sed")
-                                    && w.get(1).map(|s| s.as_str()) == Some("-n")
+                                w.first().map(std::string::String::as_str) == Some("sed")
+                                    && w.get(1).map(std::string::String::as_str) == Some("-n")
                             });
                             if has_pipe && has_sed_n {
                                 ParsedCommand::Read {
@@ -1271,7 +1275,8 @@ fn is_small_formatting_command(tokens: &[String]) -> bool {
             // Keep `sed -n <range> file` (treated as a file read elsewhere);
             // otherwise consider it a formatting helper in a pipeline.
             tokens.len() < 4
-                || !(tokens[1] == "-n" && is_valid_sed_n_arg(tokens.get(2).map(|s| s.as_str())))
+                || !(tokens[1] == "-n"
+                    && is_valid_sed_n_arg(tokens.get(2).map(std::string::String::as_str)))
         }
         _ => false,
     }
@@ -1318,7 +1323,10 @@ fn summarize_main_tokens(main_cmd: &[String]) -> ParsedCommand {
                 (None, non_flags.first().map(|s| short_display_path(s)))
             } else {
                 (
-                    non_flags.first().cloned().map(|s| s.to_string()),
+                    non_flags
+                        .first()
+                        .cloned()
+                        .map(std::string::ToString::to_string),
                     non_flags.get(1).map(|s| short_display_path(s)),
                 )
             };
@@ -1353,7 +1361,10 @@ fn summarize_main_tokens(main_cmd: &[String]) -> ParsedCommand {
                 .collect();
             // Do not shorten the query: grep patterns may legitimately contain slashes
             // and should be preserved verbatim. Only paths should be shortened.
-            let query = non_flags.first().cloned().map(|s| s.to_string());
+            let query = non_flags
+                .first()
+                .cloned()
+                .map(std::string::ToString::to_string);
             let path = non_flags.get(1).map(|s| short_display_path(s));
             ParsedCommand::Search {
                 cmd: shlex_join(main_cmd),
@@ -1363,11 +1374,12 @@ fn summarize_main_tokens(main_cmd: &[String]) -> ParsedCommand {
         }
         Some((head, tail)) if head == "cat" => {
             // Support both `cat <file>` and `cat -- <file>` forms.
-            let effective_tail: &[String] = if tail.first().map(|s| s.as_str()) == Some("--") {
-                &tail[1..]
-            } else {
-                tail
-            };
+            let effective_tail: &[String] =
+                if tail.first().map(std::string::String::as_str) == Some("--") {
+                    &tail[1..]
+                } else {
+                    tail
+                };
             if effective_tail.len() == 1 {
                 let name = short_display_path(&effective_tail[0]);
                 ParsedCommand::Read {
@@ -1479,7 +1491,7 @@ fn summarize_main_tokens(main_cmd: &[String]) -> ParsedCommand {
             if head == "sed"
                 && tail.len() >= 3
                 && tail[0] == "-n"
-                && is_valid_sed_n_arg(tail.get(1).map(|s| s.as_str())) =>
+                && is_valid_sed_n_arg(tail.get(1).map(std::string::String::as_str)) =>
         {
             if let Some(path) = tail.get(2) {
                 let name = short_display_path(path);

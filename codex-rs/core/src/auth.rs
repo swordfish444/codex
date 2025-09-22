@@ -392,7 +392,7 @@ mod tests {
     async fn roundtrip_auth_dot_json() {
         let codex_home = tempdir().unwrap();
         let _ = write_auth_file(
-            AuthFileParams {
+            &AuthFileParams {
                 openai_api_key: None,
                 chatgpt_plan_type: "pro".to_string(),
             },
@@ -438,7 +438,7 @@ mod tests {
     async fn pro_account_with_no_api_key_uses_chatgpt_auth() {
         let codex_home = tempdir().unwrap();
         let fake_jwt = write_auth_file(
-            AuthFileParams {
+            &AuthFileParams {
                 openai_api_key: None,
                 chatgpt_plan_type: "pro".to_string(),
             },
@@ -519,7 +519,7 @@ mod tests {
         chatgpt_plan_type: String,
     }
 
-    fn write_auth_file(params: AuthFileParams, codex_home: &Path) -> std::io::Result<String> {
+    fn write_auth_file(params: &AuthFileParams, codex_home: &Path) -> std::io::Result<String> {
         let auth_file = get_auth_file(codex_home);
         // Create a minimal valid JWT for the id_token field.
         #[derive(Serialize)]
@@ -536,7 +536,7 @@ mod tests {
             "email_verified": true,
             "https://api.openai.com/auth": {
                 "chatgpt_account_id": "bc3618e3-489d-4d49-9362-1561dc53ba53",
-                "chatgpt_plan_type": params.chatgpt_plan_type,
+                "chatgpt_plan_type": params.chatgpt_plan_type.clone(),
                 "chatgpt_user_id": "user-12345",
                 "user_id": "user-12345",
             }
@@ -548,7 +548,7 @@ mod tests {
         let fake_jwt = format!("{header_b64}.{payload_b64}.{signature_b64}");
 
         let auth_json_data = json!({
-            "OPENAI_API_KEY": params.openai_api_key,
+            "OPENAI_API_KEY": params.openai_api_key.clone(),
             "tokens": {
                 "id_token": fake_jwt,
                 "access_token": "test-access-token",

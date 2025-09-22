@@ -201,7 +201,7 @@ impl BottomPane {
                 return if self.composer_is_empty() {
                     CancellationEvent::NotHandled
                 } else {
-                    self.set_composer_text(String::new());
+                    self.set_composer_text("");
                     self.show_ctrl_c_quit_hint();
                     CancellationEvent::Handled
                 };
@@ -250,7 +250,7 @@ impl BottomPane {
     }
 
     /// Replace the composer text with `text`.
-    pub(crate) fn set_composer_text(&mut self, text: String) {
+    pub(crate) fn set_composer_text(&mut self, text: &str) {
         self.composer.set_text_content(text);
         self.request_redraw();
     }
@@ -452,7 +452,7 @@ impl BottomPane {
         }
     }
 
-    pub(crate) fn on_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
+    pub(crate) fn on_file_search_result(&mut self, query: &str, matches: Vec<FileMatch>) {
         self.composer.on_file_search_result(query, matches);
         self.request_redraw();
     }

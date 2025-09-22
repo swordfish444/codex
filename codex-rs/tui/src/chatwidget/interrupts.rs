@@ -79,7 +79,7 @@ impl InterruptManager {
                     chat.handle_apply_patch_approval_now(id, ev)
                 }
                 QueuedInterrupt::ExecBegin(ev) => chat.handle_exec_begin_now(ev),
-                QueuedInterrupt::ExecEnd(ev) => chat.handle_exec_end_now(ev),
+                QueuedInterrupt::ExecEnd(ev) => chat.handle_exec_end_now(&ev),
                 QueuedInterrupt::McpBegin(ev) => chat.handle_mcp_begin_now(ev),
                 QueuedInterrupt::McpEnd(ev) => chat.handle_mcp_end_now(ev),
                 QueuedInterrupt::PatchEnd(ev) => chat.handle_patch_apply_end_now(ev),

@@ -248,22 +248,22 @@ impl ChatWidget {
         }
     }
 
-    fn on_agent_message(&mut self, message: String) {
+    fn on_agent_message(&mut self, message: &str) {
         let sink = AppEventHistorySink(self.app_event_tx.clone());
-        let finished = self.stream.apply_final_answer(&message, &sink);
+        let finished = self.stream.apply_final_answer(message, &sink);
         self.handle_if_stream_finished(finished);
         self.request_redraw();
     }
 
-    fn on_agent_message_delta(&mut self, delta: String) {
+    fn on_agent_message_delta(&mut self, delta: &str) {
         self.handle_streaming_delta(delta);
     }
 
-    fn on_agent_reasoning_delta(&mut self, delta: String) {
+    fn on_agent_reasoning_delta(&mut self, delta: &str) {
         // For reasoning deltas, do not stream to history. Accumulate the
         // current reasoning block and extract the first bold element
         // (between **/**) as the chunk header. Show this header as status.
-        self.reasoning_buffer.push_str(&delta);
+        self.reasoning_buffer.push_str(delta);
 
         if let Some(header) = extract_first_bold(&self.reasoning_buffer) {
             // Update the shimmer header to the extracted reasoning chunk header.
@@ -279,7 +279,7 @@ impl ChatWidget {
         self.full_reasoning_buffer.push_str(&self.reasoning_buffer);
         if !self.full_reasoning_buffer.is_empty() {
             let cell = history_cell::new_reasoning_summary_block(
-                self.full_reasoning_buffer.clone(),
+                &self.full_reasoning_buffer,
                 &self.config,
             );
             self.add_boxed_history(cell);
@@ -340,7 +340,7 @@ impl ChatWidget {
             self.rate_limit_snapshot = Some(snapshot);
             if !warnings.is_empty() {
                 for warning in warnings {
-                    self.add_to_history(history_cell::new_warning_event(warning));
+                    self.add_to_history(history_cell::new_warning_event(&warning));
                 }
                 self.request_redraw();
             }
@@ -356,7 +356,7 @@ impl ChatWidget {
         self.stream.clear_all();
     }
 
-    fn on_error(&mut self, message: String) {
+    fn on_error(&mut self, message: &str) {
         self.finalize_turn();
         self.add_to_history(history_cell::new_error_event(message));
         self.request_redraw();
@@ -368,13 +368,13 @@ impl ChatWidget {
     /// Handle a turn aborted due to user interrupt (Esc).
     /// When there are queued user messages, restore them into the composer
     /// separated by newlines rather than auto‑submitting the next one.
-    fn on_interrupted_turn(&mut self, reason: TurnAbortReason) {
+    fn on_interrupted_turn(&mut self, reason: &TurnAbortReason) {
         // Finalize, log a gentle prompt, and clear running state.
         self.finalize_turn();
 
-        if reason != TurnAbortReason::ReviewEnded {
+        if *reason != TurnAbortReason::ReviewEnded {
             self.add_to_history(history_cell::new_error_event(
-                "Conversation interrupted - tell the model what to do differently".to_owned(),
+                "Conversation interrupted - tell the model what to do differently",
             ));
         }
 
@@ -386,7 +386,7 @@ impl ChatWidget {
                 .map(|m| m.text.clone())
                 .collect::<Vec<_>>()
                 .join("\n");
-            self.bottom_pane.set_composer_text(combined);
+            self.bottom_pane.set_composer_text(&combined);
             // Clear the queue and update the status indicator list.
             self.queued_user_messages.clear();
             self.refresh_queued_user_messages();
@@ -450,7 +450,7 @@ impl ChatWidget {
 
     fn on_exec_command_end(&mut self, ev: ExecCommandEndEvent) {
         let ev2 = ev.clone();
-        self.defer_or_handle(|q| q.push_exec_end(ev), |s| s.handle_exec_end_now(ev2));
+        self.defer_or_handle(|q| q.push_exec_end(ev), |s| s.handle_exec_end_now(&ev2));
     }
 
     fn on_mcp_tool_call_begin(&mut self, ev: McpToolCallBeginEvent) {
@@ -467,7 +467,7 @@ impl ChatWidget {
         self.flush_answer_stream_with_separator();
     }
 
-    fn on_web_search_end(&mut self, ev: WebSearchEndEvent) {
+    fn on_web_search_end(&mut self, ev: &WebSearchEndEvent) {
         self.flush_answer_stream_with_separator();
         self.add_to_history(history_cell::new_web_search_call(format!(
             "Searched: {}",
@@ -492,11 +492,11 @@ impl ChatWidget {
         self.app_event_tx.send(AppEvent::ExitRequest);
     }
 
-    fn on_turn_diff(&mut self, unified_diff: String) {
+    fn on_turn_diff(&mut self, unified_diff: &str) {
         debug!("TurnDiffEvent: {unified_diff}");
     }
 
-    fn on_background_event(&mut self, message: String) {
+    fn on_background_event(&mut self, message: &str) {
         debug!("BackgroundEvent: {message}");
     }
 
@@ -551,16 +551,16 @@ impl ChatWidget {
     }
 
     #[inline]
-    fn handle_streaming_delta(&mut self, delta: String) {
+    fn handle_streaming_delta(&mut self, delta: &str) {
         // Before streaming agent content, flush any active exec cell group.
         self.flush_active_exec_cell();
         let sink = AppEventHistorySink(self.app_event_tx.clone());
         self.stream.begin(&sink);
-        self.stream.push_and_maybe_commit(&delta, &sink);
+        self.stream.push_and_maybe_commit(delta, &sink);
         self.request_redraw();
     }
 
-    pub(crate) fn handle_exec_end_now(&mut self, ev: ExecCommandEndEvent) {
+    pub(crate) fn handle_exec_end_now(&mut self, ev: &ExecCommandEndEvent) {
         let running = self.running_commands.remove(&ev.call_id);
         let (command, parsed) = match running {
             Some(rc) => (rc.command, rc.parsed_cmd),
@@ -608,7 +608,7 @@ impl ChatWidget {
         self.flush_answer_stream_with_separator();
         // Emit the proposed command into history (like proposed patches)
         self.add_to_history(history_cell::new_proposed_command(&ev.command));
-        let command = shlex::try_join(ev.command.iter().map(|s| s.as_str()))
+        let command = shlex::try_join(ev.command.iter().map(std::string::String::as_str))
             .unwrap_or_else(|_| ev.command.join(" "));
         self.notify(Notification::ExecApprovalRequested { command });
 
@@ -881,7 +881,7 @@ impl ChatWidget {
             } if !self.queued_user_messages.is_empty() => {
                 // Prefer the most recently queued item.
                 if let Some(user_message) = self.queued_user_messages.pop_back() {
-                    self.bottom_pane.set_composer_text(user_message.text);
+                    self.bottom_pane.set_composer_text(&user_message.text);
                     self.refresh_queued_user_messages();
                     self.request_redraw();
                 }
@@ -931,7 +931,7 @@ impl ChatWidget {
                 "'/{}' is disabled while a task is in progress.",
                 cmd.command()
             );
-            self.add_to_history(history_cell::new_error_event(message));
+            self.add_to_history(history_cell::new_error_event(&message));
             self.request_redraw();
             return;
         }
@@ -1040,7 +1040,7 @@ impl ChatWidget {
     }
 
     // Returns true if caller should skip rendering this frame (a future frame is scheduled).
-    pub(crate) fn handle_paste_burst_tick(&mut self, frame_requester: FrameRequester) -> bool {
+    pub(crate) fn handle_paste_burst_tick(&mut self, frame_requester: &FrameRequester) -> bool {
         if self.bottom_pane.flush_paste_burst_if_due() {
             // A paste just flushed; request an immediate redraw and skip this frame.
             self.request_redraw();
@@ -1150,17 +1150,19 @@ impl ChatWidget {
 
         match msg {
             EventMsg::SessionConfigured(e) => self.on_session_configured(e),
-            EventMsg::AgentMessage(AgentMessageEvent { message }) => self.on_agent_message(message),
+            EventMsg::AgentMessage(AgentMessageEvent { message }) => {
+                self.on_agent_message(&message)
+            }
             EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }) => {
-                self.on_agent_message_delta(delta)
+                self.on_agent_message_delta(&delta)
             }
             EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta })
             | EventMsg::AgentReasoningRawContentDelta(AgentReasoningRawContentDeltaEvent {
                 delta,
-            }) => self.on_agent_reasoning_delta(delta),
+            }) => self.on_agent_reasoning_delta(&delta),
             EventMsg::AgentReasoning(AgentReasoningEvent { .. }) => self.on_agent_reasoning_final(),
             EventMsg::AgentReasoningRawContent(AgentReasoningRawContentEvent { text }) => {
-                self.on_agent_reasoning_delta(text);
+                self.on_agent_reasoning_delta(&text);
                 self.on_agent_reasoning_final()
             }
             EventMsg::AgentReasoningSectionBreak(_) => self.on_reasoning_section_break(),
@@ -1172,18 +1174,15 @@ impl ChatWidget {
                 self.set_token_info(ev.info);
                 self.on_rate_limit_snapshot(ev.rate_limits);
             }
-            EventMsg::Error(ErrorEvent { message }) => self.on_error(message),
-            EventMsg::TurnAborted(ev) => match ev.reason {
-                TurnAbortReason::Interrupted => {
-                    self.on_interrupted_turn(ev.reason);
+            EventMsg::Error(ErrorEvent { message }) => self.on_error(&message),
+            EventMsg::TurnAborted(ev) => {
+                let reason = ev.reason;
+                if reason == TurnAbortReason::Replaced {
+                    self.on_error("Turn aborted: replaced by a new task")
+                } else {
+                    self.on_interrupted_turn(&reason);
                 }
-                TurnAbortReason::Replaced => {
-                    self.on_error("Turn aborted: replaced by a new task".to_owned())
-                }
-                TurnAbortReason::ReviewEnded => {
-                    self.on_interrupted_turn(ev.reason);
-                }
-            },
+            }
             EventMsg::PlanUpdate(update) => self.on_plan_update(update),
             EventMsg::ExecApprovalRequest(ev) => {
                 // For replayed events, synthesize an empty id (these should not occur).
@@ -1200,19 +1199,19 @@ impl ChatWidget {
             EventMsg::McpToolCallBegin(ev) => self.on_mcp_tool_call_begin(ev),
             EventMsg::McpToolCallEnd(ev) => self.on_mcp_tool_call_end(ev),
             EventMsg::WebSearchBegin(ev) => self.on_web_search_begin(ev),
-            EventMsg::WebSearchEnd(ev) => self.on_web_search_end(ev),
+            EventMsg::WebSearchEnd(ev) => self.on_web_search_end(&ev),
             EventMsg::GetHistoryEntryResponse(ev) => self.on_get_history_entry_response(ev),
-            EventMsg::McpListToolsResponse(ev) => self.on_list_mcp_tools(ev),
+            EventMsg::McpListToolsResponse(ev) => self.on_list_mcp_tools(&ev),
             EventMsg::ListCustomPromptsResponse(ev) => self.on_list_custom_prompts(ev),
             EventMsg::ShutdownComplete => self.on_shutdown_complete(),
-            EventMsg::TurnDiff(TurnDiffEvent { unified_diff }) => self.on_turn_diff(unified_diff),
+            EventMsg::TurnDiff(TurnDiffEvent { unified_diff }) => self.on_turn_diff(&unified_diff),
             EventMsg::BackgroundEvent(BackgroundEventEvent { message }) => {
-                self.on_background_event(message)
+                self.on_background_event(&message)
             }
             EventMsg::StreamError(StreamErrorEvent { message }) => self.on_stream_error(message),
             EventMsg::UserMessage(ev) => {
                 if from_replay {
-                    self.on_user_message_event(ev);
+                    self.on_user_message_event(&ev);
                 }
             }
             EventMsg::ConversationPath(ev) => {
@@ -1220,16 +1219,19 @@ impl ChatWidget {
                     .send(crate::app_event::AppEvent::ConversationHistory(ev));
             }
             EventMsg::EnteredReviewMode(review_request) => {
-                self.on_entered_review_mode(review_request)
+                self.on_entered_review_mode(&review_request)
             }
             EventMsg::ExitedReviewMode(review) => self.on_exited_review_mode(review),
         }
     }
 
-    fn on_entered_review_mode(&mut self, review: ReviewRequest) {
+    fn on_entered_review_mode(&mut self, review: &ReviewRequest) {
         // Enter review mode and emit a concise banner
         self.is_review_mode = true;
-        let banner = format!(">> Code review started: {} <<", review.user_facing_hint);
+        let banner = format!(
+            ">> Code review started: {} <<",
+            review.user_facing_hint.as_str()
+        );
         self.add_to_history(history_cell::new_review_status_line(banner));
         self.request_redraw();
     }
@@ -1246,7 +1248,7 @@ impl ChatWidget {
                 if explanation.is_empty() {
                     tracing::error!("Reviewer failed to output a response.");
                     self.add_to_history(history_cell::new_error_event(
-                        "Reviewer failed to output a response.".to_owned(),
+                        "Reviewer failed to output a response.",
                     ));
                 } else {
                     // Show explanation when there are no structured findings.
@@ -1275,8 +1277,8 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_user_message_event(&mut self, event: UserMessageEvent) {
-        match event.kind {
+    fn on_user_message_event(&mut self, event: &UserMessageEvent) {
+        match event.kind.as_ref() {
             Some(InputMessageKind::EnvironmentContext)
             | Some(InputMessageKind::UserInstructions) => {
                 // Skip XML‑wrapped context blocks in the transcript.
@@ -1503,7 +1505,7 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    pub(crate) fn add_error_message(&mut self, message: String) {
+    pub(crate) fn add_error_message(&mut self, message: &str) {
         self.add_to_history(history_cell::new_error_event(message));
         self.request_redraw();
     }
@@ -1517,7 +1519,7 @@ impl ChatWidget {
     }
 
     /// Forward file-search results to the bottom pane.
-    pub(crate) fn apply_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
+    pub(crate) fn apply_file_search_result(&mut self, query: &str, matches: Vec<FileMatch>) {
         self.bottom_pane.on_file_search_result(query, matches);
     }
 
@@ -1552,7 +1554,7 @@ impl ChatWidget {
     }
 
     /// Replace the composer content with the provided text and reset cursor.
-    pub(crate) fn set_composer_text(&mut self, text: String) {
+    pub(crate) fn set_composer_text(&mut self, text: &str) {
         self.bottom_pane.set_composer_text(text);
     }
 
@@ -1572,8 +1574,8 @@ impl ChatWidget {
         }
     }
 
-    fn on_list_mcp_tools(&mut self, ev: McpListToolsResponseEvent) {
-        self.add_to_history(history_cell::new_mcp_tools_output(&self.config, ev.tools));
+    fn on_list_mcp_tools(&mut self, ev: &McpListToolsResponseEvent) {
+        self.add_to_history(history_cell::new_mcp_tools_output(&self.config, &ev.tools));
     }
 
     fn on_list_custom_prompts(&mut self, ev: ListCustomPromptsResponseEvent) {
@@ -1900,9 +1902,8 @@ fn extract_first_bold(s: &str) -> Option<String> {
                     let trimmed = inner.trim();
                     if !trimmed.is_empty() {
                         return Some(trimmed.to_string());
-                    } else {
-                        return None;
                     }
+                    return None;
                 }
                 j += 1;
             }

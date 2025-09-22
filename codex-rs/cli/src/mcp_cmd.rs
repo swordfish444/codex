@@ -99,10 +99,10 @@ impl McpCli {
                 codex_mcp_server::run_main(codex_linux_sandbox_exe, config_overrides).await?;
             }
             McpSubcommand::List(args) => {
-                run_list(&config_overrides, args)?;
+                run_list(&config_overrides, &args)?;
             }
             McpSubcommand::Get(args) => {
-                run_get(&config_overrides, args)?;
+                run_get(&config_overrides, &args)?;
             }
             McpSubcommand::Add(args) => {
                 run_add(&config_overrides, args)?;
@@ -188,7 +188,7 @@ fn run_remove(config_overrides: &CliConfigOverrides, remove_args: RemoveArgs) ->
     Ok(())
 }
 
-fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) -> Result<()> {
+fn run_list(config_overrides: &CliConfigOverrides, list_args: &ListArgs) -> Result<()> {
     let overrides = config_overrides.parse_overrides().map_err(|e| anyhow!(e))?;
     let config = Config::load_with_cli_overrides(overrides, ConfigOverrides::default())
         .context("failed to load configuration")?;
@@ -285,7 +285,7 @@ fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) -> Resul
     Ok(())
 }
 
-fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Result<()> {
+fn run_get(config_overrides: &CliConfigOverrides, get_args: &GetArgs) -> Result<()> {
     let overrides = config_overrides.parse_overrides().map_err(|e| anyhow!(e))?;
     let config = Config::load_with_cli_overrides(overrides, ConfigOverrides::default())
         .context("failed to load configuration")?;

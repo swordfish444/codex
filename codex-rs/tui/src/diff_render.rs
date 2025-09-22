@@ -16,6 +16,7 @@ use codex_core::protocol::FileChange;
 const SPACES_AFTER_LINE_NUMBER: usize = 6;
 
 // Internal representation for diff line rendering
+#[derive(Clone, Copy)]
 enum DiffLineType {
     Insert,
     Delete,
@@ -80,6 +81,7 @@ fn collect_rows(changes: &HashMap<PathBuf, FileChange>) -> Vec<Row> {
     rows
 }
 
+#[derive(Clone, Copy)]
 enum HeaderKind {
     ProposedChange,
     Edited,
@@ -283,7 +285,7 @@ fn calculate_add_remove_from_diff(diff: &str) -> (usize, usize) {
         patch
             .hunks()
             .iter()
-            .flat_map(|h| h.lines())
+            .flat_map(diffy::Hunk::lines)
             .fold((0, 0), |(a, d), l| match l {
                 diffy::Line::Insert(_) => (a + 1, d),
                 diffy::Line::Delete(_) => (a, d + 1),

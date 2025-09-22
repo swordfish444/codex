@@ -79,7 +79,7 @@ impl FileSearchManager {
     }
 
     /// Call whenever the user edits the `@` token.
-    pub fn on_user_query(&self, query: String) {
+    pub fn on_user_query(&self, query: &str) {
         {
             #[expect(clippy::unwrap_used)]
             let mut st = self.state.lock().unwrap();
@@ -90,7 +90,7 @@ impl FileSearchManager {
 
             // Update latest query.
             st.latest_query.clear();
-            st.latest_query.push_str(&query);
+            st.latest_query.push_str(query);
 
             // If there is an in-flight search that is definitely obsolete,
             // cancel it now.
@@ -170,7 +170,7 @@ impl FileSearchManager {
                 &search_dir,
                 Vec::new(),
                 NUM_FILE_SEARCH_THREADS,
-                cancellation_token.clone(),
+                &cancellation_token,
                 compute_indices,
             )
             .map(|res| res.matches)

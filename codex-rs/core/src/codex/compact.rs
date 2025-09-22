@@ -44,7 +44,7 @@ pub(super) async fn spawn_compact_task(
 ) {
     let task = AgentTask::compact(
         sess.clone(),
-        turn_context,
+        &turn_context,
         sub_id,
         input,
         SUMMARIZATION_PROMPT.to_string(),
@@ -159,16 +159,15 @@ async fn run_compact_task_inner(
                     .await;
                     tokio::time::sleep(delay).await;
                     continue;
-                } else {
-                    let event = Event {
-                        id: sub_id.clone(),
-                        msg: EventMsg::Error(ErrorEvent {
-                            message: e.to_string(),
-                        }),
-                    };
-                    sess.send_event(event).await;
-                    return;
                 }
+                let event = Event {
+                    id: sub_id.clone(),
+                    msg: EventMsg::Error(ErrorEvent {
+                        message: e.to_string(),
+                    }),
+                };
+                sess.send_event(event).await;
+                return;
             }
         }
     }

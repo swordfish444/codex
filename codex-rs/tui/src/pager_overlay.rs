@@ -35,7 +35,7 @@ impl Overlay {
         Self::Static(StaticOverlay::with_title(lines, title))
     }
 
-    pub(crate) fn handle_event(&mut self, tui: &mut tui::Tui, event: TuiEvent) -> Result<()> {
+    pub(crate) fn handle_event(&mut self, tui: &mut tui::Tui, event: &TuiEvent) -> Result<()> {
         match self {
             Overlay::Transcript(o) => o.handle_event(tui, event),
             Overlay::Static(o) => o.handle_event(tui, event),
@@ -382,7 +382,7 @@ impl TranscriptOverlay {
             let cell_lines = if Some(idx) == highlight_cell {
                 cell.transcript_lines()
                     .into_iter()
-                    .map(|l| l.reversed())
+                    .map(ratatui::prelude::Stylize::reversed)
                     .collect()
             } else {
                 cell.transcript_lines()
@@ -440,7 +440,7 @@ impl TranscriptOverlay {
 }
 
 impl TranscriptOverlay {
-    pub(crate) fn handle_event(&mut self, tui: &mut tui::Tui, event: TuiEvent) -> Result<()> {
+    pub(crate) fn handle_event(&mut self, tui: &mut tui::Tui, event: &TuiEvent) -> Result<()> {
         match event {
             TuiEvent::Key(key_event) => match key_event {
                 KeyEvent {
@@ -463,7 +463,7 @@ impl TranscriptOverlay {
                     self.is_done = true;
                     Ok(())
                 }
-                other => self.view.handle_key_event(tui, other),
+                other => self.view.handle_key_event(tui, *other),
             },
             TuiEvent::Draw => {
                 tui.draw(u16::MAX, |frame| {
@@ -510,7 +510,7 @@ impl StaticOverlay {
 }
 
 impl StaticOverlay {
-    pub(crate) fn handle_event(&mut self, tui: &mut tui::Tui, event: TuiEvent) -> Result<()> {
+    pub(crate) fn handle_event(&mut self, tui: &mut tui::Tui, event: &TuiEvent) -> Result<()> {
         match event {
             TuiEvent::Key(key_event) => match key_event {
                 KeyEvent {
@@ -527,7 +527,7 @@ impl StaticOverlay {
                     self.is_done = true;
                     Ok(())
                 }
-                other => self.view.handle_key_event(tui, other),
+                other => self.view.handle_key_event(tui, *other),
             },
             TuiEvent::Draw => {
                 tui.draw(u16::MAX, |frame| {

@@ -133,8 +133,9 @@ fn generate_index_ts(out_dir: &Path) -> Result<PathBuf> {
         entries.push(format!("export type {{ {name} }} from \"./{name}\";\n"));
     }
 
-    let mut content =
-        String::with_capacity(HEADER.len() + entries.iter().map(|s| s.len()).sum::<usize>());
+    let mut content = String::with_capacity(
+        HEADER.len() + entries.iter().map(std::string::String::len).sum::<usize>(),
+    );
     content.push_str(HEADER);
     for line in &entries {
         content.push_str(line);

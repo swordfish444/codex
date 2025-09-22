@@ -74,7 +74,7 @@ pub fn try_parse_word_only_commands_sequence(tree: &Tree, src: &str) -> Option<V
     }
 
     // Walk uses a stack (LIFO), so re-sort by position to restore source order.
-    command_nodes.sort_by_key(|node| node.start_byte());
+    command_nodes.sort_by_key(tree_sitter::Node::start_byte);
 
     let mut commands = Vec::new();
     for node in command_nodes {

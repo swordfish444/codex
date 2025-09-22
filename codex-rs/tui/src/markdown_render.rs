@@ -52,7 +52,7 @@ pub(crate) fn render_markdown_text_with_citations(
     let parser = Parser::new_ext(input, options);
     let mut w = Writer::new(
         parser,
-        scheme.map(|s| s.to_string()),
+        scheme.map(std::string::ToString::to_string),
         Some(cwd.to_path_buf()),
     );
     w.run();
@@ -108,7 +108,7 @@ where
         match event {
             Event::Start(tag) => self.start_tag(tag),
             Event::End(tag) => self.end_tag(tag),
-            Event::Text(text) => self.text(text),
+            Event::Text(text) => self.text(&text),
             Event::Code(code) => self.code(code),
             Event::SoftBreak => self.soft_break(),
             Event::HardBreak => self.hard_break(),
@@ -119,8 +119,8 @@ where
                 self.push_line(Line::from("———"));
                 self.needs_newline = true;
             }
-            Event::Html(html) => self.html(html, false),
-            Event::InlineHtml(html) => self.html(html, true),
+            Event::Html(html) => self.html(&html, false),
+            Event::InlineHtml(html) => self.html(&html, true),
             Event::FootnoteReference(_) => {}
             Event::TaskListMarker(_) => {}
         }
@@ -236,7 +236,7 @@ where
         self.needs_newline = true;
     }
 
-    fn text(&mut self, text: CowStr<'a>) {
+    fn text(&mut self, text: &CowStr<'a>) {
         if self.pending_marker_line {
             self.push_line(Line::default());
         }
@@ -287,7 +287,7 @@ where
         self.push_span(span);
     }
 
-    fn html(&mut self, html: CowStr<'a>, inline: bool) {
+    fn html(&mut self, html: &CowStr<'a>, inline: bool) {
         self.pending_marker_line = false;
         for (i, line) in html.lines().enumerate() {
             if self.needs_newline {
@@ -329,7 +329,7 @@ where
         let is_ordered = self
             .list_indices
             .last()
-            .map(|index| index.is_some())
+            .map(std::option::Option::is_some)
             .unwrap_or(false);
         let width = depth * 4 - 3;
         let marker = if let Some(last_index) = self.list_indices.last_mut() {

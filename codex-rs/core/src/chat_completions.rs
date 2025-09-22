@@ -462,7 +462,7 @@ async fn process_chat_sse<S>(
             if let Some(reasoning_val) = choice.get("delta").and_then(|d| d.get("reasoning")) {
                 let mut maybe_text = reasoning_val
                     .as_str()
-                    .map(|s| s.to_string())
+                    .map(std::string::ToString::to_string)
                     .filter(|s| !s.is_empty());
 
                 if maybe_text.is_none() && reasoning_val.is_object() {
@@ -706,9 +706,8 @@ where
                                     return Poll::Ready(Some(Ok(ResponseEvent::OutputItemDone(
                                         item,
                                     ))));
-                                } else {
-                                    continue;
                                 }
+                                continue;
                             }
                         }
                     }
@@ -792,9 +791,8 @@ where
                     if matches!(this.mode, AggregateMode::Streaming) {
                         // In streaming mode, also forward the delta immediately.
                         return Poll::Ready(Some(Ok(ResponseEvent::OutputTextDelta(delta))));
-                    } else {
-                        continue;
                     }
+                    continue;
                 }
                 Poll::Ready(Some(Ok(ResponseEvent::ReasoningContentDelta(delta)))) => {
                     // Always accumulate reasoning deltas so we can emit a final Reasoning item at Completed.
@@ -802,9 +800,8 @@ where
                     if matches!(this.mode, AggregateMode::Streaming) {
                         // In streaming mode, also forward the delta immediately.
                         return Poll::Ready(Some(Ok(ResponseEvent::ReasoningContentDelta(delta))));
-                    } else {
-                        continue;
                     }
+                    continue;
                 }
                 Poll::Ready(Some(Ok(ResponseEvent::ReasoningSummaryDelta(_)))) => {
                     continue;

@@ -108,7 +108,7 @@ fn ensure_absolute_path(path: &str, cwd: &Option<OsString>) -> Result<PathBuf> {
         file.absolutize()
     };
     result
-        .map(|path| path.into_owned())
+        .map(std::borrow::Cow::into_owned)
         .map_err(|error| CannotCanonicalizePath {
             file: path.to_string(),
             error: error.kind(),

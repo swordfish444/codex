@@ -22,7 +22,7 @@ use ratatui::text::Span;
 
 /// Insert `lines` above the viewport using the terminal's backend writer
 /// (avoids direct stdout references).
-pub(crate) fn insert_history_lines(terminal: &mut tui::Terminal, lines: Vec<Line>) {
+pub(crate) fn insert_history_lines(terminal: &mut tui::Terminal, lines: &[Line]) {
     let mut out = std::io::stdout();
     insert_history_lines_to_writer(terminal, &mut out, lines);
 }
@@ -32,7 +32,7 @@ pub(crate) fn insert_history_lines(terminal: &mut tui::Terminal, lines: Vec<Line
 pub fn insert_history_lines_to_writer<B, W>(
     terminal: &mut crate::custom_terminal::Terminal<B>,
     writer: &mut W,
-    lines: Vec<Line>,
+    lines: &[Line],
 ) where
     B: ratatui::backend::Backend,
     W: Write,
@@ -43,7 +43,7 @@ pub fn insert_history_lines_to_writer<B, W>(
 
     // Pre-wrap lines using word-aware wrapping so terminal scrollback sees the same
     // formatting as the TUI. This avoids character-level hard wrapping by the terminal.
-    let wrapped = word_wrap_lines_borrowed(&lines, area.width.max(1) as usize);
+    let wrapped = word_wrap_lines_borrowed(lines, area.width.max(1) as usize);
     let wrapped_lines = wrapped.len() as u16;
     let cursor_top = if area.bottom() < screen_size.height {
         // If the viewport is not at the bottom of the screen, scroll it down to make room.
@@ -322,7 +322,8 @@ mod tests {
         let mut line: Line<'static> = Line::from(vec!["> ".into(), "Hello world".into()]);
         line = line.style(Color::Green);
         let mut ansi: Vec<u8> = Vec::new();
-        insert_history_lines_to_writer(&mut term, &mut ansi, vec![line]);
+        let lines = vec![line];
+        insert_history_lines_to_writer(&mut term, &mut ansi, &lines);
 
         // Parse ANSI using vt100 and assert at least one non-default fg color appears
         let mut parser = Parser::new(height, width, 0);
@@ -365,7 +366,8 @@ mod tests {
         line = line.style(Color::Green);
 
         let mut ansi: Vec<u8> = Vec::new();
-        insert_history_lines_to_writer(&mut term, &mut ansi, vec![line]);
+        let lines = vec![line];
+        insert_history_lines_to_writer(&mut term, &mut ansi, &lines);
 
         // Parse and inspect the final screen buffer.
         let mut parser = Parser::new(height, width, 0);
@@ -430,7 +432,8 @@ mod tests {
         ]);
 
         let mut ansi: Vec<u8> = Vec::new();
-        insert_history_lines_to_writer(&mut term, &mut ansi, vec![line]);
+        let lines = vec![line];
+        insert_history_lines_to_writer(&mut term, &mut ansi, &lines);
 
         let mut parser = Parser::new(height, width, 0);
         parser.process(&ansi);
@@ -489,7 +492,7 @@ mod tests {
         term.set_viewport_area(viewport);
 
         let mut ansi: Vec<u8> = Vec::new();
-        insert_history_lines_to_writer(&mut term, &mut ansi, lines);
+        insert_history_lines_to_writer(&mut term, &mut ansi, &lines);
 
         let mut parser = Parser::new(height, width, 0);
         parser.process(&ansi);

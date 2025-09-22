@@ -66,7 +66,7 @@ pub(crate) struct CommandOutput {
     pub(crate) formatted_output: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum PatchEventType {
     ApprovalRequest,
     ApplyBegin { auto_approved: bool },
@@ -270,12 +270,7 @@ pub(crate) struct PatchHistoryCell {
 
 impl HistoryCell for PatchHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        create_diff_summary(
-            &self.changes,
-            self.event_type.clone(),
-            &self.cwd,
-            width as usize,
-        )
+        create_diff_summary(&self.changes, self.event_type, &self.cwd, width as usize)
     }
 }
 
@@ -390,23 +385,19 @@ impl ExecCell {
                 .iter()
                 .all(|c| matches!(c, ParsedCommand::Read { .. }))
             {
-                let names: Vec<String> = call
-                    .parsed
-                    .iter()
-                    .map(|c| match c {
-                        ParsedCommand::Read { name, .. } => name.clone(),
-                        _ => unreachable!(),
-                    })
-                    .unique()
-                    .collect();
-                vec![(
-                    "Read",
-                    itertools::Itertools::intersperse(
-                        names.into_iter().map(|n| n.into()),
-                        ", ".dim(),
-                    )
-                    .collect(),
-                )]
+                let spans = itertools::Itertools::intersperse(
+                    call.parsed
+                        .iter()
+                        .filter_map(|c| match c {
+                            ParsedCommand::Read { name, .. } => Some(name.clone()),
+                            _ => None,
+                        })
+                        .unique()
+                        .map(std::convert::Into::into),
+                    ", ".dim(),
+                )
+                .collect();
+                vec![("Read", spans)]
             } else {
                 let mut lines = Vec::new();
                 for p in call.parsed {
@@ -449,7 +440,13 @@ impl ExecCell {
                 push_owned_lines(&wrapped, &mut out_indented);
             }
         }
-        out.extend(prefix_lines(out_indented, "  └ ".dim(), "    ".into()));
+        let initial_prefix = "  └ ".dim();
+        let subsequent_prefix = "    ".into();
+        out.extend(prefix_lines(
+            out_indented,
+            &initial_prefix,
+            &subsequent_prefix,
+        ));
         out
     }
 
@@ -501,16 +498,12 @@ impl ExecCell {
         if let Some(output) = call.output.as_ref()
             && output.exit_code != 0
         {
-            let out = output_lines(
-                Some(output),
-                OutputLinesParams {
-                    only_err: false,
-                    include_angle_pipe: false,
-                    include_prefix: false,
-                },
-            )
-            .into_iter()
-            .join("\n");
+            let params = OutputLinesParams {
+                only_err: false,
+                include_angle_pipe: false,
+                include_prefix: false,
+            };
+            let out = output_lines(Some(output), &params).into_iter().join("\n");
             if !out.trim().is_empty() {
                 // Wrap the output.
                 for line in out.lines() {
@@ -519,7 +512,13 @@ impl ExecCell {
                 }
             }
         }
-        lines.extend(prefix_lines(body_lines, "  └ ".dim(), "    ".into()));
+        let initial_prefix = "  └ ".dim();
+        let subsequent_prefix = "    ".into();
+        lines.extend(prefix_lines(
+            body_lines,
+            &initial_prefix,
+            &subsequent_prefix,
+        ));
         lines
     }
 }
@@ -1114,7 +1113,7 @@ pub(crate) fn new_limits_unavailable() -> PlainHistoryCell {
 }
 
 #[allow(clippy::disallowed_methods)]
-pub(crate) fn new_warning_event(message: String) -> PlainHistoryCell {
+pub(crate) fn new_warning_event(message: &str) -> PlainHistoryCell {
     PlainHistoryCell {
         lines: vec![vec![format!("⚠ {message}").yellow()].into()],
     }
@@ -1309,7 +1308,7 @@ pub(crate) fn empty_mcp_output() -> PlainHistoryCell {
 /// Render MCP tools grouped by connection using the fully-qualified tool names.
 pub(crate) fn new_mcp_tools_output(
     config: &Config,
-    tools: std::collections::HashMap<String, mcp_types::Tool>,
+    tools: &std::collections::HashMap<String, mcp_types::Tool>,
 ) -> PlainHistoryCell {
     let mut lines: Vec<Line<'static>> = vec![
         "/mcp".magenta().into(),
@@ -1362,7 +1361,7 @@ pub(crate) fn new_info_event(message: String, hint: Option<String>) -> PlainHist
     PlainHistoryCell { lines }
 }
 
-pub(crate) fn new_error_event(message: String) -> PlainHistoryCell {
+pub(crate) fn new_error_event(message: &str) -> PlainHistoryCell {
     // Use a hair space (U+200A) to create a subtle, near-invisible separation
     // before the text. VS16 is intentionally omitted to keep spacing tighter
     // in terminals like Ghostty.
@@ -1412,7 +1411,9 @@ impl HistoryCell for PlanUpdateCell {
                 .into_iter()
                 .map(|s| s.to_string().set_style(step_style).into())
                 .collect();
-            prefix_lines(step_text, box_str.into(), "  ".into())
+            let box_span: Span<'static> = box_str.into();
+            let indent_span: Span<'static> = "  ".into();
+            prefix_lines(step_text, &box_span, &indent_span)
         };
 
         let mut lines: Vec<Line<'static>> = vec![];
@@ -1435,7 +1436,13 @@ impl HistoryCell for PlanUpdateCell {
                 indented_lines.extend(render_step(status, step));
             }
         }
-        lines.extend(prefix_lines(indented_lines, "  └ ".into(), "    ".into()));
+        let initial_prefix: Span<'static> = "  └ ".into();
+        let subsequent_prefix: Span<'static> = "    ".into();
+        lines.extend(prefix_lines(
+            indented_lines,
+            &initial_prefix,
+            &subsequent_prefix,
+        ));
 
         lines
     }
@@ -1463,6 +1470,11 @@ pub(crate) fn new_patch_apply_failure(stderr: String) -> PlainHistoryCell {
     lines.push(Line::from("✘ Failed to apply patch".magenta().bold()));
 
     if !stderr.trim().is_empty() {
+        let params = OutputLinesParams {
+            only_err: true,
+            include_angle_pipe: true,
+            include_prefix: true,
+        };
         lines.extend(output_lines(
             Some(&CommandOutput {
                 exit_code: 1,
@@ -1470,11 +1482,7 @@ pub(crate) fn new_patch_apply_failure(stderr: String) -> PlainHistoryCell {
                 stderr,
                 formatted_output: String::new(),
             }),
-            OutputLinesParams {
-                only_err: true,
-                include_angle_pipe: true,
-                include_prefix: true,
-            },
+            &params,
         ));
     }
 
@@ -1495,25 +1503,25 @@ pub(crate) fn new_proposed_command(command: &[String]) -> PlainHistoryCell {
     let subsequent_prefix: Span<'static> = "    ".into();
     lines.extend(prefix_lines(
         highlighted_lines,
-        initial_prefix,
-        subsequent_prefix,
+        &initial_prefix,
+        &subsequent_prefix,
     ));
 
     PlainHistoryCell { lines }
 }
 
 pub(crate) fn new_reasoning_block(
-    full_reasoning_buffer: String,
+    full_reasoning_buffer: &str,
     config: &Config,
 ) -> TranscriptOnlyHistoryCell {
     let mut lines: Vec<Line<'static>> = Vec::new();
     lines.push(Line::from("thinking".magenta().italic()));
-    append_markdown(&full_reasoning_buffer, &mut lines, config);
+    append_markdown(full_reasoning_buffer, &mut lines, config);
     TranscriptOnlyHistoryCell { lines }
 }
 
 pub(crate) fn new_reasoning_summary_block(
-    full_reasoning_buffer: String,
+    full_reasoning_buffer: &str,
     config: &Config,
 ) -> Box<dyn HistoryCell> {
     if config.model_family.reasoning_summary_format == ReasoningSummaryFormat::Experimental {
@@ -1523,19 +1531,19 @@ pub(crate) fn new_reasoning_summary_block(
         // reasoning summary
         //
         // So we need to strip header from reasoning summary
-        let full_reasoning_buffer = full_reasoning_buffer.trim();
-        if let Some(open) = full_reasoning_buffer.find("**") {
-            let after_open = &full_reasoning_buffer[(open + 2)..];
+        let trimmed = full_reasoning_buffer.trim();
+        if let Some(open) = trimmed.find("**") {
+            let after_open = &trimmed[(open + 2)..];
             if let Some(close) = after_open.find("**") {
                 let after_close_idx = open + 2 + close + 2;
                 // if we don't have anything beyond `after_close_idx`
                 // then we don't have a summary to inject into history
-                if after_close_idx < full_reasoning_buffer.len() {
-                    let header_buffer = full_reasoning_buffer[..after_close_idx].to_string();
+                if after_close_idx < trimmed.len() {
+                    let header_buffer = trimmed[..after_close_idx].to_string();
                     let mut header_lines = Vec::new();
                     append_markdown(&header_buffer, &mut header_lines, config);
 
-                    let summary_buffer = full_reasoning_buffer[after_close_idx..].to_string();
+                    let summary_buffer = trimmed[after_close_idx..].to_string();
                     let mut summary_lines = Vec::new();
                     append_markdown(&summary_buffer, &mut summary_lines, config);
 
@@ -1553,12 +1561,12 @@ struct OutputLinesParams {
     include_prefix: bool,
 }
 
-fn output_lines(output: Option<&CommandOutput>, params: OutputLinesParams) -> Vec<Line<'static>> {
+fn output_lines(output: Option<&CommandOutput>, params: &OutputLinesParams) -> Vec<Line<'static>> {
     let OutputLinesParams {
         only_err,
         include_angle_pipe,
         include_prefix,
-    } = params;
+    } = *params;
     let CommandOutput {
         exit_code,
         stdout,
@@ -2173,7 +2181,7 @@ mod tests {
         config.model_family.reasoning_summary_format = ReasoningSummaryFormat::Experimental;
 
         let cell = new_reasoning_summary_block(
-            "**High level reasoning**\n\nDetailed reasoning goes here.".to_string(),
+            "**High level reasoning**\n\nDetailed reasoning goes here.",
             &config,
         );
 
@@ -2192,8 +2200,7 @@ mod tests {
         let mut config = test_config();
         config.model_family.reasoning_summary_format = ReasoningSummaryFormat::Experimental;
 
-        let cell =
-            new_reasoning_summary_block("Detailed reasoning goes here.".to_string(), &config);
+        let cell = new_reasoning_summary_block("Detailed reasoning goes here.", &config);
 
         let rendered = render_transcript(cell.as_ref());
         assert_eq!(rendered, vec!["thinking", "Detailed reasoning goes here."]);
@@ -2204,10 +2211,7 @@ mod tests {
         let mut config = test_config();
         config.model_family.reasoning_summary_format = ReasoningSummaryFormat::Experimental;
 
-        let cell = new_reasoning_summary_block(
-            "**High level reasoning without closing".to_string(),
-            &config,
-        );
+        let cell = new_reasoning_summary_block("**High level reasoning without closing", &config);
 
         let rendered = render_transcript(cell.as_ref());
         assert_eq!(
@@ -2221,10 +2225,7 @@ mod tests {
         let mut config = test_config();
         config.model_family.reasoning_summary_format = ReasoningSummaryFormat::Experimental;
 
-        let cell = new_reasoning_summary_block(
-            "**High level reasoning without closing**".to_string(),
-            &config,
-        );
+        let cell = new_reasoning_summary_block("**High level reasoning without closing**", &config);
 
         let rendered = render_transcript(cell.as_ref());
         assert_eq!(
@@ -2232,10 +2233,8 @@ mod tests {
             vec!["thinking", "High level reasoning without closing"]
         );
 
-        let cell = new_reasoning_summary_block(
-            "**High level reasoning without closing**\n\n  ".to_string(),
-            &config,
-        );
+        let cell =
+            new_reasoning_summary_block("**High level reasoning without closing**\n\n  ", &config);
 
         let rendered = render_transcript(cell.as_ref());
         assert_eq!(
@@ -2250,7 +2249,7 @@ mod tests {
         config.model_family.reasoning_summary_format = ReasoningSummaryFormat::Experimental;
 
         let cell = new_reasoning_summary_block(
-            "**High level plan**\n\nWe should fix the bug next.".to_string(),
+            "**High level plan**\n\nWe should fix the bug next.",
             &config,
         );
 

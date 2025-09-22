@@ -219,10 +219,10 @@ impl UserApprovalWidget {
     }
 
     fn send_decision(&mut self, decision: ReviewDecision) {
-        self.send_decision_with_feedback(decision, String::new())
+        self.send_decision_with_feedback(decision, "")
     }
 
-    fn send_decision_with_feedback(&mut self, decision: ReviewDecision, feedback: String) {
+    fn send_decision_with_feedback(&mut self, decision: ReviewDecision, feedback: &str) {
         match &self.approval_request {
             ApprovalRequest::Exec { command, .. } => {
                 let full_cmd = strip_bash_lc_and_escape(command);

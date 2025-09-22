@@ -45,7 +45,7 @@ impl App {
                     kind: KeyEventKind::Press | KeyEventKind::Repeat,
                     ..
                 }) => {
-                    self.overlay_step_backtrack(tui, event)?;
+                    self.overlay_step_backtrack(tui, &event)?;
                     Ok(true)
                 }
                 TuiEvent::Key(KeyEvent {
@@ -58,7 +58,7 @@ impl App {
                 }
                 // Catchall: forward any other events to the overlay widget.
                 _ => {
-                    self.overlay_forward_event(tui, event)?;
+                    self.overlay_forward_event(tui, &event)?;
                     Ok(true)
                 }
             }
@@ -73,7 +73,7 @@ impl App {
             Ok(true)
         } else {
             // Not in backtrack mode: forward events to the overlay widget.
-            self.overlay_forward_event(tui, event)?;
+            self.overlay_forward_event(tui, &event)?;
             Ok(true)
         }
     }
@@ -202,7 +202,7 @@ impl App {
     }
 
     /// Forward any event to the overlay and close it if done.
-    fn overlay_forward_event(&mut self, tui: &mut tui::Tui, event: TuiEvent) -> Result<()> {
+    fn overlay_forward_event(&mut self, tui: &mut tui::Tui, event: &TuiEvent) -> Result<()> {
         if let Some(overlay) = &mut self.overlay {
             overlay.handle_event(tui, event)?;
             if overlay.is_done() {
@@ -233,7 +233,7 @@ impl App {
     }
 
     /// Handle Esc in overlay backtrack preview: step selection if armed, else forward.
-    fn overlay_step_backtrack(&mut self, tui: &mut tui::Tui, event: TuiEvent) -> Result<()> {
+    fn overlay_step_backtrack(&mut self, tui: &mut tui::Tui, event: &TuiEvent) -> Result<()> {
         if self.backtrack.base_id.is_some() {
             self.step_backtrack_and_highlight(tui);
         } else {
@@ -344,7 +344,7 @@ impl App {
         self.trim_transcript_for_backtrack(nth_user_message);
         self.render_transcript_once(tui);
         if !prefill.is_empty() {
-            self.chat_widget.set_composer_text(prefill.to_string());
+            self.chat_widget.set_composer_text(prefill);
         }
         tui.frame_requester().schedule_frame();
     }

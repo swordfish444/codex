@@ -41,7 +41,7 @@ impl TestScenario {
         }
     }
 
-    fn run_insert(&mut self, lines: Vec<Line<'static>>) -> Vec<u8> {
+    fn run_insert(&mut self, lines: &[Line<'static>]) -> Vec<u8> {
         let mut buf: Vec<u8> = Vec::new();
         codex_tui::insert_history::insert_history_lines_to_writer(&mut self.term, &mut buf, lines);
         buf
@@ -79,7 +79,7 @@ fn basic_insertion_no_wrap() {
     let mut scenario = TestScenario::new(20, 6, area);
 
     let lines = vec!["first".into(), "second".into()];
-    let buf = scenario.run_insert(lines);
+    let buf = scenario.run_insert(&lines);
     let rows = scenario.screen_rows_from_bytes(&buf);
     assert_contains!(rows, String::from("first"));
     assert_contains!(rows, String::from("second"));
@@ -101,7 +101,7 @@ fn long_token_wraps() {
 
     let long = "A".repeat(45); // > 2 lines at width 20
     let lines = vec![long.clone().into()];
-    let buf = scenario.run_insert(lines);
+    let buf = scenario.run_insert(&lines);
     let mut parser = vt100::Parser::new(6, 20, 0);
     parser.process(&buf);
     let screen = parser.screen();
@@ -133,7 +133,7 @@ fn emoji_and_cjk() {
 
     let text = String::from("😀😀😀😀😀 你好世界");
     let lines = vec![text.clone().into()];
-    let buf = scenario.run_insert(lines);
+    let buf = scenario.run_insert(&lines);
     let rows = scenario.screen_rows_from_bytes(&buf);
     let reconstructed: String = rows.join("").chars().filter(|c| *c != ' ').collect();
     for ch in text.chars().filter(|c| !c.is_whitespace()) {
@@ -150,7 +150,8 @@ fn mixed_ansi_spans() {
     let mut scenario = TestScenario::new(20, 6, area);
 
     let line = vec!["red".red(), "+plain".into()].into();
-    let buf = scenario.run_insert(vec![line]);
+    let lines = vec![line];
+    let buf = scenario.run_insert(&lines);
     let rows = scenario.screen_rows_from_bytes(&buf);
     assert_contains!(rows, String::from("red+plain"));
 }
@@ -161,7 +162,7 @@ fn cursor_restoration() {
     let mut scenario = TestScenario::new(20, 6, area);
 
     let lines = vec!["x".into()];
-    let buf = scenario.run_insert(lines);
+    let buf = scenario.run_insert(&lines);
     let s = String::from_utf8_lossy(&buf);
     // CUP to 1;1 (ANSI: ESC[1;1H)
     assert!(
@@ -182,7 +183,8 @@ fn word_wrap_no_mid_word_split() {
     let mut scenario = TestScenario::new(40, 10, area);
 
     let sample = "Years passed, and Willowmere thrived in peace and friendship. Mira’s herb garden flourished with both ordinary and enchanted plants, and travelers spoke of the kindness of the woman who tended them.";
-    let buf = scenario.run_insert(vec![sample.into()]);
+    let lines = vec![sample.into()];
+    let buf = scenario.run_insert(&lines);
     let rows = scenario.screen_rows_from_bytes(&buf);
     let joined = rows.join("\n");
     assert!(
@@ -198,7 +200,8 @@ fn em_dash_and_space_word_wrap() {
     let mut scenario = TestScenario::new(40, 10, area);
 
     let sample = "Mara found an old key on the shore. Curious, she opened a tarnished box half-buried in sand—and inside lay a single, glowing seed.";
-    let buf = scenario.run_insert(vec![sample.into()]);
+    let lines = vec![sample.into()];
+    let buf = scenario.run_insert(&lines);
     let rows = scenario.screen_rows_from_bytes(&buf);
     let joined = rows.join("\n");
     assert!(
@@ -214,7 +217,7 @@ fn pre_scroll_region_down() {
     let mut scenario = TestScenario::new(20, 6, area);
 
     let lines = vec!["first".into(), "second".into()];
-    let buf = scenario.run_insert(lines);
+    let buf = scenario.run_insert(&lines);
     let s = String::from_utf8_lossy(&buf);
     // Expect we limited scroll region to [top+1 .. screen_height] => [4 .. 6] (1-based)
     assert!(

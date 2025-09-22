@@ -24,7 +24,7 @@ use wiremock::ResponseTemplate;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
 
-fn text_user_input(text: String) -> serde_json::Value {
+fn text_user_input(text: &str) -> serde_json::Value {
     serde_json::json!({
         "type": "message",
         "role": "user",
@@ -685,13 +685,13 @@ async fn send_user_turn_with_no_changes_does_not_send_environment_context() {
     let shell = default_user_shell().await;
     let expected_ui_text =
         "<user_instructions>\n\nbe consistent and helpful\n\n</user_instructions>";
-    let expected_ui_msg = text_user_input(expected_ui_text.to_string());
+    let expected_ui_msg = text_user_input(expected_ui_text);
 
-    let expected_env_msg_1 = text_user_input(default_env_context_str(
+    let expected_env_msg_1 = text_user_input(&default_env_context_str(
         &cwd.path().to_string_lossy(),
         &shell,
     ));
-    let expected_user_message_1 = text_user_input("hello 1".to_string());
+    let expected_user_message_1 = text_user_input("hello 1");
 
     let expected_input_1 = serde_json::Value::Array(vec![
         expected_ui_msg.clone(),
@@ -700,7 +700,7 @@ async fn send_user_turn_with_no_changes_does_not_send_environment_context() {
     ]);
     assert_eq!(body1["input"], expected_input_1);
 
-    let expected_user_message_2 = text_user_input("hello 2".to_string());
+    let expected_user_message_2 = text_user_input("hello 2");
     let expected_input_2 = serde_json::Value::Array(vec![
         expected_ui_msg,
         expected_env_msg_1,
@@ -802,8 +802,8 @@ async fn send_user_turn_with_changes_sends_environment_context() {
         "content": [ { "type": "input_text", "text": expected_ui_text } ]
     });
     let expected_env_text_1 = default_env_context_str(&default_cwd.to_string_lossy(), &shell);
-    let expected_env_msg_1 = text_user_input(expected_env_text_1);
-    let expected_user_message_1 = text_user_input("hello 1".to_string());
+    let expected_env_msg_1 = text_user_input(&expected_env_text_1);
+    let expected_user_message_1 = text_user_input("hello 1");
     let expected_input_1 = serde_json::Value::Array(vec![
         expected_ui_msg.clone(),
         expected_env_msg_1.clone(),
@@ -811,7 +811,7 @@ async fn send_user_turn_with_changes_sends_environment_context() {
     ]);
     assert_eq!(body1["input"], expected_input_1);
 
-    let expected_env_msg_2 = text_user_input(format!(
+    let expected_env_msg_2 = text_user_input(&format!(
         r#"<environment_context>
   <cwd>{}</cwd>
   <approval_policy>never</approval_policy>
@@ -820,7 +820,7 @@ async fn send_user_turn_with_changes_sends_environment_context() {
 </environment_context>"#,
         default_cwd.to_string_lossy()
     ));
-    let expected_user_message_2 = text_user_input("hello 2".to_string());
+    let expected_user_message_2 = text_user_input("hello 2");
     let expected_input_2 = serde_json::Value::Array(vec![
         expected_ui_msg,
         expected_env_msg_1,

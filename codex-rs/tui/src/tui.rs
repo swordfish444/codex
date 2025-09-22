@@ -416,10 +416,10 @@ impl Tui {
     }
 
     #[cfg(unix)]
-    fn apply_prepared_resume_action(&mut self, prepared: PreparedResumeAction) -> Result<()> {
+    fn apply_prepared_resume_action(&mut self, prepared: &PreparedResumeAction) -> Result<()> {
         match prepared {
             PreparedResumeAction::RealignViewport(area) => {
-                self.terminal.set_viewport_area(area);
+                self.terminal.set_viewport_area(*area);
             }
             PreparedResumeAction::RestoreAltScreen => {
                 execute!(self.terminal.backend_mut(), EnterAlternateScreen)?;
@@ -511,7 +511,7 @@ impl Tui {
             #[cfg(unix)]
             {
                 if let Some(prepared) = prepared_resume.take() {
-                    self.apply_prepared_resume_action(prepared)?;
+                    self.apply_prepared_resume_action(&prepared)?;
                 }
             }
             let terminal = &mut self.terminal;
@@ -536,10 +536,7 @@ impl Tui {
                 terminal.set_viewport_area(area);
             }
             if !self.pending_history_lines.is_empty() {
-                crate::insert_history::insert_history_lines(
-                    terminal,
-                    self.pending_history_lines.clone(),
-                );
+                crate::insert_history::insert_history_lines(terminal, &self.pending_history_lines);
                 self.pending_history_lines.clear();
             }
             // Update the y position for suspending so Ctrl-Z can place the cursor correctly.

@@ -22,7 +22,7 @@ impl Policy {
     pub fn new(
         programs: MultiMap<String, ProgramSpec>,
         forbidden_program_regexes: Vec<ForbiddenProgramRegex>,
-        forbidden_substrings: Vec<String>,
+        forbidden_substrings: &[String],
     ) -> std::result::Result<Self, RegexError> {
         let forbidden_substrings_pattern = if forbidden_substrings.is_empty() {
             None

@@ -111,7 +111,7 @@ pub async fn run_main(
                     JSONRPCMessage::Request(r) => processor.process_request(r).await,
                     JSONRPCMessage::Response(r) => processor.process_response(r).await,
                     JSONRPCMessage::Notification(n) => processor.process_notification(n).await,
-                    JSONRPCMessage::Error(e) => processor.process_error(e),
+                    JSONRPCMessage::Error(e) => processor.process_error(&e),
                 }
             }
 

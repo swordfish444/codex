@@ -451,9 +451,9 @@ fn sample_rate_limit_snapshot(
     }
 }
 
-fn capture_limits_snapshot(snapshot: Option<RateLimitSnapshotEvent>) -> String {
+fn capture_limits_snapshot(snapshot: Option<&RateLimitSnapshotEvent>) -> String {
     let lines = match snapshot {
-        Some(ref snapshot) => history_cell::new_limits_output(snapshot).display_lines(80),
+        Some(snapshot) => history_cell::new_limits_output(snapshot).display_lines(80),
         None => history_cell::new_limits_unavailable().display_lines(80),
     };
     styled_lines_to_string(&lines)
@@ -467,25 +467,25 @@ fn limits_placeholder() {
 
 #[test]
 fn limits_snapshot_basic() {
-    let visual = capture_limits_snapshot(Some(sample_rate_limit_snapshot(30.0, 60.0, 40.0)));
+    let visual = capture_limits_snapshot(Some(&sample_rate_limit_snapshot(30.0, 60.0, 40.0)));
     assert_snapshot!(visual);
 }
 
 #[test]
 fn limits_snapshot_hourly_remaining() {
-    let visual = capture_limits_snapshot(Some(sample_rate_limit_snapshot(0.0, 20.0, 10.0)));
+    let visual = capture_limits_snapshot(Some(&sample_rate_limit_snapshot(0.0, 20.0, 10.0)));
     assert_snapshot!(visual);
 }
 
 #[test]
 fn limits_snapshot_mixed_usage() {
-    let visual = capture_limits_snapshot(Some(sample_rate_limit_snapshot(20.0, 20.0, 10.0)));
+    let visual = capture_limits_snapshot(Some(&sample_rate_limit_snapshot(20.0, 20.0, 10.0)));
     assert_snapshot!(visual);
 }
 
 #[test]
 fn limits_snapshot_weekly_heavy() {
-    let visual = capture_limits_snapshot(Some(sample_rate_limit_snapshot(98.0, 0.0, 10.0)));
+    let visual = capture_limits_snapshot(Some(&sample_rate_limit_snapshot(98.0, 0.0, 10.0)));
     assert_snapshot!(visual);
 }
 
@@ -1170,7 +1170,10 @@ async fn binary_size_transcript_snapshot() {
                                     call_id: e.call_id.clone(),
                                     command: e.command,
                                     cwd: e.cwd,
-                                    parsed_cmd: parsed_cmd.into_iter().map(|c| c.into()).collect(),
+                                    parsed_cmd: parsed_cmd
+                                        .into_iter()
+                                        .map(std::convert::Into::into)
+                                        .collect(),
                                 }),
                             }
                         }
@@ -1191,7 +1194,7 @@ async fn binary_size_transcript_snapshot() {
                             crate::insert_history::insert_history_lines_to_writer(
                                 &mut terminal,
                                 &mut ansi,
-                                lines,
+                                &lines,
                             );
                         }
                     }
@@ -1216,7 +1219,7 @@ async fn binary_size_transcript_snapshot() {
                             crate::insert_history::insert_history_lines_to_writer(
                                 &mut terminal,
                                 &mut ansi,
-                                lines,
+                                &lines,
                             );
                         }
                     }
@@ -1247,7 +1250,7 @@ async fn binary_size_transcript_snapshot() {
         // Trim trailing spaces to match plain text fixture
         lines.push(s.trim_end().to_string());
     }
-    while lines.last().is_some_and(|l| l.is_empty()) {
+    while lines.last().is_some_and(std::string::String::is_empty) {
         lines.pop();
     }
     // Consider content only after the last session banner marker. Skip the transient
@@ -2181,7 +2184,7 @@ fn chatwidget_exec_and_status_layout_vt100_snapshot() {
         }),
     });
     chat.bottom_pane
-        .set_composer_text("Summarize recent commits".to_string());
+        .set_composer_text("Summarize recent commits");
     chat.handle_codex_event(Event {
         id: "t1".into(),
         msg: EventMsg::AgentMessage(AgentMessageEvent { message: "I’m going to search the repo for where “Change Approved” is rendered to update that view.".into() }),
@@ -2202,7 +2205,7 @@ fn chatwidget_exec_and_status_layout_vt100_snapshot() {
     // 1) Apply any pending history insertions by emitting ANSI to a buffer via insert_history_lines_to_writer
     let mut ansi: Vec<u8> = Vec::new();
     for lines in drain_insert_history(&mut rx) {
-        crate::insert_history::insert_history_lines_to_writer(&mut term, &mut ansi, lines);
+        crate::insert_history::insert_history_lines_to_writer(&mut term, &mut ansi, &lines);
     }
 
     // 2) Render the ChatWidget UI into an off-screen buffer using WidgetRef directly
@@ -2318,7 +2321,7 @@ printf 'fenced within fenced\n'
                 if let AppEvent::InsertHistoryCell(cell) = app_ev {
                     let lines = cell.display_lines(width);
                     crate::insert_history::insert_history_lines_to_writer(
-                        &mut term, &mut ansi, lines,
+                        &mut term, &mut ansi, &lines,
                     );
                     inserted_any = true;
                 }
@@ -2337,7 +2340,7 @@ printf 'fenced within fenced\n'
         }),
     });
     for lines in drain_insert_history(&mut rx) {
-        crate::insert_history::insert_history_lines_to_writer(&mut term, &mut ansi, lines);
+        crate::insert_history::insert_history_lines_to_writer(&mut term, &mut ansi, &lines);
     }
 
     let mut parser = vt100::Parser::new(height, width, 0);

@@ -243,7 +243,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
             proto::run_main(proto_cli).await?;
         }
         Some(Subcommand::Completion(completion_cli)) => {
-            print_completion(completion_cli);
+            print_completion(&completion_cli);
         }
         Some(Subcommand::Debug(debug_args)) => match debug_args.cmd {
             DebugCommand::Seatbelt(mut seatbelt_cli) => {
@@ -363,7 +363,7 @@ fn merge_resume_cli_flags(interactive: &mut TuiCli, resume_cli: TuiCli) {
         .extend(resume_cli.config_overrides.raw_overrides);
 }
 
-fn print_completion(cmd: CompletionCommand) {
+fn print_completion(cmd: &CompletionCommand) {
     let mut app = MultitoolCli::command();
     let name = "codex";
     generate(cmd.shell, &mut app, name, &mut std::io::stdout());

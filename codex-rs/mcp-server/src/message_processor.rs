@@ -106,25 +106,25 @@ impl MessageProcessor {
                 self.handle_ping(request_id, params).await;
             }
             McpClientRequest::ListResourcesRequest(params) => {
-                self.handle_list_resources(params);
+                self.handle_list_resources(&params);
             }
             McpClientRequest::ListResourceTemplatesRequest(params) => {
-                self.handle_list_resource_templates(params);
+                self.handle_list_resource_templates(&params);
             }
             McpClientRequest::ReadResourceRequest(params) => {
-                self.handle_read_resource(params);
+                self.handle_read_resource(&params);
             }
             McpClientRequest::SubscribeRequest(params) => {
-                self.handle_subscribe(params);
+                self.handle_subscribe(&params);
             }
             McpClientRequest::UnsubscribeRequest(params) => {
-                self.handle_unsubscribe(params);
+                self.handle_unsubscribe(&params);
             }
             McpClientRequest::ListPromptsRequest(params) => {
-                self.handle_list_prompts(params);
+                self.handle_list_prompts(&params);
             }
             McpClientRequest::GetPromptRequest(params) => {
-                self.handle_get_prompt(params);
+                self.handle_get_prompt(&params);
             }
             McpClientRequest::ListToolsRequest(params) => {
                 self.handle_list_tools(request_id, params).await;
@@ -133,10 +133,10 @@ impl MessageProcessor {
                 self.handle_call_tool(request_id, params).await;
             }
             McpClientRequest::SetLevelRequest(params) => {
-                self.handle_set_level(params);
+                self.handle_set_level(&params);
             }
             McpClientRequest::CompleteRequest(params) => {
-                self.handle_complete(params);
+                self.handle_complete(&params);
             }
         }
     }
@@ -165,28 +165,28 @@ impl MessageProcessor {
                 self.handle_cancelled_notification(params).await;
             }
             ServerNotification::ProgressNotification(params) => {
-                self.handle_progress_notification(params);
+                self.handle_progress_notification(&params);
             }
             ServerNotification::ResourceListChangedNotification(params) => {
-                self.handle_resource_list_changed(params);
+                self.handle_resource_list_changed(&params);
             }
             ServerNotification::ResourceUpdatedNotification(params) => {
-                self.handle_resource_updated(params);
+                self.handle_resource_updated(&params);
             }
             ServerNotification::PromptListChangedNotification(params) => {
-                self.handle_prompt_list_changed(params);
+                self.handle_prompt_list_changed(&params);
             }
             ServerNotification::ToolListChangedNotification(params) => {
-                self.handle_tool_list_changed(params);
+                self.handle_tool_list_changed(&params);
             }
             ServerNotification::LoggingMessageNotification(params) => {
-                self.handle_logging_message(params);
+                self.handle_logging_message(&params);
             }
         }
     }
 
     /// Handle an error object received from the peer.
-    pub(crate) fn process_error(&mut self, err: JSONRPCError) {
+    pub(crate) fn process_error(&mut self, err: &JSONRPCError) {
         tracing::error!("<- error: {:?}", err);
     }
 
@@ -264,50 +264,49 @@ impl MessageProcessor {
 
     fn handle_list_resources(
         &self,
-        params: <mcp_types::ListResourcesRequest as mcp_types::ModelContextProtocolRequest>::Params,
+        params: &<mcp_types::ListResourcesRequest as mcp_types::ModelContextProtocolRequest>::Params,
     ) {
         tracing::info!("resources/list -> params: {:?}", params);
     }
 
     fn handle_list_resource_templates(
         &self,
-        params:
-            <mcp_types::ListResourceTemplatesRequest as mcp_types::ModelContextProtocolRequest>::Params,
+        params: &<mcp_types::ListResourceTemplatesRequest as mcp_types::ModelContextProtocolRequest>::Params,
     ) {
         tracing::info!("resources/templates/list -> params: {:?}", params);
     }
 
     fn handle_read_resource(
         &self,
-        params: <mcp_types::ReadResourceRequest as mcp_types::ModelContextProtocolRequest>::Params,
+        params: &<mcp_types::ReadResourceRequest as mcp_types::ModelContextProtocolRequest>::Params,
     ) {
         tracing::info!("resources/read -> params: {:?}", params);
     }
 
     fn handle_subscribe(
         &self,
-        params: <mcp_types::SubscribeRequest as mcp_types::ModelContextProtocolRequest>::Params,
+        params: &<mcp_types::SubscribeRequest as mcp_types::ModelContextProtocolRequest>::Params,
     ) {
         tracing::info!("resources/subscribe -> params: {:?}", params);
     }
 
     fn handle_unsubscribe(
         &self,
-        params: <mcp_types::UnsubscribeRequest as mcp_types::ModelContextProtocolRequest>::Params,
+        params: &<mcp_types::UnsubscribeRequest as mcp_types::ModelContextProtocolRequest>::Params,
     ) {
         tracing::info!("resources/unsubscribe -> params: {:?}", params);
     }
 
     fn handle_list_prompts(
         &self,
-        params: <mcp_types::ListPromptsRequest as mcp_types::ModelContextProtocolRequest>::Params,
+        params: &<mcp_types::ListPromptsRequest as mcp_types::ModelContextProtocolRequest>::Params,
     ) {
         tracing::info!("prompts/list -> params: {:?}", params);
     }
 
     fn handle_get_prompt(
         &self,
-        params: <mcp_types::GetPromptRequest as mcp_types::ModelContextProtocolRequest>::Params,
+        params: &<mcp_types::GetPromptRequest as mcp_types::ModelContextProtocolRequest>::Params,
     ) {
         tracing::info!("prompts/get -> params: {:?}", params);
     }
@@ -550,14 +549,14 @@ impl MessageProcessor {
 
     fn handle_set_level(
         &self,
-        params: <mcp_types::SetLevelRequest as mcp_types::ModelContextProtocolRequest>::Params,
+        params: &<mcp_types::SetLevelRequest as mcp_types::ModelContextProtocolRequest>::Params,
     ) {
         tracing::info!("logging/setLevel -> params: {:?}", params);
     }
 
     fn handle_complete(
         &self,
-        params: <mcp_types::CompleteRequest as mcp_types::ModelContextProtocolRequest>::Params,
+        params: &<mcp_types::CompleteRequest as mcp_types::ModelContextProtocolRequest>::Params,
     ) {
         tracing::info!("completion/complete -> params: {:?}", params);
     }
@@ -623,14 +622,14 @@ impl MessageProcessor {
 
     fn handle_progress_notification(
         &self,
-        params: <mcp_types::ProgressNotification as mcp_types::ModelContextProtocolNotification>::Params,
+        params: &<mcp_types::ProgressNotification as mcp_types::ModelContextProtocolNotification>::Params,
     ) {
         tracing::info!("notifications/progress -> params: {:?}", params);
     }
 
     fn handle_resource_list_changed(
         &self,
-        params: <mcp_types::ResourceListChangedNotification as mcp_types::ModelContextProtocolNotification>::Params,
+        params: &<mcp_types::ResourceListChangedNotification as mcp_types::ModelContextProtocolNotification>::Params,
     ) {
         tracing::info!(
             "notifications/resources/list_changed -> params: {:?}",
@@ -640,28 +639,28 @@ impl MessageProcessor {
 
     fn handle_resource_updated(
         &self,
-        params: <mcp_types::ResourceUpdatedNotification as mcp_types::ModelContextProtocolNotification>::Params,
+        params: &<mcp_types::ResourceUpdatedNotification as mcp_types::ModelContextProtocolNotification>::Params,
     ) {
         tracing::info!("notifications/resources/updated -> params: {:?}", params);
     }
 
     fn handle_prompt_list_changed(
         &self,
-        params: <mcp_types::PromptListChangedNotification as mcp_types::ModelContextProtocolNotification>::Params,
+        params: &<mcp_types::PromptListChangedNotification as mcp_types::ModelContextProtocolNotification>::Params,
     ) {
         tracing::info!("notifications/prompts/list_changed -> params: {:?}", params);
     }
 
     fn handle_tool_list_changed(
         &self,
-        params: <mcp_types::ToolListChangedNotification as mcp_types::ModelContextProtocolNotification>::Params,
+        params: &<mcp_types::ToolListChangedNotification as mcp_types::ModelContextProtocolNotification>::Params,
     ) {
         tracing::info!("notifications/tools/list_changed -> params: {:?}", params);
     }
 
     fn handle_logging_message(
         &self,
-        params: <mcp_types::LoggingMessageNotification as mcp_types::ModelContextProtocolNotification>::Params,
+        params: &<mcp_types::LoggingMessageNotification as mcp_types::ModelContextProtocolNotification>::Params,
     ) {
         tracing::info!("notifications/message -> params: {:?}", params);
     }

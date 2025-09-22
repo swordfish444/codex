@@ -68,7 +68,7 @@ async fn shell_command_interruption() -> anyhow::Result<()> {
         "call_sleep",
     )?])
     .await;
-    create_config_toml(&codex_home, server.uri())?;
+    create_config_toml(&codex_home, &server.uri())?;
 
     // Start MCP server and initialize.
     let mut mcp = McpProcess::new(&codex_home).await?;
@@ -140,7 +140,7 @@ async fn shell_command_interruption() -> anyhow::Result<()> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn create_config_toml(codex_home: &Path, server_uri: String) -> std::io::Result<()> {
+fn create_config_toml(codex_home: &Path, server_uri: &str) -> std::io::Result<()> {
     let config_toml = codex_home.join("config.toml");
     std::fs::write(
         config_toml,

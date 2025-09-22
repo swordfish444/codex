@@ -97,7 +97,7 @@ impl PolicyBuilder {
         let programs = self.programs.into_inner();
         let forbidden_program_regexes = self.forbidden_program_regexes.into_inner();
         let forbidden_substrings = self.forbidden_substrings.into_inner();
-        Policy::new(programs, forbidden_program_regexes, forbidden_substrings)
+        Policy::new(programs, forbidden_program_regexes, &forbidden_substrings)
     }
 
     fn add_program_spec(&self, program_spec: ProgramSpec) {

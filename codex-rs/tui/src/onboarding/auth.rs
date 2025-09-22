@@ -118,7 +118,7 @@ impl KeyboardHandler for AuthModeWidget {
     }
 
     fn handle_paste(&mut self, pasted: String) {
-        let _ = self.handle_api_key_entry_paste(pasted);
+        let _ = self.handle_api_key_entry_paste(&pasted);
     }
 }
 
@@ -403,7 +403,7 @@ impl AuthModeWidget {
         true
     }
 
-    fn handle_api_key_entry_paste(&mut self, pasted: String) -> bool {
+    fn handle_api_key_entry_paste(&mut self, pasted: &str) -> bool {
         let trimmed = pasted.trim();
         if trimmed.is_empty() {
             return false;

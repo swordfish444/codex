@@ -39,8 +39,8 @@ pub fn is_blank_line_spaces_only(line: &Line<'_>) -> bool {
 /// `subsequent_prefix` for following lines. Returns a new Vec of owned lines.
 pub fn prefix_lines(
     lines: Vec<Line<'static>>,
-    initial_prefix: Span<'static>,
-    subsequent_prefix: Span<'static>,
+    initial_prefix: &Span<'static>,
+    subsequent_prefix: &Span<'static>,
 ) -> Vec<Line<'static>> {
     lines
         .into_iter()
