@@ -36,12 +36,12 @@ pub(crate) fn apply_sandbox_policy_to_current_thread(
     }
 
     if !sandbox_policy.has_full_disk_write_access() {
-        let writable_roots = sandbox_policy
+        let writable_roots: Vec<PathBuf> = sandbox_policy
             .get_writable_roots_with_cwd(cwd)
             .into_iter()
             .map(|writable_root| writable_root.root)
             .collect();
-        install_filesystem_landlock_rules_on_current_thread(writable_roots)?;
+        install_filesystem_landlock_rules_on_current_thread(&writable_roots)?;
     }
 
     // TODO(ragona): Add appropriate restrictions if
@@ -70,7 +70,7 @@ fn install_filesystem_landlock_rules_on_current_thread(writable_roots: &[PathBuf
         .set_no_new_privs(true);
 
     if !writable_roots.is_empty() {
-        ruleset = ruleset.add_rules(landlock::path_beneath_rules(&writable_roots, access_rw))?;
+        ruleset = ruleset.add_rules(landlock::path_beneath_rules(writable_roots, access_rw))?;
     }
 
     let status = ruleset.restrict_self()?;

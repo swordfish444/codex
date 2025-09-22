@@ -561,11 +561,17 @@ mod tests_windows {
         ];
 
         for (shell, input, expected_cmd) in cases {
-            let actual_cmd = shell
-                .format_default_shell_invocation(input.iter().map(std::string::ToString::to_string).collect());
+            let actual_cmd = shell.format_default_shell_invocation(
+                input.iter().map(std::string::ToString::to_string).collect(),
+            );
             assert_eq!(
                 actual_cmd,
-                Some(expected_cmd.iter().map(std::string::ToString::to_string).collect())
+                Some(
+                    expected_cmd
+                        .iter()
+                        .map(std::string::ToString::to_string)
+                        .collect()
+                )
             );
         }
     }
