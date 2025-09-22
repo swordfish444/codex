@@ -20,7 +20,7 @@ use super::textarea::TextArea;
 use super::textarea::TextAreaState;
 
 /// Callback invoked when the user submits a custom prompt.
-pub(crate) type PromptSubmitted = Box<dyn Fn(String) + Send + Sync>;
+pub(crate) type PromptSubmitted = Box<dyn Fn(String) -> bool + Send + Sync>;
 
 /// Minimal multi-line text input view to collect custom review instructions.
 pub(crate) struct CustomPromptView {
@@ -68,8 +68,7 @@ impl BottomPaneView for CustomPromptView {
                 ..
             } => {
                 let text = self.textarea.text().trim().to_string();
-                if !text.is_empty() {
-                    (self.on_submit)(text);
+                if !text.is_empty() && (self.on_submit)(text) {
                     self.complete = true;
                 }
             }

@@ -54,6 +54,7 @@ use ratatui::layout::Layout;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
+use std::fs;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
 
@@ -313,6 +314,57 @@ impl ChatWidget {
         self.reasoning_buffer.clear();
         self.full_reasoning_buffer.clear();
         self.request_redraw();
+    }
+
+    fn open_save_prompt_popup(&mut self) {
+        let tx = self.app_event_tx.clone();
+        let get_content = self.bottom_pane.composer_text_now();
+        let prompts_dir = self.config.codex_home.join("prompts");
+        let view = CustomPromptView::new(
+            "Save prompt".to_string(),
+            "Set custom prompt name".to_string(),
+            None,
+            Box::new(move |name: String| {
+                let content = get_content.clone();
+                let mut name_slug = slugify_prompt_name(&name);
+                if name_slug.is_empty() {
+                    name_slug = "prompt".to_string();
+                }
+                if let Err(e) = fs::create_dir_all(&prompts_dir) {
+                    tx.send(AppEvent::InsertHistoryCell(Box::new(
+                        crate::history_cell::new_error_event(format!(
+                            "Failed to create prompts dir: {e}"
+                        )),
+                    )));
+                    return false;
+                }
+                let path = prompts_dir.join(format!("{name_slug}.md"));
+                if path.exists() {
+                    tx.send(AppEvent::InsertHistoryCell(Box::new(
+                        crate::history_cell::new_error_event(format!(
+                            "Prompt \"{name}\" already exists; choose a different name."
+                        )),
+                    )));
+                    return false;
+                }
+                if let Err(e) = fs::write(&path, content) {
+                    tx.send(AppEvent::InsertHistoryCell(Box::new(
+                        crate::history_cell::new_error_event(format!("Failed to save prompt: {e}")),
+                    )));
+                    return false;
+                }
+                // Informational message and refresh custom prompts list.
+                tx.send(AppEvent::InsertHistoryCell(Box::new(
+                    crate::history_cell::new_info_event(
+                        format!("Saved prompt as {}", path.display()),
+                        None,
+                    ),
+                )));
+                tx.send(AppEvent::CodexOp(Op::ListCustomPrompts));
+                true
+            }),
+        );
+        self.bottom_pane.show_view(Box::new(view));
     }
 
     fn on_reasoning_section_break(&mut self) {
@@ -896,6 +948,17 @@ impl ChatWidget {
             } => {
                 if let Ok((path, info)) = paste_image_to_temp_png() {
                     self.attach_image(path, info.width, info.height, info.encoded_format.label());
+                }
+                return;
+            }
+            KeyEvent {
+                code: KeyCode::Char('s'),
+                modifiers: KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                ..
+            } => {
+                if !self.bottom_pane.composer_is_empty() {
+                    self.open_save_prompt_popup();
                 }
                 return;
             }
@@ -1818,7 +1881,7 @@ impl ChatWidget {
             Box::new(move |prompt: String| {
                 let trimmed = prompt.trim().to_string();
                 if trimmed.is_empty() {
-                    return;
+                    return false;
                 }
                 tx.send(AppEvent::CodexOp(Op::Review {
                     review_request: ReviewRequest {
@@ -1826,6 +1889,7 @@ impl ChatWidget {
                         user_facing_hint: trimmed,
                     },
                 }));
+                true
             }),
         );
         self.bottom_pane.show_view(Box::new(view));
@@ -1985,6 +2049,29 @@ fn extract_first_bold(s: &str) -> Option<String> {
         i += 1;
     }
     None
+}
+
+fn slugify_prompt_name(name: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in name.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_dash = false;
+        } else if ch == '-' || ch == '_' || ch.is_whitespace() {
+            if !last_dash {
+                out.push('-');
+                last_dash = true;
+            }
+        } else {
+            // skip other characters
+            if !last_dash {
+                out.push('-');
+                last_dash = true;
+            }
+        }
+    }
+    out.trim_matches('-').to_string()
 }
 
 #[cfg(test)]

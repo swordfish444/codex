@@ -360,6 +360,11 @@ impl BottomPane {
         self.composer.is_empty()
     }
 
+    /// Get the current composer text (without mutating state).
+    pub(crate) fn composer_text_now(&self) -> String {
+        self.composer.text_content()
+    }
+
     pub(crate) fn is_task_running(&self) -> bool {
         self.is_task_running
     }

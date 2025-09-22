@@ -269,6 +269,11 @@ impl ChatComposer {
         self.textarea.text().to_string()
     }
 
+    /// Get the current composer text (for runtime use).
+    pub(crate) fn text_content(&self) -> String {
+        self.textarea.text().to_string()
+    }
+
     /// Attempt to start a burst by retro-capturing recent chars before the cursor.
     pub fn attach_image(&mut self, path: PathBuf, width: u32, height: u32, format_label: &str) {
         let placeholder = format!("[image {width}x{height} {format_label}]");
@@ -1282,7 +1287,7 @@ impl WidgetRef for ChatComposer {
                     } else {
                         key_hint::ctrl('J')
                     };
-                    vec![
+                    let mut base: Vec<Span<'static>> = vec![
                         key_hint::plain('⏎'),
                         " send   ".into(),
                         newline_hint_key,
@@ -1291,7 +1296,14 @@ impl WidgetRef for ChatComposer {
                         " transcript   ".into(),
                         key_hint::ctrl('C'),
                         " quit".into(),
-                    ]
+                    ];
+                    // When there is text in the composer, show Ctrl+S to save as a custom prompt.
+                    if !self.textarea.is_empty() {
+                        base.push("   ".into());
+                        base.push(key_hint::ctrl('S'));
+                        base.push(" save prompt".into());
+                    }
+                    base
                 };
 
                 if !self.ctrl_c_quit_hint && self.esc_backtrack_hint {
