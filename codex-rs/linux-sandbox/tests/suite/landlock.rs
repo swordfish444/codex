@@ -38,7 +38,7 @@ async fn run_cmd(cmd: &[&str], writable_roots: &[PathBuf], timeout_ms: u64) {
     let cwd = std::env::current_dir().expect("cwd should exist");
     let sandbox_cwd = cwd.clone();
     let params = ExecParams {
-        command: cmd.iter().map(|elm| elm.to_string()).collect(),
+        command: cmd.iter().map(std::string::ToString::to_string).collect(),
         cwd,
         timeout_ms: Some(timeout_ms),
         env: create_env_from_core_vars(),
