@@ -27,7 +27,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Run all tasks using workspace filters
+      # stage_npm_release.py requires DotSlash.
+      - uses: facebook/install-dotslash@v2
 
       - name: Ensure staging a release works.
         env:
