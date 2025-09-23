@@ -241,6 +241,11 @@
             margin-bottom: 6px;
         }
 
+        .line-comment-header-actions {
+            display: flex;
+            gap: 8px;
+        }
+
         .small-link {
             background: none;
             border: none;
@@ -254,6 +259,43 @@
             font-size: 13px;
             color: #e5e7eb;
             white-space: pre-wrap;
+        }
+
+        .context-placeholder {
+            margin: 10px 0;
+            padding: 8px 12px;
+            background: rgba(15, 23, 42, 0.78);
+            border: 1px dashed rgba(147, 197, 253, 0.35);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .context-placeholder-text {
+            font-size: 12px;
+            color: rgba(226, 232, 240, 0.85);
+        }
+
+        .context-placeholder-button {
+            padding: 4px 10px;
+            background: rgba(59, 130, 246, 0.25);
+            border: 1px solid rgba(59, 130, 246, 0.45);
+            border-radius: 6px;
+            color: #bfdbfe;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .context-placeholder-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .context-placeholder-button:hover:not(:disabled) {
+            background: rgba(59, 130, 246, 0.45);
+            border-color: rgba(59, 130, 246, 0.6);
         }
 
         .review-toolbar {
@@ -730,6 +772,124 @@
                 return 'L' + range.start + '-' + range.end;
             }
 
+            function buildHunkHeader(oldStart, oldLines, newStart, newLines) {
+                return '@@ -' + oldStart + ',' + oldLines + ' +' + newStart + ',' + newLines + ' @@';
+            }
+
+            function computeRangeEnd(start, lines) {
+                if (typeof start !== 'number') {
+                    return 0;
+                }
+                if (!lines || lines <= 0) {
+                    return start - 1;
+                }
+                return start + lines - 1;
+            }
+
+            function computeContextBlocks(file, postLines) {
+                if (!postLines || !Array.isArray(postLines) || !postLines.length) {
+                    return [];
+                }
+                const hunks = file.hunks || [];
+                if (!hunks.length) {
+                    return [];
+                }
+                const blocks = [];
+                const totalLines = postLines.length;
+                const pathKey = file.commentPath || file.displayPath || file.newPath || file.oldPath || 'file';
+
+                const first = hunks[0];
+                const leading = Math.max(0, first.newStart - 1);
+                if (leading > 0) {
+                    const count = Math.min(leading, totalLines);
+                    blocks.push({
+                        id: pathKey + ':context:leading',
+                        insertIndex: 0,
+                        startNew: 1,
+                        startOld: 1,
+                        count: count,
+                        position: 'leading',
+                    });
+                }
+
+                for (let idx = 0; idx < hunks.length - 1; idx += 1) {
+                    const current = hunks[idx];
+                    const next = hunks[idx + 1];
+                    const currentNewEnd = computeRangeEnd(current.newStart, current.newLines);
+                    const nextNewStart = next.newStart;
+                    const gapNew = Math.max(0, nextNewStart - currentNewEnd - 1);
+                    if (!gapNew) {
+                        continue;
+                    }
+                    const available = Math.min(gapNew, Math.max(0, totalLines - currentNewEnd - 1));
+                    if (!available) {
+                        continue;
+                    }
+                    const currentOldEnd = computeRangeEnd(current.oldStart, current.oldLines);
+                    blocks.push({
+                        id: pathKey + ':context:between:' + idx,
+                        insertIndex: idx + 1,
+                        startNew: currentNewEnd + 1,
+                        startOld: currentOldEnd + 1,
+                        count: available,
+                        position: 'between',
+                    });
+                }
+
+                const last = hunks[hunks.length - 1];
+                const lastNewEnd = computeRangeEnd(last.newStart, last.newLines);
+                const trailingAvailable = Math.max(0, totalLines - lastNewEnd);
+                if (trailingAvailable > 0) {
+                    const lastOldEnd = computeRangeEnd(last.oldStart, last.oldLines);
+                    blocks.push({
+                        id: pathKey + ':context:trailing',
+                        insertIndex: hunks.length,
+                        startNew: lastNewEnd + 1,
+                        startOld: lastOldEnd + 1,
+                        count: trailingAvailable,
+                        position: 'trailing',
+                    });
+                }
+
+                return blocks;
+            }
+
+            function createContextHunk(block, postLines) {
+                if (!postLines || !Array.isArray(postLines)) {
+                    return null;
+                }
+                const startIndex = block.startNew - 1;
+                if (startIndex < 0 || startIndex >= postLines.length) {
+                    return null;
+                }
+                const maxCount = Math.max(0, postLines.length - startIndex);
+                if (!maxCount) {
+                    return null;
+                }
+                const count = Math.min(block.count, maxCount);
+                const lines = postLines.slice(startIndex, startIndex + count);
+                const changes = lines.map(function (line, idx) {
+                    const oldLineNumber = block.startOld + idx;
+                    const newLineNumber = block.startNew + idx;
+                    return {
+                        type: 'normal',
+                        content: ' ' + line,
+                        isContext: true,
+                        oldLineNumber: oldLineNumber,
+                        newLineNumber: newLineNumber,
+                        lineNumber: newLineNumber,
+                    };
+                });
+                return {
+                    content: buildHunkHeader(block.startOld, count, block.startNew, count),
+                    oldStart: block.startOld,
+                    oldLines: count,
+                    newStart: block.startNew,
+                    newLines: count,
+                    changes: changes,
+                };
+            }
+
             function FileDiff(props) {
                 const {
                     file,
@@ -739,6 +899,8 @@
                     onCommentTextChange,
                     onCommentSideChange,
                     onSaveComment,
+                    onEditComment,
+                    onCancelEditComment,
                     disableInteractions,
                     comments,
                     activeChangeKey,
@@ -749,15 +911,80 @@
                     });
                 }, [comments, file.commentPath]);
 
+                const postLines = Array.isArray(file.postLines) ? file.postLines : null;
+
+                const [expandedContext, setExpandedContext] = useState({});
+
+                useEffect(
+                    function () {
+                        setExpandedContext({});
+                    },
+                    [file.commentPath, file.hunks, postLines ? postLines.length : 0]
+                );
+
+                const contextBlocks = useMemo(
+                    function () {
+                        return computeContextBlocks(file, postLines);
+                    },
+                    [file, postLines]
+                );
+
+                const derivedHunks = useMemo(
+                    function () {
+                        const blockMap = new Map();
+                        contextBlocks.forEach(function (block) {
+                            const list = blockMap.get(block.insertIndex);
+                            if (list) {
+                                list.push(block);
+                            } else {
+                                blockMap.set(block.insertIndex, [block]);
+                            }
+                        });
+
+                        const display = [];
+                        const segments = [];
+
+                        const applyBlock = function (block) {
+                            if (expandedContext[block.id]) {
+                                const hunk = createContextHunk(block, postLines);
+                                if (hunk) {
+                                    display.push(hunk);
+                                    segments.push({ kind: 'hunk', source: 'context', hunk: hunk, block: block });
+                                    return;
+                                }
+                            }
+                            segments.push({ kind: 'placeholder', block: block });
+                        };
+
+                        for (let index = 0; index <= file.hunks.length; index += 1) {
+                            const blocksAtIndex = blockMap.get(index);
+                            if (blocksAtIndex) {
+                                blocksAtIndex.forEach(applyBlock);
+                            }
+                            if (index < file.hunks.length) {
+                                const hunk = file.hunks[index];
+                                display.push(hunk);
+                                segments.push({ kind: 'hunk', source: 'diff', hunk: hunk, block: null });
+                            }
+                        }
+
+                        return { displayHunks: display, segments: segments };
+                    },
+                    [file.hunks, contextBlocks, expandedContext, postLines]
+                );
+
+                const displayHunks = derivedHunks.displayHunks;
+                const segments = derivedHunks.segments;
+
                 const changeEntries = useMemo(function () {
                     const entries = [];
-                    file.hunks.forEach(function (hunk) {
+                    displayHunks.forEach(function (hunk) {
                         hunk.changes.forEach(function (change) {
                             entries.push({ change: change, key: getChangeKey(change) });
                         });
                     });
                     return entries;
-                }, [file.hunks]);
+                }, [displayHunks]);
 
                 const changeOrderMap = useMemo(function () {
                     const map = new Map();
@@ -998,7 +1225,7 @@
                     return new Set(active.changeKeys);
                 }, [fileComments, activeChangeKey]);
 
-                const widgets = useMemo(
+                const commentWidgets = useMemo(
                     function () {
                         if (!fileComments.length) {
                             return undefined;
@@ -1011,7 +1238,9 @@
                             }
                             const elements = grouped[anchor];
                             const rangeLabel = formatRangeLabel({ start: comment.lineStart, end: comment.lineEnd });
-                            if (comment.status === 'draft') {
+                            const isDraft = comment.status === 'draft';
+                            const isEditing = comment.status === 'editing';
+                            if (isDraft || isEditing) {
                                 const baseRange = computeLineRangeForSegments(comment.segments, 'left');
                                 const newRange = computeLineRangeForSegments(comment.segments, 'right');
                                 elements.push(
@@ -1022,7 +1251,9 @@
                                             e(
                                                 'div',
                                                 { className: 'line-comment-header' },
-                                                'Draft comment – ' + rangeLabel + ' (' + comment.side + ')'
+                                                (isDraft ? 'Draft comment – ' : 'Editing comment – ') +
+                                                    rangeLabel +
+                                                    ' (' + comment.side + ')'
                                             ),
                                             baseRange && newRange
                                                 ? e(
@@ -1096,7 +1327,7 @@
                                                                 onSaveComment(comment.id);
                                                             },
                                                         },
-                                                        'Save comment'
+                                                        isDraft ? 'Save comment' : 'Save changes'
                                                     ),
                                                     e(
                                                         'button',
@@ -1104,10 +1335,14 @@
                                                             type: 'button',
                                                             disabled: disableInteractions,
                                                             onClick: function () {
-                                                                onRemoveComment(comment.id);
+                                                                if (isEditing) {
+                                                                    onCancelEditComment(comment.id);
+                                                                } else {
+                                                                    onRemoveComment(comment.id);
+                                                                }
                                                             },
                                                         },
-                                                        'Cancel'
+                                                        isEditing ? 'Discard changes' : 'Cancel'
                                                     ),
                                                 ]
                                             ),
@@ -1126,16 +1361,34 @@
                                                 [
                                                     rangeLabel + ' (' + comment.side + ')',
                                                     e(
-                                                        'button',
-                                                        {
-                                                            type: 'button',
-                                                            className: 'small-link',
-                                                            disabled: disableInteractions,
-                                                            onClick: function () {
-                                                                onRemoveComment(comment.id);
-                                                            },
-                                                        },
-                                                        'Remove'
+                                                        'div',
+                                                        { className: 'line-comment-header-actions' },
+                                                        [
+                                                            e(
+                                                                'button',
+                                                                {
+                                                                    type: 'button',
+                                                                    className: 'small-link',
+                                                                    disabled: disableInteractions,
+                                                                    onClick: function () {
+                                                                        onEditComment(comment);
+                                                                    },
+                                                                },
+                                                                'Edit'
+                                                            ),
+                                                            e(
+                                                                'button',
+                                                                {
+                                                                    type: 'button',
+                                                                    className: 'small-link',
+                                                                    disabled: disableInteractions,
+                                                                    onClick: function () {
+                                                                        onRemoveComment(comment.id);
+                                                                    },
+                                                                },
+                                                                'Remove'
+                                                            ),
+                                                        ]
                                                     ),
                                                 ]
                                             ),
@@ -1151,7 +1404,30 @@
                         });
                         return mapped;
                     },
-                    [fileComments, onCommentSideChange, onCommentTextChange, onSaveComment, onRemoveComment, disableInteractions]
+                    [
+                        fileComments,
+                        onCommentSideChange,
+                        onCommentTextChange,
+                        onSaveComment,
+                        onRemoveComment,
+                        onEditComment,
+                        onCancelEditComment,
+                        disableInteractions,
+                    ]
+                );
+
+                const handleExpandContext = useCallback(
+                    function (blockId) {
+                        setExpandedContext(function (prev) {
+                            if (prev[blockId]) {
+                                return prev;
+                            }
+                            const next = Object.assign({}, prev);
+                            next[blockId] = true;
+                            return next;
+                        });
+                    },
+                    []
                 );
 
                 const generateLineClassName = useCallback(
@@ -1192,6 +1468,124 @@
 
                 const effectiveDiffType = file.type === 'add' || file.type === 'delete' ? 'modify' : file.type;
 
+                const segmentElements = segments.map(function (segment, index) {
+                    if (segment.kind === 'placeholder') {
+                        const block = segment.block;
+                        const count = block.count;
+                        const rangeLabel = formatRangeLabel({
+                            start: block.startNew,
+                            end: block.startNew + count - 1,
+                        });
+                        let message;
+                        if (block.position === 'leading') {
+                            message = 'Show ' + count + ' lines before this change';
+                        } else if (block.position === 'trailing') {
+                            message = 'Show ' + count + ' lines after this change';
+                        } else {
+                            message = 'Show ' + count + ' lines of context';
+                        }
+                        return e(
+                            'div',
+                            { className: 'context-placeholder', key: 'placeholder-' + block.id },
+                            [
+                                e(
+                                    'span',
+                                    { className: 'context-placeholder-text' },
+                                    message + (rangeLabel ? ' (' + rangeLabel + ')' : '')
+                                ),
+                                e(
+                                    'button',
+                                    {
+                                        type: 'button',
+                                        className: 'context-placeholder-button',
+                                        disabled: disableInteractions,
+                                        onClick: function () {
+                                            handleExpandContext(block.id);
+                                        },
+                                    },
+                                    'Expand'
+                                ),
+                            ]
+                        );
+                    }
+
+                    const hunk = segment.hunk;
+                    const changeKeys = hunk.changes.map(function (change) {
+                        return getChangeKey(change);
+                    });
+                    const changeKeySet = new Set(changeKeys);
+                    const hunkSelected = selectedKeys.filter(function (key) {
+                        return changeKeySet.has(key);
+                    });
+                    let hunkWidgets;
+                    if (commentWidgets) {
+                        Object.keys(commentWidgets).forEach(function (key) {
+                            if (changeKeySet.has(key)) {
+                                if (!hunkWidgets) {
+                                    hunkWidgets = {};
+                                }
+                                hunkWidgets[key] = commentWidgets[key];
+                            }
+                        });
+                    }
+
+                    return e(
+                        Diff,
+                        {
+                            key: file.displayPath + '-segment-' + index,
+                            viewType: viewType,
+                            diffType: effectiveDiffType,
+                            hunks: [hunk],
+                            widgets: hunkWidgets,
+                            selectedChanges: hunkSelected,
+                            gutterType: 'default',
+                            generateLineClassName: generateLineClassName,
+                            renderGutter: function ({ change, side, renderDefault }) {
+                                const content = renderDefault ? renderDefault() : null;
+                                if (!change) {
+                                    return content;
+                                }
+                                return e(
+                                    'button',
+                                    {
+                                        type: 'button',
+                                        className: 'gutter-button',
+                                        disabled: disableInteractions,
+                                        onMouseDown: function (event) {
+                                            handleSelectionStart({ change: change, side: side, event: event });
+                                        },
+                                        onMouseEnter: function (event) {
+                                            handleSelectionExtend({ change: change, side: side, event: event });
+                                        },
+                                        onMouseUp: function (event) {
+                                            handleSelectionComplete(event);
+                                        },
+                                    },
+                                    content
+                                );
+                            },
+                        },
+                        function (hunksInner) {
+                            return hunksInner.map(function (inner) {
+                                return e(Hunk, {
+                                    key: inner.content,
+                                    hunk: inner,
+                                    gutterEvents: {
+                                        onMouseDown: handleSelectionStart,
+                                        onMouseEnter: handleSelectionExtend,
+                                        onMouseUp: handleSelectionComplete,
+                                    },
+                                    codeEvents: {
+                                        onMouseDown: handleSelectionStart,
+                                        onMouseEnter: handleSelectionExtend,
+                                        onMouseUp: handleSelectionComplete,
+                                    },
+                                });
+                            });
+                        }
+                    );
+                });
+
                 return e(
                     'section',
                     { className: 'file-diff', key: file.displayPath },
@@ -1204,65 +1598,24 @@
                             ]
                         ),
                         e(
-                            Diff,
-                            {
-                                viewType: viewType,
-                                diffType: effectiveDiffType,
-                                hunks: file.hunks,
-                                widgets: widgets,
-                                selectedChanges: selectedKeys,
-                                gutterType: 'default',
-                                generateLineClassName: generateLineClassName,
-                                renderGutter: function ({ change, side, renderDefault }) {
-                                    const content = renderDefault ? renderDefault() : null;
-                                    if (!change) {
-                                        return content;
-                                    }
-                                    return e(
-                                        'button',
-                                        {
-                                            type: 'button',
-                                            className: 'gutter-button',
-                                            disabled: disableInteractions,
-                                            onMouseDown: function (event) {
-                                                handleSelectionStart({ change: change, side: side, event: event });
-                                            },
-                                            onMouseEnter: function (event) {
-                                                handleSelectionExtend({ change: change, side: side, event: event });
-                                            },
-                                            onMouseUp: function (event) {
-                                                handleSelectionComplete(event);
-                                            },
-                                        },
-                                        content
-                                    );
-                                },
-                            },
-                            function (hunks) {
-                                return hunks.map(function (hunk) {
-                                    return e(Hunk, {
-                                        key: hunk.content,
-                                        hunk: hunk,
-                                        gutterEvents: {
-                                            onMouseDown: handleSelectionStart,
-                                            onMouseEnter: handleSelectionExtend,
-                                            onMouseUp: handleSelectionComplete,
-                                        },
-                                        codeEvents: {
-                                            onMouseDown: handleSelectionStart,
-                                            onMouseEnter: handleSelectionExtend,
-                                            onMouseUp: handleSelectionComplete,
-                                        },
-                                    });
-                                });
-                            }
+                            'div',
+                            { className: 'diff-scroll' },
+                            segmentElements.length
+                                ? segmentElements
+                                : [
+                                      e(
+                                          'div',
+                                          { className: 'empty-state', key: 'empty' },
+                                          'No diff content to display.'
+                                      ),
+                                  ]
                         ),
                     ]
                 );
             }
 
             function CommentList(props) {
-                const { comments, onRemoveComment, onFocusComment, activeChangeKey } = props;
+                const { comments, onRemoveComment, onFocusComment, onEditComment, activeChangeKey } = props;
                 const savedComments = comments.filter(function (comment) {
                     return comment.status === 'saved';
                 });
@@ -1329,6 +1682,17 @@
                                                         {
                                                             type: 'button',
                                                             onClick: function () {
+                                                                onFocusComment(comment);
+                                                                onEditComment(comment);
+                                                            },
+                                                        },
+                                                        'Edit'
+                                                    ),
+                                                    e(
+                                                        'button',
+                                                        {
+                                                            type: 'button',
+                                                            onClick: function () {
                                                                 onRemoveComment(comment.id);
                                                             },
                                                         },
@@ -1355,6 +1719,7 @@
                     comments,
                     onRemoveComment,
                     onFocusComment,
+                    onEditComment,
                     activeChangeKey,
                     status,
                     submitLabel,
@@ -1439,6 +1804,7 @@
                                                     comments: comments,
                                                     onRemoveComment: onRemoveComment,
                                                     onFocusComment: onFocusComment,
+                                                    onEditComment: onEditComment,
                                                     activeChangeKey: activeChangeKey,
                                                 })
                                             ),
@@ -1506,10 +1872,24 @@
                             })
                             .then(function (body) {
                                 const parsed = parseDiff(body.diff || '', { nearbySequences: 'zip' });
+                                const postFiles = body.post_files || {};
                                 const decorated = parsed.map(function (file) {
+                                    const commentPath = commentPathForFile(file);
+                                    const newPath = file.newPath && file.newPath !== '/dev/null' ? file.newPath : null;
+                                    const rawContent =
+                                        (newPath && Object.prototype.hasOwnProperty.call(postFiles, newPath)
+                                            ? postFiles[newPath]
+                                            : null) ||
+                                        (commentPath && Object.prototype.hasOwnProperty.call(postFiles, commentPath)
+                                            ? postFiles[commentPath]
+                                            : null);
+                                    const postLines = typeof rawContent === 'string'
+                                        ? rawContent.split(/\r?\n/)
+                                        : null;
                                     return Object.assign({}, file, {
                                         displayPath: formatFileLabel(file),
-                                        commentPath: commentPathForFile(file),
+                                        commentPath: commentPath,
+                                        postLines: postLines,
                                     });
                                 });
                                 setFiles(decorated);
@@ -1660,7 +2040,60 @@
                             if (!text) {
                                 return comment;
                             }
-                            return Object.assign({}, comment, { text: text, status: 'saved' });
+                            const next = Object.assign({}, comment, { text: text, status: 'saved' });
+                            if (Object.prototype.hasOwnProperty.call(next, 'originalText')) {
+                                delete next.originalText;
+                            }
+                            return next;
+                        });
+                    });
+                }, []);
+
+                const handleEditComment = useCallback(function (comment) {
+                    if (!comment) {
+                        return;
+                    }
+                    setComments(function (prev) {
+                        let anchorKey = null;
+                        const next = prev.map(function (item) {
+                            if (item.id !== comment.id) {
+                                return item;
+                            }
+                            anchorKey = item.anchorChangeKey;
+                            if (item.status !== 'saved') {
+                                return item;
+                            }
+                            return Object.assign({}, item, {
+                                status: 'editing',
+                                originalText: item.text,
+                            });
+                        });
+                        if (anchorKey) {
+                            setActiveChangeKey(anchorKey);
+                        }
+                        return next;
+                    });
+                }, []);
+
+                const handleCancelEditComment = useCallback(function (commentId) {
+                    setComments(function (prev) {
+                        return prev.map(function (comment) {
+                            if (comment.id !== commentId) {
+                                return comment;
+                            }
+                            if (comment.status !== 'editing') {
+                                return comment;
+                            }
+                            const originalText =
+                                comment.originalText != null ? comment.originalText : comment.text;
+                            const next = Object.assign({}, comment, {
+                                text: originalText,
+                                status: 'saved',
+                            });
+                            if (Object.prototype.hasOwnProperty.call(next, 'originalText')) {
+                                delete next.originalText;
+                            }
+                            return next;
                         });
                     });
                 }, []);
@@ -1699,8 +2132,15 @@
 
                 const handleSubmitReview = useCallback(
                     function () {
-                        if (comments.some(function (comment) { return comment.status === 'draft'; })) {
-                            setStatus({ state: 'error', message: 'Finish or cancel inline drafts before submitting your review.' });
+                        if (
+                            comments.some(function (comment) {
+                                return comment.status === 'draft' || comment.status === 'editing';
+                            })
+                        ) {
+                            setStatus({
+                                state: 'error',
+                                message: 'Finish or cancel inline drafts and edits before submitting your review.',
+                            });
                             return;
                         }
                         setStatus({ state: 'submitting', message: '' });
@@ -1905,6 +2345,8 @@
                                               onCommentTextChange: handleCommentTextChange,
                                               onCommentSideChange: handleCommentSideChange,
                                               onSaveComment: handleSaveComment,
+                                              onEditComment: handleEditComment,
+                                              onCancelEditComment: handleCancelEditComment,
                                               disableInteractions: disableInputs,
                                               comments: comments,
                                               activeChangeKey: activeChangeKey,
@@ -1928,6 +2370,7 @@
                                   comments: comments,
                                   onRemoveComment: handleRemoveComment,
                                   onFocusComment: handleFocusComment,
+                                  onEditComment: handleEditComment,
                                   activeChangeKey: activeChangeKey,
                                   status: status,
                                   submitLabel: submitButtonLabel,

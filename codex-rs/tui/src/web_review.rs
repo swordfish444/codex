@@ -19,6 +19,32 @@ use tiny_http::Response;
 use tiny_http::Server;
 use tokio::process::Command;
 
+fn collect_post_files(diff: &str) -> BTreeMap<String, String> {
+    let mut paths = BTreeMap::new();
+    for line in diff.lines() {
+        if let Some(rest) = line.strip_prefix("+++ ") {
+            if rest == "/dev/null" {
+                continue;
+            }
+            let trimmed = rest.strip_prefix("b/").unwrap_or(rest);
+            paths.entry(trimmed.to_string()).or_insert(());
+        }
+    }
+
+    let mut contents = BTreeMap::new();
+    for (path, ()) in paths {
+        match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                contents.insert(path, text);
+            }
+            Err(err) => {
+                tracing::debug!("failed to read file for review context {path:?}: {err}");
+            }
+        }
+    }
+    contents
+}
+
 pub(crate) struct ReviewServer {
     pub(crate) handle: ReviewServerHandle,
     pub(crate) url: String,
@@ -84,6 +110,7 @@ impl ReviewStartError {
 struct ReviewSharedState {
     diff: Arc<str>,
     repo_path: Option<String>,
+    post_files: Arc<BTreeMap<String, String>>, // map from path -> post-change contents
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -114,6 +141,7 @@ struct SubmitPayload {
 struct DiffResponse<'a> {
     repo_path: Option<&'a str>,
     diff: &'a str,
+    post_files: &'a BTreeMap<String, String>,
 }
 
 const REVIEW_APP_HTML: &str = include_str!("web_review.html");
@@ -147,9 +175,11 @@ pub(crate) async fn start_review_server(
     };
     let server = Arc::new(server);
     let shutdown = Arc::new(AtomicBool::new(false));
+    let post_files = collect_post_files(&diff);
     let shared = Arc::new(ReviewSharedState {
         diff: diff.into(),
         repo_path,
+        post_files: Arc::new(post_files),
     });
 
     let server_clone = server.clone();
@@ -212,6 +242,7 @@ fn handle_request(
             let payload = DiffResponse {
                 repo_path: data.repo_path.as_deref(),
                 diff: &data.diff,
+                post_files: &data.post_files,
             };
             if let Ok(body) = serde_json::to_string(&payload) {
                 respond_json(request, body);
