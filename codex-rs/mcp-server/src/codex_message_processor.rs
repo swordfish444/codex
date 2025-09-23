@@ -413,6 +413,7 @@ impl CodexMessageProcessor {
         request_id: RequestId,
         params: codex_protocol::mcp_protocol::GetAuthStatusParams,
     ) {
+        self.auth_manager.reload();
         let include_token = params.include_token.unwrap_or(false);
         let do_refresh = params.refresh_token.unwrap_or(false);
 
