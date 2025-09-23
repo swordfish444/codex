@@ -5,10 +5,8 @@ use shlex::Shlex;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-static PROMPT_ARG_REGEX: Lazy<Regex> = Lazy::new(|| {
-    // Regex is a hard-coded literal; abort if it ever fails to compile.
-    Regex::new(r"\$[A-Z][A-Z0-9_]*").unwrap_or_else(|_| std::process::abort())
-});
+static PROMPT_ARG_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\$[A-Z][A-Z0-9_]*").unwrap_or_else(|_| std::process::abort()));
 
 #[derive(Debug)]
 pub enum PromptArgsError {
@@ -55,6 +53,11 @@ impl PromptExpansionError {
     }
 }
 
+/// Extracts the unique placeholder variable names from a prompt template.
+///
+/// A placeholder is any token that matches the pattern `$[A-Z][A-Z0-9_]*`
+/// (for example `$USER`). The function returns the variable names without
+/// the leading `$`, de-duplicated and in the order of first appearance.
 pub fn prompt_argument_names(content: &str) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut names = Vec::new();
@@ -68,6 +71,11 @@ pub fn prompt_argument_names(content: &str) -> Vec<String> {
     names
 }
 
+/// Parses the `key=value` pairs that follow a custom prompt name.
+///
+/// The input is split using shlex rules, so quoted values are supported
+/// (for example `USER="Alice Smith"`). The function returns a map of parsed
+/// arguments, or an error if a token is missing `=` or if the key is empty.
 pub fn parse_prompt_inputs(rest: &str) -> Result<HashMap<String, String>, PromptArgsError> {
     let mut map = HashMap::new();
     if rest.trim().is_empty() {
@@ -86,6 +94,11 @@ pub fn parse_prompt_inputs(rest: &str) -> Result<HashMap<String, String>, Prompt
     Ok(map)
 }
 
+/// Expands a message of the form `/name key=value …` using a matching saved prompt.
+///
+/// If the text does not start with `/`, or if no prompt named `name` exists,
+/// the function returns `Ok(None)`. On success it returns
+/// `Ok(Some(expanded))`; otherwise it returns a descriptive error.
 pub fn expand_custom_prompt(
     text: &str,
     custom_prompts: &[CustomPrompt],
