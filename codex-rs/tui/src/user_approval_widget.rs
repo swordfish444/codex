@@ -44,12 +44,7 @@ pub(crate) enum ApprovalRequest {
         reason: Option<String>,
         grant_root: Option<PathBuf>,
     },
-    /// Ask the user to confirm running a compact operation to shrink the
-    /// conversation history when the model refuses input due to context limits.
     Compact {
-        /// The id of the server event requesting approval.
-        id: String,
-        /// A short human‑readable reason to display above the buttons.
         reason: String,
     },
 }
@@ -326,7 +321,7 @@ impl UserApprovalWidget {
                 // No history line for patch approval decisions.
             }
             ApprovalRequest::Compact { .. } => {
-                // No history line for patch approval decisions. That's handled by compact task itself.
+                // No history line for compact approval decisions. That's handled by compact task itself.
             }
         }
 
@@ -339,10 +334,7 @@ impl UserApprovalWidget {
                 id: id.clone(),
                 decision,
             },
-            ApprovalRequest::Compact { id, .. } => Op::CompactApproval {
-                id: id.clone(),
-                decision,
-            },
+            ApprovalRequest::Compact { .. } => Op::Compact,
         };
 
         self.app_event_tx.send(AppEvent::CodexOp(op));

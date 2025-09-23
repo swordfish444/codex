@@ -80,7 +80,6 @@ use crate::parse_command::parse_command;
 use crate::plan_tool::handle_update_plan;
 use crate::project_doc::get_user_instructions;
 use crate::protocol::AgentMessageDeltaEvent;
-use crate::protocol::AgentMessageEvent;
 use crate::protocol::AgentReasoningDeltaEvent;
 use crate::protocol::AgentReasoningRawContentDeltaEvent;
 use crate::protocol::AgentReasoningSectionBreakEvent;
@@ -1460,39 +1459,6 @@ async fn submission_loop(
                     }),
                 };
                 sess.send_event(event).await;
-            }
-            Op::CompactApproval { id: _, decision } => {
-                // If approved, reuse the same logic as Op::Compact: try to
-                // inject the compact trigger into the current task; if there is
-                // no running task, spawn a compact task.
-                if matches!(
-                    decision,
-                    ReviewDecision::Approved | ReviewDecision::ApprovedForSession
-                ) {
-                    // Visual indicator so the user sees compaction start.
-                    let start_msg = Event {
-                        id: sub.id.clone(),
-                        msg: EventMsg::AgentMessage(AgentMessageEvent {
-                            message: "Compacting conversation…".to_string(),
-                        }),
-                    };
-                    sess.send_event(start_msg).await;
-
-                    if let Err(items) = sess
-                        .inject_input(vec![InputItem::Text {
-                            text: compact::COMPACT_TRIGGER_TEXT.to_string(),
-                        }])
-                        .await
-                    {
-                        compact::spawn_compact_task(
-                            sess.clone(),
-                            Arc::clone(&turn_context),
-                            sub.id,
-                            items,
-                        )
-                        .await;
-                    }
-                }
             }
             Op::Compact => {
                 // Attempt to inject input into current task

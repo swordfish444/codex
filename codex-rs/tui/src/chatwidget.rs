@@ -428,11 +428,8 @@ impl ChatWidget {
         );
     }
 
-    fn on_compact_approval_request(&mut self, id: String, ev: CompactApprovalRequestEvent) {
-        let request = ApprovalRequest::Compact {
-            id,
-            reason: ev.reason,
-        };
+    fn on_compact_approval_request(&mut self, ev: CompactApprovalRequestEvent) {
+        let request = ApprovalRequest::Compact { reason: ev.reason };
         self.bottom_pane.push_approval_request(request);
         self.request_redraw();
     }
@@ -1212,9 +1209,7 @@ impl ChatWidget {
             EventMsg::ApplyPatchApprovalRequest(ev) => {
                 self.on_apply_patch_approval_request(id.unwrap_or_default(), ev)
             }
-            EventMsg::CompactApprovalRequest(ev) => {
-                self.on_compact_approval_request(id.unwrap_or_default(), ev)
-            }
+            EventMsg::CompactApprovalRequest(ev) => self.on_compact_approval_request(ev),
             EventMsg::ExecCommandBegin(ev) => self.on_exec_command_begin(ev),
             EventMsg::ExecCommandOutputDelta(delta) => self.on_exec_command_output_delta(delta),
             EventMsg::PatchApplyBegin(ev) => self.on_patch_apply_begin(ev),

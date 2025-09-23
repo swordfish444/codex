@@ -562,9 +562,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                     ts_println!(self, "task aborted: review ended");
                 }
             },
-            EventMsg::CompactApprovalRequest(_) => {
-                // No-op for exec human output; frontends handle approvals.
-            }
+            EventMsg::CompactApprovalRequest(_) => {}
             EventMsg::ShutdownComplete => return CodexStatus::Shutdown,
             EventMsg::ConversationPath(_) => {}
             EventMsg::UserMessage(_) => {}

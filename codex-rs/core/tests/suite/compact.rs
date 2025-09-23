@@ -920,8 +920,9 @@ async fn compact_trims_history_on_context_limit_error() {
         .as_array()
         .map(Vec::len)
         .unwrap_or(0);
-    assert!(
-        len2 + 1 == len1,
+    assert_eq!(
+        len1,
+        len2 + 1,
         "second compact attempt should trim exactly one item: {len1} -> {len2}"
     );
 }
