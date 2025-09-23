@@ -24,6 +24,7 @@ use codex_core::plan_tool::UpdatePlanArgs;
 use codex_core::project_doc::discover_project_doc_paths;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::McpInvocation;
+use codex_core::protocol::RateLimitSnapshotEvent;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::SessionConfiguredEvent;
 use codex_core::protocol::TokenUsage;
@@ -44,6 +45,7 @@ use ratatui::style::Stylize;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
+use std::any::Any;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::Path;
@@ -52,6 +54,10 @@ use std::time::Duration;
 use std::time::Instant;
 use tracing::error;
 use unicode_width::UnicodeWidthStr;
+
+const STATUS_LIMIT_BAR_SEGMENTS: usize = 20;
+const STATUS_LIMIT_BAR_FILLED: &str = "█";
+const STATUS_LIMIT_BAR_EMPTY: &str = " ";
 
 #[derive(Clone, Debug)]
 pub(crate) struct CommandOutput {
@@ -70,7 +76,7 @@ pub(crate) enum PatchEventType {
 /// Represents an event to display in the conversation history. Returns its
 /// `Vec<Line<'static>>` representation to make it easier to display in a
 /// scrollable list.
-pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync {
+pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>>;
 
     fn transcript_lines(&self) -> Vec<Line<'static>> {
@@ -90,9 +96,15 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync {
     }
 }
 
+impl dyn HistoryCell {
+    pub(crate) fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct UserHistoryCell {
-    message: String,
+    pub message: String,
 }
 
 impl HistoryCell for UserHistoryCell {
@@ -118,6 +130,45 @@ impl HistoryCell for UserHistoryCell {
         lines.push("user".cyan().bold().into());
         lines.extend(self.message.lines().map(|l| l.to_string().into()));
         lines
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ReasoningSummaryCell {
+    _header: Vec<Line<'static>>,
+    content: Vec<Line<'static>>,
+}
+
+impl ReasoningSummaryCell {
+    pub(crate) fn new(header: Vec<Line<'static>>, content: Vec<Line<'static>>) -> Self {
+        Self {
+            _header: header,
+            content,
+        }
+    }
+}
+
+impl HistoryCell for ReasoningSummaryCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let summary_lines = self
+            .content
+            .iter()
+            .map(|l| l.clone().dim().italic())
+            .collect::<Vec<_>>();
+
+        word_wrap_lines(
+            &summary_lines,
+            RtOptions::new(width as usize)
+                .initial_indent("• ".into())
+                .subsequent_indent("  ".into()),
+        )
+    }
+
+    fn transcript_lines(&self) -> Vec<Line<'static>> {
+        let mut out: Vec<Line<'static>> = Vec::new();
+        out.push("thinking".magenta().bold().into());
+        out.extend(self.content.clone());
+        out
     }
 }
 
@@ -187,6 +238,13 @@ impl HistoryCell for TranscriptOnlyHistoryCell {
 
     fn transcript_lines(&self) -> Vec<Line<'static>> {
         self.lines.clone()
+    }
+}
+
+/// Cyan history cell line showing the current review status.
+pub(crate) fn new_review_status_line(message: String) -> PlainHistoryCell {
+    PlainHistoryCell {
+        lines: vec![Line::from(message.cyan())],
     }
 }
 
@@ -319,19 +377,18 @@ impl ExecCell {
                 .iter()
                 .all(|c| matches!(c, ParsedCommand::Read { .. }))
             {
-                let names: Vec<String> = call
+                let names = call
                     .parsed
                     .iter()
                     .map(|c| match c {
                         ParsedCommand::Read { name, .. } => name.clone(),
                         _ => unreachable!(),
                     })
-                    .unique()
-                    .collect();
+                    .unique();
                 vec![(
                     "Read",
                     itertools::Itertools::intersperse(
-                        names.into_iter().map(|n| n.into()),
+                        names.into_iter().map(Into::into),
                         ", ".dim(),
                     )
                     .collect(),
@@ -1022,10 +1079,18 @@ pub(crate) fn new_completed_mcp_tool_call(
     Box::new(PlainHistoryCell { lines })
 }
 
+#[allow(clippy::disallowed_methods)]
+pub(crate) fn new_warning_event(message: String) -> PlainHistoryCell {
+    PlainHistoryCell {
+        lines: vec![vec![format!("⚠ {message}").yellow()].into()],
+    }
+}
+
 pub(crate) fn new_status_output(
     config: &Config,
     usage: &TokenUsage,
     session_id: &Option<ConversationId>,
+    rate_limits: Option<&RateLimitSnapshotEvent>,
 ) -> PlainHistoryCell {
     let mut lines: Vec<Line<'static>> = Vec::new();
     lines.push("/status".magenta().into());
@@ -1185,6 +1250,9 @@ pub(crate) fn new_status_output(
         "  • Total: ".into(),
         format_with_separators(usage.blended_total()).into(),
     ]));
+
+    lines.push("".into());
+    lines.extend(build_status_limit_lines(rate_limits));
 
     PlainHistoryCell { lines }
 }
@@ -1417,7 +1485,7 @@ pub(crate) fn new_reasoning_block(
 pub(crate) fn new_reasoning_summary_block(
     full_reasoning_buffer: String,
     config: &Config,
-) -> Vec<Box<dyn HistoryCell>> {
+) -> Box<dyn HistoryCell> {
     if config.model_family.reasoning_summary_format == ReasoningSummaryFormat::Experimental {
         // Experimental format is following:
         // ** header **
@@ -1434,27 +1502,19 @@ pub(crate) fn new_reasoning_summary_block(
                 // then we don't have a summary to inject into history
                 if after_close_idx < full_reasoning_buffer.len() {
                     let header_buffer = full_reasoning_buffer[..after_close_idx].to_string();
-                    let summary_buffer = full_reasoning_buffer[after_close_idx..].to_string();
-
-                    let mut header_lines: Vec<Line<'static>> = Vec::new();
-                    header_lines.push(Line::from("Thinking".magenta().italic()));
+                    let mut header_lines = Vec::new();
                     append_markdown(&header_buffer, &mut header_lines, config);
 
-                    let mut summary_lines: Vec<Line<'static>> = Vec::new();
-                    summary_lines.push(Line::from("Thinking".magenta().bold()));
+                    let summary_buffer = full_reasoning_buffer[after_close_idx..].to_string();
+                    let mut summary_lines = Vec::new();
                     append_markdown(&summary_buffer, &mut summary_lines, config);
 
-                    return vec![
-                        Box::new(TranscriptOnlyHistoryCell {
-                            lines: header_lines,
-                        }),
-                        Box::new(AgentMessageCell::new(summary_lines, true)),
-                    ];
+                    return Box::new(ReasoningSummaryCell::new(header_lines, summary_lines));
                 }
             }
         }
     }
-    vec![Box::new(new_reasoning_block(full_reasoning_buffer, config))]
+    Box::new(new_reasoning_block(full_reasoning_buffer, config))
 }
 
 struct OutputLinesParams {
@@ -1551,6 +1611,62 @@ fn format_mcp_invocation<'a>(invocation: McpInvocation) -> Line<'a> {
     invocation_spans.into()
 }
 
+fn build_status_limit_lines(snapshot: Option<&RateLimitSnapshotEvent>) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> =
+        vec![vec![padded_emoji("⏱️").into(), "Usage Limits".bold()].into()];
+
+    match snapshot {
+        Some(snapshot) => {
+            let rows = [
+                ("5h limit".to_string(), snapshot.primary_used_percent),
+                ("Weekly limit".to_string(), snapshot.secondary_used_percent),
+            ];
+            let label_width = rows
+                .iter()
+                .map(|(label, _)| UnicodeWidthStr::width(label.as_str()))
+                .max()
+                .unwrap_or(0);
+            for (label, percent) in rows {
+                lines.push(build_status_limit_line(&label, percent, label_width));
+            }
+        }
+        None => lines.push("  • Rate limit data not available yet.".dim().into()),
+    }
+
+    lines
+}
+
+fn build_status_limit_line(label: &str, percent_used: f64, label_width: usize) -> Line<'static> {
+    let clamped_percent = percent_used.clamp(0.0, 100.0);
+    let progress = render_status_limit_progress_bar(clamped_percent);
+    let summary = format_status_limit_summary(clamped_percent);
+
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(5);
+    let padded_label = format!("{label:<label_width$}");
+    spans.push(format!("  • {padded_label}: ").into());
+    spans.push(progress.into());
+    spans.push(" ".into());
+    spans.push(summary.into());
+
+    Line::from(spans)
+}
+
+fn render_status_limit_progress_bar(percent_used: f64) -> String {
+    let ratio = (percent_used / 100.0).clamp(0.0, 1.0);
+    let filled = (ratio * STATUS_LIMIT_BAR_SEGMENTS as f64).round() as usize;
+    let filled = filled.min(STATUS_LIMIT_BAR_SEGMENTS);
+    let empty = STATUS_LIMIT_BAR_SEGMENTS.saturating_sub(filled);
+    format!(
+        "[{}{}]",
+        STATUS_LIMIT_BAR_FILLED.repeat(filled),
+        STATUS_LIMIT_BAR_EMPTY.repeat(empty)
+    )
+}
+
+fn format_status_limit_summary(percent_used: f64) -> String {
+    format!("{percent_used:.0}% used")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1558,6 +1674,7 @@ mod tests {
     use codex_core::config::ConfigOverrides;
     use codex_core::config::ConfigToml;
     use dirs::home_dir;
+    use pretty_assertions::assert_eq;
 
     fn test_config() -> Config {
         Config::load_from_base_config_with_overrides(
@@ -2076,17 +2193,35 @@ mod tests {
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
+    #[test]
+    fn reasoning_summary_block() {
+        let mut config = test_config();
+        config.model_family.reasoning_summary_format = ReasoningSummaryFormat::Experimental;
+
+        let cell = new_reasoning_summary_block(
+            "**High level reasoning**\n\nDetailed reasoning goes here.".to_string(),
+            &config,
+        );
+
+        let rendered_display = render_lines(&cell.display_lines(80));
+        assert_eq!(rendered_display, vec!["• Detailed reasoning goes here."]);
+
+        let rendered_transcript = render_transcript(cell.as_ref());
+        assert_eq!(
+            rendered_transcript,
+            vec!["thinking", "Detailed reasoning goes here."]
+        );
+    }
 
     #[test]
     fn reasoning_summary_block_returns_reasoning_cell_when_feature_disabled() {
         let mut config = test_config();
         config.model_family.reasoning_summary_format = ReasoningSummaryFormat::Experimental;
 
-        let cells =
+        let cell =
             new_reasoning_summary_block("Detailed reasoning goes here.".to_string(), &config);
 
-        assert_eq!(cells.len(), 1);
-        let rendered = render_transcript(cells[0].as_ref());
+        let rendered = render_transcript(cell.as_ref());
         assert_eq!(rendered, vec!["thinking", "Detailed reasoning goes here."]);
     }
 
@@ -2095,13 +2230,12 @@ mod tests {
         let mut config = test_config();
         config.model_family.reasoning_summary_format = ReasoningSummaryFormat::Experimental;
 
-        let cells = new_reasoning_summary_block(
+        let cell = new_reasoning_summary_block(
             "**High level reasoning without closing".to_string(),
             &config,
         );
 
-        assert_eq!(cells.len(), 1);
-        let rendered = render_transcript(cells[0].as_ref());
+        let rendered = render_transcript(cell.as_ref());
         assert_eq!(
             rendered,
             vec!["thinking", "**High level reasoning without closing"]
@@ -2113,25 +2247,23 @@ mod tests {
         let mut config = test_config();
         config.model_family.reasoning_summary_format = ReasoningSummaryFormat::Experimental;
 
-        let cells = new_reasoning_summary_block(
+        let cell = new_reasoning_summary_block(
             "**High level reasoning without closing**".to_string(),
             &config,
         );
 
-        assert_eq!(cells.len(), 1);
-        let rendered = render_transcript(cells[0].as_ref());
+        let rendered = render_transcript(cell.as_ref());
         assert_eq!(
             rendered,
             vec!["thinking", "High level reasoning without closing"]
         );
 
-        let cells = new_reasoning_summary_block(
+        let cell = new_reasoning_summary_block(
             "**High level reasoning without closing**\n\n  ".to_string(),
             &config,
         );
 
-        assert_eq!(cells.len(), 1);
-        let rendered = render_transcript(cells[0].as_ref());
+        let rendered = render_transcript(cell.as_ref());
         assert_eq!(
             rendered,
             vec!["thinking", "High level reasoning without closing"]
@@ -2143,21 +2275,18 @@ mod tests {
         let mut config = test_config();
         config.model_family.reasoning_summary_format = ReasoningSummaryFormat::Experimental;
 
-        let cells = new_reasoning_summary_block(
+        let cell = new_reasoning_summary_block(
             "**High level plan**\n\nWe should fix the bug next.".to_string(),
             &config,
         );
 
-        assert_eq!(cells.len(), 2);
+        let rendered_display = render_lines(&cell.display_lines(80));
+        assert_eq!(rendered_display, vec!["• We should fix the bug next."]);
 
-        let header_lines = render_transcript(cells[0].as_ref());
-        assert_eq!(header_lines, vec!["Thinking", "High level plan"]);
-
-        let summary_lines = render_transcript(cells[1].as_ref());
-
+        let rendered_transcript = render_transcript(cell.as_ref());
         assert_eq!(
-            summary_lines,
-            vec!["codex", "Thinking", "We should fix the bug next."]
-        )
+            rendered_transcript,
+            vec!["thinking", "We should fix the bug next."]
+        );
     }
 }

@@ -37,8 +37,8 @@ use toml_edit::DocumentMut;
 use toml_edit::Item as TomlItem;
 use toml_edit::Table as TomlTable;
 
-const OPENAI_DEFAULT_MODEL: &str = "gpt-5";
-const OPENAI_DEFAULT_REVIEW_MODEL: &str = "gpt-5";
+const OPENAI_DEFAULT_MODEL: &str = "gpt-5-codex";
+const OPENAI_DEFAULT_REVIEW_MODEL: &str = "gpt-5-codex";
 pub const GPT_5_CODEX_MEDIUM_MODEL: &str = "gpt-5-codex";
 
 /// Maximum number of bytes of the documentation that will be embedded. Larger
@@ -54,7 +54,7 @@ pub struct Config {
     /// Optional override of model selection.
     pub model: String,
 
-    /// Model used specifically for review sessions. Defaults to "gpt-5".
+    /// Model used specifically for review sessions. Defaults to "gpt-5-codex".
     pub review_model: String,
 
     pub model_family: ModelFamily,
@@ -333,14 +333,12 @@ pub fn write_global_mcp_servers(
                 entry["env"] = TomlItem::Table(env_table);
             }
 
-            if let Some(timeout) = config.startup_timeout_ms {
-                let timeout = i64::try_from(timeout).map_err(|_| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "startup_timeout_ms exceeds supported range",
-                    )
-                })?;
-                entry["startup_timeout_ms"] = toml_edit::value(timeout);
+            if let Some(timeout) = config.startup_timeout_sec {
+                entry["startup_timeout_sec"] = toml_edit::value(timeout.as_secs_f64());
+            }
+
+            if let Some(timeout) = config.tool_timeout_sec {
+                entry["tool_timeout_sec"] = toml_edit::value(timeout.as_secs_f64());
             }
 
             doc["mcp_servers"][name.as_str()] = TomlItem::Table(entry);
@@ -1164,10 +1162,12 @@ pub fn log_dir(cfg: &Config) -> std::io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use crate::config_types::HistoryPersistence;
+    use crate::config_types::Notifications;
 
     use super::*;
     use pretty_assertions::assert_eq;
 
+    use std::time::Duration;
     use tempfile::TempDir;
 
     #[test]
@@ -1200,6 +1200,19 @@ persistence = "none"
             }),
             history_no_persistence_cfg.history
         );
+    }
+
+    #[test]
+    fn tui_config_missing_notifications_field_defaults_to_disabled() {
+        let cfg = r#"
+[tui]
+"#;
+
+        let parsed = toml::from_str::<ConfigToml>(cfg)
+            .expect("TUI config without notifications should succeed");
+        let tui = parsed.tui.expect("config should include tui section");
+
+        assert_eq!(tui.notifications, Notifications::Enabled(false));
     }
 
     #[test]
@@ -1279,7 +1292,8 @@ exclude_slash_tmp = true
                 command: "echo".to_string(),
                 args: vec!["hello".to_string()],
                 env: None,
-                startup_timeout_ms: None,
+                startup_timeout_sec: Some(Duration::from_secs(3)),
+                tool_timeout_sec: Some(Duration::from_secs(5)),
             },
         );
 
@@ -1290,11 +1304,35 @@ exclude_slash_tmp = true
         let docs = loaded.get("docs").expect("docs entry");
         assert_eq!(docs.command, "echo");
         assert_eq!(docs.args, vec!["hello".to_string()]);
+        assert_eq!(docs.startup_timeout_sec, Some(Duration::from_secs(3)));
+        assert_eq!(docs.tool_timeout_sec, Some(Duration::from_secs(5)));
 
         let empty = BTreeMap::new();
         write_global_mcp_servers(codex_home.path(), &empty)?;
         let loaded = load_global_mcp_servers(codex_home.path())?;
         assert!(loaded.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_global_mcp_servers_accepts_legacy_ms_field() -> anyhow::Result<()> {
+        let codex_home = TempDir::new()?;
+        let config_path = codex_home.path().join(CONFIG_TOML_FILE);
+
+        std::fs::write(
+            &config_path,
+            r#"
+[mcp_servers]
+[mcp_servers.docs]
+command = "echo"
+startup_timeout_ms = 2500
+"#,
+        )?;
+
+        let servers = load_global_mcp_servers(codex_home.path())?;
+        let docs = servers.get("docs").expect("docs entry");
+        assert_eq!(docs.startup_timeout_sec, Some(Duration::from_millis(2500)));
 
         Ok(())
     }
@@ -1329,7 +1367,7 @@ exclude_slash_tmp = true
         tokio::fs::write(
             &config_path,
             r#"
-model = "gpt-5"
+model = "gpt-5-codex"
 model_reasoning_effort = "medium"
 
 [profiles.dev]
@@ -1404,7 +1442,7 @@ model = "gpt-4"
 model_reasoning_effort = "medium"
 
 [profiles.prod]
-model = "gpt-5"
+model = "gpt-5-codex"
 "#,
         )
         .await?;
@@ -1435,7 +1473,7 @@ model = "gpt-5"
                 .profiles
                 .get("prod")
                 .and_then(|profile| profile.model.as_deref()),
-            Some("gpt-5"),
+            Some("gpt-5-codex"),
         );
 
         Ok(())
@@ -1582,7 +1620,7 @@ model_verbosity = "high"
         assert_eq!(
             Config {
                 model: "o3".to_string(),
-                review_model: "gpt-5".to_string(),
+                review_model: OPENAI_DEFAULT_REVIEW_MODEL.to_string(),
                 model_family: find_family_for_model("o3").expect("known model slug"),
                 model_context_window: Some(200_000),
                 model_max_output_tokens: Some(100_000),
@@ -1640,7 +1678,7 @@ model_verbosity = "high"
         )?;
         let expected_gpt3_profile_config = Config {
             model: "gpt-3.5-turbo".to_string(),
-            review_model: "gpt-5".to_string(),
+            review_model: OPENAI_DEFAULT_REVIEW_MODEL.to_string(),
             model_family: find_family_for_model("gpt-3.5-turbo").expect("known model slug"),
             model_context_window: Some(16_385),
             model_max_output_tokens: Some(4_096),
@@ -1713,7 +1751,7 @@ model_verbosity = "high"
         )?;
         let expected_zdr_profile_config = Config {
             model: "o3".to_string(),
-            review_model: "gpt-5".to_string(),
+            review_model: OPENAI_DEFAULT_REVIEW_MODEL.to_string(),
             model_family: find_family_for_model("o3").expect("known model slug"),
             model_context_window: Some(200_000),
             model_max_output_tokens: Some(100_000),
@@ -1772,7 +1810,7 @@ model_verbosity = "high"
         )?;
         let expected_gpt5_profile_config = Config {
             model: "gpt-5".to_string(),
-            review_model: "gpt-5".to_string(),
+            review_model: OPENAI_DEFAULT_REVIEW_MODEL.to_string(),
             model_family: find_family_for_model("gpt-5").expect("known model slug"),
             model_context_window: Some(272_000),
             model_max_output_tokens: Some(128_000),
