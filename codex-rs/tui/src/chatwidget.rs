@@ -430,7 +430,7 @@ impl ChatWidget {
 
     fn on_compact_approval_request(&mut self, id: String, ev: CompactApprovalRequestEvent) {
         let request = ApprovalRequest::Compact {
-            id: id,
+            id,
             reason: ev.reason,
         };
         self.bottom_pane.push_approval_request(request);

@@ -914,11 +914,11 @@ async fn compact_trims_history_on_context_limit_error() {
     let n = compact_bodies.len();
     let len1 = compact_bodies[n - 2]["input"]
         .as_array()
-        .map(|a| a.len())
+        .map(Vec::len)
         .unwrap_or(0);
     let len2 = compact_bodies[n - 1]["input"]
         .as_array()
-        .map(|a| a.len())
+        .map(Vec::len)
         .unwrap_or(0);
     assert!(
         len2 + 1 == len1,
