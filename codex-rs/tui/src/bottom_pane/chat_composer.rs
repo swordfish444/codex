@@ -1648,6 +1648,10 @@ mod tests {
 
     #[test]
     fn handle_paste_small_inserts_text() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
@@ -1673,6 +1677,10 @@ mod tests {
 
     #[test]
     fn empty_enter_returns_none() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
@@ -1696,6 +1704,10 @@ mod tests {
 
     #[test]
     fn handle_paste_large_uses_placeholder_and_replaces_on_submit() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
@@ -1726,6 +1738,10 @@ mod tests {
 
     #[test]
     fn edit_clears_pending_paste() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
         let large = "y".repeat(LARGE_PASTE_CHAR_THRESHOLD + 1);
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
@@ -1747,6 +1763,9 @@ mod tests {
 
     #[test]
     fn ui_snapshots() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
@@ -1863,6 +1882,9 @@ mod tests {
 
     // Test helper: simulate human typing with a brief delay and flush the paste-burst buffer
     fn type_chars_humanlike(composer: &mut ChatComposer, chars: &[char]) {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
         for &ch in chars {
             let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
             std::thread::sleep(ChatComposer::recommended_paste_flush_delay());
@@ -1872,6 +1894,10 @@ mod tests {
 
     #[test]
     fn slash_init_dispatches_command_and_does_not_submit_literal_text() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
@@ -1905,6 +1931,10 @@ mod tests {
 
     #[test]
     fn slash_tab_completion_moves_cursor_to_end() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
@@ -1926,6 +1956,10 @@ mod tests {
 
     #[test]
     fn slash_mention_dispatches_command_and_inserts_at() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
@@ -1957,6 +1991,10 @@ mod tests {
 
     #[test]
     fn test_multiple_pastes_submission() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
@@ -2032,6 +2070,10 @@ mod tests {
 
     #[test]
     fn test_placeholder_deletion() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
@@ -2100,6 +2142,10 @@ mod tests {
 
     #[test]
     fn test_partial_placeholder_deletion() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
@@ -2234,6 +2280,10 @@ mod tests {
 
     #[test]
     fn backspace_with_multibyte_text_before_placeholder_does_not_panic() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
@@ -2515,6 +2565,10 @@ mod tests {
 
     #[test]
     fn burst_paste_fast_small_buffers_and_flushes_on_stop() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
@@ -2555,6 +2609,10 @@ mod tests {
 
     #[test]
     fn burst_paste_fast_large_inserts_placeholder_on_flush() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
