@@ -27,12 +27,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Run all tasks using workspace filters
+      # stage_npm_release.py requires DotSlash.
+      - uses: facebook/install-dotslash@v2
 
       - name: Ensure staging a release works.
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./codex-cli/scripts/stage_release.sh
+        run: python3 ./codex-cli/scripts/stage_npm_release.py --release-version 0.40.0
 
       - name: Ensure root README.md contains only ASCII and certain Unicode code points
         run: ./scripts/asciicheck.py README.md
