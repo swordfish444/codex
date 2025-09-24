@@ -42,7 +42,7 @@ use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::WireApi;
 use crate::openai_model_info::get_model_info;
 use crate::openai_tools::create_tools_json_for_responses_api;
-use crate::protocol::RateLimitSnapshotEvent;
+use crate::protocol::RateLimitSnapshot;
 use crate::protocol::RateLimitWindow;
 use crate::protocol::TokenUsage;
 use crate::token_data::PlanType;
@@ -488,7 +488,7 @@ fn attach_item_ids(payload_json: &mut Value, original_items: &[ResponseItem]) {
     }
 }
 
-fn parse_rate_limit_snapshot(headers: &HeaderMap) -> Option<RateLimitSnapshotEvent> {
+fn parse_rate_limit_snapshot(headers: &HeaderMap) -> Option<RateLimitSnapshot> {
     let primary_used_percent = parse_header_f64(headers, "x-codex-primary-used-percent");
     let primary_window_minutes = parse_header_u64(headers, "x-codex-primary-window-minutes");
     let primary_resets_in_seconds =
@@ -515,7 +515,7 @@ fn parse_rate_limit_snapshot(headers: &HeaderMap) -> Option<RateLimitSnapshotEve
         return None;
     }
 
-    Some(RateLimitSnapshotEvent { primary, secondary })
+    Some(RateLimitSnapshot { primary, secondary })
 }
 
 fn parse_header_f64(headers: &HeaderMap, name: &str) -> Option<f64> {

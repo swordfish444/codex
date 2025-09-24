@@ -592,11 +592,11 @@ impl TokenUsageInfo {
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct TokenCountEvent {
     pub info: Option<TokenUsageInfo>,
-    pub rate_limits: Option<RateLimitSnapshotEvent>,
+    pub rate_limits: Option<RateLimitSnapshot>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
-pub struct RateLimitSnapshotEvent {
+pub struct RateLimitSnapshot {
     pub primary: Option<RateLimitWindow>,
     pub secondary: Option<RateLimitWindow>,
 }

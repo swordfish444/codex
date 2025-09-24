@@ -27,7 +27,7 @@ use codex_core::plan_tool::UpdatePlanArgs;
 use codex_core::project_doc::discover_project_doc_paths;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::McpInvocation;
-use codex_core::protocol::RateLimitSnapshotEvent;
+use codex_core::protocol::RateLimitSnapshot;
 use codex_core::protocol::RateLimitWindow;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::SessionConfiguredEvent;
@@ -1111,7 +1111,7 @@ pub(crate) struct RateLimitSnapshotDisplay {
 }
 
 pub(crate) fn rate_limit_snapshot_display(
-    snapshot: &RateLimitSnapshotEvent,
+    snapshot: &RateLimitSnapshot,
     captured_at: DateTime<Local>,
 ) -> RateLimitSnapshotDisplay {
     RateLimitSnapshotDisplay {
