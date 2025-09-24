@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
 use codex_utils_readiness::ReadinessFlag;
 use serde_json::Value;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 use crate::client::ModelClient;
 use crate::config_types::ShellEnvironmentPolicy;
@@ -17,8 +18,6 @@ use crate::protocol::SandboxPolicy;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
-
-use std::collections::VecDeque;
 
 #[derive(Debug)]
 pub(crate) struct TurnContext {
@@ -45,6 +44,7 @@ impl TurnContext {
     }
 }
 
+#[derive(Default)]
 struct TurnMailbox {
     initial_input: Option<ResponseInputItem>,
     latest_readiness: Option<Arc<ReadinessFlag>>,
@@ -52,7 +52,7 @@ struct TurnMailbox {
 }
 
 impl TurnMailbox {
-    fn new(
+    fn seed(
         initial_input: Option<ResponseInputItem>,
         readiness: Option<Arc<ReadinessFlag>>,
     ) -> Self {
@@ -83,17 +83,29 @@ impl TurnMailbox {
         self.pending.push_back(items.into());
     }
 
-    fn drain(&mut self) -> (Vec<ResponseItem>, Option<Arc<ReadinessFlag>>) {
+    fn drain(&mut self) -> TurnDrain {
         let items = self
             .pending
             .drain(..)
             .map(ResponseItem::from)
             .collect::<Vec<_>>();
         let readiness = self.latest_readiness.clone();
-        (items, readiness)
+        TurnDrain { items, readiness }
     }
 }
 
+pub(crate) struct TurnDrain {
+    items: Vec<ResponseItem>,
+    readiness: Option<Arc<ReadinessFlag>>,
+}
+
+impl TurnDrain {
+    pub(crate) fn into_parts(self) -> (Vec<ResponseItem>, Option<Arc<ReadinessFlag>>) {
+        (self.items, self.readiness)
+    }
+}
+
+#[derive(Default)]
 struct TurnRuntime {
     mailbox: TurnMailbox,
     review_history: Vec<ResponseItem>,
@@ -108,11 +120,8 @@ impl TurnRuntime {
         readiness: Option<Arc<ReadinessFlag>>,
     ) -> Self {
         Self {
-            mailbox: TurnMailbox::new(initial_input, readiness),
-            review_history: Vec::new(),
-            last_agent_message: None,
-            auto_compact_recently_attempted: false,
-            diff_tracker: TurnDiffTracker::new(),
+            mailbox: TurnMailbox::seed(initial_input, readiness),
+            ..Self::default()
         }
     }
 }
@@ -120,7 +129,7 @@ impl TurnRuntime {
 pub(crate) struct TurnState {
     sub_id: String,
     turn_context: Arc<TurnContext>,
-    runtime: Mutex<TurnRuntime>,
+    runtime: RwLock<TurnRuntime>,
 }
 
 impl TurnState {
@@ -139,7 +148,7 @@ impl TurnState {
         Self {
             sub_id,
             turn_context,
-            runtime: Mutex::new(runtime),
+            runtime: RwLock::new(runtime),
         }
     }
 
@@ -152,12 +161,12 @@ impl TurnState {
     }
 
     pub(crate) async fn take_initial_input(&self) -> Option<ResponseInputItem> {
-        let mut runtime = self.runtime.lock().await;
+        let mut runtime = self.runtime.write().await;
         runtime.mailbox.take_initial_input()
     }
 
-    pub(crate) async fn drain_mailbox(&self) -> (Vec<ResponseItem>, Option<Arc<ReadinessFlag>>) {
-        let mut runtime = self.runtime.lock().await;
+    pub(crate) async fn drain_mailbox(&self) -> TurnDrain {
+        let mut runtime = self.runtime.write().await;
         runtime.mailbox.drain()
     }
 
@@ -166,12 +175,12 @@ impl TurnState {
         items: Vec<InputItem>,
         readiness: Option<Arc<ReadinessFlag>>,
     ) {
-        let mut runtime = self.runtime.lock().await;
+        let mut runtime = self.runtime.write().await;
         runtime.mailbox.enqueue(items, readiness);
     }
 
     pub(crate) async fn set_review_history(&self, history: Vec<ResponseItem>) {
-        let mut runtime = self.runtime.lock().await;
+        let mut runtime = self.runtime.write().await;
         runtime.review_history = history;
     }
 
@@ -179,44 +188,44 @@ impl TurnState {
         if items.is_empty() {
             return;
         }
-        let mut runtime = self.runtime.lock().await;
+        let mut runtime = self.runtime.write().await;
         runtime.review_history.extend(items.iter().cloned());
     }
 
     pub(crate) async fn review_history(&self) -> Vec<ResponseItem> {
-        let runtime = self.runtime.lock().await;
+        let runtime = self.runtime.read().await;
         runtime.review_history.clone()
     }
 
     pub(crate) async fn mark_auto_compact_attempted(&self) -> bool {
-        let mut runtime = self.runtime.lock().await;
+        let mut runtime = self.runtime.write().await;
         let already_attempted = runtime.auto_compact_recently_attempted;
         runtime.auto_compact_recently_attempted = true;
         already_attempted
     }
 
     pub(crate) async fn reset_auto_compact_attempted(&self) {
-        let mut runtime = self.runtime.lock().await;
+        let mut runtime = self.runtime.write().await;
         runtime.auto_compact_recently_attempted = false;
     }
 
     pub(crate) async fn set_last_agent_message(&self, message: Option<String>) {
-        let mut runtime = self.runtime.lock().await;
+        let mut runtime = self.runtime.write().await;
         runtime.last_agent_message = message;
     }
 
     pub(crate) async fn last_agent_message(&self) -> Option<String> {
-        let runtime = self.runtime.lock().await;
+        let runtime = self.runtime.read().await;
         runtime.last_agent_message.clone()
     }
 
     pub(crate) async fn on_patch_begin(&self, changes: &HashMap<PathBuf, FileChange>) {
-        let mut runtime = self.runtime.lock().await;
+        let mut runtime = self.runtime.write().await;
         runtime.diff_tracker.on_patch_begin(changes);
     }
 
     pub(crate) async fn take_unified_diff(&self) -> Result<Option<String>> {
-        let mut runtime = self.runtime.lock().await;
+        let mut runtime = self.runtime.write().await;
         runtime.diff_tracker.get_unified_diff()
     }
 }

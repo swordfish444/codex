@@ -26,11 +26,42 @@ impl SessionState {
         self.readiness_queue.push_back(flag);
     }
 
-    pub(crate) fn next_readiness(&mut self) -> Option<Arc<ReadinessFlag>> {
-        self.readiness_queue.pop_front()
+    pub(crate) fn next_readiness(&mut self) -> Option<TurnReadinessGuard<'_>> {
+        if self.readiness_queue.is_empty() {
+            None
+        } else {
+            Some(TurnReadinessGuard::new(&mut self.readiness_queue))
+        }
     }
 
     pub(crate) fn clear_readiness(&mut self) {
         self.readiness_queue.clear();
+    }
+}
+
+pub(crate) struct TurnReadinessGuard<'a> {
+    queue: &'a mut VecDeque<Arc<ReadinessFlag>>,
+    consumed: bool,
+}
+
+impl<'a> TurnReadinessGuard<'a> {
+    fn new(queue: &'a mut VecDeque<Arc<ReadinessFlag>>) -> Self {
+        Self {
+            queue,
+            consumed: false,
+        }
+    }
+
+    pub(crate) fn take(mut self) -> Option<Arc<ReadinessFlag>> {
+        self.consumed = true;
+        self.queue.pop_front()
+    }
+}
+
+impl Drop for TurnReadinessGuard<'_> {
+    fn drop(&mut self) {
+        if !self.consumed {
+            let _ = self.queue.pop_front();
+        }
     }
 }

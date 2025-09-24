@@ -980,7 +980,7 @@ impl Session {
 
     pub async fn next_turn_readiness(&self) -> Option<Arc<ReadinessFlag>> {
         let mut state = self.state.lock().await;
-        state.next_readiness()
+        state.next_readiness().and_then(super::state::session::TurnReadinessGuard::take)
     }
 
     /// Returns the input if there was no task running to inject into
@@ -1686,7 +1686,7 @@ async fn run_task(sess: Arc<Session>, turn_state: Arc<TurnState>) {
     }
 
     loop {
-        let (pending_input, turn_readiness) = turn_state.drain_mailbox().await;
+        let (pending_input, turn_readiness) = turn_state.drain_mailbox().await.into_parts();
 
         let turn_input: Vec<ResponseItem> = if is_review_mode {
             if !pending_input.is_empty() {

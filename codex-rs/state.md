@@ -66,7 +66,7 @@ struct TurnMailbox {
 
 4. **Turn execution** – `run_task` now receives `Arc<TurnState>` instead of a raw `Vec<InputItem>` / readiness pair. It:
    - Grabs the initial input via `turn_state.take_initial_input()` to seed history and the review mailbox.
-   - On each iteration, calls `turn_state.drain_mailbox()` which returns `(Vec<ResponseItem>, Option<Arc<ReadinessFlag>>)` so the loop no longer needs to manipulate the readiness flag manually. `TurnMailbox` ensures we always hand out the most recent readiness flag (the newest non-`None` entry wins).
+   - On each iteration, calls `turn_state.drain_mailbox()` which returns a `TurnDrain` bundling the pending `ResponseItem`s and the latest readiness flag so the loop no longer needs to manipulate the readiness flag manually. `TurnMailbox` ensures we always hand out the most recent readiness flag (the newest non-`None` entry wins).
    - Accesses the diff tracker, review history, and auto-compaction flag through the `TurnState` rather than local variables. This keeps the single source of truth tied to the turn’s lifetime and makes debugging easier.
    - Writes the last assistant message into `turn_state` before signalling `TaskComplete` so listeners can retrieve it even if the task is aborted elsewhere.
 
