@@ -2331,9 +2331,9 @@ async fn handle_response_item(
                     input,
                     call_id,
                 )
-                    .await,
+                .await,
             )
-        },
+        }
         ResponseItem::FunctionCallOutput { .. } => {
             debug!("unexpected FunctionCallOutput from stream");
             None

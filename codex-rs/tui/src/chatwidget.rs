@@ -112,7 +112,6 @@ use codex_git_tooling::create_ghost_commit;
 use codex_git_tooling::restore_ghost_commit;
 use codex_utils_readiness::Readiness;
 use codex_utils_readiness::ReadinessFlag;
-use tokio::task::spawn_blocking;
 use tracing::warn;
 
 const MAX_TRACKED_GHOST_COMMITS: usize = 20;
@@ -1139,44 +1138,29 @@ impl ChatWidget {
         tokio::spawn(async move {
             let readiness_token = readiness_to_mark.subscribe().await.ok();
             if capture_snapshot {
-                let event = match spawn_blocking(move || {
-                    let options = CreateGhostCommitOptions::new(repo_path.as_path());
-                    create_ghost_commit(&options)
-                })
-                .await
-                {
-                    Ok(Ok(commit)) => {
+                let event = match create_ghost_commit(&CreateGhostCommitOptions::new(
+                    repo_path.as_path(),
+                )) {
+                    Ok(commit) => {
                         AppEvent::GhostSnapshotResult(GhostSnapshotEvent::Success(commit))
                     }
-                    Ok(Err(err)) => {
+                    Err(err) => {
                         warn!("failed to create ghost snapshot: {err}");
                         let (message, hint) = match &err {
                             GitToolingError::NotAGitRepository { .. } => (
-                                "Snapshots disabled: current directory is not a Git repository."
-                                    .to_string(),
+                                "Snapshots disabled: current directory is not a Git repository.".to_string(),
                                 None,
                             ),
                             _ => (
                                 format!("Snapshots disabled after error: {err}"),
                                 Some(
-                                    "Restart Codex after resolving the issue to re-enable snapshots."
-                                        .to_string(),
+                                    "Restart Codex after resolving the issue to re-enable snapshots.".to_string(),
                                 ),
                             ),
                         };
                         AppEvent::GhostSnapshotResult(GhostSnapshotEvent::Disabled {
                             message,
                             hint,
-                        })
-                    }
-                    Err(err) => {
-                        warn!("failed to join ghost snapshot task: {err}");
-                        AppEvent::GhostSnapshotResult(GhostSnapshotEvent::Disabled {
-                            message: format!("Snapshots disabled after internal error: {err}"),
-                            hint: Some(
-                                "Restart Codex after resolving the issue to re-enable snapshots."
-                                    .to_string(),
-                            ),
                         })
                     }
                 };
