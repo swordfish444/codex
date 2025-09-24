@@ -31,9 +31,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json;
 use tokio::sync::Mutex;
-use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 use tracing::debug;
@@ -148,9 +145,8 @@ use self::compact::collect_user_messages;
 /// It operates as a queue pair where you send submissions and receive events.
 pub struct Codex {
     next_id: AtomicU64,
-    tx_sub: Sender<Submission>,
+    tx_sub: Sender<PendingSubmission>,
     rx_event: Receiver<Event>,
-    turn_readiness_tx: UnboundedSender<Arc<ReadinessFlag>>,
 }
 
 /// Wrapper returned by [`Codex::spawn`] containing the spawned [`Codex`],
@@ -171,6 +167,13 @@ pub(crate) const MODEL_FORMAT_HEAD_LINES: usize = MODEL_FORMAT_MAX_LINES / 2;
 pub(crate) const MODEL_FORMAT_TAIL_LINES: usize = MODEL_FORMAT_MAX_LINES - MODEL_FORMAT_HEAD_LINES; // 128
 pub(crate) const MODEL_FORMAT_HEAD_BYTES: usize = MODEL_FORMAT_MAX_BYTES / 2;
 
+type TurnReadinessTx = oneshot::Sender<Arc<ReadinessFlag>>;
+
+struct PendingSubmission {
+    submission: Submission,
+    readiness: Option<TurnReadinessTx>,
+}
+
 impl Codex {
     /// Spawn a new [`Codex`] and initialize the session.
     pub async fn spawn(
@@ -180,7 +183,6 @@ impl Codex {
     ) -> CodexResult<CodexSpawnOk> {
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
-        let (turn_readiness_tx, turn_readiness_rx) = unbounded_channel();
 
         let user_instructions = get_user_instructions(&config).await;
 
@@ -215,28 +217,17 @@ impl Codex {
         let conversation_id = session.conversation_id;
 
         // This task will run until Op::Shutdown is received.
-        tokio::spawn(submission_loop(
-            session,
-            turn_context,
-            config,
-            rx_sub,
-            turn_readiness_rx,
-        ));
+        tokio::spawn(submission_loop(session, turn_context, config, rx_sub));
         let codex = Codex {
             next_id: AtomicU64::new(0),
             tx_sub,
             rx_event,
-            turn_readiness_tx,
         };
 
         Ok(CodexSpawnOk {
             codex,
             conversation_id,
         })
-    }
-
-    pub(crate) fn turn_readiness_sender(&self) -> UnboundedSender<Arc<ReadinessFlag>> {
-        self.turn_readiness_tx.clone()
     }
 
     /// Submit the `op` wrapped in a `Submission` with a unique ID.
@@ -246,18 +237,47 @@ impl Codex {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
             .to_string();
         let sub = Submission { id: id.clone(), op };
-        self.submit_with_id(sub).await?;
+        self.enqueue_submission(sub, None)
+            .await
+            .map_err(|_| CodexErr::InternalAgentDied)?;
         Ok(id)
     }
 
     /// Use sparingly: prefer `submit()` so Codex is responsible for generating
     /// unique IDs for each submission.
     pub async fn submit_with_id(&self, sub: Submission) -> CodexResult<()> {
-        self.tx_sub
-            .send(sub)
+        self.enqueue_submission(sub, None)
+            .await
+            .map_err(|_| CodexErr::InternalAgentDied)
+    }
+
+    pub(crate) async fn submit_with_readiness(
+        &self,
+        op: Op,
+        readiness: Option<TurnReadinessTx>,
+    ) -> CodexResult<String> {
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            .to_string();
+        let sub = Submission { id: id.clone(), op };
+        self.enqueue_submission(sub, readiness)
             .await
             .map_err(|_| CodexErr::InternalAgentDied)?;
-        Ok(())
+        Ok(id)
+    }
+
+    async fn enqueue_submission(
+        &self,
+        submission: Submission,
+        readiness: Option<TurnReadinessTx>,
+    ) -> Result<(), async_channel::SendError<PendingSubmission>> {
+        self.tx_sub
+            .send(PendingSubmission {
+                submission,
+                readiness,
+            })
+            .await
     }
 
     pub async fn next_event(&self) -> CodexResult<Event> {
@@ -973,16 +993,6 @@ impl Session {
         [history, extra].concat()
     }
 
-    pub async fn queue_turn_readiness(&self, flag: Arc<ReadinessFlag>) {
-        let mut state = self.state.lock().await;
-        state.push_readiness(flag);
-    }
-
-    pub async fn next_turn_readiness(&self) -> Option<Arc<ReadinessFlag>> {
-        let mut state = self.state.lock().await;
-        state.next_readiness().and_then(super::state::session::TurnReadinessGuard::take)
-    }
-
     /// Returns the input if there was no task running to inject into
     pub async fn inject_input(
         &self,
@@ -1019,7 +1029,6 @@ impl Session {
         {
             let mut state = self.state.lock().await;
             state.pending_approvals.clear();
-            state.clear_readiness();
         }
 
         let task = {
@@ -1040,7 +1049,6 @@ impl Session {
     fn interrupt_task_sync(&self) {
         if let Ok(mut state) = self.state.try_lock() {
             state.pending_approvals.clear();
-            state.clear_readiness();
         }
         if let Ok(mut current_turn) = self.current_turn.try_lock() {
             current_turn.take();
@@ -1168,17 +1176,15 @@ async fn submission_loop(
     sess: Arc<Session>,
     turn_context: TurnContext,
     config: Arc<Config>,
-    rx_sub: Receiver<Submission>,
-    mut turn_readiness_rx: UnboundedReceiver<Arc<ReadinessFlag>>,
+    rx_sub: Receiver<PendingSubmission>,
 ) {
     // Wrap once to avoid cloning TurnContext for each task.
     let mut turn_context = Arc::new(turn_context);
     // To break out of this loop, send Op::Shutdown.
-    while let Ok(sub) = rx_sub.recv().await {
-        debug!(?sub, "Submission");
-        while let Ok(flag) = turn_readiness_rx.try_recv() {
-            sess.queue_turn_readiness(flag).await;
-        }
+    while let Ok(pending) = rx_sub.recv().await {
+        debug!(?pending.submission, "Submission");
+        let mut readiness = pending.readiness;
+        let sub = pending.submission;
         match sub.op {
             Op::Interrupt => {
                 sess.interrupt_task().await;
@@ -1272,19 +1278,13 @@ async fn submission_loop(
                 }
             }
             Op::UserInput { items } => {
-                let readiness = match sess.next_turn_readiness().await {
-                    Some(flag) => Some(flag),
-                    None => {
-                        warn!("missing readiness flag for user input");
-                        None
-                    }
-                };
-                if let Err((items, readiness)) = sess.inject_input(items, readiness.clone()).await {
+                let readiness_flag = prepare_turn_readiness(&mut readiness).await;
+                if let Err((items, readiness)) = sess.inject_input(items, readiness_flag).await {
                     let turn_state = Arc::new(TurnState::new(
                         sub.id.clone(),
                         Arc::clone(&turn_context),
                         items,
-                        readiness.clone(),
+                        readiness,
                     ));
                     let task = AgentTask::spawn(sess.clone(), Arc::clone(&turn_state));
                     sess.set_task(task, Some(turn_state)).await;
@@ -1300,14 +1300,8 @@ async fn submission_loop(
                 summary,
                 final_output_json_schema,
             } => {
-                let readiness = match sess.next_turn_readiness().await {
-                    Some(flag) => Some(flag),
-                    None => {
-                        warn!("missing readiness flag for user input");
-                        None
-                    }
-                };
-                if let Err((items, readiness)) = sess.inject_input(items, readiness.clone()).await {
+                let readiness_flag = prepare_turn_readiness(&mut readiness).await;
+                if let Err((items, readiness)) = sess.inject_input(items, readiness_flag).await {
                     // Derive a fresh TurnContext for this turn using the provided overrides.
                     let provider = turn_context.client.get_provider();
                     let auth_manager = turn_context.client.get_auth_manager();
@@ -1374,7 +1368,7 @@ async fn submission_loop(
                         sub.id.clone(),
                         Arc::clone(&turn_context),
                         items,
-                        readiness.clone(),
+                        readiness,
                     ));
                     let task = AgentTask::spawn(sess.clone(), Arc::clone(&turn_state));
                     sess.set_task(task, Some(turn_state)).await;
@@ -1557,8 +1551,38 @@ async fn submission_loop(
                 // Ignore unknown ops; enum is non_exhaustive to allow extensions.
             }
         }
+        send_ready_flag(readiness).await;
     }
     debug!("Agent loop exited");
+}
+
+async fn prepare_turn_readiness(
+    readiness: &mut Option<TurnReadinessTx>,
+) -> Option<Arc<ReadinessFlag>> {
+    let sender = readiness.take()?;
+    let flag = Arc::new(ReadinessFlag::new());
+    if sender.send(Arc::clone(&flag)).is_err() {
+        mark_flag_ready(&flag).await;
+    }
+    Some(flag)
+}
+
+async fn send_ready_flag(readiness: Option<TurnReadinessTx>) {
+    let Some(sender) = readiness else {
+        return;
+    };
+    let flag = Arc::new(ReadinessFlag::new());
+    mark_flag_ready(&flag).await;
+    let _ = sender.send(flag);
+}
+
+async fn mark_flag_ready(flag: &Arc<ReadinessFlag>) {
+    if flag.is_ready() {
+        return;
+    }
+    if let Ok(token) = flag.subscribe().await {
+        let _ = flag.mark_ready(token).await;
+    }
 }
 
 /// Spawn a review thread using the given prompt.

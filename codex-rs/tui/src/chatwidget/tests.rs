@@ -1,6 +1,7 @@
 use super::*;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::chatwidget::agent;
 use codex_core::AuthManager;
 use codex_core::CodexAuth;
 use codex_core::config::Config;
@@ -34,7 +35,6 @@ use codex_core::protocol::StreamErrorEvent;
 use codex_core::protocol::TaskCompleteEvent;
 use codex_core::protocol::TaskStartedEvent;
 use codex_protocol::mcp_protocol::ConversationId;
-use codex_utils_readiness::ReadinessFlag;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
@@ -297,11 +297,11 @@ async fn helpers_are_available_and_do_not_panic() {
 fn make_chatwidget_manual() -> (
     ChatWidget,
     tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
-    tokio::sync::mpsc::UnboundedReceiver<Op>,
+    tokio::sync::mpsc::UnboundedReceiver<agent::OutgoingOp>,
 ) {
     let (tx_raw, rx) = unbounded_channel::<AppEvent>();
     let app_event_tx = AppEventSender::new(tx_raw);
-    let (op_tx, op_rx) = unbounded_channel::<Op>();
+    let (op_tx, op_rx) = unbounded_channel::<agent::OutgoingOp>();
     let cfg = test_config();
     let bottom = BottomPane::new(BottomPaneParams {
         app_event_tx: app_event_tx.clone(),
@@ -312,11 +312,9 @@ fn make_chatwidget_manual() -> (
         disable_paste_burst: false,
     });
     let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("test"));
-    let (turn_readiness, _rx) = unbounded_channel::<Arc<ReadinessFlag>>();
     let widget = ChatWidget {
         app_event_tx,
         codex_op_tx: op_tx,
-        turn_readiness,
         bottom_pane: bottom,
         active_exec_cell: None,
         config: cfg.clone(),
@@ -349,7 +347,7 @@ pub(crate) fn make_chatwidget_manual_with_sender() -> (
     ChatWidget,
     AppEventSender,
     tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
-    tokio::sync::mpsc::UnboundedReceiver<Op>,
+    tokio::sync::mpsc::UnboundedReceiver<agent::OutgoingOp>,
 ) {
     let (widget, rx, op_rx) = make_chatwidget_manual();
     let app_event_tx = widget.app_event_tx.clone();
@@ -1676,7 +1674,8 @@ fn apply_patch_full_flow_integration_like() {
     let forwarded = op_rx
         .try_recv()
         .expect("expected op forwarded to codex channel");
-    match forwarded {
+    assert!(forwarded.readiness.is_none());
+    match forwarded.op {
         Op::PatchApproval { id, decision } => {
             assert_eq!(id, "sub-xyz");
             assert!(matches!(

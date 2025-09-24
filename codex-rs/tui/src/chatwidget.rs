@@ -112,6 +112,7 @@ use codex_git_tooling::create_ghost_commit;
 use codex_git_tooling::restore_ghost_commit;
 use codex_utils_readiness::Readiness;
 use codex_utils_readiness::ReadinessFlag;
+use tokio::sync::oneshot;
 use tracing::warn;
 
 const MAX_TRACKED_GHOST_COMMITS: usize = 20;
@@ -185,8 +186,7 @@ pub(crate) struct ChatWidgetInit {
 
 pub(crate) struct ChatWidget {
     app_event_tx: AppEventSender,
-    codex_op_tx: UnboundedSender<Op>,
-    turn_readiness: UnboundedSender<Arc<ReadinessFlag>>,
+    codex_op_tx: UnboundedSender<agent::OutgoingOp>,
     bottom_pane: BottomPane,
     active_exec_cell: Option<ExecCell>,
     config: Config,
@@ -784,7 +784,6 @@ impl ChatWidget {
             app_event_tx: app_event_tx.clone(),
             frame_requester: frame_requester.clone(),
             codex_op_tx: agent_channels.op_tx,
-            turn_readiness: agent_channels.turn_readiness,
             bottom_pane: BottomPane::new(BottomPaneParams {
                 frame_requester,
                 app_event_tx,
@@ -846,7 +845,6 @@ impl ChatWidget {
             app_event_tx: app_event_tx.clone(),
             frame_requester: frame_requester.clone(),
             codex_op_tx: agent_channels.op_tx,
-            turn_readiness: agent_channels.turn_readiness,
             bottom_pane: BottomPane::new(BottomPaneParams {
                 frame_requester,
                 app_event_tx,
@@ -1129,14 +1127,15 @@ impl ChatWidget {
             return;
         }
 
-        let readiness_flag = Arc::new(ReadinessFlag::new());
-        agent::send_turn_readiness(&self.turn_readiness, Arc::clone(&readiness_flag));
-        let readiness_to_mark = Arc::clone(&readiness_flag);
+        let (readiness_tx, readiness_rx) = oneshot::channel::<Arc<ReadinessFlag>>();
         let capture_snapshot = !self.ghost_snapshots_disabled;
         let repo_path = self.config.cwd.clone();
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
-            let readiness_token = readiness_to_mark.subscribe().await.ok();
+            let Ok(flag) = readiness_rx.await else {
+                return;
+            };
+            let readiness_token = flag.subscribe().await.ok();
             if capture_snapshot {
                 let event = match create_ghost_commit(&CreateGhostCommitOptions::new(
                     repo_path.as_path(),
@@ -1167,7 +1166,7 @@ impl ChatWidget {
                 app_event_tx.send(event);
             }
             if let Some(token) = readiness_token {
-                let _ = readiness_to_mark.mark_ready(token).await;
+                let _ = flag.mark_ready(token).await;
             }
         });
 
@@ -1182,7 +1181,10 @@ impl ChatWidget {
         }
 
         self.codex_op_tx
-            .send(Op::UserInput { items })
+            .send(agent::OutgoingOp {
+                op: Op::UserInput { items },
+                readiness: Some(readiness_tx),
+            })
             .unwrap_or_else(|e| {
                 tracing::error!("failed to send message: {e}");
             });
@@ -1190,7 +1192,10 @@ impl ChatWidget {
         // Persist the text to cross-session message history.
         if !text.is_empty() {
             self.codex_op_tx
-                .send(Op::AddToHistory { text: text.clone() })
+                .send(agent::OutgoingOp {
+                    op: Op::AddToHistory { text: text.clone() },
+                    readiness: None,
+                })
                 .unwrap_or_else(|e| {
                     tracing::error!("failed to send AddHistory op: {e}");
                 });
@@ -1679,7 +1684,10 @@ impl ChatWidget {
     pub(crate) fn submit_op(&self, op: Op) {
         // Record outbound operation for session replay fidelity.
         crate::session_log::log_outbound_op(&op);
-        if let Err(e) = self.codex_op_tx.send(op) {
+        if let Err(e) = self.codex_op_tx.send(agent::OutgoingOp {
+            op,
+            readiness: None,
+        }) {
             tracing::error!("failed to submit op: {e}");
         }
     }
