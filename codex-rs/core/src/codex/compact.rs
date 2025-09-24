@@ -267,8 +267,7 @@ async fn drain_to_completed(
         };
         match event {
             Ok(ResponseEvent::OutputItemDone(item)) => {
-                let mut state = sess.state.lock().await;
-                state.record_items(std::slice::from_ref(&item));
+                sess.record_into_history(std::slice::from_ref(&item)).await;
             }
             Ok(ResponseEvent::Completed { .. }) => {
                 return Ok(());
