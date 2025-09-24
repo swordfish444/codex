@@ -75,6 +75,7 @@ pub use rollout::find_conversation_path_by_id_str;
 pub use rollout::list::ConversationItem;
 pub use rollout::list::ConversationsPage;
 pub use rollout::list::Cursor;
+mod state;
 mod user_notification;
 pub mod util;
 
