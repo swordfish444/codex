@@ -1058,9 +1058,10 @@ impl Session {
         if let Ok(mut state) = self.state.try_lock() {
             if let Ok(mut active) = self.active_turn.try_lock()
                 && let Some(at) = active.as_mut()
-                    && let Ok(mut ts) = at.turn_state.try_lock() {
-                        ts.clear_pending();
-                    }
+                && let Ok(mut ts) = at.turn_state.try_lock()
+            {
+                ts.clear_pending();
+            }
             if let Some(task) = state.current_task.take() {
                 task.abort(TurnAbortReason::Interrupted);
             }
