@@ -151,10 +151,7 @@ async fn run_compact_task_inner(
     if remove_task_on_completion {
         sess.remove_task(&sub_id).await;
     }
-    let history_snapshot = {
-        let state = sess.state.lock().await;
-        state.history_snapshot()
-    };
+    let history_snapshot = sess.history_snapshot().await;
     let summary_text = get_last_assistant_message_from_turn(&history_snapshot).unwrap_or_default();
     let user_messages = collect_user_messages(&history_snapshot);
     let initial_context = sess.build_initial_context(turn_context.as_ref());

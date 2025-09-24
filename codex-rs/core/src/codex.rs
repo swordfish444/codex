@@ -750,6 +750,11 @@ impl Session {
         }
     }
 
+    pub(crate) async fn history_snapshot(&self) -> Vec<ResponseItem> {
+        let state = self.state.lock().await;
+        state.history_snapshot()
+    }
+
     async fn update_token_usage_info(
         &self,
         sub_id: &str,
