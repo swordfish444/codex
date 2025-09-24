@@ -58,6 +58,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
 
 use crate::app_event::AppEvent;
+use crate::app_event::GhostSnapshotEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::BottomPane;
 use crate::bottom_pane::BottomPaneParams;
@@ -109,7 +110,10 @@ use codex_git_tooling::GhostCommit;
 use codex_git_tooling::GitToolingError;
 use codex_git_tooling::create_ghost_commit;
 use codex_git_tooling::restore_ghost_commit;
+use codex_utils_readiness::Readiness;
 use codex_utils_readiness::ReadinessFlag;
+use tokio::task::spawn_blocking;
+use tracing::warn;
 
 const MAX_TRACKED_GHOST_COMMITS: usize = 20;
 
@@ -814,7 +818,7 @@ impl ChatWidget {
             pending_notification: None,
             is_review_mode: false,
             ghost_snapshots: Vec::new(),
-            ghost_snapshots_disabled: true,
+            ghost_snapshots_disabled: false,
         }
     }
 
@@ -876,7 +880,7 @@ impl ChatWidget {
             pending_notification: None,
             is_review_mode: false,
             ghost_snapshots: Vec::new(),
-            ghost_snapshots_disabled: true,
+            ghost_snapshots_disabled: false,
         }
     }
 
@@ -1128,8 +1132,59 @@ impl ChatWidget {
 
         let readiness_flag = Arc::new(ReadinessFlag::new());
         agent::send_turn_readiness(&self.turn_readiness, Arc::clone(&readiness_flag));
-
-        self.capture_ghost_snapshot();
+        let readiness_to_mark = Arc::clone(&readiness_flag);
+        let capture_snapshot = !self.ghost_snapshots_disabled;
+        let repo_path = self.config.cwd.clone();
+        let app_event_tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            if let Ok(token) = readiness_to_mark.subscribe().await {
+                let _ = readiness_to_mark.mark_ready(token).await;
+            }
+            if capture_snapshot {
+                let event = match spawn_blocking(move || {
+                    let options = CreateGhostCommitOptions::new(repo_path.as_path());
+                    create_ghost_commit(&options)
+                })
+                .await
+                {
+                    Ok(Ok(commit)) => {
+                        AppEvent::GhostSnapshotResult(GhostSnapshotEvent::Success(commit))
+                    }
+                    Ok(Err(err)) => {
+                        warn!("failed to create ghost snapshot: {err}");
+                        let (message, hint) = match &err {
+                            GitToolingError::NotAGitRepository { .. } => (
+                                "Snapshots disabled: current directory is not a Git repository."
+                                    .to_string(),
+                                None,
+                            ),
+                            _ => (
+                                format!("Snapshots disabled after error: {err}"),
+                                Some(
+                                    "Restart Codex after resolving the issue to re-enable snapshots."
+                                        .to_string(),
+                                ),
+                            ),
+                        };
+                        AppEvent::GhostSnapshotResult(GhostSnapshotEvent::Disabled {
+                            message,
+                            hint,
+                        })
+                    }
+                    Err(err) => {
+                        warn!("failed to join ghost snapshot task: {err}");
+                        AppEvent::GhostSnapshotResult(GhostSnapshotEvent::Disabled {
+                            message: format!("Snapshots disabled after internal error: {err}"),
+                            hint: Some(
+                                "Restart Codex after resolving the issue to re-enable snapshots."
+                                    .to_string(),
+                            ),
+                        })
+                    }
+                };
+                app_event_tx.send(event);
+            }
+        });
 
         let mut items: Vec<InputItem> = Vec::new();
 
@@ -1162,37 +1217,17 @@ impl ChatWidget {
         }
     }
 
-    fn capture_ghost_snapshot(&mut self) {
-        if self.ghost_snapshots_disabled {
-            return;
-        }
-
-        let options = CreateGhostCommitOptions::new(&self.config.cwd);
-        match create_ghost_commit(&options) {
-            Ok(commit) => {
+    pub(crate) fn handle_ghost_snapshot_event(&mut self, event: GhostSnapshotEvent) {
+        match event {
+            GhostSnapshotEvent::Success(commit) => {
                 self.ghost_snapshots.push(commit);
                 if self.ghost_snapshots.len() > MAX_TRACKED_GHOST_COMMITS {
                     self.ghost_snapshots.remove(0);
                 }
             }
-            Err(err) => {
+            GhostSnapshotEvent::Disabled { message, hint } => {
                 self.ghost_snapshots_disabled = true;
-                let (message, hint) = match &err {
-                    GitToolingError::NotAGitRepository { .. } => (
-                        "Snapshots disabled: current directory is not a Git repository."
-                            .to_string(),
-                        None,
-                    ),
-                    _ => (
-                        format!("Snapshots disabled after error: {err}"),
-                        Some(
-                            "Restart Codex after resolving the issue to re-enable snapshots."
-                                .to_string(),
-                        ),
-                    ),
-                };
                 self.add_info_message(message, hint);
-                tracing::warn!("failed to create ghost snapshot: {err}");
             }
         }
     }
