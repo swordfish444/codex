@@ -66,7 +66,6 @@ struct Error {
 
     // Optional fields available on "usage_limit_reached" and "usage_not_included" errors
     plan_type: Option<PlanType>,
-    resets_in_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
