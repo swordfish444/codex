@@ -812,11 +812,16 @@ async fn token_count_includes_rate_limits_snapshot() {
         json!({
             "info": null,
             "rate_limits": {
-                "primary_used_percent": 12.5,
-                "secondary_used_percent": 40.0,
-                "primary_to_secondary_ratio_percent": 75.0,
-                "primary_window_minutes": 10,
-                "secondary_window_minutes": 60
+                "primary": {
+                    "used_percent": 12.5,
+                    "window_minutes": 10,
+                    "resets_in_seconds": 1800
+                },
+                "secondary": {
+                    "used_percent": 40.0,
+                    "window_minutes": 60,
+                    "resets_in_seconds": 7200
+                }
             }
         })
     );
@@ -923,11 +928,16 @@ async fn usage_limit_error_emits_rate_limit_event() -> anyhow::Result<()> {
     let codex = codex_fixture.codex.clone();
 
     let expected_limits = json!({
-        "primary_used_percent": 100.0,
-        "secondary_used_percent": 87.5,
-        "primary_to_secondary_ratio_percent": 95.0,
-        "primary_window_minutes": 15,
-        "secondary_window_minutes": 60
+        "primary": {
+            "used_percent": 100.0,
+            "window_minutes": 15,
+            "resets_in_seconds": null
+        },
+        "secondary": {
+            "used_percent": 87.5,
+            "window_minutes": 60,
+            "resets_in_seconds": null
+        }
     });
 
     let submission_id = codex
