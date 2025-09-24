@@ -88,7 +88,7 @@ impl BottomPaneView for ReviewModalView {
         self
     }
 
-    fn handle_key_event(&mut self, _pane: &mut BottomPane, _key_event: KeyEvent) {}
+    fn handle_key_event(&mut self, _key_event: KeyEvent) {}
 
     fn desired_height(&self, width: u16) -> u16 {
         let paragraph = Paragraph::new(self.lines()).wrap(Wrap { trim: false });
@@ -100,7 +100,7 @@ impl BottomPaneView for ReviewModalView {
         paragraph.render(area, buf);
     }
 
-    fn on_ctrl_c(&mut self, _pane: &mut BottomPane) -> CancellationEvent {
+    fn on_ctrl_c(&mut self) -> CancellationEvent {
         if !self.cancel_requested {
             self.app_event_tx.send(AppEvent::ReviewCancelled);
             self.cancel_requested = true;

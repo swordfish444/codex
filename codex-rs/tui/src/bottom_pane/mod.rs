@@ -345,7 +345,7 @@ impl BottomPane {
     }
 
     pub(crate) fn show_review_modal(&mut self, state: ReviewModalState) {
-        if let Some(view) = self.active_view.as_mut()
+        if let Some(view) = self.view_stack.last_mut()
             && let Some(review_view) = view.as_any_mut().downcast_mut::<ReviewModalView>()
         {
             review_view.set_state(state);
@@ -355,15 +355,14 @@ impl BottomPane {
 
         let view = ReviewModalView::new(state, self.app_event_tx.clone());
         self.pause_status_timer_for_modal();
-        self.active_view = Some(Box::new(view));
-        self.request_redraw();
+        self.push_view(Box::new(view));
     }
 
     pub(crate) fn hide_review_modal(&mut self) {
-        if let Some(view) = self.active_view.as_ref()
+        if let Some(view) = self.active_view().as_ref()
             && view.as_any().is::<ReviewModalView>()
         {
-            self.active_view = None;
+            self.view_stack.pop();
             self.on_active_view_complete();
             self.request_redraw();
         }
