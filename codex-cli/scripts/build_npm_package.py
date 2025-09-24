@@ -9,11 +9,34 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Sequence
+
+from install_native_deps import CODEX_TARGETS, VENDOR_DIR_NAME
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CODEX_CLI_ROOT = SCRIPT_DIR.parent
 REPO_ROOT = CODEX_CLI_ROOT.parent
 GITHUB_REPO = "openai/codex"
+
+TARGET_TO_SLICE_TAG = {
+    "x86_64-unknown-linux-musl": "linux-x64",
+    "aarch64-unknown-linux-musl": "linux-arm64",
+    "x86_64-apple-darwin": "darwin-x64",
+    "aarch64-apple-darwin": "darwin-arm64",
+    "x86_64-pc-windows-msvc": "win32-x64",
+    "aarch64-pc-windows-msvc": "win32-arm64",
+}
+
+_SLICE_ACCUMULATOR: dict[str, list[str]] = {}
+for target in CODEX_TARGETS:
+    slice_tag = TARGET_TO_SLICE_TAG.get(target)
+    if slice_tag is None:
+        raise RuntimeError(f"Missing slice tag mapping for target '{target}'.")
+    _SLICE_ACCUMULATOR.setdefault(slice_tag, []).append(target)
+
+SLICE_TAG_TO_TARGETS = {tag: tuple(targets) for tag, targets in _SLICE_ACCUMULATOR.items()}
+
+DEFAULT_SLICE_TAGS = tuple(SLICE_TAG_TO_TARGETS)
 
 
 def parse_args() -> argparse.Namespace:
@@ -52,11 +75,28 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Path where the generated npm tarball should be written.",
     )
+    parser.add_argument(
+        "--slice-pack-dir",
+        type=Path,
+        help=(
+            "Directory where per-platform slice npm tarballs should be written. "
+            "When provided, all known slices are packed unless --slices is given."
+        ),
+    )
+    parser.add_argument(
+        "--slices",
+        nargs="+",
+        choices=sorted(DEFAULT_SLICE_TAGS),
+        help="Optional subset of slice tags to pack.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+
+    if args.slices and args.slice_pack_dir is None:
+        raise RuntimeError("--slice-pack-dir is required when specifying --slices.")
 
     version = args.version
     release_version = args.release_version
@@ -97,6 +137,16 @@ def main() -> int:
 
         install_native_binaries(staging_dir, workflow_url)
 
+        slice_outputs: list[tuple[str, Path]] = []
+        if args.slice_pack_dir is not None:
+            slice_tags = tuple(args.slices or DEFAULT_SLICE_TAGS)
+            slice_outputs = build_slice_packages(
+                staging_dir,
+                version,
+                args.slice_pack_dir,
+                slice_tags,
+            )
+
         if release_version:
             staging_dir_str = str(staging_dir)
             print(
@@ -111,6 +161,9 @@ def main() -> int:
         if args.pack_output is not None:
             output_path = run_npm_pack(staging_dir, args.pack_output)
             print(f"npm pack output written to {output_path}")
+
+        for slice_tag, output_path in slice_outputs:
+            print(f"built slice {slice_tag} tarball at {output_path}")
     finally:
         if created_temp:
             # Preserve the staging directory for further inspection.
@@ -159,6 +212,63 @@ def install_native_binaries(staging_dir: Path, workflow_url: str | None) -> None
         cmd.extend(["--workflow-url", workflow_url])
     cmd.append(str(staging_dir))
     subprocess.check_call(cmd, cwd=CODEX_CLI_ROOT)
+
+
+def build_slice_packages(
+    base_staging_dir: Path,
+    version: str,
+    output_dir: Path,
+    slice_tags: Sequence[str],
+) -> list[tuple[str, Path]]:
+    if not slice_tags:
+        return []
+
+    base_vendor = base_staging_dir / VENDOR_DIR_NAME
+    if not base_vendor.exists():
+        raise RuntimeError(
+            f"Base staging directory {base_staging_dir} does not include native vendor binaries."
+        )
+
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    results: list[tuple[str, Path]] = []
+    for slice_tag in slice_tags:
+        targets = SLICE_TAG_TO_TARGETS.get(slice_tag)
+        if not targets:
+            raise RuntimeError(f"Unknown slice tag '{slice_tag}'.")
+
+        missing = [target for target in targets if not (base_vendor / target).exists()]
+        if missing:
+            missing_label = ", ".join(missing)
+            raise RuntimeError(
+                f"Missing native binaries for slice '{slice_tag}': {missing_label} is absent in vendor."
+            )
+
+        with tempfile.TemporaryDirectory(prefix=f"codex-npm-slice-{slice_tag}-") as slice_dir_str:
+            slice_dir = Path(slice_dir_str)
+            stage_sources(slice_dir, version)
+            slice_vendor = slice_dir / VENDOR_DIR_NAME
+            copy_vendor_slice(base_vendor, slice_vendor, targets)
+            output_path = output_dir / f"codex-npm-{version}-{slice_tag}.tgz"
+            run_npm_pack(slice_dir, output_path)
+            results.append((slice_tag, output_path))
+
+    return results
+
+
+def copy_vendor_slice(base_vendor: Path, dest_vendor: Path, targets: Sequence[str]) -> None:
+    dest_vendor.parent.mkdir(parents=True, exist_ok=True)
+    dest_vendor.mkdir(parents=True, exist_ok=True)
+
+    for entry in base_vendor.iterdir():
+        if entry.is_file():
+            shutil.copy2(entry, dest_vendor / entry.name)
+
+    for target in targets:
+        src = base_vendor / target
+        dest = dest_vendor / target
+        shutil.copytree(src, dest)
 
 
 def resolve_latest_alpha_workflow_url() -> str:
