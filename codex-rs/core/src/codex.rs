@@ -118,6 +118,7 @@ use crate::safety::assess_command_safety;
 use crate::safety::assess_safety_for_untrusted_command;
 use crate::services::SessionServices;
 use crate::shell;
+use crate::state::ActiveTurn;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::unified_exec::UnifiedExecSessionManager;
 use crate::user_instructions::UserInstructions;
@@ -260,6 +261,7 @@ pub(crate) struct Session {
     conversation_id: ConversationId,
     tx_event: Sender<Event>,
     state: Mutex<SessionState>,
+    active_turn: Mutex<Option<ActiveTurn>>,
     services: SessionServices,
     next_internal_sub_id: AtomicU64,
 }
@@ -461,6 +463,7 @@ impl Session {
             conversation_id,
             tx_event: tx_event.clone(),
             state: Mutex::new(state),
+            active_turn: Mutex::new(None),
             services,
             next_internal_sub_id: AtomicU64::new(0),
         });
@@ -497,6 +500,13 @@ impl Session {
             current_task.abort(TurnAbortReason::Replaced);
         }
         state.current_task = Some(task);
+        if let Some(current_task) = &state.current_task {
+            let mut active = self.active_turn.lock().await;
+            *active = Some(ActiveTurn {
+                sub_id: current_task.sub_id.clone(),
+                turn_state: std::sync::Arc::new(crate::state::TurnState),
+            });
+        }
     }
 
     pub async fn remove_task(&self, sub_id: &str) {
@@ -505,6 +515,12 @@ impl Session {
             && task.sub_id == sub_id
         {
             state.current_task.take();
+        }
+        let mut active = self.active_turn.lock().await;
+        if let Some(at) = &*active
+            && at.sub_id == sub_id
+        {
+            *active = None;
         }
     }
 
@@ -3617,6 +3633,7 @@ mod tests {
             conversation_id,
             tx_event,
             state: Mutex::new(SessionState::new()),
+            active_turn: Mutex::new(None),
             services,
             next_internal_sub_id: AtomicU64::new(0),
         };
