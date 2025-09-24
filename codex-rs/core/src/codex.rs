@@ -2272,6 +2272,9 @@ async fn handle_response_item(
             action,
         } => {
             let LocalShellAction::Exec(action) = action;
+            if let Some(flag) = turn_readiness.as_ref() {
+                flag.wait_ready().await;
+            }
             tracing::info!("LocalShellCall: {action:?}");
             let params = ShellToolCallParams {
                 command: action.command,
@@ -2314,18 +2317,23 @@ async fn handle_response_item(
             name,
             input,
             status: _,
-        } => Some(
-            handle_custom_tool_call(
-                sess,
-                turn_state,
-                turn_context,
-                sub_id.to_string(),
-                name,
-                input,
-                call_id,
+        } => {
+            if let Some(flag) = turn_readiness.as_ref() {
+                flag.wait_ready().await;
+            }
+            Some(
+                handle_custom_tool_call(
+                    sess,
+                    turn_state,
+                    turn_context,
+                    sub_id.to_string(),
+                    name,
+                    input,
+                    call_id,
+                )
+                    .await,
             )
-            .await,
-        ),
+        },
         ResponseItem::FunctionCallOutput { .. } => {
             debug!("unexpected FunctionCallOutput from stream");
             None

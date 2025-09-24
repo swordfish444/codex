@@ -1137,9 +1137,7 @@ impl ChatWidget {
         let repo_path = self.config.cwd.clone();
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
-            if let Ok(token) = readiness_to_mark.subscribe().await {
-                let _ = readiness_to_mark.mark_ready(token).await;
-            }
+            let readiness_token = readiness_to_mark.subscribe().await.ok();
             if capture_snapshot {
                 let event = match spawn_blocking(move || {
                     let options = CreateGhostCommitOptions::new(repo_path.as_path());
@@ -1183,6 +1181,9 @@ impl ChatWidget {
                     }
                 };
                 app_event_tx.send(event);
+            }
+            if let Some(token) = readiness_token {
+                let _ = readiness_to_mark.mark_ready(token).await;
             }
         });
 
