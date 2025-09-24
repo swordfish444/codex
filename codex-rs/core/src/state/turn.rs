@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
+use codex_utils_readiness::Readiness;
 use codex_utils_readiness::ReadinessFlag;
 use serde_json::Value;
 use tokio::sync::RwLock;
@@ -227,5 +228,16 @@ impl TurnState {
     pub(crate) async fn take_unified_diff(&self) -> Result<Option<String>> {
         let mut runtime = self.runtime.write().await;
         runtime.diff_tracker.get_unified_diff()
+    }
+
+    pub(crate) async fn latest_readiness(&self) -> Option<Arc<ReadinessFlag>> {
+        let runtime = self.runtime.read().await;
+        runtime.mailbox.latest_readiness.clone()
+    }
+
+    pub(crate) async fn wait_on_readiness(&self) {
+        if let Some(flag) = self.latest_readiness().await {
+            flag.wait_ready().await;
+        }
     }
 }
