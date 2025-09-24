@@ -34,6 +34,7 @@ use codex_core::protocol::StreamErrorEvent;
 use codex_core::protocol::TaskCompleteEvent;
 use codex_core::protocol::TaskStartedEvent;
 use codex_protocol::mcp_protocol::ConversationId;
+use codex_utils_readiness::ReadinessFlag;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
@@ -43,6 +44,7 @@ use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tempfile::NamedTempFile;
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -310,9 +312,11 @@ fn make_chatwidget_manual() -> (
         disable_paste_burst: false,
     });
     let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("test"));
+    let (turn_readiness, _rx) = unbounded_channel::<Arc<ReadinessFlag>>();
     let widget = ChatWidget {
         app_event_tx,
         codex_op_tx: op_tx,
+        turn_readiness,
         bottom_pane: bottom,
         active_exec_cell: None,
         config: cfg.clone(),

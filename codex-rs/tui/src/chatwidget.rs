@@ -109,6 +109,7 @@ use codex_git_tooling::GhostCommit;
 use codex_git_tooling::GitToolingError;
 use codex_git_tooling::create_ghost_commit;
 use codex_git_tooling::restore_ghost_commit;
+use codex_utils_readiness::ReadinessFlag;
 
 const MAX_TRACKED_GHOST_COMMITS: usize = 20;
 
@@ -182,6 +183,7 @@ pub(crate) struct ChatWidgetInit {
 pub(crate) struct ChatWidget {
     app_event_tx: AppEventSender,
     codex_op_tx: UnboundedSender<Op>,
+    turn_readiness: UnboundedSender<Arc<ReadinessFlag>>,
     bottom_pane: BottomPane,
     active_exec_cell: Option<ExecCell>,
     config: Config,
@@ -772,12 +774,14 @@ impl ChatWidget {
         } = common;
         let mut rng = rand::rng();
         let placeholder = EXAMPLE_PROMPTS[rng.random_range(0..EXAMPLE_PROMPTS.len())].to_string();
-        let codex_op_tx = spawn_agent(config.clone(), app_event_tx.clone(), conversation_manager);
+        let agent_channels =
+            spawn_agent(config.clone(), app_event_tx.clone(), conversation_manager);
 
         Self {
             app_event_tx: app_event_tx.clone(),
             frame_requester: frame_requester.clone(),
-            codex_op_tx,
+            codex_op_tx: agent_channels.op_tx,
+            turn_readiness: agent_channels.turn_readiness,
             bottom_pane: BottomPane::new(BottomPaneParams {
                 frame_requester,
                 app_event_tx,
@@ -832,13 +836,14 @@ impl ChatWidget {
         let mut rng = rand::rng();
         let placeholder = EXAMPLE_PROMPTS[rng.random_range(0..EXAMPLE_PROMPTS.len())].to_string();
 
-        let codex_op_tx =
+        let agent_channels =
             spawn_agent_from_existing(conversation, session_configured, app_event_tx.clone());
 
         Self {
             app_event_tx: app_event_tx.clone(),
             frame_requester: frame_requester.clone(),
-            codex_op_tx,
+            codex_op_tx: agent_channels.op_tx,
+            turn_readiness: agent_channels.turn_readiness,
             bottom_pane: BottomPane::new(BottomPaneParams {
                 frame_requester,
                 app_event_tx,
@@ -1120,6 +1125,9 @@ impl ChatWidget {
         if text.is_empty() && image_paths.is_empty() {
             return;
         }
+
+        let readiness_flag = Arc::new(ReadinessFlag::new());
+        agent::send_turn_readiness(&self.turn_readiness, Arc::clone(&readiness_flag));
 
         self.capture_ghost_snapshot();
 

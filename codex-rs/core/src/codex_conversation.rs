@@ -3,6 +3,9 @@ use crate::error::Result as CodexResult;
 use crate::protocol::Event;
 use crate::protocol::Op;
 use crate::protocol::Submission;
+use codex_utils_readiness::ReadinessFlag;
+use std::sync::Arc;
+use tokio::sync::mpsc::UnboundedSender;
 
 pub struct CodexConversation {
     codex: Codex,
@@ -26,5 +29,9 @@ impl CodexConversation {
 
     pub async fn next_event(&self) -> CodexResult<Event> {
         self.codex.next_event().await
+    }
+
+    pub fn turn_readiness_sender(&self) -> UnboundedSender<Arc<ReadinessFlag>> {
+        self.codex.turn_readiness_sender()
     }
 }
