@@ -2,6 +2,7 @@ use clap::CommandFactory;
 use clap::Parser;
 use clap_complete::Shell;
 use clap_complete::generate;
+use codex_arg0::SandboxExecutables;
 use codex_arg0::arg0_dispatch_or_else;
 use codex_chatgpt::apply_command::ApplyCommand;
 use codex_chatgpt::apply_command::run_apply_command;
@@ -157,13 +158,13 @@ struct GenerateTsCommand {
 }
 
 fn main() -> anyhow::Result<()> {
-    arg0_dispatch_or_else(|codex_linux_sandbox_exe| async move {
-        cli_main(codex_linux_sandbox_exe).await?;
+    arg0_dispatch_or_else(|sandbox_executables| async move {
+        cli_main(sandbox_executables).await?;
         Ok(())
     })
 }
 
-async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
+async fn cli_main(sandbox_executables: SandboxExecutables) -> anyhow::Result<()> {
     let MultitoolCli {
         config_overrides: root_config_overrides,
         mut interactive,
@@ -176,7 +177,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 &mut interactive.config_overrides,
                 root_config_overrides.clone(),
             );
-            let usage = codex_tui::run_main(interactive, codex_linux_sandbox_exe).await?;
+            let usage = codex_tui::run_main(interactive, sandbox_executables.clone()).await?;
             if !usage.token_usage.is_zero() {
                 println!(
                     "{}",
@@ -189,12 +190,12 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 &mut exec_cli.config_overrides,
                 root_config_overrides.clone(),
             );
-            codex_exec::run_main(exec_cli, codex_linux_sandbox_exe).await?;
+            codex_exec::run_main(exec_cli, sandbox_executables.clone()).await?;
         }
         Some(Subcommand::Mcp(mut mcp_cli)) => {
             // Propagate any root-level config overrides (e.g. `-c key=value`).
             prepend_config_flags(&mut mcp_cli.config_overrides, root_config_overrides.clone());
-            mcp_cli.run(codex_linux_sandbox_exe).await?;
+            mcp_cli.run(sandbox_executables.clone()).await?;
         }
         Some(Subcommand::Resume(ResumeCommand {
             session_id,
@@ -208,7 +209,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 last,
                 config_overrides,
             );
-            codex_tui::run_main(interactive, codex_linux_sandbox_exe).await?;
+            codex_tui::run_main(interactive, sandbox_executables.clone()).await?;
         }
         Some(Subcommand::Login(mut login_cli)) => {
             prepend_config_flags(
@@ -253,7 +254,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 );
                 codex_cli::debug_sandbox::run_command_under_seatbelt(
                     seatbelt_cli,
-                    codex_linux_sandbox_exe,
+                    sandbox_executables.clone(),
                 )
                 .await?;
             }
@@ -264,7 +265,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 );
                 codex_cli::debug_sandbox::run_command_under_landlock(
                     landlock_cli,
-                    codex_linux_sandbox_exe,
+                    sandbox_executables.clone(),
                 )
                 .await?;
             }

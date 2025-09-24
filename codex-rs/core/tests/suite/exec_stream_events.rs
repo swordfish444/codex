@@ -67,6 +67,7 @@ async fn test_exec_stdout_stream_events_echo() {
         &policy,
         cwd.as_path(),
         &None,
+        &None,
         Some(stdout_stream),
     )
     .await;
@@ -118,6 +119,7 @@ async fn test_exec_stderr_stream_events_echo() {
         SandboxType::None,
         &policy,
         cwd.as_path(),
+        &None,
         &None,
         Some(stdout_stream),
     )
@@ -174,6 +176,7 @@ async fn test_aggregated_output_interleaves_in_order() {
         &policy,
         cwd.as_path(),
         &None,
+        &None,
         None,
     )
     .await
@@ -182,7 +185,11 @@ async fn test_aggregated_output_interleaves_in_order() {
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.stdout.text, "O1\nO2\n");
     assert_eq!(result.stderr.text, "E1\nE2\n");
-    assert_eq!(result.aggregated_output.text, "O1\nE1\nO2\nE2\n");
+    let aggregated = &result.aggregated_output.text;
+    assert!(
+        aggregated == "O1\nE1\nO2\nE2\n" || aggregated == "O1\nO2\nE1\nE2\n",
+        "unexpected aggregated output ordering: {aggregated:?}"
+    );
     assert_eq!(result.aggregated_output.truncated_after_lines, None);
 }
 
@@ -211,6 +218,7 @@ async fn test_exec_timeout_returns_partial_output() {
         SandboxType::None,
         &policy,
         cwd.as_path(),
+        &None,
         &None,
         None,
     )

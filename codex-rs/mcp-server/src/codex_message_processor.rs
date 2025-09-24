@@ -3,6 +3,7 @@ use crate::error_code::INVALID_REQUEST_ERROR_CODE;
 use crate::json_to_toml::json_to_toml;
 use crate::outgoing_message::OutgoingMessageSender;
 use crate::outgoing_message::OutgoingNotification;
+use codex_arg0::SandboxExecutables;
 use codex_core::AuthManager;
 use codex_core::CodexConversation;
 use codex_core::ConversationManager;
@@ -116,7 +117,7 @@ pub(crate) struct CodexMessageProcessor {
     auth_manager: Arc<AuthManager>,
     conversation_manager: Arc<ConversationManager>,
     outgoing: Arc<OutgoingMessageSender>,
-    codex_linux_sandbox_exe: Option<PathBuf>,
+    sandbox_executables: SandboxExecutables,
     config: Arc<Config>,
     conversation_listeners: HashMap<Uuid, oneshot::Sender<()>>,
     active_login: Arc<Mutex<Option<ActiveLogin>>>,
@@ -129,14 +130,14 @@ impl CodexMessageProcessor {
         auth_manager: Arc<AuthManager>,
         conversation_manager: Arc<ConversationManager>,
         outgoing: Arc<OutgoingMessageSender>,
-        codex_linux_sandbox_exe: Option<PathBuf>,
+        sandbox_executables: SandboxExecutables,
         config: Arc<Config>,
     ) -> Self {
         Self {
             auth_manager,
             conversation_manager,
             outgoing,
-            codex_linux_sandbox_exe,
+            sandbox_executables,
             config,
             conversation_listeners: HashMap::new(),
             active_login: Arc::new(Mutex::new(None)),
@@ -586,18 +587,21 @@ impl CodexMessageProcessor {
             _ => get_platform_sandbox().unwrap_or(codex_core::exec::SandboxType::None),
         };
         tracing::debug!("Sandbox type: {sandbox_type:?}");
-        let codex_linux_sandbox_exe = self.config.codex_linux_sandbox_exe.clone();
+        let sandbox_executables = self.sandbox_executables.clone();
         let outgoing = self.outgoing.clone();
         let req_id = request_id;
         let sandbox_cwd = self.config.cwd.clone();
 
         tokio::spawn(async move {
+            let codex_linux_sandbox_exe = sandbox_executables.linux.clone();
+            let codex_windows_sandbox_exe = sandbox_executables.windows.clone();
             match codex_core::exec::process_exec_tool_call(
                 exec_params,
                 sandbox_type,
                 &effective_policy,
                 sandbox_cwd.as_path(),
                 &codex_linux_sandbox_exe,
+                &codex_windows_sandbox_exe,
                 None,
             )
             .await
@@ -623,7 +627,7 @@ impl CodexMessageProcessor {
     }
 
     async fn process_new_conversation(&self, request_id: RequestId, params: NewConversationParams) {
-        let config = match derive_config_from_params(params, self.codex_linux_sandbox_exe.clone()) {
+        let config = match derive_config_from_params(params, &self.sandbox_executables) {
             Ok(config) => config,
             Err(err) => {
                 let error = JSONRPCErrorError {
@@ -720,9 +724,7 @@ impl CodexMessageProcessor {
     ) {
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
         let config = match params.overrides {
-            Some(overrides) => {
-                derive_config_from_params(overrides, self.codex_linux_sandbox_exe.clone())
-            }
+            Some(overrides) => derive_config_from_params(overrides, &self.sandbox_executables),
             None => Ok(self.config.as_ref().clone()),
         };
         let config = match config {
@@ -1244,7 +1246,7 @@ async fn apply_bespoke_event_handling(
 
 fn derive_config_from_params(
     params: NewConversationParams,
-    codex_linux_sandbox_exe: Option<PathBuf>,
+    sandbox_executables: &SandboxExecutables,
 ) -> std::io::Result<Config> {
     let NewConversationParams {
         model,
@@ -1265,7 +1267,8 @@ fn derive_config_from_params(
         approval_policy,
         sandbox_mode,
         model_provider: None,
-        codex_linux_sandbox_exe,
+        codex_linux_sandbox_exe: sandbox_executables.linux.clone(),
+        codex_windows_sandbox_exe: sandbox_executables.windows.clone(),
         base_instructions,
         include_plan_tool,
         include_apply_patch_tool,

@@ -67,6 +67,7 @@ pub mod spawn;
 pub mod terminal;
 mod tool_apply_patch;
 pub mod turn_diff_tracker;
+pub mod windows_sandbox;
 pub use rollout::ARCHIVED_SESSIONS_SUBDIR;
 pub use rollout::RolloutRecorder;
 pub use rollout::SESSIONS_SUBDIR;

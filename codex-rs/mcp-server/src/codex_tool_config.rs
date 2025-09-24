@@ -1,5 +1,6 @@
 //! Configuration object accepted by the `codex` MCP tool-call.
 
+use codex_arg0::SandboxExecutables;
 use codex_core::protocol::AskForApproval;
 use codex_protocol::config_types::SandboxMode;
 use mcp_types::Tool;
@@ -135,7 +136,7 @@ impl CodexToolCallParam {
     /// effective Config object generated from the supplied parameters.
     pub fn into_config(
         self,
-        codex_linux_sandbox_exe: Option<PathBuf>,
+        sandbox_executables: SandboxExecutables,
     ) -> std::io::Result<(String, codex_core::config::Config)> {
         let Self {
             prompt,
@@ -158,7 +159,8 @@ impl CodexToolCallParam {
             approval_policy: approval_policy.map(Into::into),
             sandbox_mode: sandbox.map(Into::into),
             model_provider: None,
-            codex_linux_sandbox_exe,
+            codex_linux_sandbox_exe: sandbox_executables.linux.clone(),
+            codex_windows_sandbox_exe: sandbox_executables.windows,
             base_instructions,
             include_plan_tool,
             include_apply_patch_tool: None,

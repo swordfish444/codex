@@ -3,13 +3,21 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use codex_core::CODEX_APPLY_PATCH_ARG1;
+use codex_windows_sandbox::WINDOWS_SANDBOX_ARG1;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 use tempfile::TempDir;
 
 const LINUX_SANDBOX_ARG0: &str = "codex-linux-sandbox";
+const WINDOWS_SANDBOX_ARG0: &str = "codex-windows-sandbox";
 const APPLY_PATCH_ARG0: &str = "apply_patch";
 const MISSPELLED_APPLY_PATCH_ARG0: &str = "applypatch";
+
+#[derive(Clone, Debug, Default)]
+pub struct SandboxExecutables {
+    pub linux: Option<PathBuf>,
+    pub windows: Option<PathBuf>,
+}
 
 /// While we want to deploy the Codex CLI as a single executable for simplicity,
 /// we also want to expose some of its functionality as distinct CLIs, so we use
@@ -34,7 +42,7 @@ const MISSPELLED_APPLY_PATCH_ARG0: &str = "applypatch";
 /// in this workspace that depends on these helper CLIs.
 pub fn arg0_dispatch_or_else<F, Fut>(main_fn: F) -> anyhow::Result<()>
 where
-    F: FnOnce(Option<PathBuf>) -> Fut,
+    F: FnOnce(SandboxExecutables) -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
     // Determine if we were invoked via the special alias.
@@ -48,6 +56,8 @@ where
     if exe_name == LINUX_SANDBOX_ARG0 {
         // Safety: [`run_main`] never returns.
         codex_linux_sandbox::run_main();
+    } else if exe_name == WINDOWS_SANDBOX_ARG0 {
+        codex_windows_sandbox::run_main();
     } else if exe_name == APPLY_PATCH_ARG0 || exe_name == MISSPELLED_APPLY_PATCH_ARG0 {
         codex_apply_patch::main();
     }
@@ -72,6 +82,12 @@ where
         std::process::exit(exit_code);
     }
 
+    if let Some(arg) = argv1.to_str()
+        && arg == WINDOWS_SANDBOX_ARG1
+    {
+        codex_windows_sandbox::run_main();
+    }
+
     // This modifies the environment, which is not thread-safe, so do this
     // before creating any threads/the Tokio runtime.
     load_dotenv();
@@ -93,13 +109,15 @@ where
     // async entry-point.
     let runtime = tokio::runtime::Runtime::new()?;
     runtime.block_on(async move {
-        let codex_linux_sandbox_exe: Option<PathBuf> = if cfg!(target_os = "linux") {
-            std::env::current_exe().ok()
-        } else {
-            None
-        };
+        let mut executables = SandboxExecutables::default();
+        if cfg!(target_os = "linux") {
+            executables.linux = std::env::current_exe().ok();
+        }
+        if cfg!(target_os = "windows") {
+            executables.windows = std::env::current_exe().ok();
+        }
 
-        main_fn(codex_linux_sandbox_exe).await
+        main_fn(executables).await
     })
 }
 

@@ -16,14 +16,14 @@ struct TopCli {
 }
 
 fn main() -> anyhow::Result<()> {
-    arg0_dispatch_or_else(|codex_linux_sandbox_exe| async move {
+    arg0_dispatch_or_else(|sandbox_executables| async move {
         let top_cli = TopCli::parse();
         let mut inner = top_cli.inner;
         inner
             .config_overrides
             .raw_overrides
             .splice(0..0, top_cli.config_overrides.raw_overrides);
-        let exit_info = run_main(inner, codex_linux_sandbox_exe).await?;
+        let exit_info = run_main(inner, sandbox_executables).await?;
         let token_usage = exit_info.token_usage;
         let conversation_id = exit_info.conversation_id;
         if !token_usage.is_zero() {

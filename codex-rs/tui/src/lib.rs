@@ -5,6 +5,7 @@
 #![deny(clippy::disallowed_methods)]
 use app::App;
 pub use app::AppExitInfo;
+use codex_arg0::SandboxExecutables;
 use codex_core::AuthManager;
 use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_core::CodexAuth;
@@ -23,7 +24,6 @@ use codex_ollama::DEFAULT_OSS_MODEL;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::mcp_protocol::AuthMode;
 use std::fs::OpenOptions;
-use std::path::PathBuf;
 use tracing::error;
 use tracing_appender::non_blocking;
 use tracing_subscriber::EnvFilter;
@@ -86,7 +86,7 @@ use codex_core::internal_storage::InternalStorage;
 
 pub async fn run_main(
     cli: Cli,
-    codex_linux_sandbox_exe: Option<PathBuf>,
+    sandbox_executables: SandboxExecutables,
 ) -> std::io::Result<AppExitInfo> {
     let (sandbox_mode, approval_policy) = if cli.full_auto {
         (
@@ -133,7 +133,8 @@ pub async fn run_main(
         cwd,
         model_provider: model_provider_override,
         config_profile: cli.config_profile.clone(),
-        codex_linux_sandbox_exe,
+        codex_linux_sandbox_exe: sandbox_executables.linux.clone(),
+        codex_windows_sandbox_exe: sandbox_executables.windows.clone(),
         base_instructions: None,
         include_plan_tool: Some(true),
         include_apply_patch_tool: None,

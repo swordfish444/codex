@@ -283,6 +283,7 @@ pub(crate) struct Session {
     rollout: Mutex<Option<RolloutRecorder>>,
     state: Mutex<State>,
     codex_linux_sandbox_exe: Option<PathBuf>,
+    codex_windows_sandbox_exe: Option<PathBuf>,
     user_shell: shell::Shell,
     show_raw_agent_reasoning: bool,
     next_internal_sub_id: AtomicU64,
@@ -484,6 +485,7 @@ impl Session {
             state: Mutex::new(state),
             rollout: Mutex::new(Some(rollout_recorder)),
             codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
+            codex_windows_sandbox_exe: config.codex_windows_sandbox_exe.clone(),
             user_shell: default_shell,
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
             next_internal_sub_id: AtomicU64::new(0),
@@ -916,6 +918,7 @@ impl Session {
             exec_args.sandbox_policy,
             exec_args.sandbox_cwd,
             exec_args.codex_linux_sandbox_exe,
+            exec_args.codex_windows_sandbox_exe,
             exec_args.stdout_stream,
         )
         .await;
@@ -2709,6 +2712,7 @@ pub struct ExecInvokeArgs<'a> {
     pub sandbox_policy: &'a SandboxPolicy,
     pub sandbox_cwd: &'a Path,
     pub codex_linux_sandbox_exe: &'a Option<PathBuf>,
+    pub codex_windows_sandbox_exe: &'a Option<PathBuf>,
     pub stdout_stream: Option<StdoutStream>,
 }
 
@@ -2916,6 +2920,7 @@ async fn handle_container_exec_with_params(
                 sandbox_policy: &turn_context.sandbox_policy,
                 sandbox_cwd: &turn_context.cwd,
                 codex_linux_sandbox_exe: &sess.codex_linux_sandbox_exe,
+                codex_windows_sandbox_exe: &sess.codex_windows_sandbox_exe,
                 stdout_stream: if exec_command_context.apply_patch.is_some() {
                     None
                 } else {
@@ -3051,6 +3056,7 @@ async fn handle_sandbox_error(
                         sandbox_policy: &turn_context.sandbox_policy,
                         sandbox_cwd: &turn_context.cwd,
                         codex_linux_sandbox_exe: &sess.codex_linux_sandbox_exe,
+                        codex_windows_sandbox_exe: &sess.codex_windows_sandbox_exe,
                         stdout_stream: if exec_command_context.apply_patch.is_some() {
                             None
                         } else {
@@ -3655,6 +3661,7 @@ mod tests {
                 ..Default::default()
             }),
             codex_linux_sandbox_exe: None,
+            codex_windows_sandbox_exe: None,
             user_shell: shell::Shell::Unknown,
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
             next_internal_sub_id: AtomicU64::new(0),

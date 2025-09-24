@@ -3,8 +3,8 @@
 
 use std::io::ErrorKind;
 use std::io::Result as IoResult;
-use std::path::PathBuf;
 
+use codex_arg0::SandboxExecutables;
 use codex_common::CliConfigOverrides;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
@@ -47,7 +47,7 @@ pub use crate::patch_approval::PatchApprovalResponse;
 const CHANNEL_CAPACITY: usize = 128;
 
 pub async fn run_main(
-    codex_linux_sandbox_exe: Option<PathBuf>,
+    sandbox_executables: SandboxExecutables,
     cli_config_overrides: CliConfigOverrides,
 ) -> IoResult<()> {
     // Install a simple subscriber so `tracing` output is visible.  Users can
@@ -102,7 +102,7 @@ pub async fn run_main(
         let outgoing_message_sender = OutgoingMessageSender::new(outgoing_tx);
         let mut processor = MessageProcessor::new(
             outgoing_message_sender,
-            codex_linux_sandbox_exe,
+            sandbox_executables,
             std::sync::Arc::new(config),
         );
         async move {

@@ -351,6 +351,7 @@ mod tests {
                 &SandboxPolicy::DangerFullAccess,
                 temp_home.path(),
                 &None,
+                &None,
                 None,
             )
             .await
@@ -457,6 +458,7 @@ mod macos_tests {
                 SandboxType::None,
                 &SandboxPolicy::DangerFullAccess,
                 temp_home.path(),
+                &None,
                 &None,
                 None,
             )

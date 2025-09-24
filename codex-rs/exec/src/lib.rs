@@ -8,6 +8,7 @@ use std::io::Read;
 use std::path::PathBuf;
 
 pub use cli::Cli;
+use codex_arg0::SandboxExecutables;
 use codex_core::AuthManager;
 use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_core::ConversationManager;
@@ -35,7 +36,7 @@ use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
 use codex_core::find_conversation_path_by_id_str;
 
-pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
+pub async fn run_main(cli: Cli, sandbox_executables: SandboxExecutables) -> anyhow::Result<()> {
     let Cli {
         command,
         images,
@@ -155,7 +156,8 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         sandbox_mode,
         cwd: cwd.map(|p| p.canonicalize().unwrap_or(p)),
         model_provider,
-        codex_linux_sandbox_exe,
+        codex_linux_sandbox_exe: sandbox_executables.linux.clone(),
+        codex_windows_sandbox_exe: sandbox_executables.windows.clone(),
         base_instructions: None,
         include_plan_tool: None,
         include_apply_patch_tool: None,

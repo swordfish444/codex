@@ -27,6 +27,7 @@ use crate::protocol::SandboxPolicy;
 use crate::seatbelt::spawn_command_under_seatbelt;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
+use crate::windows_sandbox::spawn_command_under_windows_sandbox;
 
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 
@@ -70,6 +71,9 @@ pub enum SandboxType {
 
     /// Only available on Linux.
     LinuxSeccomp,
+
+    /// Only available on Windows.
+    WindowsAppContainer,
 }
 
 #[derive(Clone)]
@@ -85,6 +89,7 @@ pub async fn process_exec_tool_call(
     sandbox_policy: &SandboxPolicy,
     sandbox_cwd: &Path,
     codex_linux_sandbox_exe: &Option<PathBuf>,
+    codex_windows_sandbox_exe: &Option<PathBuf>,
     stdout_stream: Option<StdoutStream>,
 ) -> Result<ExecToolCallOutput> {
     let start = Instant::now();
@@ -125,6 +130,31 @@ pub async fn process_exec_tool_call(
                 .ok_or(CodexErr::LandlockSandboxExecutableNotProvided)?;
             let child = spawn_command_under_linux_sandbox(
                 codex_linux_sandbox_exe,
+                command,
+                command_cwd,
+                sandbox_policy,
+                sandbox_cwd,
+                StdioPolicy::RedirectForShellTool,
+                env,
+            )
+            .await?;
+
+            consume_truncated_output(child, timeout_duration, stdout_stream).await
+        }
+        SandboxType::WindowsAppContainer => {
+            let ExecParams {
+                command,
+                cwd: command_cwd,
+                env,
+                ..
+            } = params;
+
+            let codex_windows_sandbox_exe = codex_windows_sandbox_exe
+                .as_ref()
+                .ok_or(CodexErr::WindowsSandboxExecutableNotProvided)?;
+
+            let child = spawn_command_under_windows_sandbox(
+                codex_windows_sandbox_exe,
                 command,
                 command_cwd,
                 sandbox_policy,

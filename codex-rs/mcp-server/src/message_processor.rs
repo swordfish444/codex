@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use crate::codex_message_processor::CodexMessageProcessor;
 use crate::codex_tool_config::CodexToolCallParam;
@@ -8,6 +7,7 @@ use crate::codex_tool_config::create_tool_for_codex_tool_call_param;
 use crate::codex_tool_config::create_tool_for_codex_tool_call_reply_param;
 use crate::error_code::INVALID_REQUEST_ERROR_CODE;
 use crate::outgoing_message::OutgoingMessageSender;
+use codex_arg0::SandboxExecutables;
 use codex_protocol::mcp_protocol::ClientRequest;
 use codex_protocol::mcp_protocol::ConversationId;
 
@@ -41,7 +41,7 @@ pub(crate) struct MessageProcessor {
     codex_message_processor: CodexMessageProcessor,
     outgoing: Arc<OutgoingMessageSender>,
     initialized: bool,
-    codex_linux_sandbox_exe: Option<PathBuf>,
+    sandbox_executables: SandboxExecutables,
     conversation_manager: Arc<ConversationManager>,
     running_requests_id_to_codex_uuid: Arc<Mutex<HashMap<RequestId, ConversationId>>>,
 }
@@ -51,7 +51,7 @@ impl MessageProcessor {
     /// `Sender` so handlers can enqueue messages to be written to stdout.
     pub(crate) fn new(
         outgoing: OutgoingMessageSender,
-        codex_linux_sandbox_exe: Option<PathBuf>,
+        sandbox_executables: SandboxExecutables,
         config: Arc<Config>,
     ) -> Self {
         let outgoing = Arc::new(outgoing);
@@ -61,14 +61,14 @@ impl MessageProcessor {
             auth_manager,
             conversation_manager.clone(),
             outgoing.clone(),
-            codex_linux_sandbox_exe.clone(),
+            sandbox_executables.clone(),
             config,
         );
         Self {
             codex_message_processor,
             outgoing,
             initialized: false,
-            codex_linux_sandbox_exe,
+            sandbox_executables,
             conversation_manager,
             running_requests_id_to_codex_uuid: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -362,7 +362,7 @@ impl MessageProcessor {
     async fn handle_tool_call_codex(&self, id: RequestId, arguments: Option<serde_json::Value>) {
         let (initial_prompt, config): (String, Config) = match arguments {
             Some(json_val) => match serde_json::from_value::<CodexToolCallParam>(json_val) {
-                Ok(tool_cfg) => match tool_cfg.into_config(self.codex_linux_sandbox_exe.clone()) {
+                Ok(tool_cfg) => match tool_cfg.into_config(self.sandbox_executables.clone()) {
                     Ok(cfg) => cfg,
                     Err(e) => {
                         let result = CallToolResult {

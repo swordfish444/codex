@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use anyhow::bail;
+use codex_arg0::SandboxExecutables;
 use codex_common::CliConfigOverrides;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
@@ -87,7 +87,7 @@ pub struct RemoveArgs {
 }
 
 impl McpCli {
-    pub async fn run(self, codex_linux_sandbox_exe: Option<PathBuf>) -> Result<()> {
+    pub async fn run(self, sandbox_executables: SandboxExecutables) -> Result<()> {
         let McpCli {
             config_overrides,
             cmd,
@@ -96,7 +96,7 @@ impl McpCli {
 
         match subcommand {
             McpSubcommand::Serve => {
-                codex_mcp_server::run_main(codex_linux_sandbox_exe, config_overrides).await?;
+                codex_mcp_server::run_main(sandbox_executables, config_overrides).await?;
             }
             McpSubcommand::List(args) => {
                 run_list(&config_overrides, args)?;

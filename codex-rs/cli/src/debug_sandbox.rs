@@ -1,5 +1,4 @@
-use std::path::PathBuf;
-
+use codex_arg0::SandboxExecutables;
 use codex_common::CliConfigOverrides;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
@@ -15,7 +14,7 @@ use crate::exit_status::handle_exit_status;
 
 pub async fn run_command_under_seatbelt(
     command: SeatbeltCommand,
-    codex_linux_sandbox_exe: Option<PathBuf>,
+    sandbox_executables: SandboxExecutables,
 ) -> anyhow::Result<()> {
     let SeatbeltCommand {
         full_auto,
@@ -26,7 +25,7 @@ pub async fn run_command_under_seatbelt(
         full_auto,
         command,
         config_overrides,
-        codex_linux_sandbox_exe,
+        sandbox_executables,
         SandboxType::Seatbelt,
     )
     .await
@@ -34,7 +33,7 @@ pub async fn run_command_under_seatbelt(
 
 pub async fn run_command_under_landlock(
     command: LandlockCommand,
-    codex_linux_sandbox_exe: Option<PathBuf>,
+    sandbox_executables: SandboxExecutables,
 ) -> anyhow::Result<()> {
     let LandlockCommand {
         full_auto,
@@ -45,7 +44,7 @@ pub async fn run_command_under_landlock(
         full_auto,
         command,
         config_overrides,
-        codex_linux_sandbox_exe,
+        sandbox_executables,
         SandboxType::Landlock,
     )
     .await
@@ -60,7 +59,7 @@ async fn run_command_under_sandbox(
     full_auto: bool,
     command: Vec<String>,
     config_overrides: CliConfigOverrides,
-    codex_linux_sandbox_exe: Option<PathBuf>,
+    sandbox_executables: SandboxExecutables,
     sandbox_type: SandboxType,
 ) -> anyhow::Result<()> {
     let sandbox_mode = create_sandbox_mode(full_auto);
@@ -70,7 +69,8 @@ async fn run_command_under_sandbox(
             .map_err(anyhow::Error::msg)?,
         ConfigOverrides {
             sandbox_mode: Some(sandbox_mode),
-            codex_linux_sandbox_exe,
+            codex_linux_sandbox_exe: sandbox_executables.linux.clone(),
+            codex_windows_sandbox_exe: sandbox_executables.windows.clone(),
             ..Default::default()
         },
     )?;

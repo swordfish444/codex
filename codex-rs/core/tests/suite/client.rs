@@ -873,7 +873,7 @@ async fn token_count_includes_rate_limits_snapshot() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn azure_overrides_assign_properties_used_for_responses_url() {
-    let existing_env_var_with_random_value = if cfg!(windows) { "USERNAME" } else { "USER" };
+    let existing_env_var_with_random_value = if cfg!(windows) { "USERNAME" } else { "HOME" };
 
     // Mock server
     let server = MockServer::start().await;
@@ -949,7 +949,7 @@ async fn azure_overrides_assign_properties_used_for_responses_url() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn env_var_overrides_loaded_auth() {
-    let existing_env_var_with_random_value = if cfg!(windows) { "USERNAME" } else { "USER" };
+    let existing_env_var_with_random_value = if cfg!(windows) { "USERNAME" } else { "HOME" };
 
     // Mock server
     let server = MockServer::start().await;
