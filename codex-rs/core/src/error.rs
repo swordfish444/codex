@@ -2,7 +2,7 @@ use crate::exec::ExecToolCallOutput;
 use crate::token_data::KnownPlan;
 use crate::token_data::PlanType;
 use codex_protocol::mcp_protocol::ConversationId;
-use codex_protocol::protocol::RateLimitSnapshot;
+use codex_protocol::protocol::RateLimitSnapshotEvent;
 use reqwest::StatusCode;
 use serde_json;
 use std::io;
@@ -139,7 +139,7 @@ pub enum CodexErr {
 pub struct UsageLimitReachedError {
     pub(crate) plan_type: Option<PlanType>,
     pub(crate) resets_in_seconds: Option<u64>,
-    pub(crate) rate_limits: Option<RateLimitSnapshot>,
+    pub(crate) rate_limits: Option<RateLimitSnapshotEvent>,
 }
 
 impl std::fmt::Display for UsageLimitReachedError {
@@ -267,14 +267,20 @@ pub fn get_error_message_ui(e: &CodexErr) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_protocol::protocol::RateLimitWindow;
 
-    fn rate_limit_snapshot() -> RateLimitSnapshot {
-        RateLimitSnapshot {
-            primary_used_percent: 0.5,
-            secondary_used_percent: 0.3,
-            primary_to_secondary_ratio_percent: 0.7,
-            primary_window_minutes: 60,
-            secondary_window_minutes: 120,
+    fn rate_limit_snapshot() -> RateLimitSnapshotEvent {
+        RateLimitSnapshotEvent {
+            primary: Some(RateLimitWindow {
+                used_percent: 50.0,
+                window_minutes: Some(60),
+                resets_in_seconds: Some(3600),
+            }),
+            secondary: Some(RateLimitWindow {
+                used_percent: 30.0,
+                window_minutes: Some(120),
+                resets_in_seconds: Some(7200),
+            }),
         }
     }
 

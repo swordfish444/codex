@@ -100,7 +100,7 @@ use crate::protocol::ListCustomPromptsResponseEvent;
 use crate::protocol::Op;
 use crate::protocol::PatchApplyBeginEvent;
 use crate::protocol::PatchApplyEndEvent;
-use crate::protocol::RateLimitSnapshot;
+use crate::protocol::RateLimitSnapshotEvent;
 use crate::protocol::ReviewDecision;
 use crate::protocol::ReviewOutputEvent;
 use crate::protocol::SandboxPolicy;
@@ -261,7 +261,7 @@ struct State {
     pending_input: Vec<ResponseInputItem>,
     history: ConversationHistory,
     token_info: Option<TokenUsageInfo>,
-    latest_rate_limits: Option<RateLimitSnapshot>,
+    latest_rate_limits: Option<RateLimitSnapshotEvent>,
 }
 
 /// Context for an initialized model agent
@@ -757,7 +757,7 @@ impl Session {
         self.send_token_count_event(sub_id).await;
     }
 
-    async fn update_rate_limits(&self, sub_id: &str, new_rate_limits: RateLimitSnapshot) {
+    async fn update_rate_limits(&self, sub_id: &str, new_rate_limits: RateLimitSnapshotEvent) {
         {
             let mut state = self.state.lock().await;
             state.latest_rate_limits = Some(new_rate_limits);
@@ -2148,7 +2148,7 @@ async fn try_run_turn(
             ResponseEvent::RateLimits(snapshot) => {
                 // Update internal state with latest rate limits, but defer sending until
                 // token usage is available to avoid duplicate TokenCount events.
-                sess.update_rate_limits(sub_id, snapshot).await;
+                sess.update_rate_limits(&sub_id, snapshot).await;
             }
             ResponseEvent::Completed {
                 response_id: _,

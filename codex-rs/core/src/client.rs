@@ -42,7 +42,8 @@ use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::WireApi;
 use crate::openai_model_info::get_model_info;
 use crate::openai_tools::create_tools_json_for_responses_api;
-use crate::protocol::RateLimitSnapshot;
+use crate::protocol::RateLimitSnapshotEvent;
+use crate::protocol::RateLimitWindow;
 use crate::protocol::TokenUsage;
 use crate::token_data::PlanType;
 use crate::util::backoff;
@@ -487,21 +488,34 @@ fn attach_item_ids(payload_json: &mut Value, original_items: &[ResponseItem]) {
     }
 }
 
-fn parse_rate_limit_snapshot(headers: &HeaderMap) -> Option<RateLimitSnapshot> {
-    let primary_used_percent = parse_header_f64(headers, "x-codex-primary-used-percent")?;
-    let secondary_used_percent = parse_header_f64(headers, "x-codex-secondary-used-percent")?;
-    let primary_to_secondary_ratio_percent =
-        parse_header_f64(headers, "x-codex-primary-over-secondary-limit-percent")?;
-    let primary_window_minutes = parse_header_u64(headers, "x-codex-primary-window-minutes")?;
-    let secondary_window_minutes = parse_header_u64(headers, "x-codex-secondary-window-minutes")?;
+fn parse_rate_limit_snapshot(headers: &HeaderMap) -> Option<RateLimitSnapshotEvent> {
+    let primary_used_percent = parse_header_f64(headers, "x-codex-primary-used-percent");
+    let primary_window_minutes = parse_header_u64(headers, "x-codex-primary-window-minutes");
+    let primary_resets_in_seconds =
+        parse_header_u64(headers, "x-codex-primary-reset-after-seconds");
 
-    Some(RateLimitSnapshot {
-        primary_used_percent,
-        secondary_used_percent,
-        primary_to_secondary_ratio_percent,
-        primary_window_minutes,
-        secondary_window_minutes,
-    })
+    let primary = primary_used_percent.map(|used_percent| RateLimitWindow {
+        used_percent,
+        window_minutes: primary_window_minutes,
+        resets_in_seconds: primary_resets_in_seconds,
+    });
+
+    let secondary_used_percent = parse_header_f64(headers, "x-codex-secondary-used-percent");
+    let secondary_window_minutes = parse_header_u64(headers, "x-codex-secondary-window-minutes");
+    let secondary_resets_in_seconds =
+        parse_header_u64(headers, "x-codex-secondary-reset-after-seconds");
+
+    let secondary = secondary_used_percent.map(|used_percent| RateLimitWindow {
+        used_percent,
+        window_minutes: secondary_window_minutes,
+        resets_in_seconds: secondary_resets_in_seconds,
+    });
+
+    if primary.is_none() && secondary.is_none() {
+        return None;
+    }
+
+    Some(RateLimitSnapshotEvent { primary, secondary })
 }
 
 fn parse_header_f64(headers: &HeaderMap, name: &str) -> Option<f64> {
