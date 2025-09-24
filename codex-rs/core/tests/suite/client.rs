@@ -907,6 +907,8 @@ async fn usage_limit_error_emits_rate_limit_event() -> anyhow::Result<()> {
         .insert_header("x-codex-primary-over-secondary-limit-percent", "95.0")
         .insert_header("x-codex-primary-window-minutes", "15")
         .insert_header("x-codex-secondary-window-minutes", "60")
+        .insert_header("x-codex-primary-reset-after-seconds", "900")
+        .insert_header("x-codex-secondary-reset-after-seconds", "3600")
         .set_body_json(json!({
             "error": {
                 "type": "usage_limit_reached",
@@ -931,12 +933,12 @@ async fn usage_limit_error_emits_rate_limit_event() -> anyhow::Result<()> {
         "primary": {
             "used_percent": 100.0,
             "window_minutes": 15,
-            "resets_in_seconds": null
+            "resets_in_seconds": 900
         },
         "secondary": {
             "used_percent": 87.5,
             "window_minutes": 60,
-            "resets_in_seconds": null
+            "resets_in_seconds": 3600
         }
     });
 
@@ -970,6 +972,67 @@ async fn usage_limit_error_emits_rate_limit_event() -> anyhow::Result<()> {
     assert!(
         error_event.message.to_lowercase().contains("usage limit"),
         "unexpected error message for submission {submission_id}: {}",
+        error_event.message
+    );
+    assert!(
+        error_event.message.contains("15 minutes"),
+        "expected reset hint in error message for submission {submission_id}: {}",
+        error_event.message
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn usage_limit_error_prefers_longer_reset_window() -> anyhow::Result<()> {
+    let server = MockServer::start().await;
+
+    let response = ResponseTemplate::new(429)
+        .insert_header("x-codex-primary-used-percent", "100.0")
+        .insert_header("x-codex-secondary-used-percent", "100.0")
+        .insert_header("x-codex-primary-window-minutes", "10")
+        .insert_header("x-codex-secondary-window-minutes", "60")
+        .insert_header("x-codex-primary-reset-after-seconds", "600")
+        .insert_header("x-codex-secondary-reset-after-seconds", "7200")
+        .set_body_json(json!({
+            "error": {
+                "type": "usage_limit_reached",
+                "message": "limit reached",
+                "resets_in_seconds": 5,
+                "plan_type": "pro"
+            }
+        }));
+
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(response)
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut builder = test_codex();
+    let codex_fixture = builder.build(&server).await?;
+    let codex = codex_fixture.codex.clone();
+
+    codex
+        .submit(Op::UserInput {
+            items: vec![InputItem::Text {
+                text: "hello".into(),
+            }],
+        })
+        .await
+        .expect("submission should succeed while emitting usage limit error events");
+
+    wait_for_event(&codex, |msg| matches!(msg, EventMsg::TokenCount(_))).await;
+
+    let error_event = wait_for_event(&codex, |msg| matches!(msg, EventMsg::Error(_))).await;
+    let EventMsg::Error(error_event) = error_event else {
+        unreachable!();
+    };
+
+    assert!(
+        error_event.message.contains("2 hours"),
+        "expected longer reset hint in error message: {}",
         error_event.message
     );
 
