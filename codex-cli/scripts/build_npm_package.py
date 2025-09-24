@@ -245,8 +245,14 @@ def resolve_release_workflow(version: str) -> dict:
             f"rust-v{version}",
             "--json",
             "workflowName,url,headSha",
+            # Empirically, we have seen both "rust-release" and
+            # ".github/workflows/rust-release.yml" as the workflowName, so we
+            # check for both here. The docs are not clear on which is expected:
+            # https://cli.github.com/manual/gh_run_list
+            "--workflow",
+            ".github/workflows/rust-release.yml",
             "--jq",
-            'first(.[] | select(.workflowName == "rust-release"))',
+            "first(.[])",
         ],
         text=True,
     )
