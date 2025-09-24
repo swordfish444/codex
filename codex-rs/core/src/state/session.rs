@@ -1,16 +1,12 @@
 //! Session-wide mutable state.
 
-use std::collections::HashMap;
 use std::collections::HashSet;
 
-use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
-use tokio::sync::oneshot;
 
 use crate::codex::AgentTask;
 use crate::conversation_history::ConversationHistory;
 use crate::protocol::RateLimitSnapshot;
-use crate::protocol::ReviewDecision;
 use crate::protocol::TokenUsage;
 use crate::protocol::TokenUsageInfo;
 
@@ -19,8 +15,6 @@ use crate::protocol::TokenUsageInfo;
 pub(crate) struct SessionState {
     pub(crate) approved_commands: HashSet<Vec<String>>,
     pub(crate) current_task: Option<AgentTask>,
-    pub(crate) pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
-    pub(crate) pending_input: Vec<ResponseInputItem>,
     pub(crate) history: ConversationHistory,
     pub(crate) token_info: Option<TokenUsageInfo>,
     pub(crate) latest_rate_limits: Option<RateLimitSnapshot>,
@@ -84,38 +78,5 @@ impl SessionState {
         (self.token_info.clone(), self.latest_rate_limits.clone())
     }
 
-    // Pending input/approval helpers
-    pub(crate) fn insert_pending_approval(
-        &mut self,
-        key: String,
-        tx: oneshot::Sender<ReviewDecision>,
-    ) -> Option<oneshot::Sender<ReviewDecision>> {
-        self.pending_approvals.insert(key, tx)
-    }
-
-    pub(crate) fn remove_pending_approval(
-        &mut self,
-        key: &str,
-    ) -> Option<oneshot::Sender<ReviewDecision>> {
-        self.pending_approvals.remove(key)
-    }
-
-    pub(crate) fn clear_pending(&mut self) {
-        self.pending_approvals.clear();
-        self.pending_input.clear();
-    }
-
-    pub(crate) fn push_pending_input(&mut self, input: ResponseInputItem) {
-        self.pending_input.push(input);
-    }
-
-    pub(crate) fn take_pending_input(&mut self) -> Vec<ResponseInputItem> {
-        if self.pending_input.is_empty() {
-            Vec::with_capacity(0)
-        } else {
-            let mut ret = Vec::new();
-            std::mem::swap(&mut ret, &mut self.pending_input);
-            ret
-        }
-    }
+    // Pending input/approval moved to TurnState.
 }
