@@ -21,6 +21,7 @@ use crate::exec_command::exec_command_params::WriteStdinParams;
 use crate::exec_command::exec_command_session::ExecCommandSession;
 use crate::exec_command::session_id::SessionId;
 use crate::truncate::truncate_middle;
+use codex_protocol::models::FunctionCallOutputPayload;
 
 #[derive(Debug, Default)]
 pub struct SessionManager {
@@ -37,7 +38,7 @@ pub struct ExecCommandOutput {
 }
 
 impl ExecCommandOutput {
-    pub(crate) fn to_text_output(&self) -> String {
+    fn to_text_output(&self) -> String {
         let wall_time_secs = self.wall_time.as_secs_f32();
         let termination_status = match self.exit_status {
             ExitStatus::Exited(code) => format!("Process exited with code {code}"),
@@ -65,6 +66,19 @@ Output:
 pub enum ExitStatus {
     Exited(i32),
     Ongoing(SessionId),
+}
+
+pub fn result_into_payload(result: Result<ExecCommandOutput, String>) -> FunctionCallOutputPayload {
+    match result {
+        Ok(output) => FunctionCallOutputPayload {
+            content: output.to_text_output(),
+            success: Some(true),
+        },
+        Err(err) => FunctionCallOutputPayload {
+            content: err,
+            success: Some(false),
+        },
+    }
 }
 
 impl SessionManager {

@@ -77,9 +77,11 @@ use crate::history_cell::CommandOutput;
 use crate::history_cell::ExecCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PatchEventType;
-use crate::history_cell::RateLimitSnapshotDisplay;
 use crate::markdown::append_markdown;
 use crate::slash_command::SlashCommand;
+use crate::status::RateLimitSnapshotDisplay;
+use crate::status::new_status_output;
+use crate::status::rate_limit_snapshot_display;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
 // streaming internals are provided by crate::streaming and crate::markdown_stream
@@ -91,6 +93,7 @@ use self::agent::spawn_agent;
 use self::agent::spawn_agent_from_existing;
 mod session_header;
 use self::session_header::SessionHeader;
+use crate::streaming::controller::AppEventHistorySink;
 use crate::streaming::controller::StreamController;
 use std::path::Path;
 
@@ -251,13 +254,11 @@ fn create_initial_user_message(text: String, image_paths: Vec<PathBuf>) -> Optio
 
 impl ChatWidget {
     fn flush_answer_stream_with_separator(&mut self) {
-        if let Some(mut controller) = self.stream_controller.take()
-            && let Some(cell) = controller.finalize()
-        {
-            self.add_boxed_history(cell);
+        if let Some(mut controller) = self.stream_controller.take() {
+            let sink = AppEventHistorySink(self.app_event_tx.clone());
+            controller.finalize(&sink);
         }
     }
-
     // --- Small event handlers ---
     fn on_session_configured(&mut self, event: codex_core::protocol::SessionConfiguredEvent) {
         self.bottom_pane
@@ -347,8 +348,12 @@ impl ChatWidget {
     }
 
     fn on_task_complete(&mut self, last_agent_message: Option<String>) {
-        // If a stream is currently active, finalize it.
-        self.flush_answer_stream_with_separator();
+        // If a stream is currently active, finalize only that stream to flush any tail
+        // without emitting stray headers for other streams.
+        if let Some(mut controller) = self.stream_controller.take() {
+            let sink = AppEventHistorySink(self.app_event_tx.clone());
+            controller.finalize(&sink);
+        }
         // Mark task stopped and request redraw now that all content is in history.
         self.bottom_pane.set_task_running(false);
         self.running_commands.clear();
@@ -379,7 +384,7 @@ impl ChatWidget {
                 snapshot.primary.as_ref().map(|window| window.used_percent),
             );
 
-            let display = history_cell::rate_limit_snapshot_display(&snapshot, Local::now());
+            let display = rate_limit_snapshot_display(&snapshot, Local::now());
             self.rate_limit_snapshot = Some(display);
 
             if !warnings.is_empty() {
@@ -551,18 +556,14 @@ impl ChatWidget {
         self.add_to_history(history_cell::new_stream_error_event(message));
         self.request_redraw();
     }
-
     /// Periodic tick to commit at most one queued line to history with a small delay,
     /// animating the output.
     pub(crate) fn on_commit_tick(&mut self) {
         if let Some(controller) = self.stream_controller.as_mut() {
-            let (cell, is_idle) = controller.on_commit_tick();
-            if let Some(cell) = cell {
-                self.bottom_pane.set_task_running(false);
-                self.add_boxed_history(cell);
-            }
-            if is_idle {
-                self.app_event_tx.send(AppEvent::StopCommitAnimation);
+            let sink = AppEventHistorySink(self.app_event_tx.clone());
+            let finished = controller.on_commit_tick(&sink);
+            if finished {
+                self.handle_stream_finished();
             }
         }
     }
@@ -606,10 +607,9 @@ impl ChatWidget {
         if self.stream_controller.is_none() {
             self.stream_controller = Some(StreamController::new(self.config.clone()));
         }
-        if let Some(controller) = self.stream_controller.as_mut()
-            && controller.push(&delta)
-        {
-            self.app_event_tx.send(AppEvent::StartCommitAnimation);
+        if let Some(controller) = self.stream_controller.as_mut() {
+            let sink = AppEventHistorySink(self.app_event_tx.clone());
+            controller.push_and_maybe_commit(&delta, &sink);
         }
         self.request_redraw();
     }
@@ -1466,7 +1466,7 @@ impl ChatWidget {
             default_usage = TokenUsage::default();
             &default_usage
         };
-        self.add_to_history(history_cell::new_status_output(
+        self.add_to_history(new_status_output(
             &self.config,
             usage_ref,
             &self.conversation_id,
