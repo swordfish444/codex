@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -252,17 +251,7 @@ impl Codex {
     }
 }
 
-/// Mutable state of the agent
-#[derive(Default)]
-struct State {
-    approved_commands: HashSet<Vec<String>>,
-    current_task: Option<AgentTask>,
-    pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
-    pending_input: Vec<ResponseInputItem>,
-    history: ConversationHistory,
-    token_info: Option<TokenUsageInfo>,
-    latest_rate_limits: Option<RateLimitSnapshot>,
-}
+use crate::state::SessionState;
 
 /// Context for an initialized model agent
 ///
@@ -281,7 +270,7 @@ pub(crate) struct Session {
     /// Optional rollout recorder for persisting the conversation transcript so
     /// sessions can be replayed or inspected later.
     rollout: Mutex<Option<RolloutRecorder>>,
-    state: Mutex<State>,
+    state: Mutex<SessionState>,
     codex_linux_sandbox_exe: Option<PathBuf>,
     user_shell: shell::Shell,
     show_raw_agent_reasoning: bool,
@@ -412,10 +401,7 @@ impl Session {
         })?;
         let rollout_path = rollout_recorder.rollout_path.clone();
         // Create the mutable state for the Session.
-        let state = State {
-            history: ConversationHistory::new(),
-            ..Default::default()
-        };
+        let state = SessionState::new();
 
         // Handle MCP manager result and record any startup failures.
         let (mcp_connection_manager, failed_clients) = match mcp_res {
@@ -3631,10 +3617,7 @@ mod tests {
             unified_exec_manager: UnifiedExecSessionManager::default(),
             notifier: UserNotifier::default(),
             rollout: Mutex::new(None),
-            state: Mutex::new(State {
-                history: ConversationHistory::new(),
-                ..Default::default()
-            }),
+            state: Mutex::new(SessionState::new()),
             codex_linux_sandbox_exe: None,
             user_shell: shell::Shell::Unknown,
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
