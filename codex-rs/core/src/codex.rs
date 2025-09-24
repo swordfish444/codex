@@ -504,7 +504,9 @@ impl Session {
             let mut active = self.active_turn.lock().await;
             *active = Some(ActiveTurn {
                 sub_id: current_task.sub_id.clone(),
-                turn_state: std::sync::Arc::new(crate::state::TurnState),
+                turn_state: std::sync::Arc::new(tokio::sync::Mutex::new(
+                    crate::state::TurnState::default(),
+                )),
             });
         }
     }
@@ -583,8 +585,14 @@ impl Session {
         let (tx_approve, rx_approve) = oneshot::channel();
         let event_id = sub_id.clone();
         let prev_entry = {
-            let mut state = self.state.lock().await;
-            state.insert_pending_approval(sub_id, tx_approve)
+            let mut active = self.active_turn.lock().await;
+            match active.as_mut() {
+                Some(at) => {
+                    let mut ts = at.turn_state.lock().await;
+                    ts.insert_pending_approval(sub_id, tx_approve)
+                }
+                None => None,
+            }
         };
         if prev_entry.is_some() {
             warn!("Overwriting existing pending approval for sub_id: {event_id}");
@@ -615,8 +623,14 @@ impl Session {
         let (tx_approve, rx_approve) = oneshot::channel();
         let event_id = sub_id.clone();
         let prev_entry = {
-            let mut state = self.state.lock().await;
-            state.insert_pending_approval(sub_id, tx_approve)
+            let mut active = self.active_turn.lock().await;
+            match active.as_mut() {
+                Some(at) => {
+                    let mut ts = at.turn_state.lock().await;
+                    ts.insert_pending_approval(sub_id, tx_approve)
+                }
+                None => None,
+            }
         };
         if prev_entry.is_some() {
             warn!("Overwriting existing pending approval for sub_id: {event_id}");
@@ -637,8 +651,14 @@ impl Session {
 
     pub async fn notify_approval(&self, sub_id: &str, decision: ReviewDecision) {
         let entry = {
-            let mut state = self.state.lock().await;
-            state.remove_pending_approval(sub_id)
+            let mut active = self.active_turn.lock().await;
+            match active.as_mut() {
+                Some(at) => {
+                    let mut ts = at.turn_state.lock().await;
+                    ts.remove_pending_approval(sub_id)
+                }
+                None => None,
+            }
         };
         match entry {
             Some(tx_approve) => {
@@ -986,9 +1006,13 @@ impl Session {
 
     /// Returns the input if there was no task running to inject into
     pub async fn inject_input(&self, input: Vec<InputItem>) -> Result<(), Vec<InputItem>> {
-        let mut state = self.state.lock().await;
+        let state = self.state.lock().await;
         if state.current_task.is_some() {
-            state.push_pending_input(input.into());
+            let mut active = self.active_turn.lock().await;
+            if let Some(at) = active.as_mut() {
+                let mut ts = at.turn_state.lock().await;
+                ts.push_pending_input(input.into());
+            }
             Ok(())
         } else {
             Err(input)
@@ -996,8 +1020,13 @@ impl Session {
     }
 
     pub async fn get_pending_input(&self) -> Vec<ResponseInputItem> {
-        let mut state = self.state.lock().await;
-        state.take_pending_input()
+        let mut active = self.active_turn.lock().await;
+        if let Some(at) = active.as_mut() {
+            let mut ts = at.turn_state.lock().await;
+            ts.take_pending_input()
+        } else {
+            Vec::with_capacity(0)
+        }
     }
 
     pub async fn call_tool(
@@ -1015,7 +1044,11 @@ impl Session {
     pub async fn interrupt_task(&self) {
         info!("interrupt received: abort current task, if any");
         let mut state = self.state.lock().await;
-        state.clear_pending();
+        let mut active = self.active_turn.lock().await;
+        if let Some(at) = active.as_mut() {
+            let mut ts = at.turn_state.lock().await;
+            ts.clear_pending();
+        }
         if let Some(task) = state.current_task.take() {
             task.abort(TurnAbortReason::Interrupted);
         }
@@ -1023,7 +1056,11 @@ impl Session {
 
     fn interrupt_task_sync(&self) {
         if let Ok(mut state) = self.state.try_lock() {
-            state.clear_pending();
+            if let Ok(mut active) = self.active_turn.try_lock()
+                && let Some(at) = active.as_mut()
+                    && let Ok(mut ts) = at.turn_state.try_lock() {
+                        ts.clear_pending();
+                    }
             if let Some(task) = state.current_task.take() {
                 task.abort(TurnAbortReason::Interrupted);
             }
