@@ -11,6 +11,7 @@ use crate::protocol::RateLimitSnapshot;
 use crate::protocol::ReviewDecision;
 use crate::protocol::TokenUsageInfo;
 
+#[derive(Default)]
 pub(crate) struct SessionState {
     pub(crate) approved_commands: HashSet<Vec<String>>,
     pub(crate) pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
@@ -31,18 +32,5 @@ impl SessionState {
 
     pub(crate) fn clear_readiness(&mut self) {
         self.readiness_queue.clear();
-    }
-}
-
-impl Default for SessionState {
-    fn default() -> Self {
-        Self {
-            approved_commands: HashSet::new(),
-            pending_approvals: HashMap::new(),
-            history: ConversationHistory::new(),
-            token_info: None,
-            latest_rate_limits: None,
-            readiness_queue: VecDeque::new(),
-        }
     }
 }

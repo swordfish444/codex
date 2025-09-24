@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -18,6 +17,8 @@ use crate::protocol::SandboxPolicy;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
+
+use std::collections::VecDeque;
 
 #[derive(Debug)]
 pub(crate) struct TurnContext {
@@ -44,10 +45,57 @@ impl TurnContext {
     }
 }
 
-struct TurnRuntime {
+struct TurnMailbox {
     initial_input: Option<ResponseInputItem>,
-    current_readiness: Option<Arc<ReadinessFlag>>,
+    latest_readiness: Option<Arc<ReadinessFlag>>,
     pending: VecDeque<ResponseInputItem>,
+}
+
+impl TurnMailbox {
+    fn new(
+        initial_input: Option<ResponseInputItem>,
+        readiness: Option<Arc<ReadinessFlag>>,
+    ) -> Self {
+        Self {
+            initial_input,
+            latest_readiness: readiness,
+            pending: VecDeque::new(),
+        }
+    }
+
+    fn take_initial_input(&mut self) -> Option<ResponseInputItem> {
+        self.initial_input.take()
+    }
+
+    fn enqueue(&mut self, items: Vec<InputItem>, readiness: Option<Arc<ReadinessFlag>>) {
+        if items.is_empty() && readiness.is_none() {
+            return;
+        }
+
+        if let Some(flag) = readiness {
+            self.latest_readiness = Some(flag);
+        }
+
+        if items.is_empty() {
+            return;
+        }
+
+        self.pending.push_back(items.into());
+    }
+
+    fn drain(&mut self) -> (Vec<ResponseItem>, Option<Arc<ReadinessFlag>>) {
+        let items = self
+            .pending
+            .drain(..)
+            .map(ResponseItem::from)
+            .collect::<Vec<_>>();
+        let readiness = self.latest_readiness.clone();
+        (items, readiness)
+    }
+}
+
+struct TurnRuntime {
+    mailbox: TurnMailbox,
     review_history: Vec<ResponseItem>,
     last_agent_message: Option<String>,
     auto_compact_recently_attempted: bool,
@@ -60,9 +108,7 @@ impl TurnRuntime {
         readiness: Option<Arc<ReadinessFlag>>,
     ) -> Self {
         Self {
-            initial_input,
-            current_readiness: readiness,
-            pending: VecDeque::new(),
+            mailbox: TurnMailbox::new(initial_input, readiness),
             review_history: Vec::new(),
             last_agent_message: None,
             auto_compact_recently_attempted: false,
@@ -107,18 +153,12 @@ impl TurnState {
 
     pub(crate) async fn take_initial_input(&self) -> Option<ResponseInputItem> {
         let mut runtime = self.runtime.lock().await;
-        runtime.initial_input.take()
+        runtime.mailbox.take_initial_input()
     }
 
     pub(crate) async fn drain_mailbox(&self) -> (Vec<ResponseItem>, Option<Arc<ReadinessFlag>>) {
         let mut runtime = self.runtime.lock().await;
-        let items = runtime
-            .pending
-            .drain(..)
-            .map(ResponseItem::from)
-            .collect::<Vec<_>>();
-        let readiness = runtime.current_readiness.clone();
-        (items, readiness)
+        runtime.mailbox.drain()
     }
 
     pub(crate) async fn enqueue_user_input(
@@ -126,24 +166,8 @@ impl TurnState {
         items: Vec<InputItem>,
         readiness: Option<Arc<ReadinessFlag>>,
     ) {
-        if readiness.is_some() {
-            let mut runtime = self.runtime.lock().await;
-            runtime.current_readiness = readiness;
-            if items.is_empty() {
-                return;
-            }
-            let response: ResponseInputItem = items.into();
-            runtime.pending.push_back(response);
-            return;
-        }
-
-        if items.is_empty() {
-            return;
-        }
-
         let mut runtime = self.runtime.lock().await;
-        let response: ResponseInputItem = items.into();
-        runtime.pending.push_back(response);
+        runtime.mailbox.enqueue(items, readiness);
     }
 
     pub(crate) async fn set_review_history(&self, history: Vec<ResponseItem>) {
