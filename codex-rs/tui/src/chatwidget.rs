@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1513,40 +1514,52 @@ impl ChatWidget {
         let presets: Vec<ModelPreset> = builtin_model_presets(auth_mode);
 
         let mut items: Vec<SelectionItem> = Vec::new();
+        let mut seen_labels: HashSet<String> = HashSet::new();
+        let mut seen_model_effort: HashSet<(String, Option<String>)> = HashSet::new();
         for preset in presets.iter() {
             let name = preset.label.to_string();
             let description = Some(preset.description.to_string());
             let is_current = preset.model == current_model && preset.effort == current_effort;
             let model_slug = preset.model.to_string();
             let effort = preset.effort;
-            let current_model = current_model.clone();
-            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                tx.send(AppEvent::CodexOp(Op::OverrideTurnContext {
-                    cwd: None,
-                    approval_policy: None,
-                    sandbox_policy: None,
-                    model: Some(model_slug.clone()),
-                    effort: Some(effort),
-                    summary: None,
-                }));
-                tx.send(AppEvent::UpdateModel(model_slug.clone()));
-                tx.send(AppEvent::UpdateReasoningEffort(effort));
-                tx.send(AppEvent::PersistModelSelection {
-                    model: model_slug.clone(),
-                    effort,
-                });
-                tracing::info!(
-                    "New model: {}, New effort: {}, Current model: {}, Current effort: {}",
-                    model_slug.clone(),
-                    effort
-                        .map(|effort| effort.to_string())
-                        .unwrap_or_else(|| "none".to_string()),
-                    current_model,
-                    current_effort
-                        .map(|effort| effort.to_string())
-                        .unwrap_or_else(|| "none".to_string())
-                );
-            })];
+            let effort_key = effort.map(|value| value.to_string());
+            seen_labels.insert(name.clone());
+            seen_model_effort.insert((model_slug.clone(), effort_key.clone()));
+            let actions = build_model_selection_actions(
+                current_model.clone(),
+                current_effort,
+                model_slug.clone(),
+                effort,
+            );
+            items.push(SelectionItem {
+                name,
+                description,
+                is_current,
+                actions,
+                dismiss_on_select: true,
+                search_value: None,
+            });
+        }
+
+        for custom in self.config.experimental_custom_selector_models.iter() {
+            let name = custom.label.clone();
+            let description = custom.description.clone();
+            let is_current = custom.model == current_model && custom.effort == current_effort;
+            let model_slug = custom.model.clone();
+            let effort = custom.effort;
+            let effort_key = effort.map(|value| value.to_string());
+            let model_effort_key = (model_slug.clone(), effort_key);
+            if seen_labels.contains(&name) || seen_model_effort.contains(&model_effort_key) {
+                continue;
+            }
+            seen_labels.insert(name.clone());
+            seen_model_effort.insert(model_effort_key);
+            let actions = build_model_selection_actions(
+                current_model.clone(),
+                current_effort,
+                model_slug.clone(),
+                effort,
+            );
             items.push(SelectionItem {
                 name,
                 description,
@@ -1923,6 +1936,41 @@ impl ChatWidget {
         let [_, _, bottom_pane_area] = self.layout_areas(area);
         self.bottom_pane.cursor_pos(bottom_pane_area)
     }
+}
+
+fn build_model_selection_actions(
+    current_model: String,
+    current_effort: Option<ReasoningEffortConfig>,
+    model_slug: String,
+    effort: Option<ReasoningEffortConfig>,
+) -> Vec<SelectionAction> {
+    vec![Box::new(move |tx| {
+        tx.send(AppEvent::CodexOp(Op::OverrideTurnContext {
+            cwd: None,
+            approval_policy: None,
+            sandbox_policy: None,
+            model: Some(model_slug.clone()),
+            effort: Some(effort),
+            summary: None,
+        }));
+        tx.send(AppEvent::UpdateModel(model_slug.clone()));
+        tx.send(AppEvent::UpdateReasoningEffort(effort));
+        tx.send(AppEvent::PersistModelSelection {
+            model: model_slug.clone(),
+            effort,
+        });
+        tracing::info!(
+            "New model: {}, New effort: {}, Current model: {}, Current effort: {}",
+            model_slug.clone(),
+            effort
+                .map(|effort| effort.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            current_model,
+            current_effort
+                .map(|effort| effort.to_string())
+                .unwrap_or_else(|| "none".to_string())
+        );
+    })]
 }
 
 impl WidgetRef for &ChatWidget {

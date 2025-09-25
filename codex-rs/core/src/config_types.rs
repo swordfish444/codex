@@ -13,6 +13,8 @@ use serde::Deserializer;
 use serde::Serialize;
 use serde::de::Error as SerdeError;
 
+use codex_protocol::config_types::ReasoningEffort;
+
 #[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct McpServerConfig {
     pub command: String,
@@ -175,6 +177,16 @@ pub struct Tui {
     /// Defaults to `false`.
     #[serde(default)]
     pub notifications: Notifications,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct CustomSelectorModel {
+    pub label: String,
+    pub model: String,
+    #[serde(default)]
+    pub effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Default)]

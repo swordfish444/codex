@@ -1,11 +1,13 @@
 use super::*;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use codex_common::model_presets::builtin_model_presets;
 use codex_core::AuthManager;
 use codex_core::CodexAuth;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::ConfigToml;
+use codex_core::config_types::CustomSelectorModel;
 use codex_core::plan_tool::PlanItemArg;
 use codex_core::plan_tool::StepStatus;
 use codex_core::plan_tool::UpdatePlanArgs;
@@ -408,6 +410,155 @@ fn rate_limit_warnings_emit_thresholds() {
             ),
         ],
         "expected one warning per limit for the highest crossed threshold"
+    );
+}
+
+#[test]
+fn custom_model_presets_append_after_builtins() {
+    let (mut chat, mut _rx, _op_rx) = make_chatwidget_manual();
+
+    chat.config.experimental_custom_selector_models = vec![
+        CustomSelectorModel {
+            label: "gpt-5 medium".to_string(),
+            model: "gpt-5".to_string(),
+            effort: Some(ReasoningEffortConfig::Medium),
+            description: Some("duplicate label".to_string()),
+        },
+        CustomSelectorModel {
+            label: "Duplicate combo".to_string(),
+            model: "gpt-5".to_string(),
+            effort: Some(ReasoningEffortConfig::Medium),
+            description: Some("duplicate combination".to_string()),
+        },
+        CustomSelectorModel {
+            label: "Custom minimal".to_string(),
+            model: "custom-minimal".to_string(),
+            effort: None,
+            description: Some("fast local run".to_string()),
+        },
+        CustomSelectorModel {
+            label: "Custom high".to_string(),
+            model: "custom-high".to_string(),
+            effort: Some(ReasoningEffortConfig::High),
+            description: None,
+        },
+    ];
+
+    chat.open_model_popup();
+
+    let names = chat
+        .bottom_pane
+        .last_selection_item_names()
+        .expect("selection items");
+    let builtin_len = builtin_model_presets(None).len();
+    assert!(
+        names.len() >= builtin_len + 2,
+        "expected custom presets appended"
+    );
+    let expected = vec!["Custom minimal".to_string(), "Custom high".to_string()];
+    assert_eq!(&names[builtin_len..], expected.as_slice());
+}
+
+#[test]
+fn selecting_custom_model_emits_expected_events() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
+
+    chat.config.experimental_custom_selector_models = vec![CustomSelectorModel {
+        label: "Custom high".to_string(),
+        model: "custom-high".to_string(),
+        effort: Some(ReasoningEffortConfig::High),
+        description: Some("locally tuned".to_string()),
+    }];
+    chat.config.model = "custom-high".to_string();
+    chat.config.model_reasoning_effort = Some(ReasoningEffortConfig::High);
+
+    chat.open_model_popup();
+
+    chat.bottom_pane
+        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    let mut seen_override = None;
+    let mut seen_update_model = None;
+    let mut seen_update_effort = None;
+    let mut seen_persist = None;
+
+    while let Ok(event) = rx.try_recv() {
+        match event {
+            AppEvent::CodexOp(Op::OverrideTurnContext { model, effort, .. }) => {
+                seen_override = Some((model, effort));
+            }
+            AppEvent::UpdateModel(model) => {
+                seen_update_model = Some(model);
+            }
+            AppEvent::UpdateReasoningEffort(effort) => {
+                seen_update_effort = Some(effort);
+            }
+            AppEvent::PersistModelSelection { model, effort } => {
+                seen_persist = Some((model, effort));
+            }
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        seen_override,
+        Some((
+            Some("custom-high".to_string()),
+            Some(Some(ReasoningEffortConfig::High))
+        ))
+    );
+    assert_eq!(seen_update_model, Some("custom-high".to_string()));
+    assert_eq!(seen_update_effort, Some(Some(ReasoningEffortConfig::High)));
+    assert_eq!(
+        seen_persist,
+        Some(("custom-high".to_string(), Some(ReasoningEffortConfig::High)))
+    );
+}
+
+#[test]
+fn custom_model_conflicts_are_skipped() {
+    let (mut chat, mut _rx, _op_rx) = make_chatwidget_manual();
+
+    chat.config.experimental_custom_selector_models = vec![
+        CustomSelectorModel {
+            label: "gpt-5 medium".to_string(),
+            model: "gpt-5".to_string(),
+            effort: Some(ReasoningEffortConfig::Medium),
+            description: None,
+        },
+        CustomSelectorModel {
+            label: "Duplicate combo".to_string(),
+            model: "gpt-5".to_string(),
+            effort: Some(ReasoningEffortConfig::Medium),
+            description: None,
+        },
+        CustomSelectorModel {
+            label: "Unique custom".to_string(),
+            model: "custom-unique".to_string(),
+            effort: None,
+            description: None,
+        },
+    ];
+
+    chat.open_model_popup();
+
+    let names = chat
+        .bottom_pane
+        .last_selection_item_names()
+        .expect("selection items");
+    let builtin_len = builtin_model_presets(None).len();
+
+    assert!(names.len() > builtin_len);
+    assert!(names[builtin_len..].contains(&"Unique custom".to_string()));
+    assert!(
+        !names[builtin_len..]
+            .iter()
+            .any(|name| name == "gpt-5 medium")
+    );
+    assert!(
+        !names[builtin_len..]
+            .iter()
+            .any(|name| name == "Duplicate combo")
     );
 }
 

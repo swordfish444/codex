@@ -67,6 +67,9 @@ pub(crate) struct BottomPane {
     status: Option<StatusIndicatorWidget>,
     /// Queued user messages to show under the status indicator.
     queued_user_messages: Vec<String>,
+
+    #[cfg(test)]
+    pub(crate) debug_last_selection_items: Option<Vec<String>>,
 }
 
 pub(crate) struct BottomPaneParams {
@@ -99,6 +102,8 @@ impl BottomPane {
             status: None,
             queued_user_messages: Vec::new(),
             esc_backtrack_hint: false,
+            #[cfg(test)]
+            debug_last_selection_items: None,
         }
     }
 
@@ -337,8 +342,18 @@ impl BottomPane {
 
     /// Show a generic list selection view with the provided items.
     pub(crate) fn show_selection_view(&mut self, params: list_selection_view::SelectionViewParams) {
+        #[cfg(test)]
+        let debug_names = params
+            .items
+            .iter()
+            .map(|item| item.name.clone())
+            .collect::<Vec<_>>();
         let view = list_selection_view::ListSelectionView::new(params, self.app_event_tx.clone());
         self.push_view(Box::new(view));
+        #[cfg(test)]
+        {
+            self.debug_last_selection_items = Some(debug_names);
+        }
     }
 
     /// Update the queued messages shown under the status header.
@@ -354,6 +369,11 @@ impl BottomPane {
     pub(crate) fn set_custom_prompts(&mut self, prompts: Vec<CustomPrompt>) {
         self.composer.set_custom_prompts(prompts);
         self.request_redraw();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_selection_item_names(&self) -> Option<&[String]> {
+        self.debug_last_selection_items.as_deref()
     }
 
     pub(crate) fn composer_is_empty(&self) -> bool {

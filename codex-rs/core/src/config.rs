@@ -1,4 +1,5 @@
 use crate::config_profile::ConfigProfile;
+use crate::config_types::CustomSelectorModel;
 use crate::config_types::History;
 use crate::config_types::McpServerConfig;
 use crate::config_types::Notifications;
@@ -121,6 +122,9 @@ pub struct Config {
     /// TUI notifications preference. When set, the TUI will send OSC 9 notifications on approvals
     /// and turn completions when not focused.
     pub tui_notifications: Notifications,
+
+    /// Experimental custom model presets exposed in the TUI model selector.
+    pub experimental_custom_selector_models: Vec<CustomSelectorModel>,
 
     /// The directory that should be treated as the current working directory
     /// for the session. All relative paths inside the business-logic layer are
@@ -666,6 +670,9 @@ pub struct ConfigToml {
     /// Collection of settings that are specific to the TUI.
     pub tui: Option<Tui>,
 
+    /// Experimental custom model presets surfaced in the TUI model selector.
+    pub experimental_custom_selector_models: Option<Vec<CustomSelectorModel>>,
+
     /// When set to `true`, `AgentReasoning` events will be hidden from the
     /// UI/output. Defaults to `false`.
     pub hide_agent_reasoning: Option<bool>,
@@ -935,6 +942,8 @@ impl Config {
         };
 
         let history = cfg.history.unwrap_or_default();
+        let experimental_custom_selector_models =
+            cfg.experimental_custom_selector_models.unwrap_or_default();
 
         let tools_web_search_request = override_tools_web_search_request
             .or(cfg.tools.as_ref().and_then(|t| t.web_search))
@@ -1014,6 +1023,7 @@ impl Config {
             project_doc_max_bytes: cfg.project_doc_max_bytes.unwrap_or(PROJECT_DOC_MAX_BYTES),
             codex_home,
             history,
+            experimental_custom_selector_models,
             file_opener: cfg.file_opener.unwrap_or(UriBasedFileOpener::VsCode),
             codex_linux_sandbox_exe,
 
@@ -1198,6 +1208,59 @@ persistence = "none"
                 max_bytes: None,
             }),
             history_no_persistence_cfg.history
+        );
+    }
+
+    #[test]
+    fn experimental_custom_selector_models_round_trip_from_toml() {
+        let cfg = r#"
+[[experimental_custom_selector_models]]
+label = "o4-mini medium"
+model = "o4-mini"
+effort = "medium"
+description = "balanced latency"
+
+[[experimental_custom_selector_models]]
+label = "local sandbox"
+model = "local-model"
+"#;
+
+        let parsed =
+            toml::from_str::<ConfigToml>(cfg).expect("custom selector models should deserialize");
+        let models = parsed
+            .experimental_custom_selector_models
+            .as_ref()
+            .expect("custom presets present");
+
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].label, "o4-mini medium");
+        assert_eq!(models[0].model, "o4-mini");
+        assert_eq!(models[0].effort, Some(ReasoningEffort::Medium));
+        assert_eq!(models[0].description.as_deref(), Some("balanced latency"));
+        assert_eq!(models[1].label, "local sandbox");
+        assert_eq!(models[1].model, "local-model");
+        assert_eq!(models[1].effort, None);
+        assert_eq!(models[1].description, None);
+
+        let config = Config::load_from_base_config_with_overrides(
+            parsed.clone(),
+            ConfigOverrides::default(),
+            std::env::temp_dir(),
+        )
+        .expect("config should load");
+
+        assert_eq!(config.experimental_custom_selector_models.len(), 2);
+        assert_eq!(
+            config.experimental_custom_selector_models[0].label,
+            "o4-mini medium"
+        );
+        assert_eq!(
+            config.experimental_custom_selector_models[1].model,
+            "local-model"
+        );
+        assert_eq!(
+            config.experimental_custom_selector_models[0].effort,
+            Some(ReasoningEffort::Medium)
         );
     }
 
@@ -1654,6 +1717,7 @@ model_verbosity = "high"
                 include_view_image_tool: true,
                 active_profile: Some("o3".to_string()),
                 disable_paste_burst: false,
+                experimental_custom_selector_models: Vec::new(),
                 tui_notifications: Default::default(),
             },
             o3_profile_config
@@ -1712,6 +1776,7 @@ model_verbosity = "high"
             include_view_image_tool: true,
             active_profile: Some("gpt3".to_string()),
             disable_paste_burst: false,
+            experimental_custom_selector_models: Vec::new(),
             tui_notifications: Default::default(),
         };
 
@@ -1785,6 +1850,7 @@ model_verbosity = "high"
             include_view_image_tool: true,
             active_profile: Some("zdr".to_string()),
             disable_paste_burst: false,
+            experimental_custom_selector_models: Vec::new(),
             tui_notifications: Default::default(),
         };
 
@@ -1844,6 +1910,7 @@ model_verbosity = "high"
             include_view_image_tool: true,
             active_profile: Some("gpt5".to_string()),
             disable_paste_burst: false,
+            experimental_custom_selector_models: Vec::new(),
             tui_notifications: Default::default(),
         };
 
