@@ -488,12 +488,8 @@ impl ChatComposer {
                                     // If the user already typed positional args on the first line,
                                     // expand immediately and submit; otherwise insert "/name " so
                                     // they can type args.
-                                    let first_line = self
-                                        .textarea
-                                        .text()
-                                        .lines()
-                                        .next()
-                                        .unwrap_or("");
+                                    let first_line =
+                                        self.textarea.text().lines().next().unwrap_or("");
                                     let args = extract_args_for_prompt(first_line, &prompt.name);
                                     if !args.is_empty() {
                                         let expanded =
@@ -503,8 +499,7 @@ impl ChatComposer {
                                     } else {
                                         let text = format!("/{} ", prompt.name);
                                         self.textarea.set_text(&text);
-                                        self.textarea
-                                            .set_cursor(self.textarea.text().len());
+                                        self.textarea.set_cursor(self.textarea.text().len());
                                     }
                                 }
                                 // Popup visibility will be synchronized by the caller after this returns.
@@ -910,6 +905,7 @@ impl ChatComposer {
                 if self
                     .paste_burst
                     .newline_should_insert_instead_of_submit(now)
+                    && !in_slash_context
                 {
                     self.textarea.insert_str("\n");
                     self.paste_burst.extend_window(now);
@@ -942,10 +938,8 @@ impl ChatComposer {
                             return (InputResult::None, true);
                         }
                     };
-                let mut applied_named = false;
                 if let Some(expanded) = expanded_prompt {
                     text = expanded;
-                    applied_named = true;
                 } else {
                     // Fallback to numeric/positional placeholder expansion if this is a
                     // slash command referring to a known custom prompt.

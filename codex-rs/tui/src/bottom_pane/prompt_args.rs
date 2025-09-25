@@ -130,6 +130,11 @@ pub fn expand_custom_prompt(
         None => return Ok(None),
     };
     let rest = stripped[name_end..].trim();
+    // If the prompt has no named placeholders, defer to positional handling.
+    let required = prompt_argument_names(&prompt.content);
+    if required.is_empty() {
+        return Ok(None);
+    }
     let inputs = parse_prompt_inputs(rest).map_err(|error| PromptExpansionError::Args {
         command: format!("/{name}"),
         error,
