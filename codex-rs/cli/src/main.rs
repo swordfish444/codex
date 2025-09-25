@@ -2,6 +2,7 @@ use clap::CommandFactory;
 use clap::Parser;
 use clap_complete::Shell;
 use clap_complete::generate;
+use codex_arg0::PreMainArgs;
 use codex_arg0::arg0_dispatch_or_else;
 use codex_chatgpt::apply_command::ApplyCommand;
 use codex_chatgpt::apply_command::run_apply_command;
@@ -21,6 +22,7 @@ use std::path::PathBuf;
 use supports_color::Stream;
 
 mod mcp_cmd;
+mod pre_main_hardening;
 
 use crate::mcp_cmd::McpCli;
 use crate::proto::ProtoCli;
@@ -194,14 +196,47 @@ fn print_exit_messages(exit_info: AppExitInfo) {
     }
 }
 
+pub(crate) const CODEX_SECURE_MODE_ENV_VAR: &str = "CODEX_SECURE_MODE";
+
+/// As early as possible in the process lifecycle, apply hardening measures
+/// if the CODEX_SECURE_MODE environment variable is set to "1".
+#[ctor::ctor]
+fn pre_main_hardening() {
+    let secure_mode = match std::env::var(CODEX_SECURE_MODE_ENV_VAR) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+
+    if secure_mode == "1" {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        crate::pre_main_hardening::pre_main_hardening_linux();
+
+        #[cfg(target_os = "macos")]
+        crate::pre_main_hardening::pre_main_hardening_macos();
+
+        #[cfg(windows)]
+        crate::pre_main_hardening::pre_main_hardening_windows();
+    }
+
+    // Always clear this env var so child processes don't inherit it.
+    unsafe {
+        std::env::remove_var(CODEX_SECURE_MODE_ENV_VAR);
+    }
+}
+
 fn main() -> anyhow::Result<()> {
-    arg0_dispatch_or_else(|codex_linux_sandbox_exe| async move {
-        cli_main(codex_linux_sandbox_exe).await?;
+    arg0_dispatch_or_else(|pre_main_args| async move {
+        cli_main(pre_main_args).await?;
         Ok(())
     })
 }
 
-async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
+async fn cli_main(pre_main_args: PreMainArgs) -> anyhow::Result<()> {
+    let PreMainArgs {
+        codex_linux_sandbox_exe,
+        openai_api_key: _,
+    } = pre_main_args;
+
     let MultitoolCli {
         config_overrides: root_config_overrides,
         mut interactive,
