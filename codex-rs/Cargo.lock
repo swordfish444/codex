@@ -693,6 +693,7 @@ dependencies = [
  "clap",
  "codex-common",
  "codex-core",
+ "codex-git-apply",
  "codex-protocol",
  "reqwest",
  "serde",
@@ -761,13 +762,11 @@ dependencies = [
  "async-trait",
  "chrono",
  "codex-backend-client",
+ "codex-git-apply",
  "diffy",
- "once_cell",
- "regex",
  "reqwest",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 2.0.16",
  "tokio",
 ]
@@ -899,6 +898,15 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "codex-git-apply"
+version = "0.0.0"
+dependencies = [
+ "once_cell",
+ "regex",
+ "tempfile",
 ]
 
 [[package]]

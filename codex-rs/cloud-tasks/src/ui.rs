@@ -286,7 +286,11 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.diff_overlay.is_none() {
         return;
     }
-    let ov_can_apply = app.diff_overlay.as_ref().map(|o| o.can_apply).unwrap_or(false);
+    let ov_can_apply = app
+        .diff_overlay
+        .as_ref()
+        .map(|o| o.can_apply)
+        .unwrap_or(false);
     let is_error = app
         .diff_overlay
         .as_ref()
@@ -302,7 +306,12 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Title block
     let mut title_spans: Vec<ratatui::text::Span> = if is_error {
-        vec!["Details ".magenta(), "[FAILED]".red().bold(), " ".into(), title.clone().magenta()]
+        vec![
+            "Details ".magenta(),
+            "[FAILED]".red().bold(),
+            " ".into(),
+            title.clone().magenta(),
+        ]
     } else if ov_can_apply {
         vec!["Diff: ".magenta(), title.clone().magenta()]
     } else {
@@ -317,7 +326,10 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
         title_spans.push(format!("{p}%").dim());
     }
     frame.render_widget(Clear, inner);
-    frame.render_widget(overlay_block().title(Line::from(title_spans)).clone(), inner);
+    frame.render_widget(
+        overlay_block().title(Line::from(title_spans)).clone(),
+        inner,
+    );
 
     // Content area and optional status bar
     let content_full = overlay_content(inner);
@@ -333,9 +345,23 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
             // Status bar label
             let mut spans: Vec<ratatui::text::Span> = Vec::new();
             if has_diff && has_text {
-                let prompt_lbl = if matches!(ov.current_view, crate::app::DetailView::Prompt) { "[Prompt]".magenta().bold() } else { "Prompt".dim() };
-                let diff_lbl = if matches!(ov.current_view, crate::app::DetailView::Diff) { "[Diff]".magenta().bold() } else { "Diff".dim() };
-                spans.extend(vec![prompt_lbl, "  ".into(), diff_lbl, "  ".into(), "(← → to switch)".dim()]);
+                let prompt_lbl = if matches!(ov.current_view, crate::app::DetailView::Prompt) {
+                    "[Prompt]".magenta().bold()
+                } else {
+                    "Prompt".dim()
+                };
+                let diff_lbl = if matches!(ov.current_view, crate::app::DetailView::Diff) {
+                    "[Diff]".magenta().bold()
+                } else {
+                    "Diff".dim()
+                };
+                spans.extend(vec![
+                    prompt_lbl,
+                    "  ".into(),
+                    diff_lbl,
+                    "  ".into(),
+                    "(← → to switch)".dim(),
+                ]);
             } else if has_text {
                 spans.push("Conversation".magenta().bold());
             } else {
@@ -361,7 +387,10 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
         .unwrap_or(false);
     let styled_lines: Vec<Line<'static>> = if is_diff_view {
         let raw = app.diff_overlay.as_ref().map(|o| o.sd.wrapped_lines());
-        raw.unwrap_or(&[]).iter().map(|l| style_diff_line(l)).collect()
+        raw.unwrap_or(&[])
+            .iter()
+            .map(|l| style_diff_line(l))
+            .collect()
     } else {
         let mut in_code = false;
         let raw = app.diff_overlay.as_ref().map(|o| o.sd.wrapped_lines());

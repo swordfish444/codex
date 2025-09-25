@@ -221,7 +221,10 @@ mod tests {
             Ok(out)
         }
 
-        async fn get_task_diff(&self, _id: TaskId) -> codex_cloud_tasks_client::Result<String> {
+        async fn get_task_diff(
+            &self,
+            _id: TaskId,
+        ) -> codex_cloud_tasks_client::Result<Option<String>> {
             Err(codex_cloud_tasks_client::Error::Unimplemented(
                 "not used in test",
             ))
@@ -237,10 +240,22 @@ mod tests {
             &self,
             _id: TaskId,
         ) -> codex_cloud_tasks_client::Result<codex_cloud_tasks_client::TaskText> {
-            Ok(codex_cloud_tasks_client::TaskText { prompt: Some("Example prompt".to_string()), messages: Vec::new() })
+            Ok(codex_cloud_tasks_client::TaskText {
+                prompt: Some("Example prompt".to_string()),
+                messages: Vec::new(),
+            })
         }
 
         async fn apply_task(
+            &self,
+            _id: TaskId,
+        ) -> codex_cloud_tasks_client::Result<codex_cloud_tasks_client::ApplyOutcome> {
+            Err(codex_cloud_tasks_client::Error::Unimplemented(
+                "not used in test",
+            ))
+        }
+
+        async fn apply_task_preflight(
             &self,
             _id: TaskId,
         ) -> codex_cloud_tasks_client::Result<codex_cloud_tasks_client::ApplyOutcome> {

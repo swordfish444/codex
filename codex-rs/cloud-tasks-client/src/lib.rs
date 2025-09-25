@@ -26,6 +26,4 @@ pub use mock::MockClient;
 #[cfg(feature = "online")]
 pub use http::HttpClient;
 
-// Reusable apply engine (git apply runner and helpers)
-// Legacy engine remains until migration completes. New engine lives in git_apply.
-mod git_apply;
+// Reusable apply engine now lives in the shared crate `codex-git-apply`.

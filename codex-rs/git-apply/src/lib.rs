@@ -1,16 +1,18 @@
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+
+use once_cell::sync::Lazy;
 use regex::Regex;
 use std::ffi::OsStr;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 
-use once_cell::sync::Lazy;
-
 #[derive(Debug, Clone)]
 pub struct ApplyGitRequest {
     pub cwd: PathBuf,
     pub diff: String,
     pub revert: bool,
+    pub preflight: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -58,11 +60,8 @@ pub fn apply_git_patch(req: &ApplyGitRequest) -> io::Result<ApplyGitResult> {
 
     args.push(patch_path.to_string_lossy().to_string());
 
-    // Optional preflight: CODEX_APPLY_PREFLIGHT=1 (dry-run only; do not modify WT)
-    if matches!(
-        std::env::var("CODEX_APPLY_PREFLIGHT").ok().as_deref(),
-        Some("1" | "true" | "yes")
-    ) {
+    // Optional preflight: dry-run only; do not modify working tree
+    if req.preflight {
         let mut check_args = vec!["apply".to_string(), "--check".to_string()];
         if req.revert {
             check_args.push("-R".to_string());
@@ -479,6 +478,7 @@ fn regex_ci(pat: &str) -> Regex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
     use std::sync::Mutex;
     use std::sync::OnceLock;
 
@@ -513,7 +513,6 @@ mod tests {
     #[test]
     fn apply_add_success() {
         let _g = env_lock().lock().unwrap();
-        unsafe { std::env::remove_var("CODEX_APPLY_PREFLIGHT") };
         let repo = init_repo();
         let root = repo.path().to_path_buf();
 
@@ -522,6 +521,7 @@ mod tests {
             cwd: root.clone(),
             diff: diff.to_string(),
             revert: false,
+            preflight: false,
         };
         let r = apply_git_patch(&req).expect("run apply");
         assert_eq!(r.exit_code, 0, "exit code 0");
@@ -532,7 +532,6 @@ mod tests {
     #[test]
     fn apply_modify_conflict() {
         let _g = env_lock().lock().unwrap();
-        unsafe { std::env::remove_var("CODEX_APPLY_PREFLIGHT") };
         let repo = init_repo();
         let root = repo.path();
         // seed file and commit
@@ -547,6 +546,7 @@ mod tests {
             cwd: root.to_path_buf(),
             diff: diff.to_string(),
             revert: false,
+            preflight: false,
         };
         let r = apply_git_patch(&req).expect("run apply");
         assert_ne!(r.exit_code, 0, "non-zero exit on conflict");
@@ -555,7 +555,6 @@ mod tests {
     #[test]
     fn apply_modify_skipped_missing_index() {
         let _g = env_lock().lock().unwrap();
-        unsafe { std::env::remove_var("CODEX_APPLY_PREFLIGHT") };
         let repo = init_repo();
         let root = repo.path();
         // Try to modify a file that is not in the index
@@ -564,6 +563,7 @@ mod tests {
             cwd: root.to_path_buf(),
             diff: diff.to_string(),
             revert: false,
+            preflight: false,
         };
         let r = apply_git_patch(&req).expect("run apply");
         assert_ne!(r.exit_code, 0, "non-zero exit on missing index");
@@ -572,7 +572,6 @@ mod tests {
     #[test]
     fn apply_then_revert_success() {
         let _g = env_lock().lock().unwrap();
-        unsafe { std::env::remove_var("CODEX_APPLY_PREFLIGHT") };
         let repo = init_repo();
         let root = repo.path();
         // Seed file and commit original content
@@ -586,6 +585,7 @@ mod tests {
             cwd: root.to_path_buf(),
             diff: diff.to_string(),
             revert: false,
+            preflight: false,
         };
         let res_apply = apply_git_patch(&apply_req).expect("apply ok");
         assert_eq!(res_apply.exit_code, 0, "forward apply succeeded");
@@ -597,6 +597,7 @@ mod tests {
             cwd: root.to_path_buf(),
             diff: diff.to_string(),
             revert: true,
+            preflight: false,
         };
         let res_revert = apply_git_patch(&revert_req).expect("revert ok");
         assert_eq!(res_revert.exit_code, 0, "revert apply succeeded");
@@ -614,14 +615,13 @@ mod tests {
 diff --git a/ghost.txt b/ghost.txt\n--- a/ghost.txt\n+++ b/ghost.txt\n@@ -1,1 +1,1 @@\n-old\n+new\n";
 
         // 1) With preflight enabled, nothing should be changed (even though ok.txt could be added)
-        unsafe { std::env::set_var("CODEX_APPLY_PREFLIGHT", "1") };
         let req1 = ApplyGitRequest {
             cwd: root.clone(),
             diff: diff.to_string(),
             revert: false,
+            preflight: true,
         };
         let r1 = apply_git_patch(&req1).expect("preflight apply");
-        unsafe { std::env::remove_var("CODEX_APPLY_PREFLIGHT") };
         assert_ne!(r1.exit_code, 0, "preflight reports failure");
         assert!(
             !root.join("ok.txt").exists(),
@@ -637,6 +637,7 @@ diff --git a/ghost.txt b/ghost.txt\n--- a/ghost.txt\n+++ b/ghost.txt\n@@ -1,1 +1
             cwd: root.clone(),
             diff: diff.to_string(),
             revert: false,
+            preflight: false,
         };
         let r2 = apply_git_patch(&req2).expect("direct apply");
         assert_ne!(r2.exit_code, 0, "apply is expected to fail overall");

@@ -7,11 +7,22 @@ use reqwest::header::HeaderMap;
 use reqwest::header::HeaderName;
 use reqwest::header::HeaderValue;
 use reqwest::header::USER_AGENT;
+use serde::de::DeserializeOwned;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PathStyle {
-    CodexApi, // /api/codex/...
-    Wham,     // /wham/...
+    CodexApi,   // /api/codex/...
+    ChatGptApi, // /wham/...
+}
+
+impl PathStyle {
+    pub fn from_base_url(base_url: &str) -> Self {
+        if base_url.contains("/backend-api") {
+            PathStyle::ChatGptApi
+        } else {
+            PathStyle::CodexApi
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -39,11 +50,7 @@ impl Client {
             base_url = format!("{base_url}/backend-api");
         }
         let http = reqwest::Client::builder().build()?;
-        let path_style = if base_url.contains("/backend-api") {
-            PathStyle::Wham
-        } else {
-            PathStyle::CodexApi
-        };
+        let path_style = PathStyle::from_base_url(&base_url);
         Ok(Self {
             base_url,
             http,
@@ -95,18 +102,37 @@ impl Client {
         {
             h.insert(name, hv);
         }
-        // Optional internal toggle: send WHAM-FORCE-INTERNAL header when requested.
-        // if matches!(
-        //     std::env::var("CODEX_CLOUD_TASKS_FORCE_INTERNAL")
-        //         .ok()
-        //         .as_deref(),
-        //     Some("1") | Some("true") | Some("TRUE")
-        // ) {
-        //     if let Ok(name) = HeaderName::from_lowercase(b"wham-force-internal") {
-        //         h.insert(name, HeaderValue::from_static("true"));
-        //     }
-        // }
         h
+    }
+
+    async fn exec_request(
+        &self,
+        req: reqwest::RequestBuilder,
+        method: &str,
+        url: &str,
+    ) -> Result<(String, String)> {
+        let res = req.send().await?;
+        let status = res.status();
+        let ct = res
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let body = res.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("{method} {url} failed: {status}; content-type={ct}; body={body}");
+        }
+        Ok((body, ct))
+    }
+
+    fn decode_json<T: DeserializeOwned>(&self, url: &str, ct: &str, body: &str) -> Result<T> {
+        match serde_json::from_str::<T>(body) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                anyhow::bail!("Decode error for {url}: {e}; content-type={ct}; body={body}");
+            }
+        }
     }
 
     pub async fn list_tasks(
@@ -117,7 +143,7 @@ impl Client {
     ) -> Result<PaginatedListTaskListItem> {
         let url = match self.path_style {
             PathStyle::CodexApi => format!("{}/api/codex/tasks/list", self.base_url),
-            PathStyle::Wham => format!("{}/wham/tasks/list", self.base_url),
+            PathStyle::ChatGptApi => format!("{}/wham/tasks/list", self.base_url),
         };
         let req = self.http.get(&url).headers(self.headers());
         let req = if let Some(lim) = limit {
@@ -135,33 +161,8 @@ impl Client {
         } else {
             req
         };
-        let res = req.send().await?;
-        let status = res.status();
-        if !status.is_success() {
-            let ct = res
-                .headers()
-                .get(CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("")
-                .to_string();
-            let body = res.text().await.unwrap_or_default();
-            anyhow::bail!("GET {url} failed: {status}; content-type={ct}; body={body}");
-        }
-        // Decode with better diagnostics on failure
-        let ct = res
-            .headers()
-            .get(CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-        let body = res.text().await.unwrap_or_default();
-        match serde_json::from_str::<PaginatedListTaskListItem>(&body) {
-            Ok(v) => Ok(v),
-            Err(e) => {
-                // Include the full response body to aid debugging rather than truncating.
-                anyhow::bail!("Decode error for {url}: {e}; content-type={ct}; body={body}");
-            }
-        }
+        let (body, ct) = self.exec_request(req, "GET", &url).await?;
+        self.decode_json::<PaginatedListTaskListItem>(&url, &ct, &body)
     }
 
     pub async fn get_task_details(&self, task_id: &str) -> Result<CodeTaskDetailsResponse> {
@@ -175,33 +176,12 @@ impl Client {
     ) -> Result<(CodeTaskDetailsResponse, String, String)> {
         let url = match self.path_style {
             PathStyle::CodexApi => format!("{}/api/codex/tasks/{}", self.base_url, task_id),
-            PathStyle::Wham => format!("{}/wham/tasks/{}", self.base_url, task_id),
+            PathStyle::ChatGptApi => format!("{}/wham/tasks/{}", self.base_url, task_id),
         };
-        let res = self.http.get(&url).headers(self.headers()).send().await?;
-        let status = res.status();
-        if !status.is_success() {
-            let ct = res
-                .headers()
-                .get(CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("")
-                .to_string();
-            let body = res.text().await.unwrap_or_default();
-            anyhow::bail!("GET {url} failed: {status}; content-type={ct}; body={body}");
-        }
-        let ct = res
-            .headers()
-            .get(CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-        let body = res.text().await.unwrap_or_default();
-        match serde_json::from_str::<CodeTaskDetailsResponse>(&body) {
-            Ok(v) => Ok((v, body, ct)),
-            Err(e) => {
-                anyhow::bail!("Decode error for {url}: {e}; content-type={ct}; body={body}");
-            }
-        }
+        let req = self.http.get(&url).headers(self.headers());
+        let (body, ct) = self.exec_request(req, "GET", &url).await?;
+        let parsed: CodeTaskDetailsResponse = self.decode_json(&url, &ct, &body)?;
+        Ok((parsed, body, ct))
     }
 
     /// Create a new task (user turn) by POSTing to the appropriate backend path
@@ -209,27 +189,15 @@ impl Client {
     pub async fn create_task(&self, request_body: serde_json::Value) -> Result<String> {
         let url = match self.path_style {
             PathStyle::CodexApi => format!("{}/api/codex/tasks", self.base_url),
-            PathStyle::Wham => format!("{}/wham/tasks", self.base_url),
+            PathStyle::ChatGptApi => format!("{}/wham/tasks", self.base_url),
         };
-        let res = self
+        let req = self
             .http
             .post(&url)
             .headers(self.headers())
             .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-            .json(&request_body)
-            .send()
-            .await?;
-        let status = res.status();
-        let ct = res
-            .headers()
-            .get(CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-        let body = res.text().await.unwrap_or_default();
-        if !status.is_success() {
-            anyhow::bail!("POST {url} failed: {status}; content-type={ct}; body={body}");
-        }
+            .json(&request_body);
+        let (body, ct) = self.exec_request(req, "POST", &url).await?;
         // Extract id from JSON: prefer `task.id`; fallback to top-level `id` when present.
         match serde_json::from_str::<serde_json::Value>(&body) {
             Ok(v) => {
@@ -247,9 +215,7 @@ impl Client {
                     );
                 }
             }
-            Err(e) => {
-                anyhow::bail!("Decode error for {url}: {e}; content-type={ct}; body={body}");
-            }
+            Err(e) => anyhow::bail!("Decode error for {url}: {e}; content-type={ct}; body={body}"),
         }
     }
 }

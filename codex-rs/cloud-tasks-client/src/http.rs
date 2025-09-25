@@ -1,5 +1,4 @@
 use crate::ApplyOutcome;
-use crate::api::TaskText;
 use crate::ApplyStatus;
 use crate::CloudBackend;
 use crate::DiffSummary;
@@ -8,6 +7,7 @@ use crate::Result;
 use crate::TaskId;
 use crate::TaskStatus;
 use crate::TaskSummary;
+use crate::api::TaskText;
 use chrono::DateTime;
 use chrono::Utc;
 
@@ -87,7 +87,7 @@ impl CloudBackend for HttpClient {
         Ok(tasks)
     }
 
-    async fn get_task_diff(&self, _id: TaskId) -> Result<String> {
+    async fn get_task_diff(&self, _id: TaskId) -> Result<Option<String>> {
         let id = _id.0;
         let (details, body, ct) = self
             .backend
@@ -95,12 +95,12 @@ impl CloudBackend for HttpClient {
             .await
             .map_err(|e| Error::Http(format!("get_task_details failed: {e}")))?;
         if let Some(diff) = details.unified_diff() {
-            return Ok(diff);
+            return Ok(Some(diff));
         }
-        // No diff yet (pending or non-diff task). Return a structured error so UI can render cleanly.
-        // Keep a concise body tail in logs if needed by callers.
-        let _ = (body, ct); // silence unused if logging is disabled at callsite
-        Err(Error::NoDiffYet)
+        // No diff yet (pending or non-diff task).
+        // Keep variables bound for potential future logging.
+        let _ = (body, ct);
+        Ok(None)
     }
 
     async fn get_task_messages(&self, _id: TaskId) -> Result<Vec<String>> {
@@ -112,49 +112,7 @@ impl CloudBackend for HttpClient {
             .map_err(|e| Error::Http(format!("get_task_details failed: {e}")))?;
         let mut msgs = details.assistant_text_messages();
         if msgs.is_empty() {
-            // Fallback: some pending tasks expose only worklog messages; parse from raw body.
-            if let Ok(full) = serde_json::from_str::<serde_json::Value>(&body) {
-                // worklog.messages[*] where author.role == "assistant" → content.parts[*].text
-                if let Some(arr) = full
-                    .get("current_assistant_turn")
-                    .and_then(|v| v.get("worklog"))
-                    .and_then(|v| v.get("messages"))
-                    .and_then(|v| v.as_array())
-                {
-                    for m in arr {
-                        let is_assistant = m
-                            .get("author")
-                            .and_then(|a| a.get("role"))
-                            .and_then(|r| r.as_str())
-                            == Some("assistant");
-                        if !is_assistant {
-                            continue;
-                        }
-                        if let Some(parts) = m
-                            .get("content")
-                            .and_then(|c| c.get("parts"))
-                            .and_then(|p| p.as_array())
-                        {
-                            for p in parts {
-                                if let Some(s) = p.as_str() {
-                                    // Shape: content { content_type: "text", parts: ["..."] }
-                                    if !s.is_empty() {
-                                        msgs.push(s.to_string());
-                                    }
-                                    continue;
-                                }
-                                if let Some(obj) = p.as_object()
-                                    && obj.get("content_type").and_then(|t| t.as_str())
-                                        == Some("text")
-                                    && let Some(txt) = obj.get("text").and_then(|t| t.as_str())
-                                {
-                                    msgs.push(txt.to_string());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            msgs.extend(extract_assistant_messages_from_body(&body));
         }
         if !msgs.is_empty() {
             return Ok(msgs);
@@ -182,44 +140,8 @@ impl CloudBackend for HttpClient {
             .map_err(|e| Error::Http(format!("get_task_details failed: {e}")))?;
         let prompt = details.user_text_prompt();
         let mut messages = details.assistant_text_messages();
-        if messages.is_empty()
-            && let Ok(full) = serde_json::from_str::<serde_json::Value>(&body)
-            && let Some(arr) = full
-                .get("current_assistant_turn")
-                .and_then(|v| v.get("worklog"))
-                .and_then(|v| v.get("messages"))
-                .and_then(|v| v.as_array())
-        {
-            for m in arr {
-                let is_assistant = m
-                    .get("author")
-                    .and_then(|a| a.get("role"))
-                    .and_then(|r| r.as_str())
-                    == Some("assistant");
-                if !is_assistant {
-                    continue;
-                }
-                if let Some(parts) = m
-                    .get("content")
-                    .and_then(|c| c.get("parts"))
-                    .and_then(|p| p.as_array())
-                {
-                    for p in parts {
-                        if let Some(s) = p.as_str() {
-                            if !s.is_empty() {
-                                messages.push(s.to_string());
-                            }
-                            continue;
-                        }
-                        if let Some(obj) = p.as_object()
-                            && obj.get("content_type").and_then(|t| t.as_str()) == Some("text")
-                            && let Some(txt) = obj.get("text").and_then(|t| t.as_str())
-                        {
-                            messages.push(txt.to_string());
-                        }
-                    }
-                }
-            }
+        if messages.is_empty() {
+            messages.extend(extract_assistant_messages_from_body(&body));
         }
         Ok(TaskText { prompt, messages })
     }
@@ -252,12 +174,13 @@ impl CloudBackend for HttpClient {
         }
 
         // Run the new Git apply engine
-        let req = crate::git_apply::ApplyGitRequest {
+        let req = codex_git_apply::ApplyGitRequest {
             cwd: std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir()),
             diff: diff.clone(),
             revert: false,
+            preflight: false,
         };
-        let r = crate::git_apply::apply_git_patch(&req)
+        let r = codex_git_apply::apply_git_patch(&req)
             .map_err(|e| Error::Io(format!("git apply failed to run: {e}")))?;
 
         let status = if r.exit_code == 0 {
@@ -352,6 +275,103 @@ impl CloudBackend for HttpClient {
         })
     }
 
+    async fn apply_task_preflight(&self, _id: TaskId) -> Result<ApplyOutcome> {
+        let id = _id.0;
+        // Fetch diff fresh and apply locally via git (unified diffs).
+        let details = self
+            .backend
+            .get_task_details(&id)
+            .await
+            .map_err(|e| Error::Http(format!("get_task_details failed: {e}")))?;
+        let diff = details
+            .unified_diff()
+            .ok_or_else(|| Error::Msg(format!("No diff available for task {id}")))?;
+        // Enforce unified diff format only
+        if !is_unified_diff(&diff) {
+            let summary = summarize_patch_for_logging(&diff);
+            append_error_log(&format!(
+                "apply_error: id={id} format=non-unified; {summary}"
+            ));
+            return Ok(ApplyOutcome {
+                applied: false,
+                status: ApplyStatus::Error,
+                message: "Expected unified git diff; backend returned an incompatible format."
+                    .to_string(),
+                skipped_paths: Vec::new(),
+                conflict_paths: Vec::new(),
+            });
+        }
+
+        // Preflight: run with --check (no changes)
+        let req = codex_git_apply::ApplyGitRequest {
+            cwd: std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir()),
+            diff: diff.clone(),
+            revert: false,
+            preflight: true,
+        };
+        let r = codex_git_apply::apply_git_patch(&req)
+            .map_err(|e| Error::Io(format!("git apply failed to run: {e}")))?;
+
+        let status = if r.exit_code == 0 {
+            ApplyStatus::Success
+        } else if !r.applied_paths.is_empty() || !r.conflicted_paths.is_empty() {
+            ApplyStatus::Partial
+        } else {
+            ApplyStatus::Error
+        };
+        let message = match status {
+            ApplyStatus::Success => format!("Preflight passed for task {id} (applies cleanly)"),
+            ApplyStatus::Partial => format!(
+                "Preflight: patch does not fully apply for task {id} (applied={}, skipped={}, conflicts={})",
+                r.applied_paths.len(),
+                r.skipped_paths.len(),
+                r.conflicted_paths.len()
+            ),
+            ApplyStatus::Error => format!(
+                "Preflight failed for task {id} (applied={}, skipped={}, conflicts={})",
+                r.applied_paths.len(),
+                r.skipped_paths.len(),
+                r.conflicted_paths.len()
+            ),
+        };
+
+        if !matches!(status, ApplyStatus::Success) {
+            let mut log = String::new();
+            let summary = summarize_patch_for_logging(&diff);
+            use std::fmt::Write as _;
+            let _ = writeln!(
+                &mut log,
+                "apply_preflight_result: id={} status={:?} applied={} skipped={} conflicts={} cmd={}",
+                id,
+                status,
+                r.applied_paths.len(),
+                r.skipped_paths.len(),
+                r.conflicted_paths.len(),
+                r.cmd_for_log
+            );
+            let _ = writeln!(
+                &mut log,
+                "stdout_tail=\n{}\nstderr_tail=\n{}",
+                tail(&r.stdout, 2000),
+                tail(&r.stderr, 2000)
+            );
+            let _ = writeln!(&mut log, "{summary}");
+            let _ = writeln!(
+                &mut log,
+                "----- PATCH BEGIN -----\n{diff}\n----- PATCH END -----"
+            );
+            append_error_log(&log);
+        }
+
+        Ok(ApplyOutcome {
+            applied: false,
+            status,
+            message,
+            skipped_paths: r.skipped_paths,
+            conflict_paths: r.conflicted_paths,
+        })
+    }
+
     async fn create_task(
         &self,
         env_id: &str,
@@ -406,6 +426,51 @@ impl CloudBackend for HttpClient {
             }
         }
     }
+}
+
+/// Best-effort extraction of assistant text messages from a raw `get_task_details` body.
+/// Falls back to worklog messages when structured turns are not present.
+fn extract_assistant_messages_from_body(body: &str) -> Vec<String> {
+    let mut msgs = Vec::new();
+    if let Ok(full) = serde_json::from_str::<serde_json::Value>(body)
+        && let Some(arr) = full
+            .get("current_assistant_turn")
+            .and_then(|v| v.get("worklog"))
+            .and_then(|v| v.get("messages"))
+            .and_then(|v| v.as_array())
+    {
+        for m in arr {
+            let is_assistant = m
+                .get("author")
+                .and_then(|a| a.get("role"))
+                .and_then(|r| r.as_str())
+                == Some("assistant");
+            if !is_assistant {
+                continue;
+            }
+            if let Some(parts) = m
+                .get("content")
+                .and_then(|c| c.get("parts"))
+                .and_then(|p| p.as_array())
+            {
+                for p in parts {
+                    if let Some(s) = p.as_str() {
+                        if !s.is_empty() {
+                            msgs.push(s.to_string());
+                        }
+                        continue;
+                    }
+                    if let Some(obj) = p.as_object()
+                        && obj.get("content_type").and_then(|t| t.as_str()) == Some("text")
+                        && let Some(txt) = obj.get("text").and_then(|t| t.as_str())
+                    {
+                        msgs.push(txt.to_string());
+                    }
+                }
+            }
+        }
+    }
+    msgs
 }
 
 fn map_task_list_item_to_summary(src: backend::TaskListItem) -> TaskSummary {

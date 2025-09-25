@@ -6,28 +6,17 @@ pub mod env_detect;
 mod new_task;
 pub mod scrollable_diff;
 mod ui;
+pub mod util;
 pub use cli::Cli;
 
-use base64::Engine as _;
-use chrono::Utc;
-use std::fs::OpenOptions;
 use std::io::IsTerminal;
-use std::io::Write as _;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+use util::append_error_log;
 
-pub(crate) fn append_error_log(message: impl AsRef<str>) {
-    let ts = Utc::now().to_rfc3339();
-    if let Ok(mut f) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("error.log")
-    {
-        let _ = writeln!(f, "[{ts}] {}", message.as_ref());
-    }
-}
+// logging helper lives in util module
 
 // (no standalone patch summarizer needed – UI displays raw diffs)
 
@@ -98,7 +87,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                         http = http.with_bearer_token(t.clone());
                         if let Some(acc) = auth
                             .get_account_id()
-                            .or_else(|| extract_chatgpt_account_id(&t))
+                            .or_else(|| util::extract_chatgpt_account_id(&t))
                         {
                             append_error_log(format!("auth: set ChatGPT-Account-Id header: {acc}"));
                             http = http.with_chatgpt_account_id(acc);
@@ -201,50 +190,11 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
     {
         let tx2 = tx.clone();
         tokio::spawn(async move {
-            let mut base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL")
-                .unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
-            while base_url.ends_with('/') {
-                base_url.pop();
-            }
-            if (base_url.starts_with("https://chatgpt.com")
-                || base_url.starts_with("https://chat.openai.com"))
-                && !base_url.contains("/backend-api")
-            {
-                base_url = format!("{base_url}/backend-api");
-            }
-            let ua =
-                codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
-            let mut headers = reqwest::header::HeaderMap::new();
-            headers.insert(
-                reqwest::header::USER_AGENT,
-                reqwest::header::HeaderValue::from_str(&ua)
-                    .unwrap_or(reqwest::header::HeaderValue::from_static("codex-cli")),
+            let base_url = util::normalize_base_url(
+                &std::env::var("CODEX_CLOUD_TASKS_BASE_URL")
+                    .unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string()),
             );
-            if let Ok(home) = codex_core::config::find_codex_home() {
-                let am = codex_login::AuthManager::new(
-                    home,
-                    codex_login::AuthMode::ChatGPT,
-                    "codex_cloud_tasks_tui".to_string(),
-                );
-                if let Some(auth) = am.auth()
-                    && let Ok(tok) = auth.get_token().await
-                    && !tok.is_empty()
-                {
-                    let v = format!("Bearer {tok}");
-                    if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) {
-                        headers.insert(reqwest::header::AUTHORIZATION, hv);
-                    }
-                    if let Some(acc) = auth
-                        .get_account_id()
-                        .or_else(|| extract_chatgpt_account_id(&tok))
-                        && let Ok(name) =
-                            reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
-                        && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc)
-                    {
-                        headers.insert(name, hv);
-                    }
-                }
-            }
+            let headers = util::build_chatgpt_headers().await;
             let res = crate::env_detect::list_environments(&base_url, &headers).await;
             let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
         });
@@ -255,54 +205,12 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
     {
         let tx2 = tx.clone();
         tokio::spawn(async move {
-            // Normalize base URL like envcheck.rs does
-            let mut base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL")
-                .unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
-            while base_url.ends_with('/') {
-                base_url.pop();
-            }
-            if (base_url.starts_with("https://chatgpt.com")
-                || base_url.starts_with("https://chat.openai.com"))
-                && !base_url.contains("/backend-api")
-            {
-                base_url = format!("{base_url}/backend-api");
-            }
-
-            // Build headers: UA + ChatGPT auth if available
-            let ua =
-                codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
-            let mut headers = reqwest::header::HeaderMap::new();
-            headers.insert(
-                reqwest::header::USER_AGENT,
-                reqwest::header::HeaderValue::from_str(&ua)
-                    .unwrap_or(reqwest::header::HeaderValue::from_static("codex-cli")),
+            let base_url = util::normalize_base_url(
+                &std::env::var("CODEX_CLOUD_TASKS_BASE_URL")
+                    .unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string()),
             );
-            if let Ok(home) = codex_core::config::find_codex_home() {
-                let am = codex_login::AuthManager::new(
-                    home,
-                    codex_login::AuthMode::ChatGPT,
-                    "codex_cloud_tasks_tui".to_string(),
-                );
-                if let Some(auth) = am.auth()
-                    && let Ok(token) = auth.get_token().await
-                    && !token.is_empty()
-                {
-                    if let Ok(hv) =
-                        reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
-                    {
-                        headers.insert(reqwest::header::AUTHORIZATION, hv);
-                    }
-                    if let Some(account_id) = auth
-                        .get_account_id()
-                        .or_else(|| extract_chatgpt_account_id(&token))
-                        && let Ok(name) =
-                            reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
-                        && let Ok(hv) = reqwest::header::HeaderValue::from_str(&account_id)
-                    {
-                        headers.insert(name, hv);
-                    }
-                }
-            }
+            // Build headers: UA + ChatGPT auth if available
+            let headers = util::build_chatgpt_headers().await;
 
             // Run autodetect. If it fails, we keep using "All".
             let res = crate::env_detect::autodetect_environment_id(&base_url, &headers, None).await;
@@ -512,34 +420,11 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                     app.env_loading = true;
                                     let tx3 = tx.clone();
                                     tokio::spawn(async move {
-                                        // Build headers (UA + ChatGPT token + account id) like elsewhere
-                                        let mut base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL").unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
-                                        while base_url.ends_with('/') { base_url.pop(); }
-                                        if (base_url.starts_with("https://chatgpt.com") || base_url.starts_with("https://chat.openai.com")) && !base_url.contains("/backend-api") {
-                                            base_url = format!("{base_url}/backend-api");
-                                        }
-                                        let ua = codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
-                                        let mut headers = reqwest::header::HeaderMap::new();
-                                        headers.insert(reqwest::header::USER_AGENT, reqwest::header::HeaderValue::from_str(&ua).unwrap_or(reqwest::header::HeaderValue::from_static("codex-cli")));
-                                        if let Ok(home) = codex_core::config::find_codex_home() {
-                                            let am = codex_login::AuthManager::new(
-                                                home,
-                                                codex_login::AuthMode::ChatGPT,
-                                                "codex_cloud_tasks_tui".to_string(),
-                                            );
-                                            if let Some(auth) = am.auth()
-                                                && let Ok(tok) = auth.get_token().await
-                                                && !tok.is_empty()
-                                            {
-                                                let v = format!("Bearer {tok}");
-                                                if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
-                                                if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok))
-                                                    && let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
-                                                    && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) {
-                                                    headers.insert(name, hv);
-                                                }
-                                            }
-                                        }
+                                        let base_url = crate::util::normalize_base_url(
+                                            &std::env::var("CODEX_CLOUD_TASKS_BASE_URL")
+                                                .unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string()),
+                                        );
+                                        let headers = crate::util::build_chatgpt_headers().await;
                                         let res = crate::env_detect::list_environments(&base_url, &headers).await;
                                         let _ = tx3.send(app::AppEvent::EnvironmentsLoaded(res));
                                     });
@@ -673,38 +558,13 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                             }
                             needs_redraw = true;
                             if should_fetch {
-                                let tx2 = tx.clone();
-                                tokio::spawn(async move {
-                                    // Build headers (UA + ChatGPT token + account id)
-                                    let mut base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL")
-                                        .unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
-                                    while base_url.ends_with('/') { base_url.pop(); }
-                                    if (base_url.starts_with("https://chatgpt.com") || base_url.starts_with("https://chat.openai.com")) && !base_url.contains("/backend-api") {
-                                        base_url = format!("{base_url}/backend-api");
-                                    }
-                                    let ua = codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
-                                    let mut headers = reqwest::header::HeaderMap::new();
-                                    headers.insert(reqwest::header::USER_AGENT, reqwest::header::HeaderValue::from_str(&ua).unwrap_or(reqwest::header::HeaderValue::from_static("codex-cli")));
-                                    if let Ok(home) = codex_core::config::find_codex_home() {
-                                        let am = codex_login::AuthManager::new(
-                                            home,
-                                            codex_login::AuthMode::ChatGPT,
-                                            "codex_cloud_tasks_tui".to_string(),
-                                        );
-                                        if let Some(auth) = am.auth()
-                                            && let Ok(tok) = auth.get_token().await && !tok.is_empty() {
-                                                let v = format!("Bearer {tok}");
-                                                if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
-                                                if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok))
-                                                    && let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
-                                                    && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) {
-                                                    headers.insert(name, hv);
-                                                }
-                                            }
-                                    }
-                                    let res = crate::env_detect::list_environments(&base_url, &headers).await;
-                                    let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
-                                });
+                                    let tx2 = tx.clone();
+                                    tokio::spawn(async move {
+            let base_url = crate::util::normalize_base_url(&std::env::var("CODEX_CLOUD_TASKS_BASE_URL").unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string()));
+            let headers = crate::util::build_chatgpt_headers().await;
+                                        let res = crate::env_detect::list_environments(&base_url, &headers).await;
+                                        let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
+                                    });
                             }
                             // Render after opening env modal to show it instantly.
                             render_if_needed(&mut terminal, &mut app, &mut needs_redraw)?;
@@ -798,9 +658,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         let id2 = m.task_id.clone();
                                         let title2 = m.title.clone();
                                         tokio::spawn(async move {
-                                            unsafe { std::env::set_var("CODEX_APPLY_PREFLIGHT", "1") };
-                                            let out = codex_cloud_tasks_client::CloudBackend::apply_task(&*backend2, id2.clone()).await;
-                                            unsafe { std::env::remove_var("CODEX_APPLY_PREFLIGHT") };
+                                            let out = codex_cloud_tasks_client::CloudBackend::apply_task_preflight(&*backend2, id2.clone()).await;
                                             let evt = match out {
                                                 Ok(outcome) => {
                                                     let level = match outcome.status {
@@ -835,9 +693,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                             let id2 = ov.task_id.clone();
                                             let title2 = ov.title.clone();
                                             tokio::spawn(async move {
-                                                unsafe { std::env::set_var("CODEX_APPLY_PREFLIGHT", "1") };
-                                                let out = codex_cloud_tasks_client::CloudBackend::apply_task(&*backend2, id2.clone()).await;
-                                                unsafe { std::env::remove_var("CODEX_APPLY_PREFLIGHT") };
+                                                let out = codex_cloud_tasks_client::CloudBackend::apply_task_preflight(&*backend2, id2.clone()).await;
                                                 let evt = match out {
                                                     Ok(outcome) => {
                                                         let level = match outcome.status {
@@ -867,29 +723,11 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                     if app.environments.is_empty() {
                                         let tx2 = tx.clone();
                                         tokio::spawn(async move {
-                                            // Build headers (UA + ChatGPT token + account id)
-                                            let mut base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL").unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
-                                            while base_url.ends_with('/') { base_url.pop(); }
-                                            if (base_url.starts_with("https://chatgpt.com") || base_url.starts_with("https://chat.openai.com")) && !base_url.contains("/backend-api") { base_url = format!("{base_url}/backend-api"); }
-                                            let ua = codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
-                                            let mut headers = reqwest::header::HeaderMap::new();
-                                            headers.insert(reqwest::header::USER_AGENT, reqwest::header::HeaderValue::from_str(&ua).unwrap_or(reqwest::header::HeaderValue::from_static("codex-cli")));
-                                            if let Ok(home) = codex_core::config::find_codex_home() {
-                                                let am = codex_login::AuthManager::new(
-                                                    home,
-                                                    codex_login::AuthMode::ChatGPT,
-                                                    "codex_cloud_tasks_tui".to_string(),
-                                                );
-                                                if let Some(auth) = am.auth() && let Ok(tok) = auth.get_token().await && !tok.is_empty() {
-                                                    let v = format!("Bearer {tok}");
-                                                    if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
-                                                    if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok))
-                                                        && let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
-                                                        && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) {
-                                                        headers.insert(name, hv);
-                                                    }
-                                                }
-                                            }
+                                            let base_url = crate::util::normalize_base_url(
+                                                &std::env::var("CODEX_CLOUD_TASKS_BASE_URL")
+                                                    .unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string()),
+                                            );
+                                            let headers = crate::util::build_chatgpt_headers().await;
                                             let res = crate::env_detect::list_environments(&base_url, &headers).await;
                                             let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
                                         });
@@ -957,28 +795,8 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                     let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
                                     let tx2 = tx.clone();
                                     tokio::spawn(async move {
-                                        // Build headers (UA + ChatGPT token + account id)
-                                        let mut base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL").unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
-                                        while base_url.ends_with('/') { base_url.pop(); }
-                                        if (base_url.starts_with("https://chatgpt.com") || base_url.starts_with("https://chat.openai.com")) && !base_url.contains("/backend-api") { base_url = format!("{base_url}/backend-api"); }
-                                        let ua = codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
-                                        let mut headers = reqwest::header::HeaderMap::new();
-                                        headers.insert(reqwest::header::USER_AGENT, reqwest::header::HeaderValue::from_str(&ua).unwrap_or(reqwest::header::HeaderValue::from_static("codex-cli")));
-                                        if let Ok(home) = codex_core::config::find_codex_home() {
-                                            let am = codex_login::AuthManager::new(
-                                                home,
-                                                codex_login::AuthMode::ChatGPT,
-                                                "codex_cloud_tasks_tui".to_string(),
-                                            );
-                                            if let Some(auth) = am.auth()
-                                                && let Ok(tok) = auth.get_token().await && !tok.is_empty() {
-                                                    let v = format!("Bearer {tok}");
-                                                    if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
-                                                    if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok))
-                                                        && let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
-                                                            && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) { headers.insert(name, hv); }
-                                                }
-                                        }
+            let base_url = crate::util::normalize_base_url(&std::env::var("CODEX_CLOUD_TASKS_BASE_URL").unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string()));
+            let headers = crate::util::build_chatgpt_headers().await;
                                         let res = crate::env_detect::list_environments(&base_url, &headers).await;
                                         let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
                                     });
@@ -1094,33 +912,13 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                     if should_fetch { app.env_loading = true; app.env_error = None; }
                                     needs_redraw = true;
                                     if should_fetch {
-                                        let tx2 = tx.clone();
-                                        tokio::spawn(async move {
-                                            // Build headers (UA + ChatGPT token + account id)
-                                            let mut base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL").unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
-                                            while base_url.ends_with('/') { base_url.pop(); }
-                                            if (base_url.starts_with("https://chatgpt.com") || base_url.starts_with("https://chat.openai.com")) && !base_url.contains("/backend-api") { base_url = format!("{base_url}/backend-api"); }
-                                            let ua = codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
-                                            let mut headers = reqwest::header::HeaderMap::new();
-                                            headers.insert(reqwest::header::USER_AGENT, reqwest::header::HeaderValue::from_str(&ua).unwrap_or(reqwest::header::HeaderValue::from_static("codex-cli")));
-                                            if let Ok(home) = codex_core::config::find_codex_home() {
-                                                let am = codex_login::AuthManager::new(
-                                                    home,
-                                                    codex_login::AuthMode::ChatGPT,
-                                                    "codex_cloud_tasks_tui".to_string(),
-                                                );
-                                                if let Some(auth) = am.auth()
-                                                    && let Ok(tok) = auth.get_token().await && !tok.is_empty() {
-                                                        let v = format!("Bearer {tok}");
-                                                        if let Ok(hv) = reqwest::header::HeaderValue::from_str(&v) { headers.insert(reqwest::header::AUTHORIZATION, hv); }
-                                                        if let Some(acc) = auth.get_account_id().or_else(|| extract_chatgpt_account_id(&tok))
-                                                            && let Ok(name) = reqwest::header::HeaderName::from_bytes(b"ChatGPT-Account-Id")
-                                                                && let Ok(hv) = reqwest::header::HeaderValue::from_str(&acc) { headers.insert(name, hv); }
-                                                    }
-                                            }
-                                            let res = crate::env_detect::list_environments(&base_url, &headers).await;
-                                            let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
-                                        });
+                                    let tx2 = tx.clone();
+                                    tokio::spawn(async move {
+                                        let base_url = crate::util::normalize_base_url(&std::env::var("CODEX_CLOUD_TASKS_BASE_URL").unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string()));
+                                        let headers = crate::util::build_chatgpt_headers().await;
+                                        let res = crate::env_detect::list_environments(&base_url, &headers).await;
+                                        let _ = tx2.send(app::AppEvent::EnvironmentsLoaded(res));
+                                    });
                                     }
                                 }
                                 KeyCode::Char('n') => {
@@ -1147,11 +945,20 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         let title2 = title1.clone();
                                         tokio::spawn(async move {
                                             match codex_cloud_tasks_client::CloudBackend::get_task_diff(&*backend2, id1.clone()).await {
-                                                Ok(diff) => {
+                                                Ok(Some(diff)) => {
                                                     let _ = tx2.send(app::AppEvent::DetailsDiffLoaded { id: id1, title: title1, diff });
                                                 }
+                                                Ok(None) => {
+                                                    match codex_cloud_tasks_client::CloudBackend::get_task_text(&*backend2, id1.clone()).await {
+                                                        Ok(text) => {
+                                                            let _ = tx2.send(app::AppEvent::DetailsMessagesLoaded { id: id1, title: title1, messages: text.messages, prompt: text.prompt });
+                                                        }
+                                                        Err(e2) => {
+                                                            let _ = tx2.send(app::AppEvent::DetailsFailed { id: id1, title: title1, error: format!("{e2}") });
+                                                        }
+                                                    }
+                                                }
                                                 Err(e) => {
-                                                    // Always log errors while we debug non-success states.
                                                     append_error_log(format!("get_task_diff failed for {}: {e}", id1.0));
                                                     match codex_cloud_tasks_client::CloudBackend::get_task_text(&*backend2, id1.clone()).await {
                                                         Ok(text) => {
@@ -1183,7 +990,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 KeyCode::Char('a') => {
                                     if let Some(task) = app.tasks.get(app.selected) {
                                         match codex_cloud_tasks_client::CloudBackend::get_task_diff(&*backend, task.id.clone()).await {
-                                            Ok(_) => {
+                                            Ok(Some(_)) => {
                                                 app.apply_modal = Some(app::ApplyModalState { task_id: task.id.clone(), title: task.title.clone(), result_message: None, result_level: None, skipped_paths: Vec::new(), conflict_paths: Vec::new() });
                                                 app.apply_preflight_inflight = true;
                                                 let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
@@ -1192,9 +999,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                 let id2 = task.id.clone();
                                                 let title2 = task.title.clone();
                                                 tokio::spawn(async move {
-                                                    unsafe { std::env::set_var("CODEX_APPLY_PREFLIGHT", "1") };
-                                                    let out = codex_cloud_tasks_client::CloudBackend::apply_task(&*backend2, id2.clone()).await;
-                                                    unsafe { std::env::remove_var("CODEX_APPLY_PREFLIGHT") };
+                                                    let out = codex_cloud_tasks_client::CloudBackend::apply_task_preflight(&*backend2, id2.clone()).await;
                                                     let evt = match out {
                                                         Ok(outcome) => {
                                                             let level = match outcome.status {
@@ -1209,7 +1014,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                     let _ = tx2.send(evt);
                                                 });
                                             }
-                                            Err(_) => {
+                                            Ok(None) | Err(_) => {
                                                 app.status = "No diff available to apply".to_string();
                                             }
                                         }
@@ -1249,22 +1054,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
     Ok(())
 }
 
-fn extract_chatgpt_account_id(token: &str) -> Option<String> {
-    // JWT: header.payload.signature
-    let mut parts = token.split('.');
-    let (_h, payload_b64, _s) = match (parts.next(), parts.next(), parts.next()) {
-        (Some(h), Some(p), Some(s)) if !h.is_empty() && !p.is_empty() && !s.is_empty() => (h, p, s),
-        _ => return None,
-    };
-    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload_b64)
-        .ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
-    v.get("https://api.openai.com/auth")
-        .and_then(|auth| auth.get("chatgpt_account_id"))
-        .and_then(|id| id.as_str())
-        .map(|s| s.to_string())
-}
+// extract_chatgpt_account_id moved to util.rs
 
 /// Build plain-text conversation lines: a labeled user prompt followed by assistant messages.
 fn conversation_lines(prompt: Option<String>, messages: &[String]) -> Vec<String> {

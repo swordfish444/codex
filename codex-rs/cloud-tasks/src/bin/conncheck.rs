@@ -1,19 +1,20 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-use std::time::Duration;
-
-use base64::Engine;
 use codex_backend_client::Client as BackendClient;
+use codex_cloud_tasks::util::extract_chatgpt_account_id;
+use codex_cloud_tasks::util::normalize_base_url;
 use codex_core::config::find_codex_home;
 use codex_core::default_client::get_codex_user_agent;
 use codex_login::AuthManager;
 use codex_login::AuthMode;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Base URL (default to ChatGPT backend API)
-    let base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL")
+    // Base URL (default to ChatGPT backend API) and normalize to canonical form
+    let raw_base = std::env::var("CODEX_CLOUD_TASKS_BASE_URL")
         .unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
+    let base_url = normalize_base_url(&raw_base);
     println!("base_url: {base_url}");
     let path_style = if base_url.contains("/backend-api") {
         "wham"
@@ -102,34 +103,9 @@ async fn main() -> anyhow::Result<()> {
             for item in list.items.iter().take(5) {
                 println!("- {} — {}", item.id, item.title);
             }
-            // Print the full response object for debugging/inspection.
-            match serde_json::to_string_pretty(&list) {
-                Ok(json) => {
-                    println!("\nfull response object (pretty JSON):\n{json}");
-                }
-                Err(e) => {
-                    println!("failed to serialize response to JSON: {e}");
-                }
-            }
+            // Keep output concise; omit full JSON payload to stay readable.
         }
     }
 
     Ok(())
-}
-
-fn extract_chatgpt_account_id(token: &str) -> Option<String> {
-    // JWT: header.payload.signature
-    let mut parts = token.split('.');
-    let (_h, payload_b64, _s) = match (parts.next(), parts.next(), parts.next()) {
-        (Some(h), Some(p), Some(s)) if !h.is_empty() && !p.is_empty() && !s.is_empty() => (h, p, s),
-        _ => return None,
-    };
-    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload_b64)
-        .ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
-    v.get("https://api.openai.com/auth")
-        .and_then(|auth| auth.get("chatgpt_account_id"))
-        .and_then(|id| id.as_str())
-        .map(|s| s.to_string())
 }

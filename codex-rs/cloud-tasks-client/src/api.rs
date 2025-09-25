@@ -13,9 +13,6 @@ pub enum Error {
     Http(String),
     #[error("io error: {0}")]
     Io(String),
-    /// Expected condition: the task has no diff available yet (e.g., still in progress).
-    #[error("no diff available yet")]
-    NoDiffYet,
     #[error("{0}")]
     Msg(String),
 }
@@ -86,11 +83,14 @@ pub struct TaskText {
 #[async_trait::async_trait]
 pub trait CloudBackend: Send + Sync {
     async fn list_tasks(&self, env: Option<&str>) -> Result<Vec<TaskSummary>>;
-    async fn get_task_diff(&self, id: TaskId) -> Result<String>;
+    async fn get_task_diff(&self, id: TaskId) -> Result<Option<String>>;
     /// Return assistant output messages (no diff) when available.
     async fn get_task_messages(&self, id: TaskId) -> Result<Vec<String>>;
     /// Return the creating prompt and assistant messages (when available).
     async fn get_task_text(&self, id: TaskId) -> Result<TaskText>;
+    /// Dry-run apply (preflight) that validates whether the patch would apply cleanly.
+    /// Never modifies the working tree.
+    async fn apply_task_preflight(&self, id: TaskId) -> Result<ApplyOutcome>;
     async fn apply_task(&self, id: TaskId) -> Result<ApplyOutcome>;
     async fn create_task(
         &self,

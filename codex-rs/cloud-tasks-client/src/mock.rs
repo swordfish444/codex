@@ -1,11 +1,11 @@
 use crate::ApplyOutcome;
-use crate::api::TaskText;
 use crate::CloudBackend;
 use crate::DiffSummary;
 use crate::Result;
 use crate::TaskId;
 use crate::TaskStatus;
 use crate::TaskSummary;
+use crate::api::TaskText;
 use chrono::Utc;
 
 #[derive(Clone, Default)]
@@ -56,8 +56,8 @@ impl CloudBackend for MockClient {
         Ok(out)
     }
 
-    async fn get_task_diff(&self, id: TaskId) -> Result<String> {
-        Ok(mock_diff_for(&id))
+    async fn get_task_diff(&self, id: TaskId) -> Result<Option<String>> {
+        Ok(Some(mock_diff_for(&id)))
     }
 
     async fn get_task_messages(&self, _id: TaskId) -> Result<Vec<String>> {
@@ -78,6 +78,16 @@ impl CloudBackend for MockClient {
             applied: true,
             status: crate::ApplyStatus::Success,
             message: format!("Applied task {} locally (mock)", id.0),
+            skipped_paths: Vec::new(),
+            conflict_paths: Vec::new(),
+        })
+    }
+
+    async fn apply_task_preflight(&self, id: TaskId) -> Result<ApplyOutcome> {
+        Ok(ApplyOutcome {
+            applied: false,
+            status: crate::ApplyStatus::Success,
+            message: format!("Preflight passed for task {} (mock)", id.0),
             skipped_paths: Vec::new(),
             conflict_paths: Vec::new(),
         })

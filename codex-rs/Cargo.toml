@@ -22,6 +22,7 @@ members = [
     "protocol",
     "protocol-ts",
     "tui",
+    "git-apply",
 ]
 resolver = "2"
 
