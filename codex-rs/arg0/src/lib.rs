@@ -7,9 +7,27 @@ use codex_core::CODEX_APPLY_PATCH_ARG1;
 use std::os::unix::fs::symlink;
 use tempfile::TempDir;
 
+mod openai_api_key_env_var;
+use openai_api_key_env_var::extract_locked_openai_api_key;
+
 const LINUX_SANDBOX_ARG0: &str = "codex-linux-sandbox";
 const APPLY_PATCH_ARG0: &str = "apply_patch";
 const MISSPELLED_APPLY_PATCH_ARG0: &str = "applypatch";
+
+/// Arguments supplied to the async entrypoint invoked by [`arg0_dispatch_or_else`].
+///
+#[derive(Debug)]
+pub struct PreMainArgs {
+    pub codex_linux_sandbox_exe: Option<PathBuf>,
+
+    /// Value of the `OPENAI_API_KEY` environment variable that was set at
+    /// startup, if any.
+    ///
+    /// If `Some`, the key has already been removed from the environment and an
+    /// attempt was made to `mlock(2)` the string's allocation to keep it
+    /// resident in memory.
+    pub openai_api_key: Option<String>,
+}
 
 /// While we want to deploy the Codex CLI as a single executable for simplicity,
 /// we also want to expose some of its functionality as distinct CLIs, so we use
@@ -26,15 +44,15 @@ const MISSPELLED_APPLY_PATCH_ARG0: &str = "applypatch";
 /// 3.  Derive the path to the current executable (so children can re-invoke the
 ///     sandbox) when running on Linux.
 /// 4.  Execute the provided async `main_fn` inside that runtime, forwarding any
-///     error. Note that `main_fn` receives `codex_linux_sandbox_exe:
-///     Option<PathBuf>`, as an argument, which is generally needed as part of
-///     constructing [`codex_core::config::Config`].
+///     error. The closure receives [`PreMainArgs`], which includes the optional
+///     path to the linux sandbox helper as well as the OpenAI API key if the
+///     caller requested it.
 ///
 /// This function should be used to wrap any `main()` function in binary crates
 /// in this workspace that depends on these helper CLIs.
 pub fn arg0_dispatch_or_else<F, Fut>(main_fn: F) -> anyhow::Result<()>
 where
-    F: FnOnce(Option<PathBuf>) -> Fut,
+    F: FnOnce(PreMainArgs) -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
     // Determine if we were invoked via the special alias.
@@ -76,6 +94,9 @@ where
     // before creating any threads/the Tokio runtime.
     load_dotenv();
 
+    // Perform the OPENAI_API_KEY check after loading the .env file.
+    let openai_api_key = extract_locked_openai_api_key();
+
     // Retain the TempDir so it exists for the lifetime of the invocation of
     // this executable. Admittedly, we could invoke `keep()` on it, but it
     // would be nice to avoid leaving temporary directories behind, if possible.
@@ -99,7 +120,12 @@ where
             None
         };
 
-        main_fn(codex_linux_sandbox_exe).await
+        let args = PreMainArgs {
+            codex_linux_sandbox_exe,
+            openai_api_key,
+        };
+
+        main_fn(args).await
     })
 }
 
