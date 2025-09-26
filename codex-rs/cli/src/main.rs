@@ -14,8 +14,6 @@ use codex_cli::login::run_login_with_chatgpt;
 use codex_cli::login::run_logout;
 use codex_cli::proto;
 use codex_common::CliConfigOverrides;
-use codex_core::config::find_codex_home;
-use codex_core::config::load_config_from_toml;
 use codex_exec::Cli as ExecCli;
 use codex_responses_api_proxy::Args as ResponsesApiProxyArgs;
 use codex_tui::AppExitInfo;
@@ -24,9 +22,11 @@ use owo_colors::OwoColorize;
 use std::path::PathBuf;
 use supports_color::Stream;
 
+mod config_command;
 mod mcp_cmd;
 mod pre_main_hardening;
 
+use crate::config_command::validate_config;
 use crate::mcp_cmd::McpCli;
 use crate::proto::ProtoCli;
 
@@ -87,8 +87,8 @@ enum Subcommand {
     /// Resume a previous interactive session (picker by default; use --last to continue the most recent).
     Resume(ResumeCommand),
 
-    /// Validate the configuration file.
-    Config,
+    /// Loads and validates a command. May support additional behavior in the future.
+    Config(ConfigCommand),
 
     /// Internal: generate TypeScript protocol bindings.
     #[clap(hide = true)]
@@ -104,6 +104,13 @@ struct CompletionCommand {
     /// Shell to generate completions for
     #[clap(value_enum, default_value_t = Shell::Bash)]
     shell: Shell,
+}
+
+#[derive(Debug, Parser)]
+struct ConfigCommand {
+    /// Skip printing result
+    #[arg(short = 's', default_value_t = false)]
+    silent: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -318,30 +325,10 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
         Some(Subcommand::Completion(completion_cli)) => {
             print_completion(completion_cli);
         }
-        Some(Subcommand::Config) => {
-            let cli_overrides = match root_config_overrides.parse_overrides() {
-                Ok(overrides) => overrides,
-                Err(err) => {
-                    eprintln!("Error parsing -c overrides: {err}");
-                    std::process::exit(1);
-                }
-            };
+        Some(Subcommand::Config(config_cli)) => {
+            let ConfigCommand { silent } = config_cli;
 
-            let codex_home = match find_codex_home() {
-                Ok(path) => path,
-                Err(err) => {
-                    eprintln!("Error finding codex home: {err}");
-                    std::process::exit(1);
-                }
-            };
-
-            match load_config_from_toml(&codex_home, cli_overrides) {
-                Ok(_) => println!("Configuration validated successfully"),
-                Err(err) => {
-                    eprintln!("Config validation error: {err}");
-                    std::process::exit(3);
-                }
-            }
+            validate_config(root_config_overrides, !silent);
         }
         Some(Subcommand::Debug(debug_args)) => match debug_args.cmd {
             DebugCommand::Seatbelt(mut seatbelt_cli) => {

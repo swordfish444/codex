@@ -22,7 +22,7 @@ fn config_subcommand_reports_success_for_valid_config() -> Result<()> {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout)?;
-    assert!(stdout.contains("Configuration validated successfully"));
+    assert!(stdout.contains("Current default config settings"));
 
     Ok(())
 }

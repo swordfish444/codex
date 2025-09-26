@@ -254,15 +254,6 @@ pub fn load_config_as_toml_with_cli_overrides(
     Ok(cfg)
 }
 
-/// Load `config.toml` from `codex_home`, apply CLI overrides, and deserialize
-/// it into [`ConfigToml`].
-pub fn load_config_from_toml(
-    codex_home: &Path,
-    cli_overrides: Vec<(String, TomlValue)>,
-) -> std::io::Result<ConfigToml> {
-    load_config_as_toml_with_cli_overrides(codex_home, cli_overrides)
-}
-
 /// Read `CODEX_HOME/config.toml` and return it as a generic TOML value. Returns
 /// an empty TOML table when the file does not exist.
 pub fn load_config_as_toml(codex_home: &Path) -> std::io::Result<TomlValue> {
