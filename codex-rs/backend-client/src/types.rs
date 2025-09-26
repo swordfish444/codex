@@ -2,6 +2,7 @@ pub use codex_backend_openapi_models::models::CodeTaskDetailsResponse;
 pub use codex_backend_openapi_models::models::PaginatedListTaskListItem;
 pub use codex_backend_openapi_models::models::TaskListItem;
 
+use serde::Deserialize;
 use serde_json::Value;
 
 /// Extension helpers on generated types.
@@ -132,3 +133,9 @@ impl CodeTaskDetailsResponseExt for CodeTaskDetailsResponse {
 
 // Removed unused helpers `single_file_paths` and `extract_file_paths_list` to reduce
 // surface area; reintroduce as needed near call sites.
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TurnAttemptsSiblingTurnsResponse {
+    #[serde(default)]
+    pub sibling_turns: Vec<std::collections::HashMap<String, Value>>,
+}

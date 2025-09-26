@@ -44,6 +44,35 @@ pub struct TaskSummary {
     /// True when the backend reports this task as a code review.
     #[serde(default)]
     pub is_review: bool,
+    /// Number of assistant attempts (best-of-N), when reported by the backend.
+    #[serde(default)]
+    pub attempt_total: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttemptStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+    Cancelled,
+    Unknown,
+}
+
+impl Default for AttemptStatus {
+    fn default() -> Self {
+        AttemptStatus::Unknown
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TurnAttempt {
+    pub turn_id: String,
+    pub attempt_placement: Option<i64>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub status: AttemptStatus,
+    pub diff: Option<String>,
+    pub messages: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,10 +106,27 @@ pub struct DiffSummary {
     pub lines_removed: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaskText {
     pub prompt: Option<String>,
     pub messages: Vec<String>,
+    pub turn_id: Option<String>,
+    pub sibling_turn_ids: Vec<String>,
+    pub attempt_placement: Option<i64>,
+    pub attempt_status: AttemptStatus,
+}
+
+impl Default for TaskText {
+    fn default() -> Self {
+        Self {
+            prompt: None,
+            messages: Vec::new(),
+            turn_id: None,
+            sibling_turn_ids: Vec::new(),
+            attempt_placement: None,
+            attempt_status: AttemptStatus::Unknown,
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -91,10 +137,21 @@ pub trait CloudBackend: Send + Sync {
     async fn get_task_messages(&self, id: TaskId) -> Result<Vec<String>>;
     /// Return the creating prompt and assistant messages (when available).
     async fn get_task_text(&self, id: TaskId) -> Result<TaskText>;
+    /// Return any sibling attempts (best-of-N) for the given assistant turn.
+    async fn list_sibling_attempts(
+        &self,
+        task: TaskId,
+        turn_id: String,
+    ) -> Result<Vec<TurnAttempt>>;
     /// Dry-run apply (preflight) that validates whether the patch would apply cleanly.
-    /// Never modifies the working tree.
-    async fn apply_task_preflight(&self, id: TaskId) -> Result<ApplyOutcome>;
-    async fn apply_task(&self, id: TaskId) -> Result<ApplyOutcome>;
+    /// Never modifies the working tree. When `diff_override` is supplied, the provided diff is
+    /// used instead of re-fetching the task details so callers can apply alternate attempts.
+    async fn apply_task_preflight(
+        &self,
+        id: TaskId,
+        diff_override: Option<String>,
+    ) -> Result<ApplyOutcome>;
+    async fn apply_task(&self, id: TaskId, diff_override: Option<String>) -> Result<ApplyOutcome>;
     async fn create_task(
         &self,
         env_id: &str,

@@ -17,6 +17,7 @@ use ratatui::widgets::Paragraph;
 use std::sync::OnceLock;
 
 use crate::app::App;
+use crate::app::AttemptView;
 use chrono::Local;
 use chrono::Utc;
 use codex_cloud_tasks_client::TaskStatus;
@@ -224,12 +225,18 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &mut App) {
     ];
     // Apply hint; show disabled note when overlay is open without a diff.
     if let Some(ov) = app.diff_overlay.as_ref() {
-        if !ov.can_apply {
+        if !ov.current_can_apply() {
             help.push("a".dim());
             help.push(": Apply (disabled)  ".dim());
         } else {
             help.push("a".dim());
             help.push(": Apply  ".dim());
+        }
+        if ov.attempt_count() > 1 {
+            help.push("Tab".dim());
+            help.push(": Next attempt  ".dim());
+            help.push("[ ]".dim());
+            help.push(": Cycle attempts  ".dim());
         }
     } else {
         help.push("a".dim());
@@ -289,7 +296,7 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     let ov_can_apply = app
         .diff_overlay
         .as_ref()
-        .map(|o| o.can_apply)
+        .map(|o| o.current_can_apply())
         .unwrap_or(false);
     let is_error = app
         .diff_overlay
@@ -335,8 +342,9 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     let content_full = overlay_content(inner);
     let mut content_area = content_full;
     if let Some(ov) = app.diff_overlay.as_mut() {
-        let has_text = !ov.text_lines.is_empty() || ov.prompt.is_some();
-        let has_diff = !ov.diff_lines.is_empty() || ov_can_apply;
+        let has_text = ov.current_attempt().is_some_and(AttemptView::has_text);
+        let has_diff =
+            ov.current_attempt().is_some_and(AttemptView::has_diff) || ov.base_can_apply;
         if has_diff || has_text {
             let rows = Layout::default()
                 .direction(Direction::Vertical)
@@ -360,13 +368,28 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
                     "  ".into(),
                     diff_lbl,
                     "  ".into(),
-                    "(← → to switch)".dim(),
+                    "(← → to switch view)".dim(),
                 ]);
             } else if has_text {
                 spans.push("Conversation".magenta().bold());
             } else {
                 spans.push("Diff".magenta().bold());
             }
+            if let Some(total) = ov.expected_attempts().or({
+                if ov.attempts.is_empty() {
+                    None
+                } else {
+                    Some(ov.attempts.len())
+                }
+            })
+                && total > 1 {
+                    spans.extend(vec![
+                        "  ".into(),
+                        format!("Attempt {}/{}", ov.selected_attempt + 1, total).dim(),
+                        "  ".into(),
+                        "(Tab/Shift-Tab or [ ] to cycle attempts)".dim(),
+                    ]);
+                }
             frame.render_widget(Paragraph::new(Line::from(spans)), rows[0]);
             ov.sd.set_width(rows[1].width);
             ov.sd.set_viewport(rows[1].height);

@@ -434,42 +434,189 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                             // on Err, silently continue with All
                         }
                         app::AppEvent::DetailsDiffLoaded { id, title, diff } => {
-                            // Only update if the overlay still corresponds to this id.
-                                        if let Some(ov) = &app.diff_overlay && ov.task_id != id { continue; }
-                            let mut sd = crate::scrollable_diff::ScrollableDiff::new();
-                            let diff_lines: Vec<String> = diff.lines().map(|s| s.to_string()).collect();
-                            sd.set_content(diff_lines.clone());
-                            app.diff_overlay = Some(app::DiffOverlay{ title, task_id: id, sd, can_apply: true, diff_lines, text_lines: Vec::new(), prompt: None, current_view: app::DetailView::Diff });
-                            app.details_inflight = false;
-                            app.status.clear();
-                            needs_redraw = true;
-                        }
-                        app::AppEvent::DetailsMessagesLoaded { id, title, messages, prompt } => {
-                                        if let Some(ov) = &app.diff_overlay && ov.task_id != id { continue; }
-                            let conv = conversation_lines(prompt.clone(), &messages);
-                            if let Some(ov) = app.diff_overlay.as_mut() {
-                                ov.text_lines = conv.clone();
-                                ov.prompt = prompt;
-                                if !ov.can_apply {
-                                    ov.sd.set_content(conv);
-                                    ov.current_view = app::DetailView::Prompt;
+                            if let Some(ov) = &app.diff_overlay
+                                && ov.task_id != id {
+                                    continue;
                                 }
+                            let diff_lines: Vec<String> = diff.lines().map(|s| s.to_string()).collect();
+                            if let Some(ov) = app.diff_overlay.as_mut() {
+                                ov.title = title;
+                                {
+                                    let base = ov.base_attempt_mut();
+                                    base.diff_lines = diff_lines.clone();
+                                    base.diff_raw = Some(diff.clone());
+                                }
+                                ov.base_can_apply = true;
+                                ov.apply_selection_to_fields();
                             } else {
-                                let mut sd = crate::scrollable_diff::ScrollableDiff::new();
-                                sd.set_content(conv.clone());
-                                app.diff_overlay = Some(app::DiffOverlay{ title, task_id: id, sd, can_apply: false, diff_lines: Vec::new(), text_lines: conv, prompt, current_view: app::DetailView::Prompt });
+                                let mut overlay = app::DiffOverlay::new(id.clone(), title, None);
+                                {
+                                    let base = overlay.base_attempt_mut();
+                                    base.diff_lines = diff_lines.clone();
+                                    base.diff_raw = Some(diff.clone());
+                                }
+                                overlay.base_can_apply = true;
+                                overlay.current_view = app::DetailView::Diff;
+                                overlay.apply_selection_to_fields();
+                                app.diff_overlay = Some(overlay);
                             }
                             app.details_inflight = false;
                             app.status.clear();
                             needs_redraw = true;
                         }
+                        app::AppEvent::DetailsMessagesLoaded {
+                            id,
+                            title,
+                            messages,
+                            prompt,
+                            turn_id,
+                            sibling_turn_ids,
+                            attempt_placement,
+                            attempt_status,
+                        } => {
+                            if let Some(ov) = &app.diff_overlay
+                                && ov.task_id != id {
+                                    continue;
+                                }
+                            let conv = conversation_lines(prompt.clone(), &messages);
+                            if let Some(ov) = app.diff_overlay.as_mut() {
+                                ov.title = title.clone();
+                                {
+                                    let base = ov.base_attempt_mut();
+                                    base.text_lines = conv.clone();
+                                    base.prompt = prompt.clone();
+                                    base.turn_id = turn_id.clone();
+                                    base.status = attempt_status;
+                                    base.attempt_placement = attempt_placement;
+                                }
+                                ov.base_turn_id = turn_id.clone();
+                                ov.sibling_turn_ids = sibling_turn_ids.clone();
+                                ov.attempt_total_hint = Some(sibling_turn_ids.len().saturating_add(1));
+                                if !ov.base_can_apply {
+                                    ov.current_view = app::DetailView::Prompt;
+                                }
+                                ov.apply_selection_to_fields();
+                                if let (Some(turn_id), true) = (turn_id.clone(), !sibling_turn_ids.is_empty())
+                                    && ov.attempts.len() == 1 {
+                                        let backend2 = backend.clone();
+                                        let tx2 = tx.clone();
+                                        let task_id = id.clone();
+                                        tokio::spawn(async move {
+                                            match codex_cloud_tasks_client::CloudBackend::list_sibling_attempts(
+                                                &*backend2,
+                                                task_id.clone(),
+                                                turn_id,
+                                            )
+                                            .await
+                                            {
+                                                Ok(attempts) => {
+                                                    let _ = tx2.send(app::AppEvent::AttemptsLoaded { id: task_id, attempts });
+                                                }
+                                                Err(e) => {
+                                                    crate::util::append_error_log(format!(
+                                                        "attempts.load failed for {}: {e}",
+                                                        task_id.0
+                                                    ));
+                                                }
+                                            }
+                                        });
+                                    }
+                            } else {
+                                let mut overlay = app::DiffOverlay::new(id.clone(), title, None);
+                                {
+                                    let base = overlay.base_attempt_mut();
+                                    base.text_lines = conv.clone();
+                                    base.prompt = prompt.clone();
+                                    base.turn_id = turn_id.clone();
+                                    base.status = attempt_status;
+                                    base.attempt_placement = attempt_placement;
+                                }
+                                overlay.base_turn_id = turn_id.clone();
+                                overlay.sibling_turn_ids = sibling_turn_ids.clone();
+                                overlay.attempt_total_hint = Some(sibling_turn_ids.len().saturating_add(1));
+                                overlay.current_view = app::DetailView::Prompt;
+                                overlay.apply_selection_to_fields();
+                                app.diff_overlay = Some(overlay);
+                            }
+                            app.details_inflight = false;
+                            app.status.clear();
+                            needs_redraw = true;
+                        }
+                        app::AppEvent::AttemptsLoaded { id, attempts } => {
+                            if let Some(ov) = app.diff_overlay.as_mut() {
+                                if ov.task_id != id {
+                                    continue;
+                                }
+                                for attempt in attempts {
+                                    if ov
+                                        .attempts
+                                        .iter()
+                                        .any(|existing| existing.turn_id.as_deref() == Some(attempt.turn_id.as_str()))
+                                    {
+                                        continue;
+                                    }
+                                    let diff_lines = attempt
+                                        .diff
+                                        .as_ref()
+                                        .map(|d| d.lines().map(|s| s.to_string()).collect())
+                                        .unwrap_or_default();
+                                    let text_lines = conversation_lines(None, &attempt.messages);
+                                    ov.attempts.push(app::AttemptView {
+                                        turn_id: Some(attempt.turn_id.clone()),
+                                        status: attempt.status,
+                                        attempt_placement: attempt.attempt_placement,
+                                        diff_lines,
+                                        text_lines,
+                                        prompt: None,
+                                        diff_raw: attempt.diff.clone(),
+                                    });
+                                }
+                                if ov.attempts.len() > 1 {
+                                    let (_, rest) = ov.attempts.split_at_mut(1);
+                                    rest.sort_by(|a, b| match (a.attempt_placement, b.attempt_placement) {
+                                        (Some(lhs), Some(rhs)) => lhs.cmp(&rhs),
+                                        (Some(_), None) => std::cmp::Ordering::Less,
+                                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                                        (None, None) => a.turn_id.cmp(&b.turn_id),
+                                    });
+                                }
+                                if ov.selected_attempt >= ov.attempts.len() {
+                                    ov.selected_attempt = ov.attempts.len().saturating_sub(1);
+                                }
+                                ov.attempt_total_hint = Some(ov.attempts.len());
+                                ov.apply_selection_to_fields();
+                                needs_redraw = true;
+                            }
+                        }
                         app::AppEvent::DetailsFailed { id, title, error } => {
-                            if let Some(ov) = &app.diff_overlay && ov.task_id != id { continue; }
+                            if let Some(ov) = &app.diff_overlay
+                                && ov.task_id != id {
+                                    continue;
+                                }
                             append_error_log(format!("details failed for {}: {error}", id.0));
                             let pretty = pretty_lines_from_error(&error);
-                            let mut sd = crate::scrollable_diff::ScrollableDiff::new();
-                            sd.set_content(pretty);
-                            app.diff_overlay = Some(app::DiffOverlay{ title, task_id: id, sd, can_apply: false, diff_lines: Vec::new(), text_lines: Vec::new(), prompt: None, current_view: app::DetailView::Prompt });
+                            if let Some(ov) = app.diff_overlay.as_mut() {
+                                ov.title = title.clone();
+                                {
+                                    let base = ov.base_attempt_mut();
+                                    base.diff_lines.clear();
+                                    base.text_lines = pretty.clone();
+                                    base.prompt = None;
+                                }
+                                ov.base_can_apply = false;
+                                ov.current_view = app::DetailView::Prompt;
+                                ov.apply_selection_to_fields();
+                            } else {
+                                let mut overlay = app::DiffOverlay::new(id.clone(), title, None);
+                                {
+                                    let base = overlay.base_attempt_mut();
+                                    base.text_lines = pretty;
+                                }
+                                overlay.base_can_apply = false;
+                                overlay.current_view = app::DetailView::Prompt;
+                                overlay.apply_selection_to_fields();
+                                app.diff_overlay = Some(overlay);
+                            }
                             app.details_inflight = false;
                             needs_redraw = true;
                         }
@@ -636,8 +783,14 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         let backend2 = backend.clone();
                                         let tx2 = tx.clone();
                                         let id2 = m.task_id.clone();
+                                        let diff_override = m.diff_override.clone();
                                         tokio::spawn(async move {
-                                            let res = codex_cloud_tasks_client::CloudBackend::apply_task(&*backend2, id2.clone()).await;
+                                            let res = codex_cloud_tasks_client::CloudBackend::apply_task(
+                                                &*backend2,
+                                                id2.clone(),
+                                                diff_override,
+                                            )
+                                            .await;
                                             let evt = match res {
                                                 Ok(outcome) => app::AppEvent::ApplyFinished { id: id2, result: Ok(outcome) },
                                                 Err(e) => app::AppEvent::ApplyFinished { id: id2, result: Err(format!("{e}")) },
@@ -650,15 +803,29 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                     if let Some(m) = app.apply_modal.take() {
                                         // Kick off async preflight; show spinner in modal body
                                         app.apply_preflight_inflight = true;
-                                        app.apply_modal = Some(app::ApplyModalState { task_id: m.task_id.clone(), title: m.title.clone(), result_message: None, result_level: None, skipped_paths: Vec::new(), conflict_paths: Vec::new() });
+                                        app.apply_modal = Some(app::ApplyModalState {
+                                            task_id: m.task_id.clone(),
+                                            title: m.title.clone(),
+                                            result_message: None,
+                                            result_level: None,
+                                            skipped_paths: Vec::new(),
+                        conflict_paths: Vec::new(),
+                                            diff_override: m.diff_override.clone(),
+                                        });
                                         needs_redraw = true;
                                         let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
                                         let backend2 = backend.clone();
                                         let tx2 = tx.clone();
                                         let id2 = m.task_id.clone();
                                         let title2 = m.title.clone();
+                                        let diff_override = m.diff_override.clone();
                                         tokio::spawn(async move {
-                                            let out = codex_cloud_tasks_client::CloudBackend::apply_task_preflight(&*backend2, id2.clone()).await;
+                                            let out = codex_cloud_tasks_client::CloudBackend::apply_task_preflight(
+                                                &*backend2,
+                                                id2.clone(),
+                                                diff_override,
+                                            )
+                                            .await;
                                             let evt = match out {
                                                 Ok(outcome) => {
                                                     let level = match outcome.status {
@@ -681,19 +848,50 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 _ => {}
                             }
                         } else if app.diff_overlay.is_some() {
+                            let mut cycle_attempt = |delta: isize| {
+                                if let Some(ov) = app.diff_overlay.as_mut()
+                                    && ov.attempt_count() > 1 {
+                                        ov.step_attempt(delta);
+                                        let total = ov.attempt_display_total();
+                                        let current = ov.selected_attempt + 1;
+                                        app.status = format!("Viewing attempt {current} of {total}");
+                                        ov.sd.to_top();
+                                        needs_redraw = true;
+                                    }
+                            };
+
                             match key.code {
                                 KeyCode::Char('a') => {
-                                    if let Some(ov) = &app.diff_overlay {
-                                        if ov.can_apply {
-                                            app.apply_modal = Some(app::ApplyModalState { task_id: ov.task_id.clone(), title: ov.title.clone(), result_message: None, result_level: None, skipped_paths: Vec::new(), conflict_paths: Vec::new() });
+                                    let snapshot = app.diff_overlay.as_ref().map(|ov| {
+                                        (
+                                            ov.task_id.clone(),
+                                            ov.title.clone(),
+                                            ov.current_can_apply(),
+                                            ov.current_attempt().and_then(|attempt| attempt.diff_raw.clone()),
+                                        )
+                                    });
+                                    if let Some((task_id, title, can_apply, diff_override)) = snapshot {
+                                        if can_apply {
+                                            app.apply_modal = Some(app::ApplyModalState {
+                                                task_id: task_id.clone(),
+                                                title: title.clone(),
+                                                result_message: None,
+                                                result_level: None,
+                                                skipped_paths: Vec::new(),
+                                                conflict_paths: Vec::new(),
+                                                diff_override: diff_override.clone(),
+                                            });
                                             app.apply_preflight_inflight = true;
                                             let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
                                             let backend2 = backend.clone();
                                             let tx2 = tx.clone();
-                                            let id2 = ov.task_id.clone();
-                                            let title2 = ov.title.clone();
                                             tokio::spawn(async move {
-                                                let out = codex_cloud_tasks_client::CloudBackend::apply_task_preflight(&*backend2, id2.clone()).await;
+                                                let out = codex_cloud_tasks_client::CloudBackend::apply_task_preflight(
+                                                    &*backend2,
+                                                    task_id.clone(),
+                                                    diff_override.clone(),
+                                                )
+                                                .await;
                                                 let evt = match out {
                                                     Ok(outcome) => {
                                                         let level = match outcome.status {
@@ -701,17 +899,37 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                             codex_cloud_tasks_client::ApplyStatus::Partial => app::ApplyResultLevel::Partial,
                                                             codex_cloud_tasks_client::ApplyStatus::Error => app::ApplyResultLevel::Error,
                                                         };
-                                                        app::AppEvent::ApplyPreflightFinished { id: id2, title: title2, message: outcome.message, level, skipped: outcome.skipped_paths, conflicts: outcome.conflict_paths }
+                                                        app::AppEvent::ApplyPreflightFinished {
+                                                            id: task_id,
+                                                            title,
+                                                            message: outcome.message,
+                                                            level,
+                                                            skipped: outcome.skipped_paths,
+                                                            conflicts: outcome.conflict_paths,
+                                                        }
                                                     }
-                                                    Err(e) => app::AppEvent::ApplyPreflightFinished { id: id2, title: title2, message: format!("Preflight failed: {e}"), level: app::ApplyResultLevel::Error, skipped: Vec::new(), conflicts: Vec::new() },
+                                                    Err(e) => app::AppEvent::ApplyPreflightFinished {
+                                                        id: task_id,
+                                                        title,
+                                                        message: format!("Preflight failed: {e}"),
+                                                        level: app::ApplyResultLevel::Error,
+                                                        skipped: Vec::new(),
+                                                        conflicts: Vec::new(),
+                                                    },
                                                 };
                                                 let _ = tx2.send(evt);
                                             });
                                         } else {
-                                            app.status = "No diff available to apply".to_string();
+                                            app.status = "No diff available to apply.".to_string();
                                         }
                                         needs_redraw = true;
                                     }
+                                }
+                                KeyCode::Tab => {
+                                    cycle_attempt(1);
+                                }
+                                KeyCode::BackTab => {
+                                    cycle_attempt(-1);
                                 }
                                 // From task modal, 'o' should close it and open the env selector
                                 KeyCode::Char('o') | KeyCode::Char('O') => {
@@ -735,12 +953,10 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 }
                                 KeyCode::Left => {
                                     if let Some(ov) = &mut app.diff_overlay {
-                                        let has_text = !ov.text_lines.is_empty() || ov.prompt.is_some();
-                                        let has_diff = !ov.diff_lines.is_empty() || ov.can_apply;
+                                        let has_text = ov.current_attempt().is_some_and(app::AttemptView::has_text);
+                                        let has_diff = ov.current_attempt().is_some_and(app::AttemptView::has_diff) || ov.base_can_apply;
                                         if has_text && has_diff {
-                                            ov.current_view = app::DetailView::Prompt;
-                                            let lines = if ov.text_lines.is_empty() { conversation_lines(ov.prompt.clone(), &[]) } else { ov.text_lines.clone() };
-                                            ov.sd.set_content(lines);
+                                            ov.set_view(app::DetailView::Prompt);
                                             ov.sd.to_top();
                                             needs_redraw = true;
                                         }
@@ -748,18 +964,20 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 }
                                 KeyCode::Right => {
                                     if let Some(ov) = &mut app.diff_overlay {
-                                        let has_text = !ov.text_lines.is_empty() || ov.prompt.is_some();
-                                        let has_diff = !ov.diff_lines.is_empty() || ov.can_apply;
+                                        let has_text = ov.current_attempt().is_some_and(app::AttemptView::has_text);
+                                        let has_diff = ov.current_attempt().is_some_and(app::AttemptView::has_diff) || ov.base_can_apply;
                                         if has_text && has_diff {
-                                            ov.current_view = app::DetailView::Diff;
-                                            let lines = ov.diff_lines.clone();
-                                            if !lines.is_empty() {
-                                                ov.sd.set_content(lines);
-                                            }
+                                            ov.set_view(app::DetailView::Diff);
                                             ov.sd.to_top();
                                             needs_redraw = true;
                                         }
                                     }
+                                }
+                                KeyCode::Char(']') | KeyCode::Char('}') => {
+                                    cycle_attempt(1);
+                                }
+                                KeyCode::Char('[') | KeyCode::Char('{') => {
+                                    cycle_attempt(-1);
                                 }
                                 KeyCode::Esc | KeyCode::Char('q') => {
                                     app.diff_overlay = None;
@@ -932,9 +1150,12 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         app.status = format!("Loading details for {title}…", title = task.title);
                                         app.details_inflight = true;
                                         // Open empty overlay immediately; content arrives via events
-                                        let mut sd = crate::scrollable_diff::ScrollableDiff::new();
-                                        sd.set_content(Vec::new());
-                                        app.diff_overlay = Some(app::DiffOverlay{ title: task.title.clone(), task_id: task.id.clone(), sd, can_apply: false, diff_lines: Vec::new(), text_lines: Vec::new(), prompt: None, current_view: app::DetailView::Prompt });
+                                        let overlay = app::DiffOverlay::new(
+                                            task.id.clone(),
+                                            task.title.clone(),
+                                            task.attempt_total,
+                                        );
+                                        app.diff_overlay = Some(overlay);
                                         needs_redraw = true;
                                         // Spawn background details load (diff first, then messages fallback)
                                         let backend2 = backend.clone();
@@ -951,7 +1172,17 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                 Ok(None) => {
                                                     match codex_cloud_tasks_client::CloudBackend::get_task_text(&*backend2, id1.clone()).await {
                                                         Ok(text) => {
-                                                            let _ = tx2.send(app::AppEvent::DetailsMessagesLoaded { id: id1, title: title1, messages: text.messages, prompt: text.prompt });
+                                                            let evt = app::AppEvent::DetailsMessagesLoaded {
+                                                                id: id1,
+                                                                title: title1,
+                                                                messages: text.messages,
+                                                                prompt: text.prompt,
+                                                                turn_id: text.turn_id,
+                                                                sibling_turn_ids: text.sibling_turn_ids,
+                                                                attempt_placement: text.attempt_placement,
+                                                                attempt_status: text.attempt_status,
+                                                            };
+                                                            let _ = tx2.send(evt);
                                                         }
                                                         Err(e2) => {
                                                             let _ = tx2.send(app::AppEvent::DetailsFailed { id: id1, title: title1, error: format!("{e2}") });
@@ -962,7 +1193,17 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                     append_error_log(format!("get_task_diff failed for {}: {e}", id1.0));
                                                     match codex_cloud_tasks_client::CloudBackend::get_task_text(&*backend2, id1.clone()).await {
                                                         Ok(text) => {
-                                                            let _ = tx2.send(app::AppEvent::DetailsMessagesLoaded { id: id1, title: title1, messages: text.messages, prompt: text.prompt });
+                                                            let evt = app::AppEvent::DetailsMessagesLoaded {
+                                                                id: id1,
+                                                                title: title1,
+                                                                messages: text.messages,
+                                                                prompt: text.prompt,
+                                                                turn_id: text.turn_id,
+                                                                sibling_turn_ids: text.sibling_turn_ids,
+                                                                attempt_placement: text.attempt_placement,
+                                                                attempt_status: text.attempt_status,
+                                                            };
+                                                            let _ = tx2.send(evt);
                                                         }
                                                         Err(e2) => {
                                                             let _ = tx2.send(app::AppEvent::DetailsFailed { id: id1, title: title1, error: format!("{e2}") });
@@ -978,8 +1219,18 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                             let id3 = id2;
                                             let title3 = title2;
                                             tokio::spawn(async move {
-                                                if let Ok(text) = codex_cloud_tasks_client::CloudBackend::get_task_text(&*backend3, id3.clone()).await {
-                                                    let _ = tx3.send(app::AppEvent::DetailsMessagesLoaded { id: id3, title: title3, messages: text.messages, prompt: text.prompt });
+                                            if let Ok(text) = codex_cloud_tasks_client::CloudBackend::get_task_text(&*backend3, id3.clone()).await {
+                                                    let evt = app::AppEvent::DetailsMessagesLoaded {
+                                                        id: id3,
+                                                        title: title3,
+                                                        messages: text.messages,
+                                                        prompt: text.prompt,
+                                                        turn_id: text.turn_id,
+                                                        sibling_turn_ids: text.sibling_turn_ids,
+                                                        attempt_placement: text.attempt_placement,
+                                                        attempt_status: text.attempt_status,
+                                                    };
+                                                    let _ = tx3.send(evt);
                                                 }
                                             });
                                         }
@@ -988,10 +1239,19 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                     }
                                 }
                                 KeyCode::Char('a') => {
-                                    if let Some(task) = app.tasks.get(app.selected) {
+                                    if let Some(task) = app.tasks.get(app.selected).cloned() {
                                         match codex_cloud_tasks_client::CloudBackend::get_task_diff(&*backend, task.id.clone()).await {
-                                            Ok(Some(_)) => {
-                                                app.apply_modal = Some(app::ApplyModalState { task_id: task.id.clone(), title: task.title.clone(), result_message: None, result_level: None, skipped_paths: Vec::new(), conflict_paths: Vec::new() });
+                                            Ok(Some(diff)) => {
+                                                let diff_override = Some(diff.clone());
+                                                app.apply_modal = Some(app::ApplyModalState {
+                                                    task_id: task.id.clone(),
+                                                    title: task.title.clone(),
+                                                    result_message: None,
+                                                    result_level: None,
+                                                    skipped_paths: Vec::new(),
+                                                    conflict_paths: Vec::new(),
+                                                    diff_override: diff_override.clone(),
+                                                });
                                                 app.apply_preflight_inflight = true;
                                                 let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
                                                 let backend2 = backend.clone();
@@ -999,7 +1259,12 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                 let id2 = task.id.clone();
                                                 let title2 = task.title.clone();
                                                 tokio::spawn(async move {
-                                                    let out = codex_cloud_tasks_client::CloudBackend::apply_task_preflight(&*backend2, id2.clone()).await;
+                                                    let out = codex_cloud_tasks_client::CloudBackend::apply_task_preflight(
+                                                        &*backend2,
+                                                        id2.clone(),
+                                                        diff_override,
+                                                    )
+                                                    .await;
                                                     let evt = match out {
                                                         Ok(outcome) => {
                                                             let level = match outcome.status {
@@ -1007,9 +1272,23 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                                 codex_cloud_tasks_client::ApplyStatus::Partial => app::ApplyResultLevel::Partial,
                                                                 codex_cloud_tasks_client::ApplyStatus::Error => app::ApplyResultLevel::Error,
                                                             };
-                                                            app::AppEvent::ApplyPreflightFinished { id: id2, title: title2, message: outcome.message, level, skipped: outcome.skipped_paths, conflicts: outcome.conflict_paths }
+                                                            app::AppEvent::ApplyPreflightFinished {
+                                                                id: id2,
+                                                                title: title2,
+                                                                message: outcome.message,
+                                                                level,
+                                                                skipped: outcome.skipped_paths,
+                                                                conflicts: outcome.conflict_paths,
+                                                            }
                                                         }
-                                                        Err(e) => app::AppEvent::ApplyPreflightFinished { id: id2, title: title2, message: format!("Preflight failed: {e}"), level: app::ApplyResultLevel::Error, skipped: Vec::new(), conflicts: Vec::new() },
+                                                        Err(e) => app::AppEvent::ApplyPreflightFinished {
+                                                            id: id2,
+                                                            title: title2,
+                                                            message: format!("Preflight failed: {e}"),
+                                                            level: app::ApplyResultLevel::Error,
+                                                            skipped: Vec::new(),
+                                                            conflicts: Vec::new(),
+                                                        },
                                                     };
                                                     let _ = tx2.send(evt);
                                                 });

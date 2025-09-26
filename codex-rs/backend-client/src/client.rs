@@ -1,5 +1,6 @@
 use crate::types::CodeTaskDetailsResponse;
 use crate::types::PaginatedListTaskListItem;
+use crate::types::TurnAttemptsSiblingTurnsResponse;
 use anyhow::Result;
 use reqwest::header::AUTHORIZATION;
 use reqwest::header::CONTENT_TYPE;
@@ -182,6 +183,26 @@ impl Client {
         let (body, ct) = self.exec_request(req, "GET", &url).await?;
         let parsed: CodeTaskDetailsResponse = self.decode_json(&url, &ct, &body)?;
         Ok((parsed, body, ct))
+    }
+
+    pub async fn list_sibling_turns(
+        &self,
+        task_id: &str,
+        turn_id: &str,
+    ) -> Result<TurnAttemptsSiblingTurnsResponse> {
+        let url = match self.path_style {
+            PathStyle::CodexApi => format!(
+                "{}/api/codex/tasks/{}/turns/{}/sibling_turns",
+                self.base_url, task_id, turn_id
+            ),
+            PathStyle::ChatGptApi => format!(
+                "{}/wham/tasks/{}/turns/{}/sibling_turns",
+                self.base_url, task_id, turn_id
+            ),
+        };
+        let req = self.http.get(&url).headers(self.headers());
+        let (body, ct) = self.exec_request(req, "GET", &url).await?;
+        self.decode_json::<TurnAttemptsSiblingTurnsResponse>(&url, &ct, &body)
     }
 
     /// Create a new task (user turn) by POSTing to the appropriate backend path

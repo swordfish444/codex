@@ -1,10 +1,12 @@
 use crate::ApplyOutcome;
+use crate::AttemptStatus;
 use crate::CloudBackend;
 use crate::DiffSummary;
 use crate::Result;
 use crate::TaskId;
 use crate::TaskStatus;
 use crate::TaskSummary;
+use crate::TurnAttempt;
 use crate::api::TaskText;
 use chrono::Utc;
 
@@ -52,6 +54,7 @@ impl CloudBackend for MockClient {
                     lines_removed: d,
                 },
                 is_review: false,
+                attempt_total: Some(if id_str == "T-1000" { 2 } else { 1 }),
             });
         }
         Ok(out)
@@ -71,10 +74,14 @@ impl CloudBackend for MockClient {
         Ok(TaskText {
             prompt: Some("Why is there no diff?".to_string()),
             messages: vec!["Mock assistant output: this task contains no diff.".to_string()],
+            turn_id: Some("mock-turn".to_string()),
+            sibling_turn_ids: Vec::new(),
+            attempt_placement: Some(0),
+            attempt_status: AttemptStatus::Completed,
         })
     }
 
-    async fn apply_task(&self, id: TaskId) -> Result<ApplyOutcome> {
+    async fn apply_task(&self, id: TaskId, _diff_override: Option<String>) -> Result<ApplyOutcome> {
         Ok(ApplyOutcome {
             applied: true,
             status: crate::ApplyStatus::Success,
@@ -84,7 +91,11 @@ impl CloudBackend for MockClient {
         })
     }
 
-    async fn apply_task_preflight(&self, id: TaskId) -> Result<ApplyOutcome> {
+    async fn apply_task_preflight(
+        &self,
+        id: TaskId,
+        _diff_override: Option<String>,
+    ) -> Result<ApplyOutcome> {
         Ok(ApplyOutcome {
             applied: false,
             status: crate::ApplyStatus::Success,
@@ -92,6 +103,24 @@ impl CloudBackend for MockClient {
             skipped_paths: Vec::new(),
             conflict_paths: Vec::new(),
         })
+    }
+
+    async fn list_sibling_attempts(
+        &self,
+        task: TaskId,
+        _turn_id: String,
+    ) -> Result<Vec<TurnAttempt>> {
+        if task.0 == "T-1000" {
+            return Ok(vec![TurnAttempt {
+                turn_id: "T-1000-attempt-2".to_string(),
+                attempt_placement: Some(1),
+                created_at: Some(Utc::now()),
+                status: AttemptStatus::Completed,
+                diff: Some(mock_diff_for(&task)),
+                messages: vec!["Mock alternate attempt".to_string()],
+            }]);
+        }
+        Ok(Vec::new())
     }
 
     async fn create_task(
