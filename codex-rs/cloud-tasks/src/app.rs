@@ -381,7 +381,7 @@ mod tests {
             &self,
             _id: TaskId,
         ) -> codex_cloud_tasks_client::Result<Option<String>> {
-            Err(codex_cloud_tasks_client::Error::Unimplemented(
+            Err(codex_cloud_tasks_client::CloudTaskError::Unimplemented(
                 "not used in test",
             ))
         }
@@ -419,7 +419,7 @@ mod tests {
             _id: TaskId,
             _diff_override: Option<String>,
         ) -> codex_cloud_tasks_client::Result<codex_cloud_tasks_client::ApplyOutcome> {
-            Err(codex_cloud_tasks_client::Error::Unimplemented(
+            Err(codex_cloud_tasks_client::CloudTaskError::Unimplemented(
                 "not used in test",
             ))
         }
@@ -429,7 +429,7 @@ mod tests {
             _id: TaskId,
             _diff_override: Option<String>,
         ) -> codex_cloud_tasks_client::Result<codex_cloud_tasks_client::ApplyOutcome> {
-            Err(codex_cloud_tasks_client::Error::Unimplemented(
+            Err(codex_cloud_tasks_client::CloudTaskError::Unimplemented(
                 "not used in test",
             ))
         }
@@ -441,7 +441,7 @@ mod tests {
             _git_ref: &str,
             _qa_mode: bool,
         ) -> codex_cloud_tasks_client::Result<codex_cloud_tasks_client::CreatedTask> {
-            Err(codex_cloud_tasks_client::Error::Unimplemented(
+            Err(codex_cloud_tasks_client::CloudTaskError::Unimplemented(
                 "not used in test",
             ))
         }

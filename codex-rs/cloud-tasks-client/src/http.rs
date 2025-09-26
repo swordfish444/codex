@@ -3,7 +3,7 @@ use crate::ApplyStatus;
 use crate::AttemptStatus;
 use crate::CloudBackend;
 use crate::DiffSummary;
-use crate::Error;
+use crate::CloudTaskError;
 use crate::Result;
 use crate::TaskId;
 use crate::TaskStatus;
@@ -74,7 +74,7 @@ impl CloudBackend for HttpClient {
             .backend
             .list_tasks(Some(20), Some("current"), env)
             .await
-            .map_err(|e| Error::Http(format!("list_tasks failed: {e}")))?;
+            .map_err(|e| CloudTaskError::Http(format!("list_tasks failed: {e}")))?;
 
         let tasks: Vec<TaskSummary> = resp
             .items
@@ -96,7 +96,7 @@ impl CloudBackend for HttpClient {
             .backend
             .get_task_details_with_body(&id)
             .await
-            .map_err(|e| Error::Http(format!("get_task_details failed: {e}")))?;
+            .map_err(|e| CloudTaskError::Http(format!("get_task_details failed: {e}")))?;
         if let Some(diff) = details.unified_diff() {
             return Ok(Some(diff));
         }
@@ -112,7 +112,7 @@ impl CloudBackend for HttpClient {
             .backend
             .get_task_details_with_body(&id)
             .await
-            .map_err(|e| Error::Http(format!("get_task_details failed: {e}")))?;
+            .map_err(|e| CloudTaskError::Http(format!("get_task_details failed: {e}")))?;
         let mut msgs = details.assistant_text_messages();
         if msgs.is_empty() {
             msgs.extend(extract_assistant_messages_from_body(&body));
@@ -129,7 +129,7 @@ impl CloudBackend for HttpClient {
         } else {
             format!("{}/api/codex/tasks/{}", self.base_url, id)
         };
-        Err(Error::Http(format!(
+        Err(CloudTaskError::Http(format!(
             "No assistant text messages in response. GET {url}; content-type={ct}; body={body}"
         )))
     }
@@ -140,7 +140,7 @@ impl CloudBackend for HttpClient {
             .backend
             .get_task_details_with_body(&id)
             .await
-            .map_err(|e| Error::Http(format!("get_task_details failed: {e}")))?;
+            .map_err(|e| CloudTaskError::Http(format!("get_task_details failed: {e}")))?;
         let prompt = details.user_text_prompt();
         let mut messages = details.assistant_text_messages();
         if messages.is_empty() {
@@ -188,7 +188,7 @@ impl CloudBackend for HttpClient {
             .backend
             .list_sibling_turns(&task.0, &turn_id)
             .await
-            .map_err(|e| Error::Http(format!("list_sibling_turns failed: {e}")))?;
+            .map_err(|e| CloudTaskError::Http(format!("list_sibling_turns failed: {e}")))?;
 
         let mut attempts: Vec<TurnAttempt> = resp
             .sibling_turns
@@ -263,7 +263,7 @@ impl CloudBackend for HttpClient {
                     prompt.chars().count(),
                     e
                 ));
-                Err(Error::Http(format!("create_task failed: {e}")))
+                Err(CloudTaskError::Http(format!("create_task failed: {e}")))
             }
         }
     }
@@ -285,10 +285,10 @@ impl HttpClient {
                     .backend
                     .get_task_details(&id)
                     .await
-                    .map_err(|e| Error::Http(format!("get_task_details failed: {e}")))?;
+                    .map_err(|e| CloudTaskError::Http(format!("get_task_details failed: {e}")))?;
                 details
                     .unified_diff()
-                    .ok_or_else(|| Error::Msg(format!("No diff available for task {id}")))?
+                    .ok_or_else(|| CloudTaskError::Msg(format!("No diff available for task {id}")))?
             }
         };
 
@@ -315,7 +315,7 @@ impl HttpClient {
             preflight,
         };
         let r = codex_git_apply::apply_git_patch(&req)
-            .map_err(|e| Error::Io(format!("git apply failed to run: {e}")))?;
+            .map_err(|e| CloudTaskError::Io(format!("git apply failed to run: {e}")))?;
 
         let status = if r.exit_code == 0 {
             ApplyStatus::Success

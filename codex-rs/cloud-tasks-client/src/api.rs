@@ -3,10 +3,10 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, CloudTaskError>;
 
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum CloudTaskError {
     #[error("unimplemented: {0}")]
     Unimplemented(&'static str),
     #[error("http error: {0}")]
