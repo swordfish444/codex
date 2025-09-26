@@ -2,6 +2,7 @@ use ratatui::layout::Constraint;
 use ratatui::layout::Direction;
 use ratatui::layout::Layout;
 use ratatui::prelude::*;
+use ratatui::style::Color;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::style::Stylize;
@@ -20,6 +21,7 @@ use crate::app::App;
 use crate::app::AttemptView;
 use chrono::Local;
 use chrono::Utc;
+use codex_cloud_tasks_client::AttemptStatus;
 use codex_cloud_tasks_client::TaskStatus;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -385,7 +387,9 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
             {
                 spans.extend(vec![
                     "  ".into(),
-                    format!("Attempt {}/{}", ov.selected_attempt + 1, total).dim(),
+                    format!("Attempt {}/{}", ov.selected_attempt + 1, total)
+                        .bold()
+                        .dim(),
                     "  ".into(),
                     "(Tab/Shift-Tab or [ ] to cycle attempts)".dim(),
                 ]);
@@ -415,29 +419,10 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
             .map(|l| style_diff_line(l))
             .collect()
     } else {
-        let mut in_code = false;
-        let raw = app.diff_overlay.as_ref().map(|o| o.sd.wrapped_lines());
-        raw.unwrap_or(&[])
-            .iter()
-            .map(|raw| {
-                if raw.trim_start().starts_with("```") {
-                    in_code = !in_code;
-                    return Line::from(raw.to_string().cyan());
-                }
-                if in_code {
-                    return Line::from(raw.to_string().cyan());
-                }
-                let s = raw.trim_start();
-                if s.starts_with("### ") || s.starts_with("## ") || s.starts_with("# ") {
-                    return Line::from(raw.to_string().magenta().bold());
-                }
-                if s.starts_with("- ") || s.starts_with("* ") {
-                    let rest = &s[2..];
-                    return Line::from(vec!["• ".into(), rest.to_string().into()]);
-                }
-                Line::from(raw.to_string())
-            })
-            .collect()
+        app.diff_overlay
+            .as_ref()
+            .map(|o| style_conversation_lines(&o.sd, o.current_attempt()))
+            .unwrap_or_default()
     };
     let raw_empty = app
         .diff_overlay
@@ -537,6 +522,197 @@ pub fn draw_apply_modal(frame: &mut Frame, area: Rect, app: &mut App) {
             frame.render_widget(body, rows[1]);
         }
         frame.render_widget(footer, rows[2]);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConversationSpeaker {
+    User,
+    Assistant,
+}
+
+fn style_conversation_lines(
+    sd: &crate::scrollable_diff::ScrollableDiff,
+    attempt: Option<&AttemptView>,
+) -> Vec<Line<'static>> {
+    use ratatui::text::Span;
+
+    let wrapped = sd.wrapped_lines();
+    if wrapped.is_empty() {
+        return Vec::new();
+    }
+
+    let indices = sd.wrapped_src_indices();
+    let mut styled: Vec<Line<'static>> = Vec::new();
+    let mut speaker: Option<ConversationSpeaker> = None;
+    let mut in_code = false;
+    let mut last_src: Option<usize> = None;
+    let mut bullet_indent: Option<usize> = None;
+
+    for (display, &src_idx) in wrapped.iter().zip(indices.iter()) {
+        let raw = sd.raw_line_at(src_idx);
+        let trimmed = raw.trim();
+        let is_new_raw = last_src.map(|prev| prev != src_idx).unwrap_or(true);
+
+        if trimmed.eq_ignore_ascii_case("user:") {
+            speaker = Some(ConversationSpeaker::User);
+            in_code = false;
+            bullet_indent = None;
+            styled.push(conversation_header_line(ConversationSpeaker::User, None));
+            last_src = Some(src_idx);
+            continue;
+        }
+        if trimmed.eq_ignore_ascii_case("assistant:") {
+            speaker = Some(ConversationSpeaker::Assistant);
+            in_code = false;
+            bullet_indent = None;
+            styled.push(conversation_header_line(
+                ConversationSpeaker::Assistant,
+                attempt,
+            ));
+            last_src = Some(src_idx);
+            continue;
+        }
+        if raw.is_empty() {
+            let mut spans: Vec<Span> = Vec::new();
+            if let Some(role) = speaker {
+                spans.push(conversation_gutter_span(role));
+            } else {
+                spans.push(Span::raw(String::new()));
+            }
+            styled.push(Line::from(spans));
+            last_src = Some(src_idx);
+            bullet_indent = None;
+            continue;
+        }
+
+        if is_new_raw {
+            let trimmed_start = raw.trim_start();
+            if trimmed_start.starts_with("```") {
+                in_code = !in_code;
+                bullet_indent = None;
+            } else if !in_code
+                && (trimmed_start.starts_with("- ") || trimmed_start.starts_with("* "))
+            {
+                let indent = raw.chars().take_while(|c| c.is_whitespace()).count();
+                bullet_indent = Some(indent);
+            } else if !in_code {
+                bullet_indent = None;
+            }
+        }
+
+        let mut spans: Vec<Span> = Vec::new();
+        if let Some(role) = speaker {
+            spans.push(conversation_gutter_span(role));
+        }
+
+        spans.extend(conversation_text_spans(
+            display,
+            in_code,
+            is_new_raw,
+            bullet_indent,
+        ));
+
+        styled.push(Line::from(spans));
+        last_src = Some(src_idx);
+    }
+
+    if styled.is_empty() {
+        wrapped.iter().map(|l| Line::from(l.to_string())).collect()
+    } else {
+        styled
+    }
+}
+
+fn conversation_header_line(
+    speaker: ConversationSpeaker,
+    attempt: Option<&AttemptView>,
+) -> Line<'static> {
+    use ratatui::text::Span;
+
+    let mut spans: Vec<Span> = vec!["╭ ".dim()];
+    match speaker {
+        ConversationSpeaker::User => {
+            spans.push("User".cyan().bold());
+            spans.push(" prompt".dim());
+        }
+        ConversationSpeaker::Assistant => {
+            spans.push("Assistant".magenta().bold());
+            spans.push(" response".dim());
+            if let Some(attempt) = attempt {
+                if let Some(status_span) = attempt_status_span(attempt.status) {
+                    spans.push("  • ".dim());
+                    spans.push(status_span);
+                }
+            }
+        }
+    }
+    Line::from(spans)
+}
+
+fn conversation_gutter_span(speaker: ConversationSpeaker) -> ratatui::text::Span<'static> {
+    match speaker {
+        ConversationSpeaker::User => "│ ".cyan().dim(),
+        ConversationSpeaker::Assistant => "│ ".magenta().dim(),
+    }
+}
+
+fn conversation_text_spans(
+    display: &str,
+    in_code: bool,
+    is_new_raw: bool,
+    bullet_indent: Option<usize>,
+) -> Vec<ratatui::text::Span<'static>> {
+    use ratatui::text::Span;
+
+    if in_code {
+        return vec![Span::styled(
+            display.to_string(),
+            Style::default().fg(Color::Cyan),
+        )];
+    }
+
+    let trimmed = display.trim_start();
+
+    if let Some(indent) = bullet_indent {
+        if is_new_raw {
+            let rest = trimmed.get(2..).unwrap_or("").trim_start();
+            let mut spans: Vec<Span> = Vec::new();
+            if indent > 0 {
+                spans.push(Span::raw(" ".repeat(indent)));
+            }
+            spans.push("• ".into());
+            spans.push(Span::raw(rest.to_string()));
+            return spans;
+        }
+        let mut continuation = String::new();
+        continuation.push_str(&" ".repeat(indent + 2));
+        continuation.push_str(trimmed);
+        return vec![Span::raw(continuation)];
+    }
+
+    if is_new_raw
+        && (trimmed.starts_with("### ") || trimmed.starts_with("## ") || trimmed.starts_with("# "))
+    {
+        return vec![Span::styled(
+            display.to_string(),
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        )];
+    }
+
+    vec![Span::raw(display.to_string())]
+}
+
+fn attempt_status_span(status: AttemptStatus) -> Option<ratatui::text::Span<'static>> {
+    match status {
+        AttemptStatus::Completed => Some("Completed".green()),
+        AttemptStatus::Failed => Some("Failed".red().bold()),
+        AttemptStatus::InProgress => Some("In progress".magenta()),
+        AttemptStatus::Pending => Some("Pending".yellow()),
+        AttemptStatus::Cancelled => Some("Cancelled".yellow().dim()),
+        AttemptStatus::Unknown => None,
     }
 }
 

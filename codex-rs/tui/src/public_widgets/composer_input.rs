@@ -58,6 +58,10 @@ impl ComposerInput {
         }
     }
 
+    pub fn handle_paste(&mut self, pasted: String) -> bool {
+        self.inner.handle_paste(pasted)
+    }
+
     /// Override the footer hint items displayed under the composer.
     /// Each tuple is rendered as "<key> <label>", with keys styled.
     pub fn set_hint_items(&mut self, items: Vec<(impl Into<String>, impl Into<String>)>) {

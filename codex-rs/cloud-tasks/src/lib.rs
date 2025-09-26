@@ -104,6 +104,8 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
 
     // Terminal setup
     use crossterm::ExecutableCommand;
+    use crossterm::event::DisableBracketedPaste;
+    use crossterm::event::EnableBracketedPaste;
     use crossterm::event::KeyboardEnhancementFlags;
     use crossterm::event::PopKeyboardEnhancementFlags;
     use crossterm::event::PushKeyboardEnhancementFlags;
@@ -116,6 +118,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
     let mut stdout = std::io::stdout();
     enable_raw_mode()?;
     stdout.execute(EnterAlternateScreen)?;
+    stdout.execute(EnableBracketedPaste)?;
     // Enable enhanced key reporting so Shift+Enter is distinguishable from Enter.
     // Some terminals may not support these flags; ignore errors if enabling fails.
     let _ = crossterm::execute!(
@@ -648,6 +651,27 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
             }
             maybe_event = events.next() => {
                 match maybe_event {
+                    Some(Ok(Event::Paste(pasted))) => {
+                        if app.env_modal.is_some() {
+                            if let Some(m) = app.env_modal.as_mut() {
+                                for ch in pasted.chars() {
+                                    match ch {
+                                        '\r' | '\n' => continue,
+                                        '\t' => m.query.push(' '),
+                                        _ => m.query.push(ch),
+                                    }
+                                }
+                            }
+                            needs_redraw = true;
+                        } else if let Some(page) = app.new_task.as_mut() {
+                            if !page.submitting {
+                                if page.composer.handle_paste(pasted) {
+                                    needs_redraw = true;
+                                }
+                                let _ = frame_tx.send(Instant::now());
+                            }
+                        }
+                    }
                     Some(Ok(Event::Key(key))) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
                         // Treat Ctrl-C like pressing 'q' in the current context.
                         if key.modifiers.contains(KeyModifiers::CONTROL)
@@ -1313,6 +1337,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
     // Restore terminal
     disable_raw_mode().ok();
     terminal.show_cursor().ok();
+    let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
     // Best-effort restore of keyboard enhancement flags before leaving alt screen.
     let _ = crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
     let _ = crossterm::execute!(std::io::stdout(), LeaveAlternateScreen);
