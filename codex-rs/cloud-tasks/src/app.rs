@@ -354,7 +354,7 @@ mod tests {
             &self,
             env: Option<&str>,
         ) -> codex_cloud_tasks_client::Result<Vec<TaskSummary>> {
-            let key = env.map(|s| s.to_string());
+            let key = env.map(str::to_string);
             let titles = self
                 .by_env
                 .get(&key)
@@ -367,7 +367,7 @@ mod tests {
                     title: t.to_string(),
                     status: codex_cloud_tasks_client::TaskStatus::Ready,
                     updated_at: Utc::now(),
-                    environment_id: env.map(|s| s.to_string()),
+                    environment_id: env.map(str::to_string),
                     environment_label: None,
                     summary: codex_cloud_tasks_client::DiffSummary::default(),
                     is_review: false,

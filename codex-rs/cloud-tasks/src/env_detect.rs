@@ -61,7 +61,7 @@ pub async fn autodetect_environment_id(
     if let Some(env) = pick_environment_row(&by_repo_envs, desired_label.as_deref()) {
         return Ok(AutodetectSelection {
             id: env.id.clone(),
-            label: env.label.clone(),
+            label: env.label.as_deref().map(str::to_owned),
         });
     }
 
@@ -100,7 +100,7 @@ pub async fn autodetect_environment_id(
     if let Some(env) = pick_environment_row(&all_envs, desired_label.as_deref()) {
         return Ok(AutodetectSelection {
             id: env.id.clone(),
-            label: env.label.clone(),
+            label: env.label.as_deref().map(str::to_owned),
         });
     }
     anyhow::bail!("no environments available")

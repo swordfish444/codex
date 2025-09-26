@@ -2,6 +2,12 @@ use base64::Engine as _;
 use chrono::Utc;
 use reqwest::header::HeaderMap;
 
+pub fn set_user_agent_suffix(suffix: &str) {
+    if let Ok(mut guard) = codex_core::default_client::USER_AGENT_SUFFIX.lock() {
+        guard.replace(suffix.to_string());
+    }
+}
+
 pub fn append_error_log(message: impl AsRef<str>) {
     let ts = Utc::now().to_rfc3339();
     if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -45,7 +51,7 @@ pub fn extract_chatgpt_account_id(token: &str) -> Option<String> {
     v.get("https://api.openai.com/auth")
         .and_then(|auth| auth.get("chatgpt_account_id"))
         .and_then(|id| id.as_str())
-        .map(|s| s.to_string())
+        .map(str::to_string)
 }
 
 /// Build headers for ChatGPT-backed requests: `User-Agent`, optional `Authorization`,
@@ -56,18 +62,15 @@ pub async fn build_chatgpt_headers() -> HeaderMap {
     use reqwest::header::HeaderValue;
     use reqwest::header::USER_AGENT;
 
-    let ua = codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
+    set_user_agent_suffix("codex_cloud_tasks_tui");
+    let ua = codex_core::default_client::get_codex_user_agent();
     let mut headers = HeaderMap::new();
     headers.insert(
         USER_AGENT,
         HeaderValue::from_str(&ua).unwrap_or(HeaderValue::from_static("codex-cli")),
     );
     if let Ok(home) = codex_core::config::find_codex_home() {
-        let am = codex_login::AuthManager::new(
-            home,
-            codex_login::AuthMode::ChatGPT,
-            "codex_cloud_tasks_tui".to_string(),
-        );
+        let am = codex_login::AuthManager::new(home);
         if let Some(auth) = am.auth()
             && let Ok(tok) = auth.get_token().await
             && !tok.is_empty()

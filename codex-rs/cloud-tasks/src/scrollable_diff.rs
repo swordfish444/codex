@@ -72,7 +72,7 @@ impl ScrollableDiff {
     }
 
     pub fn raw_line_at(&self, idx: usize) -> &str {
-        self.raw.get(idx).map(|s| s.as_str()).unwrap_or("")
+        self.raw.get(idx).map(String::as_str).unwrap_or("")
     }
 
     /// Scroll by a signed delta; clamps to content.

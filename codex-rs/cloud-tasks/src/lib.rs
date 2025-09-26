@@ -13,6 +13,7 @@ use std::time::Duration;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use util::append_error_log;
+use util::set_user_agent_suffix;
 
 // logging helper lives in util module
 
@@ -33,6 +34,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
         .try_init();
 
     info!("Launching Cloud Tasks list UI");
+    set_user_agent_suffix("codex_cloud_tasks_tui");
 
     // Default to online unless explicitly configured to use mock.
     let use_mock = matches!(
@@ -47,7 +49,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
         // Build an HTTP client against the configured (or default) base URL.
         let base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL")
             .unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
-        let ua = codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"));
+        let ua = codex_core::default_client::get_codex_user_agent();
         let mut http =
             codex_cloud_tasks_client::HttpClient::new(base_url.clone())?.with_user_agent(ua);
         // Log which base URL and path style we're going to use.
@@ -61,23 +63,13 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
         // Require ChatGPT login (SWIC). Exit with a clear message if missing.
         let _token = match codex_core::config::find_codex_home()
             .ok()
-            .map(|home| {
-                codex_login::AuthManager::new(
-                    home,
-                    codex_login::AuthMode::ChatGPT,
-                    "codex_cloud_tasks_tui".to_string(),
-                )
-            })
+            .map(codex_login::AuthManager::new)
             .and_then(|am| am.auth())
         {
             Some(auth) => {
                 // Log account context for debugging workspace selection.
                 if let Some(acc) = auth.get_account_id() {
-                    append_error_log(format!(
-                        "auth: mode=ChatGPT account_id={acc} plan={}",
-                        auth.get_plan_type()
-                            .unwrap_or_else(|| "<unknown>".to_string())
-                    ));
+                    append_error_log(format!("auth: mode=ChatGPT account_id={acc}"));
                 }
                 match auth.get_token().await {
                     Ok(t) if !t.is_empty() => {
@@ -150,7 +142,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
     append_error_log(format!(
         "startup: wham_force_internal={} ua={}",
         force_internal,
-        codex_core::default_client::get_codex_user_agent(Some("codex_cloud_tasks_tui"))
+        codex_core::default_client::get_codex_user_agent()
     ));
     // Non-blocking initial load so the in-box spinner can animate
     app.status = "Loading tasks…".to_string();
@@ -436,7 +428,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 && ov.task_id != id {
                                     continue;
                                 }
-                            let diff_lines: Vec<String> = diff.lines().map(|s| s.to_string()).collect();
+                            let diff_lines: Vec<String> = diff.lines().map(str::to_string).collect();
                             if let Some(ov) = app.diff_overlay.as_mut() {
                                 ov.title = title;
                                 {
@@ -556,7 +548,7 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                     let diff_lines = attempt
                                         .diff
                                         .as_ref()
-                                        .map(|d| d.lines().map(|s| s.to_string()).collect())
+                                        .map(|d| d.lines().map(str::to_string).collect())
                                         .unwrap_or_default();
                                     let text_lines = conversation_lines(None, &attempt.messages);
                                     ov.attempts.push(app::AttemptView {

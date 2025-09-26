@@ -1,9 +1,9 @@
 use base64::Engine;
 use clap::Parser;
+use codex_cloud_tasks::util::set_user_agent_suffix;
 use codex_core::config::find_codex_home;
 use codex_core::default_client::get_codex_user_agent;
 use codex_login::AuthManager;
-use codex_login::AuthMode;
 use reqwest::header::AUTHORIZATION;
 use reqwest::header::HeaderMap;
 use reqwest::header::HeaderName;
@@ -47,7 +47,8 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Build headers: UA + ChatGPT auth if available
-    let ua = get_codex_user_agent(Some("codex_cloud_tasks_envcheck"));
+    set_user_agent_suffix("codex_cloud_tasks_envcheck");
+    let ua = get_codex_user_agent();
     let mut headers = HeaderMap::new();
     headers.insert(
         reqwest::header::USER_AGENT,
@@ -57,11 +58,7 @@ async fn main() -> anyhow::Result<()> {
     // Locate CODEX_HOME and try to load ChatGPT auth
     if let Ok(home) = find_codex_home() {
         println!("codex_home: {}", home.display());
-        let authm = AuthManager::new(
-            home,
-            AuthMode::ChatGPT,
-            "codex_cloud_tasks_envcheck".to_string(),
-        );
+        let authm = AuthManager::new(home);
         if let Some(auth) = authm.auth() {
             match auth.get_token().await {
                 Ok(token) if !token.is_empty() => {
@@ -135,5 +132,5 @@ fn extract_chatgpt_account_id(token: &str) -> Option<String> {
     v.get("https://api.openai.com/auth")
         .and_then(|auth| auth.get("chatgpt_account_id"))
         .and_then(|id| id.as_str())
-        .map(|s| s.to_string())
+        .map(str::to_string)
 }

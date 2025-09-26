@@ -2,8 +2,8 @@ use crate::ApplyOutcome;
 use crate::ApplyStatus;
 use crate::AttemptStatus;
 use crate::CloudBackend;
-use crate::DiffSummary;
 use crate::CloudTaskError;
+use crate::DiffSummary;
 use crate::Result;
 use crate::TaskId;
 use crate::TaskStatus;
@@ -150,14 +150,14 @@ impl CloudBackend for HttpClient {
         let turn_id = turn_map
             .and_then(|m| m.get("id"))
             .and_then(Value::as_str)
-            .map(|s| s.to_string());
+            .map(str::to_string);
         let sibling_turn_ids = turn_map
             .and_then(|m| m.get("sibling_turn_ids"))
             .and_then(Value::as_array)
             .map(|arr| {
                 arr.iter()
                     .filter_map(Value::as_str)
-                    .map(|s| s.to_string())
+                    .map(str::to_string)
                     .collect()
             })
             .unwrap_or_default();
@@ -281,14 +281,13 @@ impl HttpClient {
         let diff = match diff_override {
             Some(diff) => diff,
             None => {
-                let details = self
-                    .backend
-                    .get_task_details(&id)
-                    .await
-                    .map_err(|e| CloudTaskError::Http(format!("get_task_details failed: {e}")))?;
-                details
-                    .unified_diff()
-                    .ok_or_else(|| CloudTaskError::Msg(format!("No diff available for task {id}")))?
+                let details =
+                    self.backend.get_task_details(&id).await.map_err(|e| {
+                        CloudTaskError::Http(format!("get_task_details failed: {e}"))
+                    })?;
+                details.unified_diff().ok_or_else(|| {
+                    CloudTaskError::Msg(format!("No diff available for task {id}"))
+                })?
             }
         };
 

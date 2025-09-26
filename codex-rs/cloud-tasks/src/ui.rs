@@ -296,7 +296,7 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     let ov_can_apply = app
         .diff_overlay
         .as_ref()
-        .map(|o| o.current_can_apply())
+        .map(super::app::DiffOverlay::current_can_apply)
         .unwrap_or(false);
     let is_error = app
         .diff_overlay
@@ -312,17 +312,18 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
         .unwrap_or_default();
 
     // Title block
+    let title_ref = title.as_str();
     let mut title_spans: Vec<ratatui::text::Span> = if is_error {
         vec![
             "Details ".magenta(),
             "[FAILED]".red().bold(),
             " ".into(),
-            title.clone().magenta(),
+            title_ref.magenta(),
         ]
     } else if ov_can_apply {
-        vec!["Diff: ".magenta(), title.clone().magenta()]
+        vec!["Diff: ".magenta(), title_ref.magenta()]
     } else {
-        vec!["Details: ".magenta(), title.clone().magenta()]
+        vec!["Details: ".magenta(), title_ref.magenta()]
     };
     if let Some(p) = app
         .diff_overlay

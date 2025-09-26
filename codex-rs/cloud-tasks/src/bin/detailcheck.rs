@@ -1,22 +1,19 @@
 use codex_backend_client::Client as BackendClient;
+use codex_cloud_tasks::util::set_user_agent_suffix;
 use codex_core::config::find_codex_home;
 use codex_core::default_client::get_codex_user_agent;
 use codex_login::AuthManager;
-use codex_login::AuthMode;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL")
         .unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
-    let ua = get_codex_user_agent(Some("codex_cloud_tasks_detailcheck"));
+    set_user_agent_suffix("codex_cloud_tasks_detailcheck");
+    let ua = get_codex_user_agent();
     let mut client = BackendClient::new(base_url)?.with_user_agent(ua);
 
     if let Ok(home) = find_codex_home() {
-        let am = AuthManager::new(
-            home,
-            AuthMode::ChatGPT,
-            "codex_cloud_tasks_detailcheck".to_string(),
-        );
+        let am = AuthManager::new(home);
         if let Some(auth) = am.auth()
             && let Ok(tok) = auth.get_token().await
         {

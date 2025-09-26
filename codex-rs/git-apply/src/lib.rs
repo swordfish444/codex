@@ -454,12 +454,12 @@ pub fn parse_git_apply_output(
     }
 
     // Final precedence: conflicts > applied > skipped
-    for p in conflicted.iter().cloned().collect::<Vec<_>>() {
-        applied.remove(&p);
-        skipped.remove(&p);
+    for p in conflicted.iter() {
+        applied.remove(p);
+        skipped.remove(p);
     }
-    for p in applied.iter().cloned().collect::<Vec<_>>() {
-        skipped.remove(&p);
+    for p in applied.iter() {
+        skipped.remove(p);
     }
 
     (
@@ -512,11 +512,11 @@ mod tests {
     fn apply_add_success() {
         let _g = env_lock().lock().unwrap();
         let repo = init_repo();
-        let root = repo.path().to_path_buf();
+        let root = repo.path();
 
         let diff = "diff --git a/hello.txt b/hello.txt\nnew file mode 100644\n--- /dev/null\n+++ b/hello.txt\n@@ -0,0 +1,2 @@\n+hello\n+world\n";
         let req = ApplyGitRequest {
-            cwd: root.clone(),
+            cwd: root.to_path_buf(),
             diff: diff.to_string(),
             revert: false,
             preflight: false,
@@ -607,14 +607,14 @@ mod tests {
     fn preflight_blocks_partial_changes() {
         let _g = env_lock().lock().unwrap();
         let repo = init_repo();
-        let root = repo.path().to_path_buf();
+        let root = repo.path();
         // Build a multi-file diff: one valid add (ok.txt) and one invalid modify (ghost.txt)
         let diff = "diff --git a/ok.txt b/ok.txt\nnew file mode 100644\n--- /dev/null\n+++ b/ok.txt\n@@ -0,0 +1,2 @@\n+alpha\n+beta\n\n\
 diff --git a/ghost.txt b/ghost.txt\n--- a/ghost.txt\n+++ b/ghost.txt\n@@ -1,1 +1,1 @@\n-old\n+new\n";
 
         // 1) With preflight enabled, nothing should be changed (even though ok.txt could be added)
         let req1 = ApplyGitRequest {
-            cwd: root.clone(),
+            cwd: root.to_path_buf(),
             diff: diff.to_string(),
             revert: false,
             preflight: true,
@@ -632,7 +632,7 @@ diff --git a/ghost.txt b/ghost.txt\n--- a/ghost.txt\n+++ b/ghost.txt\n@@ -1,1 +1
 
         // 2) Without preflight, we should see no --check in the executed command
         let req2 = ApplyGitRequest {
-            cwd: root.clone(),
+            cwd: root.to_path_buf(),
             diff: diff.to_string(),
             revert: false,
             preflight: false,

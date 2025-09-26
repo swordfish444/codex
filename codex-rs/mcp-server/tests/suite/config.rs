@@ -26,7 +26,7 @@ fn create_config_toml(codex_home: &Path) -> std::io::Result<()> {
     std::fs::write(
         config_toml,
         r#"
-model = "gpt-5"
+model = "gpt-5-codex"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 model_reasoning_summary = "detailed"
@@ -51,7 +51,6 @@ model_reasoning_effort = "high"
 model_reasoning_summary = "detailed"
 model_verbosity = "medium"
 model_provider = "openai"
-disable_response_storage = false
 chatgpt_base_url = "https://api.chatgpt.com"
 "#,
     )
@@ -93,7 +92,7 @@ async fn get_config_toml_parses_all_fields() {
                 exclude_tmpdir_env_var: Some(true),
                 exclude_slash_tmp: Some(true),
             }),
-            model: Some("gpt-5".into()),
+            model: Some("gpt-5-codex".into()),
             model_reasoning_effort: Some(ReasoningEffort::High),
             model_reasoning_summary: Some(ReasoningSummary::Detailed),
             model_verbosity: Some(Verbosity::Medium),
@@ -111,7 +110,6 @@ async fn get_config_toml_parses_all_fields() {
                     model_reasoning_summary: Some(ReasoningSummary::Detailed),
                     model_verbosity: Some(Verbosity::Medium),
                     model_provider: Some("openai".into()),
-                    disable_response_storage: Some(false),
                     chatgpt_base_url: Some("https://api.chatgpt.com".into()),
                 },
             )]),

@@ -29,7 +29,7 @@ impl CloudBackend for MockClient {
                 ("T-1002", "Add contributing guide", TaskStatus::Ready),
             ],
         };
-        let environment_id = _env.map(|s| s.to_string());
+        let environment_id = _env.map(str::to_string);
         let environment_label = match _env {
             Some("env-A") => Some("Env A".to_string()),
             Some("env-B") => Some("Env B".to_string()),
@@ -155,7 +155,7 @@ fn count_from_unified(diff: &str) -> (usize, usize) {
         patch
             .hunks()
             .iter()
-            .flat_map(|h| h.lines())
+            .flat_map(diffy::Hunk::lines)
             .fold((0, 0), |(a, d), l| match l {
                 diffy::Line::Insert(_) => (a + 1, d),
                 diffy::Line::Delete(_) => (a, d + 1),
