@@ -343,8 +343,7 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
     let mut content_area = content_full;
     if let Some(ov) = app.diff_overlay.as_mut() {
         let has_text = ov.current_attempt().is_some_and(AttemptView::has_text);
-        let has_diff =
-            ov.current_attempt().is_some_and(AttemptView::has_diff) || ov.base_can_apply;
+        let has_diff = ov.current_attempt().is_some_and(AttemptView::has_diff) || ov.base_can_apply;
         if has_diff || has_text {
             let rows = Layout::default()
                 .direction(Direction::Vertical)
@@ -381,15 +380,15 @@ fn draw_diff_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
                 } else {
                     Some(ov.attempts.len())
                 }
-            })
-                && total > 1 {
-                    spans.extend(vec![
-                        "  ".into(),
-                        format!("Attempt {}/{}", ov.selected_attempt + 1, total).dim(),
-                        "  ".into(),
-                        "(Tab/Shift-Tab or [ ] to cycle attempts)".dim(),
-                    ]);
-                }
+            }) && total > 1
+            {
+                spans.extend(vec![
+                    "  ".into(),
+                    format!("Attempt {}/{}", ov.selected_attempt + 1, total).dim(),
+                    "  ".into(),
+                    "(Tab/Shift-Tab or [ ] to cycle attempts)".dim(),
+                ]);
+            }
             frame.render_widget(Paragraph::new(Line::from(spans)), rows[0]);
             ov.sd.set_width(rows[1].width);
             ov.sd.set_viewport(rows[1].height);

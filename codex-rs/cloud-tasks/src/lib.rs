@@ -1,5 +1,3 @@
-#![deny(clippy::unwrap_used, clippy::expect_used)]
-
 mod app;
 mod cli;
 pub mod env_detect;

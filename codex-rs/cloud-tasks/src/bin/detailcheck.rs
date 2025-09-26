@@ -1,5 +1,3 @@
-#![deny(clippy::unwrap_used, clippy::expect_used)]
-
 use codex_backend_client::Client as BackendClient;
 use codex_core::config::find_codex_home;
 use codex_core::default_client::get_codex_user_agent;

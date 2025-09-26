@@ -187,7 +187,7 @@ impl DiffOverlay {
         if self.attempts.is_empty() {
             self.attempts.push(AttemptView::default());
         }
-        self.attempts.get_mut(0).expect("base attempt present")
+        &mut self.attempts[0]
     }
 
     pub fn set_view(&mut self, view: DetailView) {

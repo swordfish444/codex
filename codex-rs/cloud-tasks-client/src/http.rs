@@ -271,7 +271,6 @@ impl CloudBackend for HttpClient {
 
 /// Best-effort extraction of assistant text messages from a raw `get_task_details` body.
 /// Falls back to worklog messages when structured turns are not present.
-
 impl HttpClient {
     async fn apply_with_diff(
         &self,
@@ -395,9 +394,8 @@ stderr_tail=
             let _ = writeln!(
                 &mut log,
                 "----- PATCH BEGIN -----
-{}
------ PATCH END -----",
-                diff
+{diff}
+----- PATCH END -----"
             );
             append_error_log(&log);
         }
@@ -491,10 +489,10 @@ fn extract_diff_from_turn(turn: &HashMap<String, Value>) -> Option<String> {
     for item in items {
         match item.get("type").and_then(Value::as_str) {
             Some("output_diff") => {
-                if let Some(diff) = item.get("diff").and_then(Value::as_str) {
-                    if !diff.is_empty() {
-                        return Some(diff.to_string());
-                    }
+                if let Some(diff) = item.get("diff").and_then(Value::as_str)
+                    && !diff.is_empty()
+                {
+                    return Some(diff.to_string());
                 }
             }
             Some("pr") => {
@@ -503,10 +501,9 @@ fn extract_diff_from_turn(turn: &HashMap<String, Value>) -> Option<String> {
                     .and_then(Value::as_object)
                     .and_then(|od| od.get("diff"))
                     .and_then(Value::as_str)
+                    && !diff.is_empty()
                 {
-                    if !diff.is_empty() {
-                        return Some(diff.to_string());
-                    }
+                    return Some(diff.to_string());
                 }
             }
             _ => {}
@@ -526,29 +523,28 @@ fn extract_assistant_messages_from_turn(turn: &HashMap<String, Value>) -> Vec<St
                 for part in content {
                     if part.get("content_type").and_then(Value::as_str) == Some("text")
                         && let Some(txt) = part.get("text").and_then(Value::as_str)
+                        && !txt.is_empty()
                     {
-                        if !txt.is_empty() {
-                            msgs.push(txt.to_string());
-                        }
+                        msgs.push(txt.to_string());
                     }
                 }
             }
         }
     }
-    if msgs.is_empty() {
-        if let Some(err) = turn.get("error").and_then(Value::as_object) {
-            let message = err.get("message").and_then(Value::as_str).unwrap_or("");
-            let code = err.get("code").and_then(Value::as_str).unwrap_or("");
-            if !message.is_empty() || !code.is_empty() {
-                let text = if !code.is_empty() && !message.is_empty() {
-                    format!("{code}: {message}")
-                } else if !code.is_empty() {
-                    code.to_string()
-                } else {
-                    message.to_string()
-                };
-                msgs.push(format!("Task failed: {text}"));
-            }
+    if msgs.is_empty()
+        && let Some(err) = turn.get("error").and_then(Value::as_object)
+    {
+        let message = err.get("message").and_then(Value::as_str).unwrap_or("");
+        let code = err.get("code").and_then(Value::as_str).unwrap_or("");
+        if !message.is_empty() || !code.is_empty() {
+            let text = if !code.is_empty() && !message.is_empty() {
+                format!("{code}: {message}")
+            } else if !code.is_empty() {
+                code.to_string()
+            } else {
+                message.to_string()
+            };
+            msgs.push(format!("Task failed: {text}"));
         }
     }
     msgs
@@ -648,7 +644,7 @@ fn map_task_list_item_to_summary(src: backend::TaskListItem) -> TaskSummary {
         is_review: src
             .pull_requests
             .as_ref()
-            .map_or(false, |prs| !prs.is_empty()),
+            .is_some_and(|prs| !prs.is_empty()),
         attempt_total: attempt_total_from_status_display(src.task_status_display.as_ref()),
     }
 }

@@ -49,20 +49,15 @@ pub struct TaskSummary {
     pub attempt_total: Option<usize>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum AttemptStatus {
     Pending,
     InProgress,
     Completed,
     Failed,
     Cancelled,
+    #[default]
     Unknown,
-}
-
-impl Default for AttemptStatus {
-    fn default() -> Self {
-        AttemptStatus::Unknown
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

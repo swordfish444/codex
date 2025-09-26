@@ -1,5 +1,3 @@
-#![deny(clippy::unwrap_used, clippy::expect_used)]
-
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::ffi::OsStr;

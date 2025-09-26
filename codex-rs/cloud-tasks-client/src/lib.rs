@@ -1,5 +1,3 @@
-#![deny(clippy::unwrap_used, clippy::expect_used)]
-
 mod api;
 
 pub use api::ApplyOutcome;

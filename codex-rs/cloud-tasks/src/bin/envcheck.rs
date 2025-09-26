@@ -1,5 +1,3 @@
-#![deny(clippy::unwrap_used, clippy::expect_used)]
-
 use base64::Engine;
 use clap::Parser;
 use codex_core::config::find_codex_home;

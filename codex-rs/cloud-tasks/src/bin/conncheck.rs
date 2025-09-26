@@ -1,5 +1,3 @@
-#![deny(clippy::unwrap_used, clippy::expect_used)]
-
 use codex_backend_client::Client as BackendClient;
 use codex_cloud_tasks::util::extract_chatgpt_account_id;
 use codex_cloud_tasks::util::normalize_base_url;
