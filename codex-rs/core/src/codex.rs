@@ -114,12 +114,9 @@ use crate::rollout::RolloutRecorder;
 use crate::rollout::RolloutRecorderParams;
 use crate::sandbox::BackendRegistry;
 use crate::sandbox::ExecPlan;
-use crate::sandbox::ExecRequest;
 use crate::sandbox::ExecRuntimeContext;
-use crate::sandbox::PatchExecRequest;
-use crate::sandbox::build_exec_params_for_apply_patch;
-use crate::sandbox::plan_apply_patch;
-use crate::sandbox::plan_exec;
+use crate::sandbox::PreparedExec;
+use crate::sandbox::prepare_exec_invocation;
 use crate::sandbox::run_with_plan;
 use crate::shell;
 use crate::state::ActiveTurn;
@@ -2753,82 +2750,28 @@ async fn handle_container_exec_with_params(
         MaybeApplyPatchVerified::NotApplyPatch => None,
     };
 
-    let mut params = params;
-    let command_for_display;
-
-    let plan = if let Some(apply_patch_exec) = apply_patch_exec.as_ref() {
-        params = build_exec_params_for_apply_patch(apply_patch_exec, &params)?;
-        command_for_display = vec![
-            "apply_patch".to_string(),
-            apply_patch_exec.action.patch.clone(),
-        ];
-
-        let plan_req = PatchExecRequest {
-            action: &apply_patch_exec.action,
-            approval: turn_context.approval_policy,
-            policy: &turn_context.sandbox_policy,
-            cwd: &turn_context.cwd,
-            user_explicitly_approved: apply_patch_exec.user_explicitly_approved_this_action,
-        };
-
-        match plan_apply_patch(&plan_req) {
-            plan @ ExecPlan::Approved { .. } => plan,
-            ExecPlan::AskUser { .. } => {
-                return Err(FunctionCallError::RespondToModel(
-                    "patch requires approval but none was recorded".to_string(),
-                ));
-            }
-            ExecPlan::Reject { reason } => {
-                return Err(FunctionCallError::RespondToModel(format!(
-                    "patch rejected: {reason}"
-                )));
-            }
-        }
-    } else {
-        command_for_display = params.command.clone();
-
-        let initial_plan = {
-            let state = sess.state.lock().await;
-            plan_exec(&ExecRequest {
-                params: &params,
-                approval: turn_context.approval_policy,
-                policy: &turn_context.sandbox_policy,
-                approved_session_commands: state.approved_commands_ref(),
-            })
-        };
-
-        match initial_plan {
-            plan @ ExecPlan::Approved { .. } => plan,
-            ExecPlan::AskUser { reason } => {
-                let decision = sess
-                    .request_command_approval(
-                        sub_id.clone(),
-                        call_id.clone(),
-                        params.command.clone(),
-                        params.cwd.clone(),
-                        reason,
-                    )
-                    .await;
-                match decision {
-                    ReviewDecision::Approved => ExecPlan::approved(SandboxType::None, false, true),
-                    ReviewDecision::ApprovedForSession => {
-                        sess.add_approved_command(params.command.clone()).await;
-                        ExecPlan::approved(SandboxType::None, false, true)
-                    }
-                    ReviewDecision::Denied | ReviewDecision::Abort => {
-                        return Err(FunctionCallError::RespondToModel(
-                            "exec command rejected by user".to_string(),
-                        ));
-                    }
-                }
-            }
-            ExecPlan::Reject { reason } => {
-                return Err(FunctionCallError::RespondToModel(format!(
-                    "exec command rejected: {reason:?}"
-                )));
-            }
-        }
+    let approved_session_commands = {
+        let state = sess.state.lock().await;
+        state.approved_commands_ref().clone()
     };
+
+    let prepared = prepare_exec_invocation(
+        sess,
+        turn_context,
+        &sub_id,
+        &call_id,
+        params,
+        apply_patch_exec,
+        approved_session_commands,
+    )
+    .await?;
+
+    let PreparedExec {
+        params,
+        plan,
+        command_for_display,
+        apply_patch_exec,
+    } = prepared;
 
     let exec_command_context = ExecCommandContext {
         sub_id: sub_id.clone(),

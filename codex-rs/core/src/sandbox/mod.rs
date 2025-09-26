@@ -2,7 +2,6 @@ mod apply_patch_adapter;
 mod backend;
 mod planner;
 
-pub(crate) use apply_patch_adapter::build_exec_params_for_apply_patch;
 pub use backend::BackendRegistry;
 pub use backend::DirectBackend;
 pub use backend::LinuxBackend;
@@ -11,8 +10,10 @@ pub use backend::SpawnBackend;
 pub use planner::ExecPlan;
 pub use planner::ExecRequest;
 pub use planner::PatchExecRequest;
+pub(crate) use planner::PreparedExec;
 pub use planner::plan_apply_patch;
 pub use planner::plan_exec;
+pub(crate) use planner::prepare_exec_invocation;
 
 use crate::error::Result;
 use crate::exec::ExecParams;
