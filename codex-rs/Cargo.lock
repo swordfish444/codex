@@ -673,6 +673,7 @@ dependencies = [
  "askama",
  "assert_cmd",
  "async-channel",
+ "async-trait",
  "base64",
  "bytes",
  "chrono",
