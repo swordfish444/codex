@@ -2859,6 +2859,37 @@ mod tests {
     }
 
     #[test]
+    fn numeric_prompt_positional_args_does_not_error() {
+        // Ensure that a prompt with only numeric placeholders does not trigger
+        // key=value parsing errors when given positional arguments.
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        composer.set_custom_prompts(vec![CustomPrompt {
+            name: "elegant".to_string(),
+            path: "/tmp/elegant.md".to_string().into(),
+            content: "Echo: $ARGUMENTS".to_string(),
+            description: None,
+            argument_hint: None,
+        }]);
+
+        // Type positional args; should submit with numeric expansion, no errors.
+        composer.textarea.set_text("/elegant hi");
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert_eq!(InputResult::Submitted("Echo: hi".to_string()), result);
+        assert!(composer.textarea.is_empty());
+    }
+
+    #[test]
     fn selecting_custom_prompt_with_no_args_inserts_template() {
         let prompt_text = "X:$1 Y:$2 All:[$ARGUMENTS]";
 
