@@ -25,8 +25,12 @@ use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
 use super::footer::FooterMode;
 use super::footer::FooterProps;
+use super::footer::esc_hint_mode;
 use super::footer::footer_height;
+use super::footer::prompt_mode;
 use super::footer::render_footer;
+use super::footer::reset_mode_after_activity;
+use super::footer::toggle_shortcut_mode;
 use super::paste_burst::CharDecision;
 use super::paste_burst::PasteBurst;
 use crate::bottom_pane::paste_burst::FlushResult;
@@ -87,7 +91,7 @@ pub(crate) struct ChatComposer {
     // When true, disables paste-burst logic and inserts characters immediately.
     disable_paste_burst: bool,
     custom_prompts: Vec<CustomPrompt>,
-    footer_state: ComposerFooterState,
+    footer_mode: FooterMode,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -95,23 +99,6 @@ enum ActivePopup {
     None,
     Command(CommandPopup),
     File(FileSearchPopup),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ComposerFooterState {
-    ShortcutPrompt,
-    ShortcutOverlay,
-    EscHint,
-}
-
-impl From<ComposerFooterState> for FooterMode {
-    fn from(value: ComposerFooterState) -> Self {
-        match value {
-            ComposerFooterState::ShortcutPrompt => FooterMode::ShortcutPrompt,
-            ComposerFooterState::ShortcutOverlay => FooterMode::ShortcutOverlay,
-            ComposerFooterState::EscHint => FooterMode::EscHint,
-        }
-    }
 }
 
 const FOOTER_SPACING_HEIGHT: u16 = 1;
@@ -145,47 +132,11 @@ impl ChatComposer {
             paste_burst: PasteBurst::default(),
             disable_paste_burst: false,
             custom_prompts: Vec::new(),
-            footer_state: ComposerFooterState::ShortcutPrompt,
+            footer_mode: FooterMode::ShortcutPrompt,
         };
         // Apply configuration via the setter to keep side-effects centralized.
         this.set_disable_paste_burst(disable_paste_burst);
         this
-    }
-
-    fn set_footer_prompt(&mut self) {
-        self.footer_state = ComposerFooterState::ShortcutPrompt;
-    }
-
-    fn hide_shortcut_overlay(&mut self) {
-        if matches!(self.footer_state, ComposerFooterState::ShortcutOverlay) {
-            self.set_footer_prompt();
-        }
-    }
-
-    fn toggle_shortcut_overlay(&mut self) -> bool {
-        if self.ctrl_c_quit_hint {
-            return false;
-        }
-        self.footer_state = match self.footer_state {
-            ComposerFooterState::ShortcutOverlay => ComposerFooterState::ShortcutPrompt,
-            _ => ComposerFooterState::ShortcutOverlay,
-        };
-        true
-    }
-
-    fn show_esc_hint(&mut self) -> bool {
-        self.hide_shortcut_overlay();
-        if self.is_task_running {
-            return false;
-        }
-        self.footer_state = ComposerFooterState::EscHint;
-        true
-    }
-
-    fn reset_esc_hint(&mut self) {
-        if matches!(self.footer_state, ComposerFooterState::EscHint) {
-            self.set_footer_prompt();
-        }
     }
 
     pub fn desired_height(&self, width: u16) -> u16 {
@@ -371,9 +322,9 @@ impl ChatComposer {
     pub fn set_ctrl_c_quit_hint(&mut self, show: bool, has_focus: bool) {
         self.ctrl_c_quit_hint = show;
         if show {
-            self.set_footer_prompt();
+            self.footer_mode = prompt_mode();
         } else {
-            self.reset_esc_hint();
+            self.footer_mode = reset_mode_after_activity(self.footer_mode);
         }
         self.set_has_focus(has_focus);
     }
@@ -414,11 +365,13 @@ impl ChatComposer {
             return (InputResult::None, true);
         }
         if matches!(key_event.code, KeyCode::Esc) {
-            if self.show_esc_hint() {
+            let next_mode = esc_hint_mode(self.footer_mode, self.is_task_running);
+            if next_mode != self.footer_mode {
+                self.footer_mode = next_mode;
                 return (InputResult::None, true);
             }
         } else {
-            self.reset_esc_hint();
+            self.footer_mode = reset_mode_after_activity(self.footer_mode);
         }
         let ActivePopup::Command(popup) = &mut self.active_popup else {
             unreachable!();
@@ -548,11 +501,13 @@ impl ChatComposer {
             return (InputResult::None, true);
         }
         if matches!(key_event.code, KeyCode::Esc) {
-            if self.show_esc_hint() {
+            let next_mode = esc_hint_mode(self.footer_mode, self.is_task_running);
+            if next_mode != self.footer_mode {
+                self.footer_mode = next_mode;
                 return (InputResult::None, true);
             }
         } else {
-            self.reset_esc_hint();
+            self.footer_mode = reset_mode_after_activity(self.footer_mode);
         }
         let ActivePopup::File(popup) = &mut self.active_popup else {
             unreachable!();
@@ -809,11 +764,13 @@ impl ChatComposer {
             return (InputResult::None, true);
         }
         if matches!(key_event.code, KeyCode::Esc) {
-            if self.show_esc_hint() {
+            let next_mode = esc_hint_mode(self.footer_mode, self.is_task_running);
+            if next_mode != self.footer_mode {
+                self.footer_mode = next_mode;
                 return (InputResult::None, true);
             }
         } else {
-            self.reset_esc_hint();
+            self.footer_mode = reset_mode_after_activity(self.footer_mode);
         }
         match key_event {
             KeyEvent {
@@ -959,7 +916,7 @@ impl ChatComposer {
         self.handle_paste_burst_flush(now);
 
         if !matches!(input.code, KeyCode::Esc) {
-            self.reset_esc_hint();
+            self.footer_mode = reset_mode_after_activity(self.footer_mode);
         }
 
         // If we're capturing a burst and receive Enter, accumulate it instead of inserting.
@@ -1243,10 +1200,10 @@ impl ChatComposer {
             ..
         } = *key_event
         {
-            match self.footer_mode() {
-                FooterMode::CtrlCReminder => false,
-                _ => self.toggle_shortcut_overlay(),
-            }
+            let next = toggle_shortcut_mode(self.footer_mode, self.ctrl_c_quit_hint);
+            let changed = next != self.footer_mode;
+            self.footer_mode = next;
+            changed
         } else {
             false
         }
@@ -1262,12 +1219,12 @@ impl ChatComposer {
     }
 
     fn footer_mode(&self) -> FooterMode {
-        if matches!(self.footer_state, ComposerFooterState::EscHint) {
+        if matches!(self.footer_mode, FooterMode::EscHint) {
             FooterMode::EscHint
         } else if self.ctrl_c_quit_hint {
             FooterMode::CtrlCReminder
         } else {
-            self.footer_state.into()
+            self.footer_mode
         }
     }
 
@@ -1355,16 +1312,16 @@ impl ChatComposer {
     pub fn set_task_running(&mut self, running: bool) {
         self.is_task_running = running;
         if running {
-            self.set_footer_prompt();
+            self.footer_mode = prompt_mode();
         }
     }
 
     pub(crate) fn set_esc_backtrack_hint(&mut self, show: bool) {
         self.esc_backtrack_hint = show;
         if show {
-            let _ = self.show_esc_hint();
+            self.footer_mode = esc_hint_mode(self.footer_mode, self.is_task_running);
         } else {
-            self.reset_esc_hint();
+            self.footer_mode = reset_mode_after_activity(self.footer_mode);
         }
     }
 }

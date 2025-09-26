@@ -21,6 +21,35 @@ pub(crate) enum FooterMode {
     EscHint,
 }
 
+pub(crate) fn toggle_shortcut_mode(current: FooterMode, ctrl_c_hint: bool) -> FooterMode {
+    if ctrl_c_hint {
+        return current;
+    }
+    match current {
+        FooterMode::ShortcutOverlay => FooterMode::ShortcutPrompt,
+        FooterMode::CtrlCReminder => FooterMode::ShortcutPrompt,
+        _ => FooterMode::ShortcutOverlay,
+    }
+}
+
+pub(crate) fn esc_hint_mode(current: FooterMode, is_task_running: bool) -> FooterMode {
+    if is_task_running {
+        return current;
+    }
+    FooterMode::EscHint
+}
+
+pub(crate) fn reset_mode_after_activity(current: FooterMode) -> FooterMode {
+    match current {
+        FooterMode::EscHint | FooterMode::ShortcutOverlay => FooterMode::ShortcutPrompt,
+        other => other,
+    }
+}
+
+pub(crate) fn prompt_mode() -> FooterMode {
+    FooterMode::ShortcutPrompt
+}
+
 #[derive(Clone, Copy, Debug)]
 struct CtrlCReminderState {
     is_task_running: bool,
