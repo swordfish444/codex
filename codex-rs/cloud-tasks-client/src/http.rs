@@ -535,6 +535,10 @@ fn map_task_list_item_to_summary(src: backend::TaskListItem) -> TaskSummary {
         environment_id: None,
         environment_label: env_label_from_status_display(src.task_status_display.as_ref()),
         summary: diff_summary_from_status_display(src.task_status_display.as_ref()),
+        is_review: src
+            .pull_requests
+            .as_ref()
+            .map_or(false, |prs| !prs.is_empty()),
     }
 }
 

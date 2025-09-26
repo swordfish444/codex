@@ -41,6 +41,9 @@ pub struct TaskSummary {
     /// Human-friendly environment label (when available)
     pub environment_label: Option<String>,
     pub summary: DiffSummary,
+    /// True when the backend reports this task as a code review.
+    #[serde(default)]
+    pub is_review: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

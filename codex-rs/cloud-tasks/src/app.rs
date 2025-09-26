@@ -115,7 +115,9 @@ pub async fn load_tasks(
 ) -> anyhow::Result<Vec<TaskSummary>> {
     // In later milestones, add a small debounce, spinner, and error display.
     let tasks = tokio::time::timeout(Duration::from_secs(5), backend.list_tasks(env)).await??;
-    Ok(tasks)
+    // Hide review-only tasks from the main list.
+    let filtered: Vec<TaskSummary> = tasks.into_iter().filter(|t| !t.is_review).collect();
+    Ok(filtered)
 }
 
 pub struct DiffOverlay {
@@ -216,6 +218,7 @@ mod tests {
                     environment_id: env.map(|s| s.to_string()),
                     environment_label: None,
                     summary: codex_cloud_tasks_client::DiffSummary::default(),
+                    is_review: false,
                 });
             }
             Ok(out)

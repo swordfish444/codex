@@ -51,6 +51,7 @@ impl CloudBackend for MockClient {
                     lines_added: a,
                     lines_removed: d,
                 },
+                is_review: false,
             });
         }
         Ok(out)
