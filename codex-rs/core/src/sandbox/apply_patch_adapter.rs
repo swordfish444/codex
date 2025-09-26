@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 
 use crate::apply_patch::ApplyPatchExec;
@@ -23,7 +24,9 @@ pub(crate) fn build_exec_params_for_apply_patch(
         command: vec![path_to_codex, CODEX_APPLY_PATCH_ARG1.to_string(), patch],
         cwd: exec.action.cwd.clone(),
         timeout_ms: original.timeout_ms,
-        env: original.env.clone(),
+        // Run apply_patch with a minimal environment for determinism and to
+        // avoid leaking host environment variables into the patch process.
+        env: HashMap::new(),
         with_escalated_permissions: original.with_escalated_permissions,
         justification: original.justification.clone(),
     })
