@@ -93,12 +93,62 @@ function getUpdatedPath(newDirs) {
   return updatedPath;
 }
 
+function sanitizeTitleSegment(segment) {
+  return segment
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function truncateWithEllipsis(text, maxLength) {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  if (maxLength <= 1) {
+    return text.slice(0, maxLength);
+  }
+  return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function buildMacOSTabTitle(argv) {
+  const argsString = sanitizeTitleSegment(argv.join(" "));
+  const truncatedArgs = argsString
+    ? truncateWithEllipsis(argsString, 60)
+    : null;
+  const cwdLabel = sanitizeTitleSegment(path.basename(process.cwd()));
+  const parts = ["codex"];
+  if (truncatedArgs) {
+    parts.push(truncatedArgs);
+  }
+  let title = parts.join(" ");
+  if (cwdLabel) {
+    title = `${title} — ${cwdLabel}`;
+  }
+  return title;
+}
+
+function updateMacOSTabTitle(argv) {
+  if (platform !== "darwin") {
+    return;
+  }
+  if (!process.stdout?.isTTY) {
+    return;
+  }
+  const title = buildMacOSTabTitle(argv);
+  if (!title) {
+    return;
+  }
+  process.stdout.write(`\u001B]0;${title}\u0007`);
+}
+
 const additionalDirs = [];
 const rgDir = await resolveRgDir();
 if (rgDir) {
   additionalDirs.push(rgDir);
 }
 const updatedPath = getUpdatedPath(additionalDirs);
+
+updateMacOSTabTitle(process.argv.slice(2));
 
 const child = spawn(binaryPath, process.argv.slice(2), {
   stdio: "inherit",
