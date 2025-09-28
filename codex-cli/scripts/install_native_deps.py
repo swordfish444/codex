@@ -145,7 +145,35 @@ def fetch_rg(
 
 
 def _download_artifacts(workflow_id: str, dest_dir: Path) -> None:
-    cmd = [
+    """
+    Find all the .zst variants of the Codex CLI artifacts in the given workflow
+    run and download them into the given directory.
+    """
+    view_cmd = [
+        "gh",
+        "run",
+        "view",
+        workflow_id,
+        "--repo",
+        "openai/codex",
+        "--json",
+        "artifacts",
+    ]
+    data = json.loads(subprocess.check_output(view_cmd, text=True))
+    all_artifact_names = [
+        artifact["name"]
+        for artifact in data.get("artifacts", [])
+        if not artifact["name"].startswith("codex-responses-api-proxy")
+    ]
+    artifact_names = [
+        name
+        for name in all_artifact_names
+        if not name.startswith("codex-responses-api-proxy") and name.endswith(".zst")
+    ]
+
+    if not artifact_names:
+        raise RuntimeError("No codex artifacts found in workflow run.")
+    download_cmd = [
         "gh",
         "run",
         "download",
@@ -155,7 +183,9 @@ def _download_artifacts(workflow_id: str, dest_dir: Path) -> None:
         "openai/codex",
         workflow_id,
     ]
-    subprocess.check_call(cmd)
+    for name in artifact_names:
+        download_cmd.extend(["--name", name])
+    subprocess.check_call(download_cmd)
 
 
 def install_codex_binaries(
@@ -259,9 +289,7 @@ def extract_archive(
 
     if archive_format == "zst":
         output_path = archive_path.parent / dest.name
-        subprocess.check_call(
-            ["zstd", "-f", "-d", str(archive_path), "-o", str(output_path)]
-        )
+        subprocess.check_call(["zstd", "-f", "-d", str(archive_path), "-o", str(output_path)])
         shutil.move(str(output_path), dest)
         return
 
