@@ -8,7 +8,7 @@ name = "codex_responses_api_proxy"
 path = "src/lib.rs"
 
 [[bin]]
-name = "responses-api-proxy"
+name = "codex-responses-api-proxy"
 path = "src/main.rs"
 
 [lints]
