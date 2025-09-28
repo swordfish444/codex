@@ -24,5 +24,4 @@ reqwest = { workspace = true, features = ["blocking", "json", "rustls-tls"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tiny_http = { workspace = true }
-tokio = { workspace = true }
 zeroize = { workspace = true }

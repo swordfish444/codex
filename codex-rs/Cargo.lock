@@ -1002,7 +1002,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tiny_http",
- "tokio",
  "zeroize",
 ]
 
