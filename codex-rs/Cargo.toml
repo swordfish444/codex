@@ -1,10 +1,10 @@
 [workspace]
 members = [
+    "agent",
     "ansi-escape",
     "apply-patch",
     "arg0",
     "cli",
-    "codex-agent",
     "common",
     "core",
     "exec",
@@ -34,10 +34,10 @@ edition = "2024"
 
 [workspace.dependencies]
 # Internal
+codex-agent = { path = "agent" }
 codex-ansi-escape = { path = "ansi-escape" }
 codex-apply-patch = { path = "apply-patch" }
 codex-arg0 = { path = "arg0" }
-codex-agent = { path = "codex-agent" }
 codex-chatgpt = { path = "chatgpt" }
 codex-common = { path = "common" }
 codex-core = { path = "core" }
