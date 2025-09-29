@@ -584,6 +584,7 @@ dependencies = [
  "codex-file-search",
  "codex-protocol",
  "core_test_support",
+ "futures",
  "libc",
  "mcp-types",
  "portable-pty",

@@ -27,6 +27,7 @@ time = { workspace = true, features = ["formatting", "parsing", "local-offset", 
 tracing = { workspace = true }
 tree-sitter = { workspace = true }
 tree-sitter-bash = { workspace = true }
+futures = { workspace = true }
 
 [dev-dependencies]
 core_test_support = { workspace = true }

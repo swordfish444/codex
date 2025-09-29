@@ -103,7 +103,7 @@ pub(crate) async fn stream_chat_completions(
                 for c in items {
                     match c {
                         ReasoningItemContent::ReasoningText { text: t }
-                        | ReasoningItemContent::Text { text: t } => text.push_str(t),
+                        | ReasoningItemContent::Text { text: t } => text.push_str(t.as_str()),
                     }
                 }
                 if text.trim().is_empty() {
@@ -158,7 +158,7 @@ pub(crate) async fn stream_chat_completions(
                     match c {
                         ContentItem::InputText { text: t }
                         | ContentItem::OutputText { text: t } => {
-                            text.push_str(t);
+                            text.push_str(t.as_str());
                         }
                         _ => {}
                     }

@@ -2,110 +2,19 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use codex_agent::apply_patch::ApplyPatchExec;
-use codex_agent::safety::SafetyCheck;
-use codex_agent::safety::assess_command_safety;
-use codex_agent::safety::assess_patch_safety;
+use codex_agent::sandbox::CommandPlanRequest;
+use codex_agent::sandbox::ExecPlan;
+use codex_agent::sandbox::PatchPlanRequest;
 use codex_agent::sandbox::SandboxType;
+use codex_agent::sandbox::plan_apply_patch;
+use codex_agent::sandbox::plan_exec;
 use codex_agent::services::ApprovalCoordinator;
-use codex_apply_patch::ApplyPatchAction;
 
-use super::apply_patch_adapter::build_exec_params_for_apply_patch;
-use crate::codex::TurnContext;
 use crate::exec::ExecParams;
 use crate::function_tool::FunctionCallError;
 use crate::protocol::AskForApproval;
 use crate::protocol::ReviewDecision;
 use crate::protocol::SandboxPolicy;
-
-#[derive(Clone, Debug)]
-pub struct ExecRequest<'a> {
-    pub params: &'a ExecParams,
-    pub approval: AskForApproval,
-    pub policy: &'a SandboxPolicy,
-    pub approved_session_commands: &'a HashSet<Vec<String>>,
-}
-
-#[derive(Clone, Debug)]
-pub enum ExecPlan {
-    Reject {
-        reason: String,
-    },
-    AskUser {
-        reason: Option<String>,
-    },
-    Approved {
-        sandbox: SandboxType,
-        on_failure_escalate: bool,
-        approved_by_user: bool,
-    },
-}
-
-impl ExecPlan {
-    pub fn approved(
-        sandbox: SandboxType,
-        on_failure_escalate: bool,
-        approved_by_user: bool,
-    ) -> Self {
-        ExecPlan::Approved {
-            sandbox,
-            on_failure_escalate,
-            approved_by_user,
-        }
-    }
-}
-
-pub fn plan_exec(req: &ExecRequest<'_>) -> ExecPlan {
-    let params = req.params;
-    let with_escalated_permissions = params.with_escalated_permissions.unwrap_or(false);
-    let safety = assess_command_safety(
-        &params.command,
-        req.approval,
-        req.policy,
-        req.approved_session_commands,
-        with_escalated_permissions,
-    );
-
-    match safety {
-        SafetyCheck::AutoApprove { sandbox_type } => ExecPlan::Approved {
-            sandbox: sandbox_type,
-            on_failure_escalate: should_escalate_on_failure(req.approval, sandbox_type),
-            approved_by_user: false,
-        },
-        SafetyCheck::AskUser => ExecPlan::AskUser {
-            reason: params.justification.clone(),
-        },
-        SafetyCheck::Reject { reason } => ExecPlan::Reject { reason },
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct PatchExecRequest<'a> {
-    pub action: &'a ApplyPatchAction,
-    pub approval: AskForApproval,
-    pub policy: &'a SandboxPolicy,
-    pub cwd: &'a Path,
-    pub user_explicitly_approved: bool,
-}
-
-pub fn plan_apply_patch(req: &PatchExecRequest<'_>) -> ExecPlan {
-    if req.user_explicitly_approved {
-        ExecPlan::Approved {
-            sandbox: SandboxType::None,
-            on_failure_escalate: false,
-            approved_by_user: true,
-        }
-    } else {
-        match assess_patch_safety(req.action, req.approval, req.policy, req.cwd) {
-            SafetyCheck::AutoApprove { sandbox_type } => ExecPlan::Approved {
-                sandbox: sandbox_type,
-                on_failure_escalate: should_escalate_on_failure(req.approval, sandbox_type),
-                approved_by_user: false,
-            },
-            SafetyCheck::AskUser => ExecPlan::AskUser { reason: None },
-            SafetyCheck::Reject { reason } => ExecPlan::Reject { reason },
-        }
-    }
-}
 
 #[derive(Debug)]
 pub(crate) struct PreparedExec {
@@ -117,28 +26,31 @@ pub(crate) struct PreparedExec {
 
 pub(crate) async fn prepare_exec_invocation(
     approvals: &dyn ApprovalCoordinator,
-    turn_context: &TurnContext,
+    approval_policy: AskForApproval,
+    sandbox_policy: &SandboxPolicy,
+    cwd: &Path,
     sub_id: &str,
     call_id: &str,
     params: ExecParams,
     apply_patch_exec: Option<ApplyPatchExec>,
     approved_session_commands: HashSet<Vec<String>>,
 ) -> Result<PreparedExec, FunctionCallError> {
-    let mut params = params;
+    let command_for_display = if let Some(exec) = apply_patch_exec.as_ref() {
+        vec!["apply_patch".to_string(), exec.action.patch.clone()]
+    } else {
+        params.command.clone()
+    };
 
-    let (plan, command_for_display) = if let Some(exec) = apply_patch_exec.as_ref() {
-        params = build_exec_params_for_apply_patch(exec, &params)?;
-        let command_for_display = vec!["apply_patch".to_string(), exec.action.patch.clone()];
-
-        let plan_req = PatchExecRequest {
+    let plan = if let Some(exec) = apply_patch_exec.as_ref() {
+        let plan_req = PatchPlanRequest {
             action: &exec.action,
-            approval: turn_context.approval_policy,
-            policy: &turn_context.sandbox_policy,
-            cwd: &turn_context.cwd,
+            approval: approval_policy,
+            policy: sandbox_policy,
+            cwd,
             user_explicitly_approved: exec.user_explicitly_approved_this_action,
         };
 
-        let plan = match plan_apply_patch(&plan_req) {
+        match plan_apply_patch(&plan_req) {
             plan @ ExecPlan::Approved { .. } => plan,
             ExecPlan::AskUser { .. } => {
                 return Err(FunctionCallError::RespondToModel(
@@ -150,20 +62,18 @@ pub(crate) async fn prepare_exec_invocation(
                     "patch rejected: {reason}"
                 )));
             }
+        }
+    } else {
+        let plan_req = CommandPlanRequest {
+            command: &params.command,
+            approval: approval_policy,
+            policy: sandbox_policy,
+            approved_session_commands: &approved_session_commands,
+            with_escalated_permissions: params.with_escalated_permissions.unwrap_or(false),
+            justification: params.justification.as_ref(),
         };
 
-        (plan, command_for_display)
-    } else {
-        let command_for_display = params.command.clone();
-
-        let initial_plan = plan_exec(&ExecRequest {
-            params: &params,
-            approval: turn_context.approval_policy,
-            policy: &turn_context.sandbox_policy,
-            approved_session_commands: &approved_session_commands,
-        });
-
-        let plan = match initial_plan {
+        match plan_exec(&plan_req) {
             plan @ ExecPlan::Approved { .. } => plan,
             ExecPlan::AskUser { reason } => {
                 let decision = approvals
@@ -175,6 +85,7 @@ pub(crate) async fn prepare_exec_invocation(
                         reason,
                     )
                     .await;
+
                 match decision {
                     ReviewDecision::Approved => ExecPlan::approved(SandboxType::None, false, true),
                     ReviewDecision::ApprovedForSession => {
@@ -193,9 +104,7 @@ pub(crate) async fn prepare_exec_invocation(
                     "exec command rejected: {reason:?}"
                 )));
             }
-        };
-
-        (plan, command_for_display)
+        }
     };
 
     Ok(PreparedExec {
@@ -204,14 +113,4 @@ pub(crate) async fn prepare_exec_invocation(
         command_for_display,
         apply_patch_exec,
     })
-}
-
-fn should_escalate_on_failure(approval: AskForApproval, sandbox: SandboxType) -> bool {
-    matches!(
-        (approval, sandbox),
-        (
-            AskForApproval::UnlessTrusted | AskForApproval::OnFailure,
-            SandboxType::MacosSeatbelt | SandboxType::LinuxSeccomp
-        )
-    )
 }

@@ -1,7 +1,6 @@
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
-use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
@@ -27,9 +26,8 @@ use crate::protocol::SandboxPolicy;
 use crate::seatbelt::spawn_command_under_seatbelt;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
+pub use codex_agent::exec::ExecParams;
 pub use codex_agent::sandbox::SandboxType;
-
-const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 
 // Hardcode these since it does not seem worth including the libc crate just
 // for these.
@@ -45,22 +43,6 @@ const AGGREGATE_BUFFER_INITIAL_CAPACITY: usize = 8 * 1024; // 8 KiB
 /// Limit the number of ExecCommandOutputDelta events emitted per exec call.
 /// Aggregation still collects full output; only the live event stream is capped.
 pub(crate) const MAX_EXEC_OUTPUT_DELTAS_PER_CALL: usize = 10_000;
-
-#[derive(Clone, Debug)]
-pub struct ExecParams {
-    pub command: Vec<String>,
-    pub cwd: PathBuf,
-    pub timeout_ms: Option<u64>,
-    pub env: HashMap<String, String>,
-    pub with_escalated_permissions: Option<bool>,
-    pub justification: Option<String>,
-}
-
-impl ExecParams {
-    pub fn timeout_duration(&self) -> Duration {
-        Duration::from_millis(self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))
-    }
-}
 
 #[derive(Clone)]
 pub struct StdoutStream {
