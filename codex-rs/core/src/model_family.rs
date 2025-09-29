@@ -1,47 +1,11 @@
 use crate::config_types::ReasoningSummaryFormat;
-use crate::tool_apply_patch::ApplyPatchToolType;
+use codex_agent::ApplyPatchToolType;
+pub use codex_agent::ModelFamily;
 
 /// The `instructions` field in the payload sent to a model should always start
 /// with this content.
 const BASE_INSTRUCTIONS: &str = include_str!("../prompt.md");
 const GPT_5_CODEX_INSTRUCTIONS: &str = include_str!("../gpt_5_codex_prompt.md");
-
-/// A model family is a group of models that share certain characteristics.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ModelFamily {
-    /// The full model slug used to derive this model family, e.g.
-    /// "gpt-4.1-2025-04-14".
-    pub slug: String,
-
-    /// The model family name, e.g. "gpt-4.1". Note this should able to be used
-    /// with [`crate::openai_model_info::get_model_info`].
-    pub family: String,
-
-    /// True if the model needs additional instructions on how to use the
-    /// "virtual" `apply_patch` CLI.
-    pub needs_special_apply_patch_instructions: bool,
-
-    // Whether the `reasoning` field can be set when making a request to this
-    // model family. Note it has `effort` and `summary` subfields (though
-    // `summary` is optional).
-    pub supports_reasoning_summaries: bool,
-
-    // Define if we need a special handling of reasoning summary
-    pub reasoning_summary_format: ReasoningSummaryFormat,
-
-    // This should be set to true when the model expects a tool named
-    // "local_shell" to be provided. Its contract must be understood natively by
-    // the model such that its description can be omitted.
-    // See https://platform.openai.com/docs/guides/tools-local-shell
-    pub uses_local_shell_tool: bool,
-
-    /// Present if the model performs better when `apply_patch` is provided as
-    /// a tool call instead of just a bash command
-    pub apply_patch_tool_type: Option<ApplyPatchToolType>,
-
-    // Instructions to use for querying the model
-    pub base_instructions: String,
-}
 
 macro_rules! model_family {
     (

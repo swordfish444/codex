@@ -22,6 +22,7 @@ use crate::client_common::ResponseStream;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::model_family::ModelFamily;
+use crate::model_provider_info::ModelProviderExt;
 use crate::openai_tools::create_tools_json_for_chat_completions_api;
 use crate::util::backoff;
 use codex_protocol::models::ContentItem;

@@ -1,5 +1,3 @@
-use serde::Deserialize;
-use serde::Serialize;
 use std::collections::BTreeMap;
 
 use crate::openai_tools::FreeformTool;
@@ -7,15 +5,9 @@ use crate::openai_tools::FreeformToolFormat;
 use crate::openai_tools::JsonSchema;
 use crate::openai_tools::OpenAiTool;
 use crate::openai_tools::ResponsesApiTool;
+pub use codex_agent::ApplyPatchToolType;
 
 const APPLY_PATCH_LARK_GRAMMAR: &str = include_str!("tool_apply_patch.lark");
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum ApplyPatchToolType {
-    Freeform,
-    Function,
-}
 
 /// Returns a custom tool that can be used to edit files. Well-suited for GPT-5 models
 /// https://platform.openai.com/docs/guides/function-calling#custom-tools

@@ -23,6 +23,8 @@ use tracing::debug;
 use tracing::trace;
 use tracing::warn;
 
+use crate::ModelProviderInfo;
+use crate::WireApi;
 use crate::agent_config::AgentConfig;
 use crate::chat_completions::AggregateStreamExt;
 use crate::chat_completions::stream_chat_completions;
@@ -38,8 +40,7 @@ use crate::error::Result;
 use crate::error::UsageLimitReachedError;
 use crate::flags::CODEX_RS_SSE_FIXTURE;
 use crate::model_family::ModelFamily;
-use crate::model_provider_info::ModelProviderInfo;
-use crate::model_provider_info::WireApi;
+use crate::model_provider_info::ModelProviderExt;
 use crate::openai_model_info::get_model_info;
 use crate::openai_tools::create_tools_json_for_responses_api;
 use crate::protocol::RateLimitSnapshot;

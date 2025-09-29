@@ -7,6 +7,7 @@ use crate::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
+use crate::model_provider_info::ModelProviderExt;
 use crate::protocol::AgentMessageEvent;
 use crate::protocol::CompactedItem;
 use crate::protocol::ErrorEvent;

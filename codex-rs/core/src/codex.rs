@@ -76,6 +76,7 @@ use crate::exec_env::create_env;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::mcp_tool_call::handle_mcp_tool_call;
 use crate::model_family::find_family_for_model;
+use crate::model_provider_info::ModelProviderExt;
 use crate::openai_model_info::get_model_info;
 use crate::openai_tools::ApplyPatchToolArgs;
 use crate::openai_tools::ToolsConfig;
@@ -259,6 +260,23 @@ impl Codex {
             .await
             .map_err(|_| CodexErr::InternalAgentDied)?;
         Ok(event)
+    }
+}
+
+#[async_trait::async_trait]
+impl codex_agent::AgentRuntime for Codex {
+    type Error = CodexErr;
+
+    async fn submit(&self, op: Op) -> CodexResult<String> {
+        Codex::submit(self, op).await
+    }
+
+    async fn submit_with_id(&self, submission: Submission) -> CodexResult<()> {
+        Codex::submit_with_id(self, submission).await
+    }
+
+    async fn next_event(&self) -> CodexResult<Event> {
+        Codex::next_event(self).await
     }
 }
 
