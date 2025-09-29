@@ -560,13 +560,6 @@ impl Session {
             startup_errors,
             ..
         } = bootstrap;
-        let post_session_configured_error_events: Vec<Event> = startup_errors
-            .into_iter()
-            .map(|message| Event {
-                id: INITIAL_SUBMIT_ID.to_owned(),
-                msg: EventMsg::Error(ErrorEvent { message }),
-            })
-            .collect();
 
         // Create the mutable state for the Session.
         let state = SessionState::new();
@@ -599,7 +592,10 @@ impl Session {
                 rollout_path,
             }),
         })
-        .chain(post_session_configured_error_events.into_iter());
+        .chain(startup_errors.into_iter().map(|message| Event {
+            id: INITIAL_SUBMIT_ID.to_owned(),
+            msg: EventMsg::Error(ErrorEvent { message }),
+        }));
         for event in events {
             sess.send_event(event).await;
         }

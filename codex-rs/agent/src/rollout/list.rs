@@ -111,7 +111,8 @@ pub async fn find_conversation_path_by_id_str(
     }
 
     let limit = NonZero::new(1).ok_or_else(|| io::Error::other("search limit must be non-zero"))?;
-    let threads = NonZero::new(2).ok_or_else(|| io::Error::other("thread pool size must be non-zero"))?;
+    let threads =
+        NonZero::new(2).ok_or_else(|| io::Error::other("thread pool size must be non-zero"))?;
     let cancel = Arc::new(AtomicBool::new(false));
     let exclude: Vec<String> = Vec::new();
     let compute_indices = false;

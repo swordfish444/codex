@@ -590,8 +590,10 @@ mod tests {
             AuthMode::ChatGPT => {
                 // Minimal valid JWT payload: header.payload.signature (all base64url, no padding)
                 const FAKE_JWT: &str = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.e30.c2ln"; // {"alg":"none","typ":"JWT"}.{}."sig"
-                let mut id_info = IdTokenInfo::default();
-                id_info.raw_jwt = FAKE_JWT.to_string();
+                let id_info = IdTokenInfo {
+                    raw_jwt: FAKE_JWT.to_string(),
+                    ..IdTokenInfo::default()
+                };
                 let auth = AuthDotJson {
                     openai_api_key: None,
                     tokens: Some(TokenData {

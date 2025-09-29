@@ -25,9 +25,12 @@ async fn user_info_returns_email_from_auth_json() {
     let codex_home = TempDir::new().expect("create tempdir");
 
     let auth_path = get_auth_file(codex_home.path());
-    let mut id_token = IdTokenInfo::default();
-    id_token.email = Some("user@example.com".to_string());
-    id_token.raw_jwt = encode_id_token_with_email("user@example.com").expect("encode id token");
+    let raw_jwt = encode_id_token_with_email("user@example.com").expect("encode id token");
+    let id_token = IdTokenInfo {
+        email: Some("user@example.com".to_string()),
+        raw_jwt,
+        ..IdTokenInfo::default()
+    };
 
     let auth = AuthDotJson {
         openai_api_key: None,
