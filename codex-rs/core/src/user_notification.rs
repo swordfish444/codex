@@ -1,6 +1,8 @@
-use serde::Serialize;
+use serde_json::to_string;
 use tracing::error;
 use tracing::warn;
+
+pub use codex_agent::notifications::UserNotification;
 
 #[derive(Debug, Default)]
 pub(crate) struct UserNotifier {
@@ -17,7 +19,7 @@ impl UserNotifier {
     }
 
     fn invoke_notify(&self, notify_command: &[String], notification: &UserNotification) {
-        let Ok(json) = serde_json::to_string(&notification) else {
+        let Ok(json) = to_string(notification) else {
             error!("failed to serialise notification payload");
             return;
         };
@@ -28,7 +30,6 @@ impl UserNotifier {
         }
         command.arg(json);
 
-        // Fire-and-forget – we do not wait for completion.
         if let Err(e) = command.spawn() {
             warn!("failed to spawn notifier '{}': {e}", notify_command[0]);
         }
@@ -38,46 +39,5 @@ impl UserNotifier {
         Self {
             notify_command: notify,
         }
-    }
-}
-
-/// User can configure a program that will receive notifications. Each
-/// notification is serialized as JSON and passed as an argument to the
-/// program.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
-pub enum UserNotification {
-    #[serde(rename_all = "kebab-case")]
-    AgentTurnComplete {
-        turn_id: String,
-
-        /// Messages that the user sent to the agent to initiate the turn.
-        input_messages: Vec<String>,
-
-        /// The last message sent by the assistant in the turn.
-        last_assistant_message: Option<String>,
-    },
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use anyhow::Result;
-
-    #[test]
-    fn test_user_notification() -> Result<()> {
-        let notification = UserNotification::AgentTurnComplete {
-            turn_id: "12345".to_string(),
-            input_messages: vec!["Rename `foo` to `bar` and update the callsites.".to_string()],
-            last_assistant_message: Some(
-                "Rename complete and verified `cargo build` succeeds.".to_string(),
-            ),
-        };
-        let serialized = serde_json::to_string(&notification)?;
-        assert_eq!(
-            serialized,
-            r#"{"type":"agent-turn-complete","turn-id":"12345","input-messages":["Rename `foo` to `bar` and update the callsites."],"last-assistant-message":"Rename complete and verified `cargo build` succeeds."}"#
-        );
-        Ok(())
     }
 }

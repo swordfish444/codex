@@ -1,10 +1,21 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use anyhow::Result;
 use async_trait::async_trait;
+use codex_agent::notifications::UserNotification;
+use codex_agent::services::CredentialsProvider;
+use codex_agent::services::McpInterface;
+use codex_agent::services::Notifier;
+use codex_agent::services::ProviderAuth;
+use codex_agent::services::RolloutSink;
+use codex_agent::services::SandboxManager;
+use codex_agent::token_data::PlanType;
+use codex_protocol::mcp_protocol::AuthMode;
 use mcp_types::CallToolResult;
 use mcp_types::Tool;
 use serde_json::Value;
-use std::collections::HashMap;
-use std::path::PathBuf;
 
 use crate::auth::AuthManager;
 use crate::auth::CodexAuth;
@@ -18,21 +29,31 @@ use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::UnifiedExecRequest;
 use crate::unified_exec::UnifiedExecResult;
 use crate::unified_exec::UnifiedExecSessionManager;
-use crate::user_notification::UserNotification;
 use crate::user_notification::UserNotifier;
 
-/// Provides access to credentials required when talking to model providers.
 #[async_trait]
-pub trait CredentialsProvider: Send + Sync {
-    fn auth(&self) -> Option<CodexAuth>;
+impl ProviderAuth for CodexAuth {
+    fn mode(&self) -> AuthMode {
+        self.mode
+    }
 
-    async fn refresh_token(&self) -> std::io::Result<Option<String>>;
+    async fn access_token(&self) -> std::io::Result<String> {
+        self.get_token().await
+    }
+
+    fn account_id(&self) -> Option<String> {
+        self.get_account_id()
+    }
+
+    fn plan_type(&self) -> Option<PlanType> {
+        self.get_plan_type()
+    }
 }
 
 #[async_trait]
 impl CredentialsProvider for AuthManager {
-    fn auth(&self) -> Option<CodexAuth> {
-        AuthManager::auth(self)
+    fn auth(&self) -> Option<Arc<dyn ProviderAuth>> {
+        AuthManager::auth(self).map(|auth| Arc::new(auth) as Arc<dyn ProviderAuth>)
     }
 
     async fn refresh_token(&self) -> std::io::Result<Option<String>> {
@@ -40,30 +61,10 @@ impl CredentialsProvider for AuthManager {
     }
 }
 
-/// Emits user-facing notifications for turn completion or other events.
-pub trait Notifier: Send + Sync {
-    fn notify(&self, notification: &UserNotification);
-}
-
 impl Notifier for UserNotifier {
     fn notify(&self, notification: &UserNotification) {
         UserNotifier::notify(self, notification);
     }
-}
-
-/// Aggregates and dispatches MCP tool calls across configured servers.
-#[async_trait]
-pub trait McpInterface: Send + Sync {
-    fn list_all_tools(&self) -> HashMap<String, Tool>;
-
-    fn parse_tool_name(&self, tool_name: &str) -> Option<(String, String)>;
-
-    async fn call_tool(
-        &self,
-        server: &str,
-        tool: &str,
-        arguments: Option<Value>,
-    ) -> Result<CallToolResult>;
 }
 
 #[async_trait]
@@ -86,21 +87,6 @@ impl McpInterface for McpConnectionManager {
     }
 }
 
-/// Persists rollout events for later inspection or replay.
-#[async_trait]
-pub trait RolloutSink: Send + Sync {
-    async fn record_items(
-        &self,
-        items: &[codex_protocol::protocol::RolloutItem],
-    ) -> std::io::Result<()>;
-
-    async fn flush(&self) -> std::io::Result<()>;
-
-    async fn shutdown(&self) -> std::io::Result<()>;
-
-    fn get_rollout_path(&self) -> PathBuf;
-}
-
 #[async_trait]
 impl RolloutSink for RolloutRecorder {
     async fn record_items(
@@ -121,29 +107,6 @@ impl RolloutSink for RolloutRecorder {
     fn get_rollout_path(&self) -> PathBuf {
         RolloutRecorder::get_rollout_path(self)
     }
-}
-
-/// Handles sandboxed exec orchestration, including long-running sessions.
-#[async_trait]
-pub trait SandboxManager: Send + Sync {
-    async fn handle_exec_command_request(
-        &self,
-        params: ExecCommandParams,
-    ) -> Result<ExecCommandOutput, String>;
-
-    async fn handle_write_stdin_request(
-        &self,
-        params: WriteStdinParams,
-    ) -> Result<ExecCommandOutput, String>;
-
-    async fn handle_unified_exec_request(
-        &self,
-        request: UnifiedExecRequest<'_>,
-    ) -> Result<UnifiedExecResult, UnifiedExecError>;
-
-    fn codex_linux_sandbox_exe(&self) -> &Option<PathBuf>;
-
-    fn user_shell(&self) -> &crate::shell::Shell;
 }
 
 /// Default [`SandboxManager`] used by the CLI runtime. Wraps the existing exec

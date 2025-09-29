@@ -4,8 +4,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use crate::agent_services::CredentialsProvider;
-use crate::auth::CodexAuth;
+use crate::CredentialsProvider;
 use bytes::Bytes;
 use codex_protocol::mcp_protocol::AuthMode;
 use codex_protocol::mcp_protocol::ConversationId;
@@ -298,8 +297,8 @@ impl ModelClient {
             .json(payload_json);
 
         if let Some(auth) = auth.as_ref()
-            && auth.mode == AuthMode::ChatGPT
-            && let Some(account_id) = auth.get_account_id()
+            && auth.mode() == AuthMode::ChatGPT
+            && let Some(account_id) = auth.account_id()
         {
             req_builder = req_builder.header("chatgpt-account-id", account_id);
         }
@@ -385,7 +384,7 @@ impl ModelClient {
                             // token.
                             let plan_type = error
                                 .plan_type
-                                .or_else(|| auth.as_ref().and_then(CodexAuth::get_plan_type));
+                                .or_else(|| auth.as_ref().and_then(|a| a.plan_type()));
                             let resets_in_seconds = error.resets_in_seconds;
                             let codex_err = CodexErr::UsageLimitReached(UsageLimitReachedError {
                                 plan_type,

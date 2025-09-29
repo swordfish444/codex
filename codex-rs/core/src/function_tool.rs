@@ -1,7 +1,1 @@
-use thiserror::Error;
-
-#[derive(Debug, Error, PartialEq)]
-pub enum FunctionCallError {
-    #[error("{0}")]
-    RespondToModel(String),
-}
+pub use codex_agent::function_tool::*;

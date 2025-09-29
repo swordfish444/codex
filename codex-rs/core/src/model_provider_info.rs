@@ -6,11 +6,13 @@
 //!      key. These override or extend the defaults at runtime.
 
 use crate::CodexAuth;
+use crate::ProviderAuth;
 use codex_protocol::mcp_protocol::AuthMode;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::env::VarError;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error::EnvVarError;
@@ -97,13 +99,13 @@ impl ModelProviderInfo {
     ///
     /// If the provider declares an `env_key` but the variable is missing/empty, returns an [`Err`] identical to the
     /// one produced by [`ModelProviderInfo::api_key`].
-    pub async fn create_request_builder<'a>(
-        &'a self,
-        client: &'a reqwest::Client,
-        auth: &Option<CodexAuth>,
+    pub async fn create_request_builder(
+        &self,
+        client: &reqwest::Client,
+        auth: &Option<Arc<dyn ProviderAuth>>,
     ) -> crate::error::Result<reqwest::RequestBuilder> {
-        let effective_auth = match self.api_key() {
-            Ok(Some(key)) => Some(CodexAuth::from_api_key(&key)),
+        let effective_auth: Option<Arc<dyn ProviderAuth>> = match self.api_key() {
+            Ok(Some(key)) => Some(Arc::new(CodexAuth::from_api_key(&key))),
             Ok(None) => auth.clone(),
             Err(err) => {
                 if auth.is_some() {
@@ -119,7 +121,7 @@ impl ModelProviderInfo {
         let mut builder = client.post(url);
 
         if let Some(auth) = effective_auth.as_ref() {
-            builder = builder.bearer_auth(auth.get_token().await?);
+            builder = builder.bearer_auth(auth.access_token().await?);
         }
 
         Ok(self.apply_http_headers(builder))
@@ -138,14 +140,8 @@ impl ModelProviderInfo {
             })
     }
 
-    pub(crate) fn get_full_url(&self, auth: &Option<CodexAuth>) -> String {
-        let default_base_url = if matches!(
-            auth,
-            Some(CodexAuth {
-                mode: AuthMode::ChatGPT,
-                ..
-            })
-        ) {
+    pub(crate) fn get_full_url(&self, auth: &Option<Arc<dyn ProviderAuth>>) -> String {
+        let default_base_url = if auth.as_ref().map(|a| a.mode()) == Some(AuthMode::ChatGPT) {
             "https://chatgpt.com/backend-api/codex"
         } else {
             "https://api.openai.com/v1"

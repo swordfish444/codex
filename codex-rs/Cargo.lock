@@ -578,10 +578,22 @@ name = "codex-agent"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "base64",
  "codex-protocol",
+ "core_test_support",
+ "libc",
+ "mcp-types",
  "portable-pty",
  "serde",
+ "serde_json",
+ "sha1",
+ "shlex",
+ "similar",
+ "thiserror 2.0.16",
  "tokio",
+ "uuid",
+ "which",
  "wildmatch",
 ]
 
