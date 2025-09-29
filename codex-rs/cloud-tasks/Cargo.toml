@@ -52,7 +52,3 @@ path = "src/bin/newtask.rs"
 [[bin]]
 name = "envcheck"
 path = "src/bin/envcheck.rs"
-
-[[bin]]
-name = "upload-debug"
-path = "src/bin/upload_debug.rs"
