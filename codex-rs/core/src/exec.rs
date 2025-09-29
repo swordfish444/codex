@@ -27,6 +27,7 @@ use crate::protocol::SandboxPolicy;
 use crate::seatbelt::spawn_command_under_seatbelt;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
+pub use codex_agent::sandbox::SandboxType;
 
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 
@@ -59,17 +60,6 @@ impl ExecParams {
     pub fn timeout_duration(&self) -> Duration {
         Duration::from_millis(self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SandboxType {
-    None,
-
-    /// Only available on macOS.
-    MacosSeatbelt,
-
-    /// Only available on Linux.
-    LinuxSeccomp,
 }
 
 #[derive(Clone)]

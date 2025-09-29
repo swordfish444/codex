@@ -55,6 +55,11 @@
 - **Observability**: keep tracing instrumentation intact; new modules should use existing `tracing` spans for start/end of tasks, exec calls, and MCP interactions.
 - **Code quality**: write minimalist idiomatic code. Leverage the capacity of Rust 
 
+## Current Scope Snapshot
+- `codex-agent` owns the execution/runtime surface: conversation history, rollout recording, function tool plumbing, sandbox planning, command/apply_patch safety, and the new `ApprovalCoordinator` trait that abstracts user approvals. Host-agnostic helpers such as shell formatting, bash parsing, and command safety now live here.
+- `codex-core` focuses on CLI integration: loading user configuration, wiring concrete services (auth, MCP, sandbox manager), translating CLI policies into runtime configs, and exposing the embedded runtime to front-ends. It re-exports runtime modules needed by existing callers but should avoid hosting new agent logic.
+- Session bootstrap now flows through a host-provided `prepare_session_bootstrap` helper: the CLI constructs rollout/MCP/sandbox services, builds the new `codex_agent::SessionServices` + `SessionState`, pre-builds the initial `TurnContext` (model client + tool config), and hands them to `Session::new` instead of constructing them inline.
+
 
 ## Implementation Plan
 1. **Baseline & documentation**
@@ -105,4 +110,3 @@
 11. **Validation**
     - Execute `cargo test -p codex-agent`, `cargo test -p codex-core`, and full suite (`cargo test --all-features`) once shared crates change.
     - Perform manual verification: CLI session, review task, training binary against mock Response API, ensuring approvals and sandboxing behave identically.
-

@@ -7,9 +7,11 @@
 
 pub mod agent_config;
 pub mod agent_services;
-mod apply_patch;
 pub mod auth;
-pub mod bash;
+// `bash` helpers now live in `codex-agent`; re-export the module for
+// backwards compatibility with existing imports.
+pub use codex_agent::bash;
+pub use codex_agent::command_safety;
 mod chat_completions;
 mod client;
 mod client_common;
@@ -17,7 +19,6 @@ pub mod codex;
 mod codex_conversation;
 pub mod token_data;
 pub use codex_conversation::CodexConversation;
-mod command_safety;
 pub mod config;
 pub mod config_edit;
 pub mod config_profile;
@@ -60,7 +61,6 @@ mod openai_tools;
 pub mod plan_tool;
 pub mod project_doc;
 mod rollout;
-pub(crate) mod safety;
 pub mod sandbox;
 pub mod seatbelt;
 pub mod shell;
@@ -82,9 +82,9 @@ mod tasks;
 mod user_notification;
 pub mod util;
 
-pub use apply_patch::CODEX_APPLY_PATCH_ARG1;
-pub use command_safety::is_safe_command;
-pub use safety::get_platform_sandbox;
+pub use codex_agent::apply_patch::CODEX_APPLY_PATCH_ARG1;
+pub use codex_agent::command_safety::is_safe_command;
+pub use codex_agent::safety::get_platform_sandbox;
 // Re-export the protocol types from the standalone `codex-protocol` crate so existing
 // `codex_core::protocol::...` references continue to work across the workspace.
 pub use codex_protocol::protocol;

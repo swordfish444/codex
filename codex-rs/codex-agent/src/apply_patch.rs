@@ -1,18 +1,22 @@
-use crate::codex::Session;
-use crate::codex::TurnContext;
-use crate::function_tool::FunctionCallError;
-use crate::protocol::FileChange;
-use crate::protocol::ReviewDecision;
-use crate::safety::SafetyCheck;
-use crate::safety::assess_patch_safety;
+use std::collections::HashMap;
+use std::path::Path;
+use std::path::PathBuf;
+
 use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
-use std::collections::HashMap;
-use std::path::PathBuf;
+use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::FileChange;
+use codex_protocol::protocol::ReviewDecision;
+use codex_protocol::protocol::SandboxPolicy;
+
+use crate::function_tool::FunctionCallError;
+use crate::safety::SafetyCheck;
+use crate::safety::assess_patch_safety;
+use crate::services::ApprovalCoordinator;
 
 pub const CODEX_APPLY_PATCH_ARG1: &str = "--codex-run-as-apply-patch";
 
-pub(crate) enum InternalApplyPatchInvocation {
+pub enum InternalApplyPatchInvocation {
     /// The `apply_patch` call was handled programmatically, without any sort
     /// of sandbox, because the user explicitly approved it. This is the
     /// result to use with the `shell` function call that contained `apply_patch`.
@@ -28,23 +32,29 @@ pub(crate) enum InternalApplyPatchInvocation {
 }
 
 #[derive(Debug)]
-pub(crate) struct ApplyPatchExec {
-    pub(crate) action: ApplyPatchAction,
-    pub(crate) user_explicitly_approved_this_action: bool,
+pub struct ApplyPatchExec {
+    pub action: ApplyPatchAction,
+    pub user_explicitly_approved_this_action: bool,
 }
 
-pub(crate) async fn apply_patch(
-    sess: &Session,
-    turn_context: &TurnContext,
+pub struct ApplyPatchContext<'a> {
+    pub approval_policy: AskForApproval,
+    pub sandbox_policy: &'a SandboxPolicy,
+    pub cwd: &'a Path,
+}
+
+pub async fn apply_patch(
+    approvals: &dyn ApprovalCoordinator,
+    context: ApplyPatchContext<'_>,
     sub_id: &str,
     call_id: &str,
     action: ApplyPatchAction,
 ) -> InternalApplyPatchInvocation {
     match assess_patch_safety(
         &action,
-        turn_context.approval_policy,
-        &turn_context.sandbox_policy,
-        &turn_context.cwd,
+        context.approval_policy,
+        context.sandbox_policy,
+        context.cwd,
     ) {
         SafetyCheck::AutoApprove { .. } => {
             InternalApplyPatchInvocation::DelegateToExec(ApplyPatchExec {
@@ -53,17 +63,11 @@ pub(crate) async fn apply_patch(
             })
         }
         SafetyCheck::AskUser => {
-            // Compute a readable summary of path changes to include in the
-            // approval request so the user can make an informed decision.
-            //
-            // Note that it might be worth expanding this approval request to
-            // give the user the option to expand the set of writable roots so
-            // that similar patches can be auto-approved in the future during
-            // this session.
-            let rx_approve = sess
+            let approval = approvals
                 .request_patch_approval(sub_id.to_owned(), call_id.to_owned(), &action, None, None)
                 .await;
-            match rx_approve.await.unwrap_or_default() {
+
+            match approval {
                 ReviewDecision::Approved | ReviewDecision::ApprovedForSession => {
                     InternalApplyPatchInvocation::DelegateToExec(ApplyPatchExec {
                         action,
@@ -83,9 +87,7 @@ pub(crate) async fn apply_patch(
     }
 }
 
-pub(crate) fn convert_apply_patch_to_protocol(
-    action: &ApplyPatchAction,
-) -> HashMap<PathBuf, FileChange> {
+pub fn convert_apply_patch_to_protocol(action: &ApplyPatchAction) -> HashMap<PathBuf, FileChange> {
     let changes = action.changes();
     let mut result = HashMap::with_capacity(changes.len());
     for (path, change) in changes {

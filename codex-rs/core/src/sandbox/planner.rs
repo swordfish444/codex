@@ -1,21 +1,21 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use codex_agent::apply_patch::ApplyPatchExec;
+use codex_agent::safety::SafetyCheck;
+use codex_agent::safety::assess_command_safety;
+use codex_agent::safety::assess_patch_safety;
+use codex_agent::sandbox::SandboxType;
+use codex_agent::services::ApprovalCoordinator;
 use codex_apply_patch::ApplyPatchAction;
 
 use super::apply_patch_adapter::build_exec_params_for_apply_patch;
-use crate::apply_patch::ApplyPatchExec;
-use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::exec::ExecParams;
-use crate::exec::SandboxType;
 use crate::function_tool::FunctionCallError;
 use crate::protocol::AskForApproval;
 use crate::protocol::ReviewDecision;
 use crate::protocol::SandboxPolicy;
-use crate::safety::SafetyCheck;
-use crate::safety::assess_command_safety;
-use crate::safety::assess_patch_safety;
 
 #[derive(Clone, Debug)]
 pub struct ExecRequest<'a> {
@@ -116,7 +116,7 @@ pub(crate) struct PreparedExec {
 }
 
 pub(crate) async fn prepare_exec_invocation(
-    sess: &Session,
+    approvals: &dyn ApprovalCoordinator,
     turn_context: &TurnContext,
     sub_id: &str,
     call_id: &str,
@@ -166,7 +166,7 @@ pub(crate) async fn prepare_exec_invocation(
         let plan = match initial_plan {
             plan @ ExecPlan::Approved { .. } => plan,
             ExecPlan::AskUser { reason } => {
-                let decision = sess
+                let decision = approvals
                     .request_command_approval(
                         sub_id.to_string(),
                         call_id.to_string(),
@@ -178,7 +178,7 @@ pub(crate) async fn prepare_exec_invocation(
                 match decision {
                     ReviewDecision::Approved => ExecPlan::approved(SandboxType::None, false, true),
                     ReviewDecision::ApprovedForSession => {
-                        sess.add_approved_command(params.command.clone()).await;
+                        approvals.add_approved_command(params.command.clone()).await;
                         ExecPlan::approved(SandboxType::None, false, true)
                     }
                     ReviewDecision::Denied | ReviewDecision::Abort => {

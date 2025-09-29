@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::env;
 
-use crate::apply_patch::ApplyPatchExec;
-use crate::apply_patch::CODEX_APPLY_PATCH_ARG1;
 use crate::exec::ExecParams;
 use crate::function_tool::FunctionCallError;
+use codex_agent::apply_patch::ApplyPatchExec;
+use codex_agent::apply_patch::CODEX_APPLY_PATCH_ARG1;
 
 pub(crate) fn build_exec_params_for_apply_patch(
     exec: &ApplyPatchExec,

@@ -308,19 +308,16 @@ mod tests {
             Some(PathBuf::from("/repo")),
             Some(AskForApproval::OnRequest),
             Some(workspace_write_policy(vec!["/repo"], false)),
-            Some(Shell::Bash(BashShell {
-                shell_path: "/bin/bash".into(),
-                bashrc_path: "/home/user/.bashrc".into(),
-            })),
+            Some(Shell::Bash(BashShell::new(
+                "/bin/bash",
+                "/home/user/.bashrc",
+            ))),
         );
         let context2 = EnvironmentContext::new(
             Some(PathBuf::from("/repo")),
             Some(AskForApproval::OnRequest),
             Some(workspace_write_policy(vec!["/repo"], false)),
-            Some(Shell::Zsh(ZshShell {
-                shell_path: "/bin/zsh".into(),
-                zshrc_path: "/home/user/.zshrc".into(),
-            })),
+            Some(Shell::Zsh(ZshShell::new("/bin/zsh", "/home/user/.zshrc"))),
         );
 
         assert!(context1.equals_except_shell(&context2));

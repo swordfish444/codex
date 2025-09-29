@@ -1,26 +1,24 @@
-//! Session-wide mutable state.
-
 use std::collections::HashSet;
 
 use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::RateLimitSnapshot;
+use codex_protocol::protocol::TokenUsage;
+use codex_protocol::protocol::TokenUsageInfo;
 
 use crate::conversation_history::ConversationHistory;
-use crate::protocol::RateLimitSnapshot;
-use crate::protocol::TokenUsage;
-use crate::protocol::TokenUsageInfo;
 
 /// Persistent, session-scoped state previously stored directly on `Session`.
 #[derive(Default)]
-pub(crate) struct SessionState {
-    pub(crate) approved_commands: HashSet<Vec<String>>,
-    pub(crate) history: ConversationHistory,
-    pub(crate) token_info: Option<TokenUsageInfo>,
-    pub(crate) latest_rate_limits: Option<RateLimitSnapshot>,
+pub struct SessionState {
+    approved_commands: HashSet<Vec<String>>,
+    history: ConversationHistory,
+    token_info: Option<TokenUsageInfo>,
+    latest_rate_limits: Option<RateLimitSnapshot>,
 }
 
 impl SessionState {
     /// Create a new session state mirroring previous `State::default()` semantics.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             history: ConversationHistory::new(),
             ..Default::default()
@@ -28,7 +26,7 @@ impl SessionState {
     }
 
     // History helpers
-    pub(crate) fn record_items<I>(&mut self, items: I)
+    pub fn record_items<I>(&mut self, items: I)
     where
         I: IntoIterator,
         I::Item: std::ops::Deref<Target = ResponseItem>,
@@ -36,25 +34,25 @@ impl SessionState {
         self.history.record_items(items)
     }
 
-    pub(crate) fn history_snapshot(&self) -> Vec<ResponseItem> {
+    pub fn history_snapshot(&self) -> Vec<ResponseItem> {
         self.history.contents()
     }
 
-    pub(crate) fn replace_history(&mut self, items: Vec<ResponseItem>) {
+    pub fn replace_history(&mut self, items: Vec<ResponseItem>) {
         self.history.replace(items);
     }
 
     // Approved command helpers
-    pub(crate) fn add_approved_command(&mut self, cmd: Vec<String>) {
+    pub fn add_approved_command(&mut self, cmd: Vec<String>) {
         self.approved_commands.insert(cmd);
     }
 
-    pub(crate) fn approved_commands_ref(&self) -> &HashSet<Vec<String>> {
+    pub fn approved_commands_ref(&self) -> &HashSet<Vec<String>> {
         &self.approved_commands
     }
 
     // Token/rate limit helpers
-    pub(crate) fn update_token_info_from_usage(
+    pub fn update_token_info_from_usage(
         &mut self,
         usage: &TokenUsage,
         model_context_window: Option<u64>,
@@ -66,15 +64,13 @@ impl SessionState {
         );
     }
 
-    pub(crate) fn set_rate_limits(&mut self, snapshot: RateLimitSnapshot) {
+    pub fn set_rate_limits(&mut self, snapshot: RateLimitSnapshot) {
         self.latest_rate_limits = Some(snapshot);
     }
 
-    pub(crate) fn token_info_and_rate_limits(
+    pub fn token_info_and_rate_limits(
         &self,
     ) -> (Option<TokenUsageInfo>, Option<RateLimitSnapshot>) {
         (self.token_info.clone(), self.latest_rate_limits.clone())
     }
-
-    // Pending input/approval moved to TurnState.
 }

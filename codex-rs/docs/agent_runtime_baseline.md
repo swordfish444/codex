@@ -16,7 +16,7 @@ The refactor tracked in `../agent_refactor.md` will extract these responsibiliti
 - `submit` wraps an `Op` in a `Submission`, generates a unique id, and pushes it onto the bounded submission channel (`SUBMISSION_CHANNEL_CAPACITY = 64`).
 - `next_event` pulls the next `Event` from the unbounded event receiver, propagating `CodexErr::InternalAgentDied` if the channel is closed.
 
-Upon spawning, `Codex` constructs a `ConfigureSession` payload that gathers CLI-derived configuration (model details, approvals, sandbox policy, notify hooks, `cwd`) and delegates to `Session::new`. It also seeds the `TurnContext`, `SessionServices`, and kicks off the background `submission_loop` task that drives the agent.
+Upon spawning, `Codex` constructs a `ConfigureSession` payload that gathers CLI-derived configuration (model details, approvals, sandbox policy, notify hooks, `cwd`) and uses `prepare_session_bootstrap` to assemble rollout/MCP/sandbox services before delegating to `Session::new`. The CLI now also constructs the initial `ModelClient`/`ToolsConfig` pair and wraps them in a `TurnContext` `Arc`, hands over the host-built `SessionServices`, and kicks off the background `submission_loop` task that drives the agent.
 
 ## `Session`
 
@@ -25,9 +25,9 @@ Upon spawning, `Codex` constructs a `ConfigureSession` payload that gathers CLI-
 - Identifiers: `conversation_id` (originating from `InitialHistory`) and an internal `next_internal_sub_id` counter for action-specific ids.
 - Communication: the `tx_event` sender used to emit `Event` messages back to the host.
 - State holders: a `Mutex<SessionState>` for persistent session data and a `Mutex<Option<ActiveTurn>>` tracking the currently running tasks.
-- Services: `SessionServices` packages dependencies that are currently hard-wired to CLI types—`ExecSessionManager`, `UnifiedExecSessionManager`, `RolloutRecorder`, `McpConnectionManager`, etc.
+- Services: `SessionServices` (now defined in `codex-agent`) packages dependencies that are currently hard-wired to CLI types—`ExecSessionManager`, `UnifiedExecSessionManager`, `RolloutRecorder`, `McpConnectionManager`, etc.
 
-`Session::new` performs the upfront wiring: it initialises rollout recording, MCP connections, default shell discovery, and history metadata in parallel; constructs the `SessionServices`; emits the initial `SessionConfigured` event; and records any startup warnings so they can be surfaced after configuration.
+`Session::new` now expects those services to be prepared by the host: `prepare_session_bootstrap` initialises rollout recording, MCP connections, default shell discovery, and history metadata in parallel before handing the assembled pieces to `Session::new`, which emits the initial `SessionConfigured` event and records any startup warnings so they can be surfaced after configuration.
 
 Operationally, `Session` is responsible for:
 

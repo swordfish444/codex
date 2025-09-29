@@ -47,10 +47,6 @@ use crate::RolloutSink;
 use crate::SandboxManager;
 use crate::agent_config::AgentConfig;
 use crate::agent_services::DefaultSandboxManager;
-use crate::apply_patch;
-use crate::apply_patch::ApplyPatchExec;
-use crate::apply_patch::InternalApplyPatchInvocation;
-use crate::apply_patch::convert_apply_patch_to_protocol;
 use crate::client::ModelClient;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
@@ -127,7 +123,6 @@ use crate::sandbox::prepare_exec_invocation;
 use crate::sandbox::run_with_plan;
 use crate::shell;
 use crate::state::ActiveTurn;
-use crate::state::SessionServices;
 use crate::tasks::CompactTask;
 use crate::tasks::RegularTask;
 use crate::tasks::ReviewTask;
@@ -136,6 +131,13 @@ use crate::unified_exec::UnifiedExecSessionManager;
 use crate::user_instructions::UserInstructions;
 use crate::user_notification::UserNotification;
 use crate::util::backoff;
+use codex_agent::apply_patch::ApplyPatchContext;
+use codex_agent::apply_patch::ApplyPatchExec;
+use codex_agent::apply_patch::InternalApplyPatchInvocation;
+use codex_agent::apply_patch::apply_patch;
+use codex_agent::apply_patch::convert_apply_patch_to_protocol;
+use codex_agent::services::ApprovalCoordinator;
+use codex_agent::session_services::SessionServices;
 use codex_protocol::config_types::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::custom_prompts::CustomPrompt;
@@ -201,17 +203,103 @@ impl Codex {
             base_instructions: agent_config.base_instructions.clone(),
             approval_policy: agent_config.approval_policy,
             sandbox_policy: agent_config.sandbox_policy.clone(),
-            notify: UserNotifier::new(agent_config.notify.clone()),
             cwd: agent_config.cwd.clone(),
         };
 
+        let bootstrap = prepare_session_bootstrap(
+            agent_config.clone(),
+            &configure_session,
+            &conversation_history,
+        )
+        .await
+        .map_err(|e| {
+            error!("Failed to prepare session services: {e:#}");
+            CodexErr::InternalAgentDied
+        })?;
+
+        let SessionBootstrap {
+            conversation_id,
+            rollout_sink,
+            rollout_path,
+            mcp,
+            default_shell,
+            history_log_id,
+            history_entry_count,
+            startup_errors,
+        } = bootstrap;
+
+        // Build the runtime services expected by the session.
+        let notifier: Arc<dyn Notifier> = Arc::new(UserNotifier::new(agent_config.notify.clone()));
+        let sandbox: Arc<dyn SandboxManager> = Arc::new(DefaultSandboxManager::new(
+            ExecSessionManager::default(),
+            UnifiedExecSessionManager::default(),
+            agent_config.codex_linux_sandbox_exe.clone(),
+            default_shell.clone(),
+        ));
+        let services = SessionServices {
+            mcp: Arc::clone(&mcp),
+            notifier,
+            sandbox,
+            rollout: Mutex::new(Some(Arc::clone(&rollout_sink))),
+            show_raw_agent_reasoning: agent_config.show_raw_agent_reasoning,
+        };
+
+        // Construct the model client and initial turn context before handing off to the runtime.
+        let credentials_provider: Option<Arc<dyn CredentialsProvider>> = Some(auth_manager.clone());
+        let client = ModelClient::new(
+            agent_config.clone(),
+            credentials_provider,
+            configure_session.provider.clone(),
+            configure_session.model_reasoning_effort,
+            configure_session.model_reasoning_summary,
+            conversation_id,
+        );
+        let tools_config = ToolsConfig::new(&ToolsConfigParams {
+            model_family: &agent_config.model_family,
+            include_plan_tool: agent_config.include_plan_tool,
+            include_apply_patch_tool: agent_config.include_apply_patch_tool,
+            include_web_search_request: agent_config.tools_web_search_request,
+            use_streamable_shell_tool: agent_config.use_experimental_streamable_shell_tool,
+            include_view_image_tool: agent_config.include_view_image_tool,
+            experimental_unified_exec_tool: agent_config.use_experimental_unified_exec_tool,
+        });
+        if !configure_session.cwd.is_absolute() {
+            error!(cwd = ?configure_session.cwd, "cwd is not absolute");
+            return Err(CodexErr::InternalAgentDied);
+        }
+        let turn_context = Arc::new(TurnContext {
+            client,
+            tools_config,
+            user_instructions: configure_session.user_instructions.clone(),
+            base_instructions: configure_session.base_instructions.clone(),
+            approval_policy: configure_session.approval_policy,
+            sandbox_policy: configure_session.sandbox_policy.clone(),
+            shell_environment_policy: agent_config.shell_environment_policy.clone(),
+            cwd: configure_session.cwd.clone(),
+            is_review_mode: false,
+            final_output_json_schema: None,
+        });
+
+        let bootstrap = SessionBootstrap {
+            conversation_id,
+            rollout_sink,
+            rollout_path,
+            mcp,
+            default_shell,
+            history_log_id,
+            history_entry_count,
+            startup_errors,
+        };
+
         // Generate a unique ID for the lifetime of this Codex session.
-        let (session, turn_context) = Session::new(
+        let session = Session::new(
             configure_session,
             agent_config.clone(),
-            auth_manager.clone(),
             tx_event.clone(),
             conversation_history,
+            bootstrap,
+            services,
+            Arc::clone(&turn_context),
         )
         .await
         .map_err(|e| {
@@ -345,8 +433,6 @@ struct ConfigureSession {
     /// How to sandbox commands executed in the system
     sandbox_policy: SandboxPolicy,
 
-    notify: UserNotifier,
-
     /// Working directory that should be treated as the *root* of the
     /// session. All relative paths supplied by the model as well as the
     /// execution sandbox are resolved against this directory **instead**
@@ -357,157 +443,133 @@ struct ConfigureSession {
     cwd: PathBuf,
 }
 
+struct SessionBootstrap {
+    conversation_id: ConversationId,
+    rollout_sink: Arc<dyn RolloutSink>,
+    rollout_path: PathBuf,
+    mcp: Arc<dyn McpInterface>,
+    default_shell: crate::shell::Shell,
+    history_log_id: u64,
+    history_entry_count: usize,
+    startup_errors: Vec<String>,
+}
+
+async fn prepare_session_bootstrap(
+    agent_config: Arc<AgentConfig>,
+    configure_session: &ConfigureSession,
+    initial_history: &InitialHistory,
+) -> anyhow::Result<SessionBootstrap> {
+    let (conversation_id, rollout_params) = match initial_history {
+        InitialHistory::New | InitialHistory::Forked(_) => {
+            let conversation_id = ConversationId::default();
+            (
+                conversation_id,
+                RolloutRecorderParams::new(
+                    conversation_id,
+                    agent_config.cwd.clone(),
+                    configure_session.user_instructions.clone(),
+                ),
+            )
+        }
+        InitialHistory::Resumed(resumed_history) => (
+            resumed_history.conversation_id,
+            RolloutRecorderParams::resume(resumed_history.rollout_path.clone()),
+        ),
+    };
+
+    let rollout_config = RolloutConfig {
+        codex_home: agent_config.codex_home.clone(),
+        originator: crate::default_client::ORIGINATOR.value.clone(),
+        cli_version: env!("CARGO_PKG_VERSION").to_string(),
+        git_info_collector: Some(Arc::new(CoreGitInfoCollector)),
+    };
+
+    let rollout_fut = RolloutRecorder::new(&rollout_config, rollout_params);
+    let mcp_fut = McpConnectionManager::new(agent_config.mcp_servers.clone());
+    let default_shell_fut = shell::default_user_shell();
+    let history_meta_fut = crate::message_history::history_metadata(&agent_config);
+
+    let (rollout_recorder, mcp_res, default_shell, (history_log_id, history_entry_count)) =
+        tokio::join!(rollout_fut, mcp_fut, default_shell_fut, history_meta_fut);
+
+    let rollout_recorder = rollout_recorder.map_err(|e| {
+        error!("failed to initialize rollout recorder: {e:#}");
+        anyhow::anyhow!("failed to initialize rollout recorder: {e:#}")
+    })?;
+    let rollout_path = rollout_recorder.get_rollout_path();
+    let rollout_sink: Arc<dyn RolloutSink> = Arc::new(rollout_recorder);
+
+    let mut startup_errors = Vec::new();
+
+    let (mcp, failed_clients) = match mcp_res {
+        Ok((mgr, failures)) => (Arc::new(mgr) as Arc<dyn McpInterface>, failures),
+        Err(e) => {
+            let message = format!("Failed to create MCP connection manager: {e:#}");
+            error!("{message}");
+            startup_errors.push(message);
+            (
+                Arc::new(McpConnectionManager::default()) as Arc<dyn McpInterface>,
+                Default::default(),
+            )
+        }
+    };
+
+    if !failed_clients.is_empty() {
+        for (server_name, err) in failed_clients {
+            let message = format!("MCP client for `{server_name}` failed to start: {err:#}");
+            error!("{message}");
+            startup_errors.push(message);
+        }
+    }
+
+    Ok(SessionBootstrap {
+        conversation_id,
+        rollout_sink,
+        rollout_path,
+        mcp,
+        default_shell,
+        history_log_id,
+        history_entry_count,
+        startup_errors,
+    })
+}
+
 impl Session {
     async fn new(
         configure_session: ConfigureSession,
         agent_config: Arc<AgentConfig>,
-        auth_manager: Arc<AuthManager>,
         tx_event: Sender<Event>,
         initial_history: InitialHistory,
-    ) -> anyhow::Result<(Arc<Self>, TurnContext)> {
+        bootstrap: SessionBootstrap,
+        services: SessionServices,
+        turn_context: Arc<TurnContext>,
+    ) -> anyhow::Result<Arc<Self>> {
         let ConfigureSession {
             provider,
             model,
             model_reasoning_effort,
-            model_reasoning_summary,
-            user_instructions,
-            base_instructions,
-            approval_policy,
-            sandbox_policy,
-            notify,
-            cwd,
+            ..
         } = configure_session;
         debug!("Configuring session: model={model}; provider={provider:?}");
-        if !cwd.is_absolute() {
-            return Err(anyhow::anyhow!("cwd is not absolute: {cwd:?}"));
-        }
 
-        let (conversation_id, rollout_params) = match &initial_history {
-            InitialHistory::New | InitialHistory::Forked(_) => {
-                let conversation_id = ConversationId::default();
-                (
-                    conversation_id,
-                    RolloutRecorderParams::new(
-                        conversation_id,
-                        agent_config.cwd.clone(),
-                        user_instructions.clone(),
-                    ),
-                )
-            }
-            InitialHistory::Resumed(resumed_history) => (
-                resumed_history.conversation_id,
-                RolloutRecorderParams::resume(resumed_history.rollout_path.clone()),
-            ),
-        };
+        let SessionBootstrap {
+            conversation_id,
+            rollout_path,
+            history_log_id,
+            history_entry_count,
+            startup_errors,
+            ..
+        } = bootstrap;
+        let post_session_configured_error_events: Vec<Event> = startup_errors
+            .into_iter()
+            .map(|message| Event {
+                id: INITIAL_SUBMIT_ID.to_owned(),
+                msg: EventMsg::Error(ErrorEvent { message }),
+            })
+            .collect();
 
-        // Error messages to dispatch after SessionConfigured is sent.
-        let mut post_session_configured_error_events = Vec::<Event>::new();
-
-        // Kick off independent async setup tasks in parallel to reduce startup latency.
-        //
-        // - initialize RolloutRecorder with new or resumed session info
-        // - spin up MCP connection manager
-        // - perform default shell discovery
-        // - load history metadata
-        let rollout_config = RolloutConfig {
-            codex_home: agent_config.codex_home.clone(),
-            originator: crate::default_client::ORIGINATOR.value.clone(),
-            cli_version: env!("CARGO_PKG_VERSION").to_string(),
-            git_info_collector: Some(Arc::new(CoreGitInfoCollector)),
-        };
-        let rollout_fut = RolloutRecorder::new(&rollout_config, rollout_params);
-
-        let mcp_fut = McpConnectionManager::new(agent_config.mcp_servers.clone());
-        let default_shell_fut = shell::default_user_shell();
-        let history_meta_fut = crate::message_history::history_metadata(&agent_config);
-
-        // Join all independent futures.
-        let (rollout_recorder, mcp_res, default_shell, (history_log_id, history_entry_count)) =
-            tokio::join!(rollout_fut, mcp_fut, default_shell_fut, history_meta_fut);
-
-        let rollout_recorder = rollout_recorder.map_err(|e| {
-            error!("failed to initialize rollout recorder: {e:#}");
-            anyhow::anyhow!("failed to initialize rollout recorder: {e:#}")
-        })?;
-        let rollout_path = rollout_recorder.get_rollout_path();
-        let rollout_sink: Arc<dyn RolloutSink> = Arc::new(rollout_recorder);
         // Create the mutable state for the Session.
         let state = SessionState::new();
-
-        // Handle MCP manager result and record any startup failures.
-        let (mcp_connection_manager, failed_clients) = match mcp_res {
-            Ok((mgr, failures)) => (Arc::new(mgr) as Arc<dyn McpInterface>, failures),
-            Err(e) => {
-                let message = format!("Failed to create MCP connection manager: {e:#}");
-                error!("{message}");
-                post_session_configured_error_events.push(Event {
-                    id: INITIAL_SUBMIT_ID.to_owned(),
-                    msg: EventMsg::Error(ErrorEvent { message }),
-                });
-                (
-                    Arc::new(McpConnectionManager::default()) as Arc<dyn McpInterface>,
-                    Default::default(),
-                )
-            }
-        };
-
-        // Surface individual client start-up failures to the user.
-        if !failed_clients.is_empty() {
-            for (server_name, err) in failed_clients {
-                let message = format!("MCP client for `{server_name}` failed to start: {err:#}");
-                error!("{message}");
-                post_session_configured_error_events.push(Event {
-                    id: INITIAL_SUBMIT_ID.to_owned(),
-                    msg: EventMsg::Error(ErrorEvent { message }),
-                });
-            }
-        }
-
-        // Now that the conversation id is final (may have been updated by resume),
-        // construct the model client.
-        let credentials_provider: Option<Arc<dyn CredentialsProvider>> = Some(auth_manager.clone());
-        let client = ModelClient::new(
-            agent_config.clone(),
-            credentials_provider,
-            provider.clone(),
-            model_reasoning_effort,
-            model_reasoning_summary,
-            conversation_id,
-        );
-        let turn_context = TurnContext {
-            client,
-            tools_config: ToolsConfig::new(&ToolsConfigParams {
-                model_family: &agent_config.model_family,
-                include_plan_tool: agent_config.include_plan_tool,
-                include_apply_patch_tool: agent_config.include_apply_patch_tool,
-                include_web_search_request: agent_config.tools_web_search_request,
-                use_streamable_shell_tool: agent_config.use_experimental_streamable_shell_tool,
-                include_view_image_tool: agent_config.include_view_image_tool,
-                experimental_unified_exec_tool: agent_config.use_experimental_unified_exec_tool,
-            }),
-            user_instructions,
-            base_instructions,
-            approval_policy,
-            sandbox_policy,
-            shell_environment_policy: agent_config.shell_environment_policy.clone(),
-            cwd,
-            is_review_mode: false,
-            final_output_json_schema: None,
-        };
-        let notifier: Arc<dyn Notifier> = Arc::new(notify);
-        let sandbox: Arc<dyn SandboxManager> = Arc::new(DefaultSandboxManager::new(
-            ExecSessionManager::default(),
-            UnifiedExecSessionManager::default(),
-            agent_config.codex_linux_sandbox_exe.clone(),
-            default_shell,
-        ));
-        let services = SessionServices {
-            mcp: mcp_connection_manager,
-            notifier,
-            sandbox,
-            rollout: Mutex::new(Some(rollout_sink)),
-            show_raw_agent_reasoning: agent_config.show_raw_agent_reasoning,
-        };
 
         let sess = Arc::new(Session {
             conversation_id,
@@ -542,7 +604,7 @@ impl Session {
             sess.send_event(event).await;
         }
 
-        Ok((sess, turn_context))
+        Ok(sess)
     }
 
     fn next_internal_sub_id(&self) -> String {
@@ -1127,12 +1189,11 @@ pub(crate) struct ApplyPatchCommandContext {
 
 async fn submission_loop(
     sess: Arc<Session>,
-    turn_context: TurnContext,
+    turn_context: Arc<TurnContext>,
     agent_config: Arc<AgentConfig>,
     rx_sub: Receiver<Submission>,
 ) {
-    // Wrap once to avoid cloning TurnContext for each task.
-    let mut turn_context = Arc::new(turn_context);
+    let mut turn_context = turn_context;
     // To break out of this loop, send Op::Shutdown.
     while let Ok(sub) = rx_sub.recv().await {
         debug!(?sub, "Submission");
@@ -2619,7 +2680,13 @@ async fn handle_container_exec_with_params(
     // check if this was a patch, and apply it if so
     let apply_patch_exec = match maybe_parse_apply_patch_verified(&params.command, &params.cwd) {
         MaybeApplyPatchVerified::Body(changes) => {
-            match apply_patch::apply_patch(sess, turn_context, &sub_id, &call_id, changes).await {
+            let apply_patch_context = ApplyPatchContext {
+                approval_policy: turn_context.approval_policy,
+                sandbox_policy: &turn_context.sandbox_policy,
+                cwd: &turn_context.cwd,
+            };
+
+            match apply_patch(sess, apply_patch_context, &sub_id, &call_id, changes).await {
                 InternalApplyPatchInvocation::Output(item) => return item,
                 InternalApplyPatchInvocation::DelegateToExec(apply_patch_exec) => {
                     Some(apply_patch_exec)
@@ -3112,6 +3179,37 @@ pub(crate) async fn exit_review_mode(
 #[cfg(test)]
 pub(crate) use tests::make_session_and_context;
 
+#[async_trait::async_trait]
+impl ApprovalCoordinator for Session {
+    async fn request_patch_approval(
+        &self,
+        sub_id: String,
+        call_id: String,
+        action: &ApplyPatchAction,
+        reason: Option<String>,
+        grant_root: Option<PathBuf>,
+    ) -> ReviewDecision {
+        let rx = Session::request_patch_approval(self, sub_id, call_id, action, reason, grant_root)
+            .await;
+        rx.await.unwrap_or_default()
+    }
+
+    async fn request_command_approval(
+        &self,
+        sub_id: String,
+        call_id: String,
+        command: Vec<String>,
+        cwd: PathBuf,
+        reason: Option<String>,
+    ) -> ReviewDecision {
+        Session::request_command_approval(self, sub_id, call_id, command, cwd, reason).await
+    }
+
+    async fn add_approved_command(&self, command: Vec<String>) {
+        Session::add_approved_command(self, command).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3120,20 +3218,116 @@ mod tests {
     use crate::protocol::CompactedItem;
     use crate::protocol::InitialHistory;
     use crate::protocol::ResumedHistory;
-    use crate::state::TaskKind;
-    use crate::tasks::SessionTask;
-    use crate::tasks::SessionTaskContext;
     use codex_protocol::models::ContentItem;
     use mcp_types::ContentBlock;
     use mcp_types::TextContent;
     use pretty_assertions::assert_eq;
-    use serde::Deserialize;
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::Duration as StdDuration;
-    use tokio::time::Duration;
-    use tokio::time::sleep;
+
+    fn sample_rollout(
+        session: &Session,
+        turn_context: &TurnContext,
+    ) -> (Vec<RolloutItem>, Vec<ResponseItem>) {
+        let mut rollout_items = Vec::new();
+        let mut live_history = ConversationHistory::new();
+
+        let initial_context = session.build_initial_context(turn_context);
+        for item in &initial_context {
+            rollout_items.push(RolloutItem::ResponseItem(item.clone()));
+        }
+        live_history.record_items(initial_context.iter());
+
+        let user1 = ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "first user".to_string(),
+            }],
+        };
+        live_history.record_items(std::iter::once(&user1));
+        rollout_items.push(RolloutItem::ResponseItem(user1.clone()));
+
+        let assistant1 = ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "assistant reply one".to_string(),
+            }],
+        };
+        live_history.record_items(std::iter::once(&assistant1));
+        rollout_items.push(RolloutItem::ResponseItem(assistant1.clone()));
+
+        let summary1 = "summary one";
+        let snapshot1 = live_history.contents();
+        let user_messages1 = collect_user_messages(&snapshot1);
+        let rebuilt1 = build_compacted_history(
+            session.build_initial_context(turn_context),
+            &user_messages1,
+            summary1,
+        );
+        live_history.replace(rebuilt1);
+        rollout_items.push(RolloutItem::Compacted(CompactedItem {
+            message: summary1.to_string(),
+        }));
+
+        let user2 = ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "second user".to_string(),
+            }],
+        };
+        live_history.record_items(std::iter::once(&user2));
+        rollout_items.push(RolloutItem::ResponseItem(user2.clone()));
+
+        let assistant2 = ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "assistant reply two".to_string(),
+            }],
+        };
+        live_history.record_items(std::iter::once(&assistant2));
+        rollout_items.push(RolloutItem::ResponseItem(assistant2.clone()));
+
+        let summary2 = "summary two";
+        let snapshot2 = live_history.contents();
+        let user_messages2 = collect_user_messages(&snapshot2);
+        let rebuilt2 = build_compacted_history(
+            session.build_initial_context(turn_context),
+            &user_messages2,
+            summary2,
+        );
+        live_history.replace(rebuilt2);
+        rollout_items.push(RolloutItem::Compacted(CompactedItem {
+            message: summary2.to_string(),
+        }));
+
+        let user3 = ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "third user".to_string(),
+            }],
+        };
+        live_history.record_items(std::iter::once(&user3));
+        rollout_items.push(RolloutItem::ResponseItem(user3.clone()));
+
+        let assistant3 = ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "assistant reply three".to_string(),
+            }],
+        };
+        live_history.record_items(std::iter::once(&assistant3));
+        rollout_items.push(RolloutItem::ResponseItem(assistant3.clone()));
+
+        (rollout_items, live_history.contents())
+    }
 
     #[test]
     fn reconstruct_history_matches_live_compactions() {
@@ -3425,373 +3619,4 @@ mod tests {
 
     // Like make_session_and_context, but returns Arc<Session> and the event receiver
     // so tests can assert on emitted events.
-    fn make_session_and_context_with_rx() -> (
-        Arc<Session>,
-        Arc<TurnContext>,
-        async_channel::Receiver<Event>,
-    ) {
-        let (tx_event, rx_event) = async_channel::unbounded();
-        let codex_home = tempfile::tempdir().expect("create temp dir");
-        let config = Config::load_from_base_config_with_overrides(
-            ConfigToml::default(),
-            ConfigOverrides::default(),
-            codex_home.path().to_path_buf(),
-        )
-        .expect("load default test config");
-        let config = Arc::new(config);
-        let agent_config = Arc::new(AgentConfig::from(config.as_ref()));
-        let conversation_id = ConversationId::default();
-        let client = ModelClient::new(
-            agent_config.clone(),
-            None,
-            agent_config.model_provider.clone(),
-            agent_config.model_reasoning_effort,
-            agent_config.model_reasoning_summary,
-            conversation_id,
-        );
-        let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &agent_config.model_family,
-            include_plan_tool: agent_config.include_plan_tool,
-            include_apply_patch_tool: agent_config.include_apply_patch_tool,
-            include_web_search_request: agent_config.tools_web_search_request,
-            use_streamable_shell_tool: agent_config.use_experimental_streamable_shell_tool,
-            include_view_image_tool: agent_config.include_view_image_tool,
-            experimental_unified_exec_tool: agent_config.use_experimental_unified_exec_tool,
-        });
-        let turn_context = Arc::new(TurnContext {
-            client,
-            cwd: agent_config.cwd.clone(),
-            base_instructions: agent_config.base_instructions.clone(),
-            user_instructions: agent_config.user_instructions.clone(),
-            approval_policy: agent_config.approval_policy,
-            sandbox_policy: agent_config.sandbox_policy.clone(),
-            shell_environment_policy: agent_config.shell_environment_policy.clone(),
-            tools_config,
-            is_review_mode: false,
-            final_output_json_schema: None,
-        });
-        let services = SessionServices {
-            mcp: Arc::new(McpConnectionManager::default()),
-            notifier: Arc::new(UserNotifier::default()),
-            sandbox: Arc::new(DefaultSandboxManager::new(
-                ExecSessionManager::default(),
-                UnifiedExecSessionManager::default(),
-                None,
-                shell::Shell::Unknown,
-            )),
-            rollout: Mutex::new(None),
-            show_raw_agent_reasoning: agent_config.show_raw_agent_reasoning,
-        };
-        let session = Arc::new(Session {
-            conversation_id,
-            tx_event,
-            state: Mutex::new(SessionState::new()),
-            active_turn: Mutex::new(None),
-            services,
-            agent_config,
-            next_internal_sub_id: AtomicU64::new(0),
-        });
-        (session, turn_context, rx_event)
-    }
-
-    #[derive(Clone, Copy)]
-    struct NeverEndingTask(TaskKind);
-
-    #[async_trait::async_trait]
-    impl SessionTask for NeverEndingTask {
-        fn kind(&self) -> TaskKind {
-            self.0
-        }
-
-        async fn run(
-            self: Arc<Self>,
-            _session: Arc<SessionTaskContext>,
-            _ctx: Arc<TurnContext>,
-            _sub_id: String,
-            _input: Vec<InputItem>,
-        ) -> Option<String> {
-            loop {
-                sleep(Duration::from_secs(60)).await;
-            }
-        }
-
-        async fn abort(&self, session: Arc<SessionTaskContext>, sub_id: &str) {
-            if let TaskKind::Review = self.0 {
-                exit_review_mode(session.clone_session(), sub_id.to_string(), None).await;
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn abort_regular_task_emits_turn_aborted_only() {
-        let (sess, tc, rx) = make_session_and_context_with_rx();
-        let sub_id = "sub-regular".to_string();
-        let input = vec![InputItem::Text {
-            text: "hello".to_string(),
-        }];
-        sess.spawn_task(
-            Arc::clone(&tc),
-            sub_id.clone(),
-            input,
-            NeverEndingTask(TaskKind::Regular),
-        )
-        .await;
-
-        sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
-
-        let evt = rx.recv().await.expect("event");
-        match evt.msg {
-            EventMsg::TurnAborted(e) => assert_eq!(TurnAbortReason::Interrupted, e.reason),
-            other => panic!("unexpected event: {other:?}"),
-        }
-        assert!(rx.try_recv().is_err());
-    }
-
-    #[tokio::test]
-    async fn abort_review_task_emits_exited_then_aborted_and_records_history() {
-        let (sess, tc, rx) = make_session_and_context_with_rx();
-        let sub_id = "sub-review".to_string();
-        let input = vec![InputItem::Text {
-            text: "start review".to_string(),
-        }];
-        sess.spawn_task(
-            Arc::clone(&tc),
-            sub_id.clone(),
-            input,
-            NeverEndingTask(TaskKind::Review),
-        )
-        .await;
-
-        sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
-
-        let first = rx.recv().await.expect("first event");
-        match first.msg {
-            EventMsg::ExitedReviewMode(ev) => assert!(ev.review_output.is_none()),
-            other => panic!("unexpected first event: {other:?}"),
-        }
-        let second = rx.recv().await.expect("second event");
-        match second.msg {
-            EventMsg::TurnAborted(e) => assert_eq!(TurnAbortReason::Interrupted, e.reason),
-            other => panic!("unexpected second event: {other:?}"),
-        }
-
-        let history = sess.history_snapshot().await;
-        let found = history.iter().any(|item| match item {
-            ResponseItem::Message { role, content, .. } if role == "user" => {
-                content.iter().any(|ci| match ci {
-                    ContentItem::InputText { text } => {
-                        text.contains("<user_action>")
-                            && text.contains("review")
-                            && text.contains("interrupted")
-                    }
-                    _ => false,
-                })
-            }
-            _ => false,
-        });
-        assert!(
-            found,
-            "synthetic review interruption not recorded in history"
-        );
-    }
-
-    fn sample_rollout(
-        session: &Session,
-        turn_context: &TurnContext,
-    ) -> (Vec<RolloutItem>, Vec<ResponseItem>) {
-        let mut rollout_items = Vec::new();
-        let mut live_history = ConversationHistory::new();
-
-        let initial_context = session.build_initial_context(turn_context);
-        for item in &initial_context {
-            rollout_items.push(RolloutItem::ResponseItem(item.clone()));
-        }
-        live_history.record_items(initial_context.iter());
-
-        let user1 = ResponseItem::Message {
-            id: None,
-            role: "user".to_string(),
-            content: vec![ContentItem::InputText {
-                text: "first user".to_string(),
-            }],
-        };
-        live_history.record_items(std::iter::once(&user1));
-        rollout_items.push(RolloutItem::ResponseItem(user1.clone()));
-
-        let assistant1 = ResponseItem::Message {
-            id: None,
-            role: "assistant".to_string(),
-            content: vec![ContentItem::OutputText {
-                text: "assistant reply one".to_string(),
-            }],
-        };
-        live_history.record_items(std::iter::once(&assistant1));
-        rollout_items.push(RolloutItem::ResponseItem(assistant1.clone()));
-
-        let summary1 = "summary one";
-        let snapshot1 = live_history.contents();
-        let user_messages1 = collect_user_messages(&snapshot1);
-        let rebuilt1 = build_compacted_history(
-            session.build_initial_context(turn_context),
-            &user_messages1,
-            summary1,
-        );
-        live_history.replace(rebuilt1);
-        rollout_items.push(RolloutItem::Compacted(CompactedItem {
-            message: summary1.to_string(),
-        }));
-
-        let user2 = ResponseItem::Message {
-            id: None,
-            role: "user".to_string(),
-            content: vec![ContentItem::InputText {
-                text: "second user".to_string(),
-            }],
-        };
-        live_history.record_items(std::iter::once(&user2));
-        rollout_items.push(RolloutItem::ResponseItem(user2.clone()));
-
-        let assistant2 = ResponseItem::Message {
-            id: None,
-            role: "assistant".to_string(),
-            content: vec![ContentItem::OutputText {
-                text: "assistant reply two".to_string(),
-            }],
-        };
-        live_history.record_items(std::iter::once(&assistant2));
-        rollout_items.push(RolloutItem::ResponseItem(assistant2.clone()));
-
-        let summary2 = "summary two";
-        let snapshot2 = live_history.contents();
-        let user_messages2 = collect_user_messages(&snapshot2);
-        let rebuilt2 = build_compacted_history(
-            session.build_initial_context(turn_context),
-            &user_messages2,
-            summary2,
-        );
-        live_history.replace(rebuilt2);
-        rollout_items.push(RolloutItem::Compacted(CompactedItem {
-            message: summary2.to_string(),
-        }));
-
-        let user3 = ResponseItem::Message {
-            id: None,
-            role: "user".to_string(),
-            content: vec![ContentItem::InputText {
-                text: "third user".to_string(),
-            }],
-        };
-        live_history.record_items(std::iter::once(&user3));
-        rollout_items.push(RolloutItem::ResponseItem(user3.clone()));
-
-        let assistant3 = ResponseItem::Message {
-            id: None,
-            role: "assistant".to_string(),
-            content: vec![ContentItem::OutputText {
-                text: "assistant reply three".to_string(),
-            }],
-        };
-        live_history.record_items(std::iter::once(&assistant3));
-        rollout_items.push(RolloutItem::ResponseItem(assistant3.clone()));
-
-        (rollout_items, live_history.contents())
-    }
-
-    #[tokio::test]
-    async fn rejects_escalated_permissions_when_policy_not_on_request() {
-        use crate::exec::ExecParams;
-        use crate::protocol::AskForApproval;
-        use crate::protocol::SandboxPolicy;
-        use crate::turn_diff_tracker::TurnDiffTracker;
-        use std::collections::HashMap;
-
-        let (session, mut turn_context) = make_session_and_context();
-        // Ensure policy is NOT OnRequest so the early rejection path triggers
-        turn_context.approval_policy = AskForApproval::OnFailure;
-
-        let params = ExecParams {
-            command: if cfg!(windows) {
-                vec![
-                    "cmd.exe".to_string(),
-                    "/C".to_string(),
-                    "echo hi".to_string(),
-                ]
-            } else {
-                vec![
-                    "/bin/sh".to_string(),
-                    "-c".to_string(),
-                    "echo hi".to_string(),
-                ]
-            },
-            cwd: turn_context.cwd.clone(),
-            timeout_ms: Some(1000),
-            env: HashMap::new(),
-            with_escalated_permissions: Some(true),
-            justification: Some("test".to_string()),
-        };
-
-        let params2 = ExecParams {
-            with_escalated_permissions: Some(false),
-            ..params.clone()
-        };
-
-        let mut turn_diff_tracker = TurnDiffTracker::new();
-
-        let sub_id = "test-sub".to_string();
-        let call_id = "test-call".to_string();
-
-        let resp = handle_container_exec_with_params(
-            params,
-            &session,
-            &turn_context,
-            &mut turn_diff_tracker,
-            sub_id,
-            call_id,
-        )
-        .await;
-
-        let Err(FunctionCallError::RespondToModel(output)) = resp else {
-            panic!("expected error result");
-        };
-
-        let expected = format!(
-            "approval policy is {policy:?}; reject command — you should not ask for escalated permissions if the approval policy is {policy:?}",
-            policy = turn_context.approval_policy
-        );
-
-        pretty_assertions::assert_eq!(output, expected);
-
-        // Now retry the same command WITHOUT escalated permissions; should succeed.
-        // Force DangerFullAccess to avoid platform sandbox dependencies in tests.
-        turn_context.sandbox_policy = SandboxPolicy::DangerFullAccess;
-
-        let resp2 = handle_container_exec_with_params(
-            params2,
-            &session,
-            &turn_context,
-            &mut turn_diff_tracker,
-            "test-sub".to_string(),
-            "test-call-2".to_string(),
-        )
-        .await;
-
-        let output = resp2.expect("expected Ok result");
-
-        #[derive(Deserialize, PartialEq, Eq, Debug)]
-        struct ResponseExecMetadata {
-            exit_code: i32,
-        }
-
-        #[derive(Deserialize)]
-        struct ResponseExecOutput {
-            output: String,
-            metadata: ResponseExecMetadata,
-        }
-
-        let exec_output: ResponseExecOutput =
-            serde_json::from_str(&output).expect("valid exec output json");
-
-        pretty_assertions::assert_eq!(exec_output.metadata, ResponseExecMetadata { exit_code: 0 });
-        assert!(exec_output.output.contains("hi"));
-    }
 }

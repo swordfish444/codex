@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use codex_apply_patch::ApplyPatchAction;
 use codex_protocol::mcp_protocol::AuthMode;
+use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::RolloutItem;
 use mcp_types::Tool;
 use serde_json::Value;
@@ -40,6 +42,30 @@ pub trait CredentialsProvider: Send + Sync {
 /// Emits user-facing notifications for turn completion or other events.
 pub trait Notifier: Send + Sync {
     fn notify(&self, notification: &UserNotification);
+}
+
+/// Runtime callbacks for user approval workflows.
+#[async_trait]
+pub trait ApprovalCoordinator: Send + Sync {
+    async fn request_patch_approval(
+        &self,
+        sub_id: String,
+        call_id: String,
+        action: &ApplyPatchAction,
+        reason: Option<String>,
+        grant_root: Option<PathBuf>,
+    ) -> ReviewDecision;
+
+    async fn request_command_approval(
+        &self,
+        sub_id: String,
+        call_id: String,
+        command: Vec<String>,
+        cwd: PathBuf,
+        reason: Option<String>,
+    ) -> ReviewDecision;
+
+    async fn add_approved_command(&self, command: Vec<String>);
 }
 
 /// Aggregates and dispatches MCP tool calls across configured servers.
