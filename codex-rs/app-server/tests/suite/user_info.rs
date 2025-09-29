@@ -1,6 +1,8 @@
 use std::time::Duration;
 
 use anyhow::Context;
+use app_test_support::McpProcess;
+use app_test_support::to_response;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use codex_core::auth::AuthDotJson;
@@ -9,8 +11,6 @@ use codex_core::auth::write_auth_json;
 use codex_core::token_data::IdTokenInfo;
 use codex_core::token_data::TokenData;
 use codex_protocol::mcp_protocol::UserInfoResponse;
-use mcp_test_support::McpProcess;
-use mcp_test_support::to_response;
 use mcp_types::JSONRPCResponse;
 use mcp_types::RequestId;
 use pretty_assertions::assert_eq;
@@ -46,8 +46,8 @@ async fn user_info_returns_email_from_auth_json() {
         .expect("spawn mcp process");
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize())
         .await
-        .expect("initialize timeout")
-        .expect("initialize request");
+        .expect("init timeout")
+        .expect("init error");
 
     let request_id = mcp.send_user_info_request().await.expect("send userInfo");
     let response: JSONRPCResponse = timeout(
