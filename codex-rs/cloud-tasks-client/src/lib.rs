@@ -2,11 +2,14 @@ mod api;
 
 pub use api::ApplyOutcome;
 pub use api::ApplyStatus;
+pub use api::AttachmentKind;
+pub use api::AttachmentReference;
 pub use api::AttemptStatus;
 pub use api::CloudBackend;
 pub use api::CloudTaskError;
 pub use api::CreatedTask;
 pub use api::DiffSummary;
+pub use api::FileServiceConfig;
 pub use api::Result;
 pub use api::TaskId;
 pub use api::TaskStatus;

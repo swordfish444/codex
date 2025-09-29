@@ -7,6 +7,7 @@ pub struct EnvironmentRow {
     pub label: Option<String>,
     pub is_pinned: bool,
     pub repo_hints: Option<String>, // e.g., "openai/codex"
+    pub default_branch: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -440,6 +441,7 @@ mod tests {
             _prompt: &str,
             _git_ref: &str,
             _qa_mode: bool,
+            _attachments: &[codex_cloud_tasks_client::AttachmentReference],
         ) -> codex_cloud_tasks_client::Result<codex_cloud_tasks_client::CreatedTask> {
             Err(codex_cloud_tasks_client::CloudTaskError::Unimplemented(
                 "not used in test",

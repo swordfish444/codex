@@ -90,6 +90,7 @@ pub(crate) struct ChatComposer {
     custom_prompts: Vec<CustomPrompt>,
     // Optional override for footer hint items.
     footer_hint_override: Option<Vec<(String, String)>>,
+    inline_file_search_enabled: bool,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -134,10 +135,22 @@ impl ChatComposer {
             disable_paste_burst: false,
             custom_prompts: Vec::new(),
             footer_hint_override: None,
+            inline_file_search_enabled: true,
         };
         // Apply configuration via the setter to keep side-effects centralized.
         this.set_disable_paste_burst(disable_paste_burst);
         this
+    }
+
+    pub(crate) fn set_inline_file_search_enabled(&mut self, enabled: bool) {
+        self.inline_file_search_enabled = enabled;
+        if !enabled {
+            if matches!(self.active_popup, ActivePopup::File(_)) {
+                self.active_popup = ActivePopup::None;
+            }
+            self.current_file_query = None;
+            self.dismissed_file_popup_token = None;
+        }
     }
 
     pub fn desired_height(&self, width: u16) -> u16 {
@@ -274,6 +287,10 @@ impl ChatComposer {
     /// Get the current composer text.
     pub(crate) fn current_text(&self) -> String {
         self.textarea.text().to_string()
+    }
+
+    pub(crate) fn current_mention_token(&self) -> Option<String> {
+        Self::current_at_token(&self.textarea)
     }
 
     /// Attempt to start a burst by retro-capturing recent chars before the cursor.
@@ -529,7 +546,7 @@ impl ChatComposer {
                     // Determine dimensions; if that fails fall back to normal path insertion.
                     let path_buf = PathBuf::from(&sel_path);
                     if let Ok((w, h)) = image::image_dimensions(&path_buf) {
-                        // Remove the current @token (mirror logic from insert_selected_path without inserting text)
+                        // Remove the current @token (mirror logic from replace_current_token without inserting text)
                         // using the flat text and byte-offset cursor API.
                         let cursor_offset = self.textarea.cursor();
                         let text = self.textarea.text();
@@ -568,11 +585,11 @@ impl ChatComposer {
                         self.textarea.insert_str(" ");
                     } else {
                         // Fallback to plain path insertion if metadata read fails.
-                        self.insert_selected_path(&sel_path);
+                        self.replace_current_token(&sel_path);
                     }
                 } else {
                     // Non-image: inserting file path.
-                    self.insert_selected_path(&sel_path);
+                    self.replace_current_token(&sel_path);
                 }
                 // No selection: treat Enter as closing the popup/session.
                 self.active_popup = ActivePopup::None;
@@ -598,7 +615,7 @@ impl ChatComposer {
     /// - If the token under the cursor starts with `@`, that token is
     ///   returned without the leading `@`. This includes the case where the
     ///   token is just "@" (empty query), which is used to trigger a UI hint
-    fn current_at_token(textarea: &TextArea) -> Option<String> {
+    pub(crate) fn current_at_token(textarea: &TextArea) -> Option<String> {
         let cursor_offset = textarea.cursor();
         let text = textarea.text();
 
@@ -694,7 +711,7 @@ impl ChatComposer {
     /// The algorithm mirrors `current_at_token` so replacement works no matter
     /// where the cursor is within the token and regardless of how many
     /// `@tokens` exist in the line.
-    fn insert_selected_path(&mut self, path: &str) {
+    pub(crate) fn replace_current_token(&mut self, path: &str) {
         let cursor_offset = self.textarea.cursor();
         let text = self.textarea.text();
         // Clamp to a valid char boundary to avoid panics when slicing.
@@ -946,9 +963,13 @@ impl ChatComposer {
             code: KeyCode::Backspace,
             ..
         } = input
-            && self.try_remove_any_placeholder_at_cursor()
         {
-            return (InputResult::None, true);
+            if self.try_remove_any_placeholder_at_cursor() {
+                return (InputResult::None, true);
+            }
+            if self.try_remove_bracket_reference_before_cursor() {
+                return (InputResult::None, true);
+            }
         }
 
         // Normal input handling
@@ -1148,6 +1169,56 @@ impl ChatComposer {
         false
     }
 
+    fn try_remove_bracket_reference_before_cursor(&mut self) -> bool {
+        let cursor = self.textarea.cursor();
+        if cursor == 0 {
+            return false;
+        }
+        let text = self.textarea.text();
+        let safe_cursor = Self::clamp_to_char_boundary(text, cursor);
+        if safe_cursor == 0 {
+            return false;
+        }
+        let before_cursor = &text[..safe_cursor];
+        if !before_cursor.ends_with(']') {
+            return false;
+        }
+        let Some(start_idx) = before_cursor.rfind('[') else {
+            return false;
+        };
+        if before_cursor[start_idx..before_cursor.len().saturating_sub(1)].contains(']') {
+            return false;
+        }
+        if start_idx > 0 {
+            if let Some(prev) = before_cursor[..start_idx].chars().rev().next() {
+                if !prev.is_whitespace()
+                    && !matches!(prev, '(' | '{' | '[' | '<' | ',' | ';' | ':' | '!')
+                {
+                    return false;
+                }
+            }
+        }
+        if let Some(next_char) = text[safe_cursor..].chars().next() {
+            if !next_char.is_whitespace()
+                && !matches!(next_char, ')' | ']' | '}' | '>' | ',' | '.' | ';' | ':')
+            {
+                return false;
+            }
+        }
+        let mut remove_end = safe_cursor;
+        if let Some(next_char) = text[safe_cursor..].chars().next() {
+            if next_char.is_whitespace() {
+                remove_end += next_char.len_utf8();
+            }
+        }
+        self.textarea.replace_range(start_idx..remove_end, "");
+        self.textarea.set_cursor(start_idx);
+        let text_after = self.textarea.text();
+        self.pending_pastes
+            .retain(|(placeholder, _)| text_after.contains(placeholder));
+        true
+    }
+
     /// Synchronize `self.command_popup` with the current text in the
     /// textarea. This must be called after every modification that can change
     /// the text so the popup is shown/updated/hidden as appropriate.
@@ -1182,6 +1253,13 @@ impl ChatComposer {
     /// Synchronize `self.file_search_popup` with the current text in the textarea.
     /// Note this is only called when self.active_popup is NOT Command.
     fn sync_file_search_popup(&mut self) {
+        if !self.inline_file_search_enabled {
+            self.active_popup = ActivePopup::None;
+            self.current_file_query = None;
+            self.dismissed_file_popup_token = None;
+            return;
+        }
+
         // Determine if there is an @token underneath the cursor.
         let query = match Self::current_at_token(&self.textarea) {
             Some(token) => token,

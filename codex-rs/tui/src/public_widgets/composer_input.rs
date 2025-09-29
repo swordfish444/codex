@@ -10,7 +10,6 @@ use ratatui::layout::Rect;
 use ratatui::widgets::WidgetRef;
 use std::time::Duration;
 
-use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::ChatComposer;
 use crate::bottom_pane::InputResult;
@@ -27,17 +26,17 @@ pub enum ComposerAction {
 /// reusable text input field with submit semantics.
 pub struct ComposerInput {
     inner: ChatComposer,
-    _tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
 }
 
 impl ComposerInput {
     /// Create a new composer input with a neutral placeholder.
     pub fn new() -> Self {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let sender = AppEventSender::new(tx.clone());
+        let sender = AppEventSender::noop();
         // `enhanced_keys_supported=true` enables Shift+Enter newline hint/behavior.
-        let inner = ChatComposer::new(true, sender, true, "Compose new task".to_string(), false);
-        Self { inner, _tx: tx }
+        let mut inner =
+            ChatComposer::new(true, sender, true, "Compose new task".to_string(), false);
+        inner.set_inline_file_search_enabled(false);
+        Self { inner }
     }
 
     /// Returns true if the input is empty.
@@ -58,8 +57,26 @@ impl ComposerInput {
         }
     }
 
+    /// Current `@` token under the cursor, without the leading `@`.
+    pub fn mention_token(&self) -> Option<String> {
+        self.inner.current_mention_token()
+    }
+
+    pub fn replace_current_token(&mut self, replacement: &str) {
+        self.inner.replace_current_token(replacement);
+    }
+
     pub fn handle_paste(&mut self, pasted: String) -> bool {
         self.inner.handle_paste(pasted)
+    }
+
+    pub fn set_text_content(&mut self, text: String) {
+        self.inner.set_text_content(text);
+    }
+
+    /// Read the current composer text.
+    pub fn text_content(&self) -> String {
+        self.inner.current_text()
     }
 
     /// Override the footer hint items displayed under the composer.

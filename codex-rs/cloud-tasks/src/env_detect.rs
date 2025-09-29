@@ -13,12 +13,79 @@ struct CodeEnvironment {
     is_pinned: Option<bool>,
     #[serde(default)]
     task_count: Option<i64>,
+    #[serde(default)]
+    repo_map: Option<HashMap<String, GitRepository>>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct GitRepository {
+    #[serde(default)]
+    repository_full_name: Option<String>,
+    #[serde(default)]
+    default_branch: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AutodetectSelection {
     pub id: String,
     pub label: Option<String>,
+    pub default_branch: Option<String>,
+}
+
+fn clean_branch(branch: Option<&str>) -> Option<String> {
+    branch
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(std::string::ToString::to_string)
+}
+
+fn default_branch_from_env(env: &CodeEnvironment, repo_hint: Option<&str>) -> Option<String> {
+    let repo_map = env.repo_map.as_ref()?;
+    if let Some(hint) = repo_hint {
+        if let Some(repo) = repo_map
+            .values()
+            .find(|repo| repo.repository_full_name.as_deref() == Some(hint))
+            && let Some(branch) = clean_branch(repo.default_branch.as_deref())
+        {
+            return Some(branch);
+        }
+        if let Some(repo) = repo_map.get(hint)
+            && let Some(branch) = clean_branch(repo.default_branch.as_deref())
+        {
+            return Some(branch);
+        }
+    }
+    repo_map
+        .values()
+        .find_map(|repo| clean_branch(repo.default_branch.as_deref()))
+}
+
+fn merge_environment_row(
+    map: &mut HashMap<String, crate::app::EnvironmentRow>,
+    env: &CodeEnvironment,
+    repo_hint: Option<&str>,
+) {
+    let default_branch = default_branch_from_env(env, repo_hint);
+    let repo_hint_owned = repo_hint.map(str::to_string);
+    let entry = map
+        .entry(env.id.clone())
+        .or_insert_with(|| crate::app::EnvironmentRow {
+            id: env.id.clone(),
+            label: env.label.clone(),
+            is_pinned: env.is_pinned.unwrap_or(false),
+            repo_hints: repo_hint_owned.clone(),
+            default_branch: default_branch.clone(),
+        });
+    if entry.label.is_none() {
+        entry.label = env.label.clone();
+    }
+    entry.is_pinned = entry.is_pinned || env.is_pinned.unwrap_or(false);
+    if entry.repo_hints.is_none() {
+        entry.repo_hints = repo_hint_owned;
+    }
+    if let Some(branch) = default_branch {
+        entry.default_branch = Some(branch);
+    }
 }
 
 pub async fn autodetect_environment_id(
@@ -62,6 +129,7 @@ pub async fn autodetect_environment_id(
         return Ok(AutodetectSelection {
             id: env.id.clone(),
             label: env.label.as_deref().map(str::to_owned),
+            default_branch: default_branch_from_env(&env, None),
         });
     }
 
@@ -101,6 +169,7 @@ pub async fn autodetect_environment_id(
         return Ok(AutodetectSelection {
             id: env.id.clone(),
             label: env.label.as_deref().map(str::to_owned),
+            default_branch: default_branch_from_env(&env, None),
         });
     }
     anyhow::bail!("no environments available")
@@ -276,23 +345,9 @@ pub async fn list_environments(
             match get_json::<Vec<CodeEnvironment>>(&url, headers).await {
                 Ok(list) => {
                     info!("env_tui: by-repo {}:{} -> {} envs", owner, repo, list.len());
-                    for e in list {
-                        let entry =
-                            map.entry(e.id.clone())
-                                .or_insert_with(|| crate::app::EnvironmentRow {
-                                    id: e.id.clone(),
-                                    label: e.label.clone(),
-                                    is_pinned: e.is_pinned.unwrap_or(false),
-                                    repo_hints: Some(format!("{owner}/{repo}")),
-                                });
-                        // Merge: keep label if present, or use new; accumulate pinned flag
-                        if entry.label.is_none() {
-                            entry.label = e.label.clone();
-                        }
-                        entry.is_pinned = entry.is_pinned || e.is_pinned.unwrap_or(false);
-                        if entry.repo_hints.is_none() {
-                            entry.repo_hints = Some(format!("{owner}/{repo}"));
-                        }
+                    for env in list {
+                        let repo_hint = format!("{owner}/{repo}");
+                        merge_environment_row(&mut map, &env, Some(repo_hint.as_str()));
                     }
                 }
                 Err(e) => {
@@ -314,19 +369,8 @@ pub async fn list_environments(
     match get_json::<Vec<CodeEnvironment>>(&list_url, headers).await {
         Ok(list) => {
             info!("env_tui: global list -> {} envs", list.len());
-            for e in list {
-                let entry = map
-                    .entry(e.id.clone())
-                    .or_insert_with(|| crate::app::EnvironmentRow {
-                        id: e.id.clone(),
-                        label: e.label.clone(),
-                        is_pinned: e.is_pinned.unwrap_or(false),
-                        repo_hints: None,
-                    });
-                if entry.label.is_none() {
-                    entry.label = e.label.clone();
-                }
-                entry.is_pinned = entry.is_pinned || e.is_pinned.unwrap_or(false);
+            for env in list {
+                merge_environment_row(&mut map, &env, None);
             }
         }
         Err(e) => {

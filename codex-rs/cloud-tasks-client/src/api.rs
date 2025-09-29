@@ -94,6 +94,32 @@ pub struct CreatedTask {
     pub id: TaskId,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AttachmentKind {
+    File,
+    Image,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttachmentReference {
+    pub sediment_id: String,
+    pub asset_pointer: String,
+    pub path: Option<String>,
+    pub display_name: Option<String>,
+    pub kind: AttachmentKind,
+    pub size_bytes: Option<u64>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FileServiceConfig {
+    pub base_url: String,
+    pub bearer_token: Option<String>,
+    pub chatgpt_account_id: Option<String>,
+    pub user_agent: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct DiffSummary {
     pub files_changed: usize,
@@ -153,5 +179,10 @@ pub trait CloudBackend: Send + Sync {
         prompt: &str,
         git_ref: &str,
         qa_mode: bool,
+        attachments: &[AttachmentReference],
     ) -> Result<CreatedTask>;
+
+    fn file_service_config(&self) -> Option<FileServiceConfig> {
+        None
+    }
 }

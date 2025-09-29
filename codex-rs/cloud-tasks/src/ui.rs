@@ -15,10 +15,13 @@ use ratatui::widgets::ListItem;
 use ratatui::widgets::ListState;
 use ratatui::widgets::Padding;
 use ratatui::widgets::Paragraph;
+use ratatui::widgets::Wrap;
 use std::sync::OnceLock;
 
 use crate::app::App;
 use crate::app::AttemptView;
+use crate::new_task::AttachmentUploadDisplay;
+use crate::new_task::SubmitPhase;
 use chrono::Local;
 use chrono::Utc;
 use codex_cloud_tasks_client::AttemptStatus;
@@ -138,24 +141,201 @@ pub fn draw_new_task_page(frame: &mut Frame, area: Rect, app: &mut App) {
         .unwrap_or(3)
         .clamp(3, max_allowed);
 
-    // Anchor the composer to the bottom-left by allocating a flexible spacer
-    // above it and a fixed `desired`-height area for the composer.
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(desired)])
-        .split(content);
-    let composer_area = rows[1];
+    let (mention_area, composer_area) = if let Some(page) = app.new_task.as_ref() {
+        compute_new_task_areas(content, desired, page)
+    } else {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(desired)])
+            .split(content);
+        (None, rows[1])
+    };
 
-    if let Some(page) = app.new_task.as_ref() {
-        page.composer.render_ref(composer_area, frame.buffer_mut());
-        // Composer renders its own footer hints; no extra row here.
+    let submitting = app
+        .new_task
+        .as_ref()
+        .map(|p| p.submit_phase() != SubmitPhase::Idle)
+        .unwrap_or(false);
+
+    if let Some(area) = mention_area
+        && !submitting
+        && let Some(page) = app.new_task.as_ref()
+    {
+        draw_mention_picker(frame, area, page);
     }
 
-    // Place cursor where composer wants it
-    if let Some(page) = app.new_task.as_ref()
-        && let Some((x, y)) = page.composer.cursor_pos(composer_area)
-    {
-        frame.set_cursor_position((x, y));
+    if submitting {
+        if let Some(page) = app.new_task.as_mut() {
+            draw_submission_status(frame, composer_area, page);
+        }
+    } else if let Some(page) = app.new_task.as_ref() {
+        page.composer.render_ref(composer_area, frame.buffer_mut());
+        if let Some((x, y)) = page.composer.cursor_pos(composer_area) {
+            frame.set_cursor_position((x, y));
+        }
+    }
+}
+
+fn compute_new_task_areas(
+    content: Rect,
+    desired: u16,
+    page: &crate::new_task::NewTaskPage,
+) -> (Option<Rect>, Rect) {
+    let available_for_mention = content.height.saturating_sub(desired);
+    let mention_height = if page.mention_state.current.is_some() && available_for_mention >= 3 {
+        page.mention_picker
+            .render_height()
+            .min(available_for_mention)
+            .max(3)
+    } else {
+        0
+    };
+
+    if mention_height > 0 {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(1),
+                Constraint::Length(mention_height),
+                Constraint::Length(desired),
+            ])
+            .split(content);
+        (Some(rows[1]), rows[2])
+    } else {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(desired)])
+            .split(content);
+        (None, rows[1])
+    }
+}
+
+fn draw_mention_picker(frame: &mut Frame, area: Rect, page: &crate::new_task::NewTaskPage) {
+    use ratatui::widgets::ListState;
+
+    let mut state = ListState::default().with_selected(Some(page.mention_picker.selected_index()));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Files".magenta().bold());
+    frame.render_widget(block.clone(), area);
+    let inner = block.inner(area);
+
+    if page.mention_picker.items().is_empty() {
+        let message = if page.mention_search_pending {
+            "Searching…"
+        } else if page
+            .mention_state
+            .current
+            .as_ref()
+            .is_some_and(|tok| tok.query.is_empty())
+        {
+            "Type to search"
+        } else {
+            "No matches"
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(message.dim())).wrap(Wrap { trim: true }),
+            inner,
+        );
+        return;
+    }
+
+    let items: Vec<ListItem> = page
+        .mention_picker
+        .items()
+        .iter()
+        .map(|s| {
+            let mut spans: Vec<ratatui::text::Span> = vec![s.label.clone().into()];
+            if s.path != s.label {
+                spans.push("  ".into());
+                spans.push(s.path.clone().dim());
+            }
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
+    frame.render_stateful_widget(
+        List::new(items)
+            .highlight_style(Style::default().add_modifier(Modifier::BOLD))
+            .block(block),
+        area,
+        &mut state,
+    );
+}
+
+fn draw_submission_status(frame: &mut Frame, area: Rect, page: &mut crate::new_task::NewTaskPage) {
+    use ratatui::text::Span;
+    use ratatui::widgets::Paragraph;
+
+    let attachments = page.attachment_display_items();
+    let mut constraints: Vec<Constraint> = Vec::new();
+    constraints.push(Constraint::Length(1));
+    for _ in 0..attachments.len() {
+        constraints.push(Constraint::Length(1));
+    }
+    constraints.push(Constraint::Min(0));
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
+
+    let head_label = match page.submit_phase() {
+        SubmitPhase::WaitingForUploads => "Waiting for uploads…",
+        SubmitPhase::Sending | SubmitPhase::Idle => "Submitting…",
+    };
+    draw_inline_spinner(frame, rows[0], page.submit_throbber_mut(), head_label);
+
+    for (idx, (label, state)) in attachments.iter().enumerate() {
+        let row = rows[idx + 1];
+        match state {
+            AttachmentUploadDisplay::Pending => {
+                draw_inline_spinner(frame, row, page.submit_throbber_mut(), label);
+            }
+            AttachmentUploadDisplay::Uploaded => {
+                let line = Line::from(vec!["✔".green(), " ".into(), Span::from(label.clone())]);
+                frame.render_widget(Paragraph::new(line), row);
+            }
+            AttachmentUploadDisplay::Failed(msg) => {
+                let line = Line::from(vec![
+                    "✖".red(),
+                    " ".into(),
+                    Span::from(label.clone()).red(),
+                    ": ".into(),
+                    Span::from(msg.clone()).red(),
+                ]);
+                frame.render_widget(Paragraph::new(line), row);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::attachments::AttachmentUploadMode;
+    use crate::new_task::NewTaskPage;
+
+    #[test]
+    fn mention_area_allocated_when_token_active() {
+        let mut page = NewTaskPage::new(None, AttachmentUploadMode::Disabled);
+        page.mention_state.update_from(Some("@foo".to_string()));
+        page.mention_search_pending = true;
+        let content = Rect::new(0, 0, 80, 8);
+        let desired = page.composer.desired_height(content.width);
+        let (mention, composer) = compute_new_task_areas(content, desired, &page);
+        assert!(mention.is_some());
+        assert!(composer.height > 0);
+    }
+
+    #[test]
+    fn mention_area_not_allocated_when_no_space() {
+        let mut page = NewTaskPage::new(None, AttachmentUploadMode::Disabled);
+        page.mention_state.update_from(Some("@foo".to_string()));
+        page.mention_search_pending = true;
+        let content = Rect::new(0, 0, 80, 3);
+        let desired = page.composer.desired_height(content.width);
+        let (mention, _composer) = compute_new_task_areas(content, desired, &page);
+        assert!(mention.is_none());
     }
 }
 
@@ -244,10 +424,10 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &mut App) {
         help.push("a".dim());
         help.push(": Apply  ".dim());
     }
-    help.push("o : Set Env  ".dim());
     if app.new_task.is_some() {
-        help.push("(editing new task)  ".dim());
+        help.push("o : Set Env  ".dim());
     } else {
+        help.push("o : Set Env  ".dim());
         help.push("n : New Task  ".dim());
     }
     help.extend(vec!["q".dim(), ": Quit  ".dim()]);
@@ -639,11 +819,11 @@ fn conversation_header_line(
         ConversationSpeaker::Assistant => {
             spans.push("Assistant".magenta().bold());
             spans.push(" response".dim());
-            if let Some(attempt) = attempt {
-                if let Some(status_span) = attempt_status_span(attempt.status) {
-                    spans.push("  • ".dim());
-                    spans.push(status_span);
-                }
+            if let Some(attempt) = attempt
+                && let Some(status_span) = attempt_status_span(attempt.status)
+            {
+                spans.push("  • ".dim());
+                spans.push(status_span);
             }
         }
     }
@@ -710,8 +890,8 @@ fn attempt_status_span(status: AttemptStatus) -> Option<ratatui::text::Span<'sta
         AttemptStatus::Completed => Some("Completed".green()),
         AttemptStatus::Failed => Some("Failed".red().bold()),
         AttemptStatus::InProgress => Some("In progress".magenta()),
-        AttemptStatus::Pending => Some("Pending".yellow()),
-        AttemptStatus::Cancelled => Some("Cancelled".yellow().dim()),
+        AttemptStatus::Pending => Some("Pending".cyan()),
+        AttemptStatus::Cancelled => Some("Cancelled".red().dim()),
         AttemptStatus::Unknown => None,
     }
 }

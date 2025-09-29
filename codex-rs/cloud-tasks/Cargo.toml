@@ -14,7 +14,7 @@ workspace = true
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 codex-common = { path = "../common", features = ["cli"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread"] }
 tracing = { version = "0.1.41", features = ["log"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 codex-cloud-tasks-client = { path = "../cloud-tasks-client", features = ["mock", "online"] }
@@ -32,9 +32,14 @@ reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 unicode-width = "0.1"
 codex-tui = { path = "../tui" }
+codex-file-search = { path = "../file-search" }
+mime_guess = "2"
+url = "2"
+image = { workspace = true }
 
 [dev-dependencies]
 async-trait = "0.1"
+tempfile = "3"
 
 [[bin]]
 name = "conncheck"
@@ -47,3 +52,7 @@ path = "src/bin/newtask.rs"
 [[bin]]
 name = "envcheck"
 path = "src/bin/envcheck.rs"
+
+[[bin]]
+name = "upload-debug"
+path = "src/bin/upload_debug.rs"

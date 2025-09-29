@@ -16,6 +16,8 @@ use chrono::Utc;
 use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::path::Path;
+use std::path::PathBuf;
 
 use codex_backend_client as backend;
 use codex_backend_client::CodeTaskDetailsResponseExt;
@@ -24,27 +26,45 @@ use codex_backend_client::CodeTaskDetailsResponseExt;
 pub struct HttpClient {
     pub base_url: String,
     backend: backend::Client,
+    bearer_token: Option<String>,
+    chatgpt_account_id: Option<String>,
+    user_agent: Option<String>,
 }
 
 impl HttpClient {
     pub fn new(base_url: impl Into<String>) -> anyhow::Result<Self> {
         let base_url = base_url.into();
         let backend = backend::Client::new(base_url.clone())?;
-        Ok(Self { base_url, backend })
+        Ok(Self {
+            base_url,
+            backend,
+            bearer_token: None,
+            chatgpt_account_id: None,
+            user_agent: None,
+        })
     }
 
     pub fn with_bearer_token(mut self, token: impl Into<String>) -> Self {
-        self.backend = self.backend.clone().with_bearer_token(token);
+        let token = token.into();
+        self.backend = self.backend.clone().with_bearer_token(token.clone());
+        self.bearer_token = Some(token);
         self
     }
 
     pub fn with_user_agent(mut self, ua: impl Into<String>) -> Self {
-        self.backend = self.backend.clone().with_user_agent(ua);
+        let ua = ua.into();
+        self.backend = self.backend.clone().with_user_agent(ua.clone());
+        self.user_agent = Some(ua);
         self
     }
 
     pub fn with_chatgpt_account_id(mut self, account_id: impl Into<String>) -> Self {
-        self.backend = self.backend.clone().with_chatgpt_account_id(account_id);
+        let account_id = account_id.into();
+        self.backend = self
+            .backend
+            .clone()
+            .with_chatgpt_account_id(account_id.clone());
+        self.chatgpt_account_id = Some(account_id);
         self
     }
 }
@@ -219,6 +239,7 @@ impl CloudBackend for HttpClient {
         prompt: &str,
         git_ref: &str,
         qa_mode: bool,
+        attachments: &[crate::AttachmentReference],
     ) -> Result<crate::CreatedTask> {
         // Build request payload patterned after VSCode/newtask.rs
         let mut input_items: Vec<serde_json::Value> = Vec::new();
@@ -227,6 +248,47 @@ impl CloudBackend for HttpClient {
             "role": "user",
             "content": [{ "content_type": "text", "text": prompt }]
         }));
+
+        for attachment in attachments {
+            match attachment.kind {
+                crate::AttachmentKind::Image => {
+                    if let (Some(width), Some(height), Some(size_bytes)) =
+                        (attachment.width, attachment.height, attachment.size_bytes)
+                    {
+                        input_items.push(serde_json::json!({
+                            "type": "image_asset_pointer",
+                            "asset_pointer": attachment.asset_pointer,
+                            "width": width,
+                            "height": height,
+                            "size_bytes": size_bytes,
+                        }));
+                        continue;
+                    }
+                    // Fallback to container when metadata is missing
+                }
+                crate::AttachmentKind::File => {}
+            }
+
+            let default_path = attachment
+                .path
+                .clone()
+                .or_else(|| attachment.display_name.clone())
+                .unwrap_or_else(|| attachment.sediment_id.clone());
+
+            let file_entry = serde_json::json!({
+                "type": "file",
+                "sediment_id": attachment.sediment_id,
+                "path": default_path.clone(),
+            });
+
+            let mut container = serde_json::json!({
+                "type": "container_file",
+                "file_ids": [file_entry],
+                "body": "",
+            });
+            container["path"] = serde_json::Value::String(default_path);
+            input_items.push(container);
+        }
 
         if let Ok(diff) = std::env::var("CODEX_STARTING_DIFF")
             && !diff.is_empty()
@@ -250,22 +312,33 @@ impl CloudBackend for HttpClient {
         match self.backend.create_task(request_body).await {
             Ok(id) => {
                 append_error_log(&format!(
-                    "new_task: created id={id} env={} prompt_chars={}",
+                    "new_task: created id={id} env={} prompt_chars={} attachments={}",
                     env_id,
-                    prompt.chars().count()
+                    prompt.chars().count(),
+                    attachments.len()
                 ));
                 Ok(crate::CreatedTask { id: TaskId(id) })
             }
             Err(e) => {
                 append_error_log(&format!(
-                    "new_task: create failed env={} prompt_chars={}: {}",
+                    "new_task: create failed env={} prompt_chars={} attachments={}: {}",
                     env_id,
                     prompt.chars().count(),
+                    attachments.len(),
                     e
                 ));
                 Err(CloudTaskError::Http(format!("create_task failed: {e}")))
             }
         }
+    }
+
+    fn file_service_config(&self) -> Option<crate::FileServiceConfig> {
+        Some(crate::FileServiceConfig {
+            base_url: self.base_url.clone(),
+            bearer_token: self.bearer_token.clone(),
+            chatgpt_account_id: self.chatgpt_account_id.clone(),
+            user_agent: self.user_agent.clone(),
+        })
     }
 }
 
@@ -725,13 +798,52 @@ fn summarize_patch_for_logging(patch: &str) -> String {
 }
 
 fn append_error_log(message: &str) {
-    let ts = Utc::now().to_rfc3339();
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("error.log")
+    let timestamp = Utc::now().to_rfc3339();
+
+    if let Some(path) = log_file_path()
+        && write_log_line(&path, &timestamp, message)
     {
-        use std::io::Write as _;
-        let _ = writeln!(f, "[{ts}] {message}");
+        return;
+    }
+
+    let fallback = Path::new("error.log");
+    let _ = write_log_line(fallback, &timestamp, message);
+}
+
+fn log_file_path() -> Option<PathBuf> {
+    let mut codex_home = codex_home_dir()?;
+    codex_home.push("log");
+    std::fs::create_dir_all(&codex_home).ok()?;
+    Some(codex_home.join("codex-cloud-tasks.log"))
+}
+
+fn codex_home_dir() -> Option<PathBuf> {
+    if let Ok(val) = std::env::var("CODEX_HOME")
+        && !val.is_empty()
+    {
+        let path = PathBuf::from(val);
+        return path.canonicalize().ok().or(Some(path));
+    }
+    dirs::home_dir().map(|mut home| {
+        home.push(".codex");
+        home
+    })
+}
+
+fn write_log_line(path: &Path, timestamp: &str, message: &str) -> bool {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+
+    match opts.open(path) {
+        Ok(mut file) => {
+            use std::io::Write as _;
+            writeln!(file, "[{timestamp}] {message}").is_ok()
+        }
+        Err(_) => false,
     }
 }

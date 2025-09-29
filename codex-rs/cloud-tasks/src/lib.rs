@@ -1,19 +1,166 @@
 mod app;
+mod attachments;
 mod cli;
 pub mod env_detect;
 mod new_task;
 pub mod scrollable_diff;
 mod ui;
 pub mod util;
+pub use attachments::AttachmentAssetPointer;
+pub use attachments::AttachmentId;
+pub use attachments::AttachmentKind;
+pub use attachments::AttachmentUploadHttpConfig;
+pub use attachments::AttachmentUploadMode;
+pub use attachments::AttachmentUploadUpdate;
+pub use attachments::AttachmentUploader;
+pub use attachments::pointer_id_from_value;
 pub use cli::Cli;
 
+use crate::new_task::AttachmentSubmission;
+use crate::new_task::SubmissionAction;
+use crate::new_task::SubmitPhase;
+use image::image_dimensions;
+use std::fs;
+use std::fs::File;
 use std::io::IsTerminal;
+use std::io::Read;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use util::append_error_log;
+use util::normalize_base_url;
 use util::set_user_agent_suffix;
+
+fn attachment_upload_mode_for(
+    backend: &dyn codex_cloud_tasks_client::CloudBackend,
+) -> AttachmentUploadMode {
+    backend
+        .file_service_config()
+        .map(|cfg| {
+            if cfg.bearer_token.is_none() {
+                return AttachmentUploadMode::Disabled;
+            }
+            AttachmentUploadMode::Http(AttachmentUploadHttpConfig {
+                base_url: cfg.base_url,
+                bearer_token: cfg.bearer_token,
+                chatgpt_account_id: cfg.chatgpt_account_id,
+                user_agent: cfg.user_agent,
+            })
+        })
+        .unwrap_or(AttachmentUploadMode::Disabled)
+}
+
+fn spawn_task_submission(
+    backend: Arc<dyn codex_cloud_tasks_client::CloudBackend>,
+    env: String,
+    prompt: String,
+    attachments: Vec<AttachmentSubmission>,
+    tx: tokio::sync::mpsc::UnboundedSender<app::AppEvent>,
+) {
+    tokio::spawn(async move {
+        let attachments_payload: Result<Vec<_>, _> = attachments
+            .into_iter()
+            .map(map_attachment_submission)
+            .collect();
+
+        let payload = match attachments_payload {
+            Ok(p) => p,
+            Err(err) => {
+                append_error_log(format!("new-task: submission aborted: {err}"));
+                let _ = tx.send(app::AppEvent::NewTaskSubmitted(Err(err)));
+                return;
+            }
+        };
+
+        let result = codex_cloud_tasks_client::CloudBackend::create_task(
+            &*backend,
+            &env,
+            &prompt,
+            "main",
+            false,
+            payload.as_slice(),
+        )
+        .await;
+
+        let evt = match result {
+            Ok(ok) => app::AppEvent::NewTaskSubmitted(Ok(ok)),
+            Err(e) => app::AppEvent::NewTaskSubmitted(Err(format!("{e}"))),
+        };
+        let _ = tx.send(evt);
+    });
+}
+
+fn map_attachment_submission(
+    att: AttachmentSubmission,
+) -> Result<codex_cloud_tasks_client::AttachmentReference, String> {
+    let pointer_value = att.pointer.value.clone();
+    let pointer_id = pointer_id_from_value(&pointer_value)
+        .ok_or_else(|| format!("Attachment missing upload pointer for {}", att.label))?;
+
+    let mut size_bytes = att
+        .fs_path
+        .as_deref()
+        .and_then(|path| fs::metadata(path).ok().map(|m| m.len()));
+
+    let mut width = None;
+    let mut height = None;
+    let mut kind = match att.kind {
+        AttachmentKind::Image => codex_cloud_tasks_client::AttachmentKind::Image,
+        AttachmentKind::File => codex_cloud_tasks_client::AttachmentKind::File,
+    };
+
+    if matches!(att.kind, AttachmentKind::Image) {
+        if let Some(ref path) = att.fs_path {
+            if let Some((w, h)) = detect_image_dimensions(path) {
+                width = Some(w);
+                height = Some(h);
+            }
+            if size_bytes.is_none() {
+                size_bytes = fs::metadata(path).ok().map(|m| m.len());
+            }
+        }
+        if width.is_none() || height.is_none() || size_bytes.is_none() {
+            kind = codex_cloud_tasks_client::AttachmentKind::File;
+            width = None;
+            height = None;
+        }
+    }
+
+    append_error_log(format!(
+        "attachment.map label={} pointer={} kind={:?} size={:?} width={:?} height={:?}",
+        att.label, pointer_value, kind, size_bytes, width, height
+    ));
+
+    Ok(codex_cloud_tasks_client::AttachmentReference {
+        sediment_id: pointer_id,
+        asset_pointer: pointer_value,
+        path: Some(att.path),
+        display_name: Some(att.display_name),
+        kind,
+        size_bytes,
+        width,
+        height,
+    })
+}
+
+fn detect_image_dimensions(path: &str) -> Option<(u32, u32)> {
+    if let Ok((w, h)) = image_dimensions(path) {
+        return Some((w, h));
+    }
+
+    let mut file = File::open(path).ok()?;
+    let mut header = [0u8; 24];
+    file.read_exact(&mut header).ok()?;
+    let png_signature = [137, 80, 78, 71, 13, 10, 26, 10];
+    if header[..8] == png_signature {
+        let width = u32::from_be_bytes([header[16], header[17], header[18], header[19]]);
+        let height = u32::from_be_bytes([header[20], header[21], header[22], header[23]]);
+        return Some((width, height));
+    }
+    None
+}
 
 // logging helper lives in util module
 
@@ -47,8 +194,9 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
         Arc::new(codex_cloud_tasks_client::MockClient)
     } else {
         // Build an HTTP client against the configured (or default) base URL.
-        let base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL")
+        let raw_base = std::env::var("CODEX_CLOUD_TASKS_BASE_URL")
             .unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
+        let base_url = normalize_base_url(&raw_base);
         let ua = codex_core::default_client::get_codex_user_agent();
         let mut http =
             codex_cloud_tasks_client::HttpClient::new(base_url.clone())?.with_user_agent(ua);
@@ -272,6 +420,18 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                     if page.composer.is_in_paste_burst() {
                         let _ = frame_tx.send(Instant::now() + codex_tui::ComposerInput::recommended_flush_delay());
                     }
+                    let refresh = page.refresh_mention_state();
+                    if refresh.state_changed && !needs_redraw {
+                        needs_redraw = true;
+                    }
+                    if refresh.search_requested {
+                        let _ = frame_tx.send(Instant::now() + Duration::from_millis(75));
+                    }
+                    if page.is_submitting() || page.pending_upload_count() > 0 {
+                        page.submit_throbber_mut().calc_next();
+                        needs_redraw = true;
+                        let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
+                    }
                 }
                 // Advance throbber only while loading.
                 if app.refresh_inflight
@@ -341,7 +501,9 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 }
                                 Err(msg) => {
                                     append_error_log(format!("new-task: submit failed: {msg}"));
-                                    if let Some(page) = app.new_task.as_mut() { page.submitting = false; }
+                                    if let Some(page) = app.new_task.as_mut() {
+                                        page.reset_submission_state();
+                                    }
                                     app.status = format!("Submit failed: {msg}. See error.log for details.");
                                     needs_redraw = true;
                                     let _ = frame_tx.send(Instant::now());
@@ -389,14 +551,49 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         sel.label.clone().unwrap_or_else(|| "<none>".to_string())
                                     ));
                                     // Preseed environments with detected label so header can show it even before list arrives
-                                    if let Some(lbl) = sel.label.clone() {
-                                        let present = app.environments.iter().any(|r| r.id == sel.id);
-                                        if !present {
-                                            app.environments.push(app::EnvironmentRow { id: sel.id.clone(), label: Some(lbl), is_pinned: false, repo_hints: None });
+                                    match app
+                                        .environments
+                                        .iter_mut()
+                                        .find(|row| row.id == sel.id)
+                                    {
+                                        Some(row) => {
+                                            if row.label.is_none() {
+                                                row.label = sel.label.clone();
+                                            }
+                                            if sel.default_branch.is_some() {
+                                                row.default_branch = sel.default_branch.clone();
+                                            }
+                                        }
+                                        None => {
+                                            app.environments.push(app::EnvironmentRow {
+                                                id: sel.id.clone(),
+                                                label: sel.label.clone(),
+                                                is_pinned: false,
+                                                repo_hints: None,
+                                                default_branch: sel.default_branch.clone(),
+                                            });
+                                        }
+                                    }
+                                    let mut status_override: Option<String> = None;
+                                    if let Some(branch) = sel.default_branch.as_deref() {
+                                        match crate::util::switch_to_branch(branch) {
+                                            Ok(()) => {
+                                                status_override =
+                                                    Some(format!("Loading tasks… (on {branch})"));
+                                            }
+                                            Err(err) => {
+                                                append_error_log(format!(
+                                                    "env.select: failed to switch to {branch}: {err}"
+                                                ));
+                                                status_override = Some(format!(
+                                                    "Loading tasks… (failed to switch to {branch})"
+                                                ));
+                                            }
                                         }
                                     }
                                     app.env_filter = Some(sel.id);
-                                    app.status = "Loading tasks…".to_string();
+                                    app.status = status_override
+                                        .unwrap_or_else(|| "Loading tasks…".to_string());
                                     app.refresh_inflight = true;
                                     app.list_generation = app.list_generation.saturating_add(1);
                                     app.in_flight.clear();
@@ -663,14 +860,21 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 }
                             }
                             needs_redraw = true;
-                        } else if let Some(page) = app.new_task.as_mut() {
-                            if !page.submitting {
+                        } else if let Some(page) = app.new_task.as_mut()
+                            && !page.is_submitting() {
                                 if page.composer.handle_paste(pasted) {
                                     needs_redraw = true;
                                 }
+                                page.prune_unreferenced_attachments();
+                                let refresh = page.refresh_mention_state();
+                                if refresh.state_changed && !needs_redraw {
+                                    needs_redraw = true;
+                                }
+                                if refresh.search_requested {
+                                    let _ = frame_tx.send(Instant::now() + Duration::from_millis(75));
+                                }
                                 let _ = frame_tx.send(Instant::now());
                             }
-                        }
                     }
                     Some(Ok(Event::Key(key))) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
                         // Treat Ctrl-C like pressing 'q' in the current context.
@@ -733,57 +937,138 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                         }
 
                         // New Task page has priority when active, unless an env modal is open.
+                        let mention_consumed = if app.env_modal.is_none() {
+                            if let Some(page) = app.new_task.as_mut() {
+                                if page.mention_active() {
+                                    match key.code {
+                                        KeyCode::Up => {
+                                            page.move_mention_selection(-1);
+                                            needs_redraw = true;
+                                            true
+                                        }
+                                        KeyCode::Down => {
+                                            page.move_mention_selection(1);
+                                            needs_redraw = true;
+                                            true
+                                        }
+                                        KeyCode::Tab if key.modifiers.is_empty() => {
+                                            if page.accept_current_mention() {
+                                                needs_redraw = true;
+                                                let _ = frame_tx.send(Instant::now());
+                                            }
+                                            true
+                                        }
+                                        KeyCode::Enter if key.modifiers.is_empty() => {
+                                            if page.accept_current_mention() {
+                                                needs_redraw = true;
+                                                let _ = frame_tx.send(Instant::now());
+                                            }
+                                            true
+                                        }
+                                        KeyCode::Esc => {
+                                            page.cancel_mention();
+                                            needs_redraw = true;
+                                            true
+                                        }
+                                        _ => false,
+                                    }
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+                        if mention_consumed {
+                            render_if_needed(&mut terminal, &mut app, &mut needs_redraw)?;
+                            continue;
+                        }
+
                         if let Some(page) = app.new_task.as_mut() {
                             if app.env_modal.is_some() {
                                 // Defer handling to env-modal branch below.
                             } else {
-                            match key.code {
-                                KeyCode::Esc => {
-                                    app.new_task = None;
-                                    app.status = "Canceled new task".to_string();
-                                    needs_redraw = true;
-                                }
-                                _ => {
-                                    if page.submitting {
-                                        // Ignore input while submitting
-                                    } else if let codex_tui::ComposerAction::Submitted(text) = page.composer.input(key) {
-                                            // Submit only if we have an env id
-                                            if let Some(env) = page.env_id.clone() {
-                                                append_error_log(format!(
-                                                    "new-task: submit env={} size={}",
-                                                    env,
-                                                    text.chars().count()
-                                                ));
-                                                page.submitting = true;
-                                                app.status = "Submitting new task…".to_string();
-                                                let tx2 = tx.clone();
-                                                let backend2 = backend.clone();
-                                                tokio::spawn(async move {
-                                                    let result = codex_cloud_tasks_client::CloudBackend::create_task(&*backend2, &env, &text, "main", false).await;
-                                                    let evt = match result {
-                                                        Ok(ok) => app::AppEvent::NewTaskSubmitted(Ok(ok)),
-                                                        Err(e) => app::AppEvent::NewTaskSubmitted(Err(format!("{e}"))),
-                                                    };
-                                                    let _ = tx2.send(evt);
-                                                });
-                                            } else {
-                                                app.status = "No environment selected (press 'e' to choose)".to_string();
+                                match key.code {
+                                    KeyCode::Esc => {
+                                        app.new_task = None;
+                                        app.status = "Canceled new task".to_string();
+                                        needs_redraw = true;
+                                    }
+                                    _ => {
+                                        if page.is_submitting() {
+                                            // Ignore input while submitting
+                                        } else {
+                                            needs_redraw = true;
+                                            let action = page.composer.input(key);
+                                            if !matches!(action, codex_tui::ComposerAction::Submitted(_)) {
+                                                page.prune_unreferenced_attachments();
                                             }
+                                            if let codex_tui::ComposerAction::Submitted(text) = action {
+                                                if let Some(env) = page.env_id.clone() {
+                                                    match page.prepare_submission(text.clone()) {
+                                                        SubmissionAction::Blocked(msg) => {
+                                                            app.status = msg;
+                                                            page.reset_submission_state();
+                                                        }
+                                                        SubmissionAction::WaitForUploads => {
+                                                            let pending = page.pending_upload_count();
+                                                            app.status = if pending == 0 {
+                                                                "Waiting for attachments to finish uploading…".to_string()
+                                                            } else {
+                                                                format!(
+                                                                    "Waiting for {pending} attachment upload{}…",
+                                                                    if pending == 1 { "" } else { "s" }
+                                                                )
+                                                            };
+                                                            append_error_log("new-task: waiting for attachment uploads");
+                                                            let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
+                                                            needs_redraw = true;
+                                                        }
+                                                        SubmissionAction::StartSending { prompt, attachments } => {
+                                                            app.status = "Submitting new task…".to_string();
+                                                            append_error_log(format!(
+                                                                "new-task: submit env={} size={} attachments={}",
+                                                                env,
+                                                                prompt.chars().count(),
+                                                                attachments.len()
+                                                            ));
+                                                            spawn_task_submission(
+                                                                backend.clone(),
+                                                                env,
+                                                                prompt,
+                                                                attachments,
+                                                                tx.clone(),
+                                                            );
+                                                        }
+                                                    }
+                                                } else {
+                                                    app.status = "No environment selected (press 'e' to choose)".to_string();
+                                                }
+                                            }
+                                            let refresh = page.refresh_mention_state();
+                                            if refresh.state_changed && !needs_redraw {
+                                                needs_redraw = true;
+                                            }
+                                            if refresh.search_requested {
+                                                let _ = frame_tx.send(Instant::now() + Duration::from_millis(75));
+                                            }
+                                        }
+                                        // If paste‑burst is active, schedule a micro‑flush frame.
+                                        if page.composer.is_in_paste_burst() {
+                                            let _ = frame_tx.send(Instant::now() + codex_tui::ComposerInput::recommended_flush_delay());
+                                        }
+                                        // Always schedule an immediate redraw for key edits in the composer.
+                                        let _ = frame_tx.send(Instant::now());
+                                        // Draw now so non-char edits (e.g., Option+Delete) reflect instantly.
+                                        render_if_needed(&mut terminal, &mut app, &mut needs_redraw)?;
                                     }
-                                    needs_redraw = true;
-                                    // If paste‑burst is active, schedule a micro‑flush frame.
-                                    if page.composer.is_in_paste_burst() {
-                                        let _ = frame_tx.send(Instant::now() + codex_tui::ComposerInput::recommended_flush_delay());
-                                    }
-                                    // Always schedule an immediate redraw for key edits in the composer.
-                                    let _ = frame_tx.send(Instant::now());
-                                    // Draw now so non-char edits (e.g., Option+Delete) reflect instantly.
-                                    render_if_needed(&mut terminal, &mut app, &mut needs_redraw)?;
                                 }
-                            }
-                            continue;
+                                continue;
                             }
                         }
+
                         // If a diff overlay is open, handle its keys first.
                         if app.apply_modal.is_some() {
                             // Simple apply confirmation modal: y apply, p preflight, n/Esc cancel
@@ -1045,10 +1330,17 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 KeyCode::PageDown | KeyCode::Char(' ') => { if let Some(m) = app.env_modal.as_mut() { let step = 10usize; m.selected = m.selected.saturating_add(step); } needs_redraw = true; }
                                 KeyCode::PageUp => { if let Some(m) = app.env_modal.as_mut() { let step = 10usize; m.selected = m.selected.saturating_sub(step); } needs_redraw = true; }
                                 KeyCode::Char('n') => {
+                                    let upload_mode = attachment_upload_mode_for(&*backend);
                                     if app.env_filter.is_none() {
-                                        app.new_task = Some(crate::new_task::NewTaskPage::new(None));
+                                        app.new_task = Some(crate::new_task::NewTaskPage::new(
+                                            None,
+                                            upload_mode.clone(),
+                                        ));
                                     } else {
-                                        app.new_task = Some(crate::new_task::NewTaskPage::new(app.env_filter.clone()));
+                                        app.new_task = Some(crate::new_task::NewTaskPage::new(
+                                            app.env_filter.clone(),
+                                            upload_mode,
+                                        ));
                                     }
                                     app.status = "New Task: Enter to submit; Esc to cancel".to_string();
                                     needs_redraw = true;
@@ -1067,8 +1359,11 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                         }).collect();
                                         // Keep original order (already sorted) — no need to re-sort
                                         let idx = state.selected;
-                                        if idx == 0 { app.env_filter = None; append_error_log("env.select: All"); }
-                                        else {
+                                        let mut status_override: Option<String> = None;
+                                        if idx == 0 {
+                                            app.env_filter = None;
+                                            append_error_log("env.select: All");
+                                        } else {
                                             let env_idx = idx.saturating_sub(1);
                                             if let Some(row) = filtered.get(env_idx) {
                                                 append_error_log(format!(
@@ -1077,6 +1372,23 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                     row.label.clone().unwrap_or_else(|| "<none>".to_string())
                                                 ));
                                                 app.env_filter = Some(row.id.clone());
+                                                if let Some(branch) = row.default_branch.as_deref() {
+                                                    match crate::util::switch_to_branch(branch) {
+                                                        Ok(()) => {
+                                                            status_override = Some(format!(
+                                                                "Loading tasks… (on {branch})"
+                                                            ));
+                                                        }
+                                                        Err(err) => {
+                                                            append_error_log(format!(
+                                                                "env.select: failed to switch to {branch}: {err}"
+                                                            ));
+                                                            status_override = Some(format!(
+                                                                "Loading tasks… (failed to switch to {branch})"
+                                                            ));
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                         // If New Task page is open, reflect the new selection in its header immediately.
@@ -1084,7 +1396,8 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                             page.env_id = app.env_filter.clone();
                                         }
                                         // Trigger tasks refresh with the selected filter
-                                        app.status = "Loading tasks…".to_string();
+                                        app.status = status_override
+                                            .unwrap_or_else(|| "Loading tasks…".to_string());
                                         app.refresh_inflight = true;
                                         app.list_generation = app.list_generation.saturating_add(1);
                                         app.in_flight.clear();
@@ -1155,7 +1468,11 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                 }
                                 KeyCode::Char('n') => {
                                     let env_opt = app.env_filter.clone();
-                                    app.new_task = Some(crate::new_task::NewTaskPage::new(env_opt));
+                                    let upload_mode = attachment_upload_mode_for(&*backend);
+                                    app.new_task = Some(crate::new_task::NewTaskPage::new(
+                                        env_opt,
+                                        upload_mode,
+                                    ));
                                     app.status = "New Task: Enter to submit; Esc to cancel".to_string();
                                     needs_redraw = true;
                                 }
@@ -1332,6 +1649,57 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                 render_if_needed(&mut terminal, &mut app, &mut needs_redraw)?;
             }
         }
+
+        if let Some(page) = app.new_task.as_mut() {
+            let upload_poll = page.poll_attachment_uploads();
+            if upload_poll.state_changed {
+                needs_redraw = true;
+            }
+            if let Some(err) = upload_poll.failed {
+                app.status = err;
+                needs_redraw = true;
+            }
+            let mut schedule_upload_poll = false;
+
+            if matches!(page.submit_phase(), SubmitPhase::WaitingForUploads) {
+                if let Some(payload) = page.take_ready_submission() {
+                    if let Some(env) = page.env_id.clone() {
+                        app.status = "Submitting new task…".to_string();
+                        append_error_log(format!(
+                            "new-task: submit env={} size={} attachments={}",
+                            env,
+                            payload.prompt.chars().count(),
+                            payload.attachments.len()
+                        ));
+                        spawn_task_submission(
+                            backend.clone(),
+                            env,
+                            payload.prompt,
+                            payload.attachments,
+                            tx.clone(),
+                        );
+                        needs_redraw = true;
+                    } else {
+                        page.reset_submission_state();
+                        app.status = "No environment selected (press 'e' to choose)".to_string();
+                        needs_redraw = true;
+                    }
+                } else if page.has_pending_referenced_uploads() {
+                    schedule_upload_poll = true;
+                }
+            }
+
+            if upload_poll.has_pending {
+                schedule_upload_poll = true;
+            }
+
+            if schedule_upload_poll {
+                let _ = frame_tx.send(Instant::now() + Duration::from_millis(100));
+            }
+            if page.poll_mention_search() {
+                needs_redraw = true;
+            }
+        }
     };
 
     // Restore terminal
@@ -1455,4 +1823,63 @@ fn pretty_lines_from_error(raw: &str) -> Vec<String> {
         lines.push(String::new());
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::attachments::AttachmentAssetPointer;
+    use crate::attachments::upload::AttachmentPointerKind;
+    use base64::Engine as _;
+    use tempfile::NamedTempFile;
+
+    fn make_attachment_submission(
+        pointer_kind: AttachmentPointerKind,
+        fs_path: Option<String>,
+    ) -> AttachmentSubmission {
+        let kind = match pointer_kind {
+            AttachmentPointerKind::Image => AttachmentKind::Image,
+            _ => AttachmentKind::File,
+        };
+        AttachmentSubmission {
+            id: AttachmentId::new(1),
+            label: "image.png".to_string(),
+            path: "image.png".to_string(),
+            fs_path,
+            pointer: AttachmentAssetPointer::new(pointer_kind, "file-service://file_123"),
+            display_name: "image.png".to_string(),
+            kind,
+        }
+    }
+
+    #[test]
+    fn map_attachment_submission_image_with_metadata() {
+        let png_bytes = base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAFgwJ/lkEc1QAAAABJRU5ErkJggg==")
+            .expect("decode");
+        let tmp = NamedTempFile::new().expect("tmp");
+        std::fs::write(tmp.path(), png_bytes).expect("write png");
+
+        let submission = make_attachment_submission(
+            AttachmentPointerKind::Image,
+            Some(tmp.path().display().to_string()),
+        );
+
+        let mapped = map_attachment_submission(submission).expect("map ok");
+        assert_eq!(mapped.kind, codex_cloud_tasks_client::AttachmentKind::Image);
+        assert_eq!(mapped.width, Some(1));
+        assert_eq!(mapped.height, Some(1));
+        assert!(mapped.size_bytes.unwrap_or(0) > 0);
+        assert_eq!(mapped.asset_pointer, "file-service://file_123".to_string());
+    }
+
+    #[test]
+    fn map_attachment_submission_image_without_metadata_falls_back() {
+        let submission = make_attachment_submission(AttachmentPointerKind::Image, None);
+        let mapped = map_attachment_submission(submission).expect("map ok");
+        assert_eq!(mapped.kind, codex_cloud_tasks_client::AttachmentKind::File);
+        assert_eq!(mapped.width, None);
+        assert_eq!(mapped.height, None);
+        assert_eq!(mapped.size_bytes, None);
+    }
 }

@@ -1,6 +1,9 @@
 use base64::Engine as _;
 use chrono::Utc;
 use reqwest::header::HeaderMap;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
 
 pub fn set_user_agent_suffix(suffix: &str) {
     if let Ok(mut guard) = codex_core::default_client::USER_AGENT_SUFFIX.lock() {
@@ -9,15 +12,17 @@ pub fn set_user_agent_suffix(suffix: &str) {
 }
 
 pub fn append_error_log(message: impl AsRef<str>) {
-    let ts = Utc::now().to_rfc3339();
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("error.log")
+    let message = message.as_ref();
+    let timestamp = Utc::now().to_rfc3339();
+
+    if let Some(path) = log_file_path()
+        && write_log_line(&path, &timestamp, message)
     {
-        use std::io::Write as _;
-        let _ = writeln!(f, "[{ts}] {}", message.as_ref());
+        return;
     }
+
+    let fallback = Path::new("error.log");
+    let _ = write_log_line(fallback, &timestamp, message);
 }
 
 /// Normalize the configured base URL to a canonical form used by the backend client.
@@ -37,6 +42,31 @@ pub fn normalize_base_url(input: &str) -> String {
     base_url
 }
 
+fn log_file_path() -> Option<PathBuf> {
+    let mut log_dir = codex_core::config::find_codex_home().ok()?;
+    log_dir.push("log");
+    std::fs::create_dir_all(&log_dir).ok()?;
+    Some(log_dir.join("codex-cloud-tasks.log"))
+}
+
+fn write_log_line(path: &Path, timestamp: &str, message: &str) -> bool {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+
+    match opts.open(path) {
+        Ok(mut file) => {
+            use std::io::Write as _;
+            writeln!(file, "[{timestamp}] {message}").is_ok()
+        }
+        Err(_) => false,
+    }
+}
+
 /// Extract the ChatGPT account id from a JWT token, when present.
 pub fn extract_chatgpt_account_id(token: &str) -> Option<String> {
     let mut parts = token.split('.');
@@ -52,6 +82,90 @@ pub fn extract_chatgpt_account_id(token: &str) -> Option<String> {
         .and_then(|auth| auth.get("chatgpt_account_id"))
         .and_then(|id| id.as_str())
         .map(str::to_string)
+}
+
+pub fn switch_to_branch(branch: &str) -> Result<(), String> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err("default branch name is empty".to_string());
+    }
+
+    if let Ok(current) = current_branch()
+        && current == branch
+    {
+        append_error_log(format!("git.switch: already on branch {branch}"));
+        return Ok(());
+    }
+
+    append_error_log(format!("git.switch: switching to branch {branch}"));
+    match ensure_success(&["checkout", branch]) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            append_error_log(format!("git.switch: checkout {branch} failed: {err}"));
+            if ensure_success(&["rev-parse", "--verify", branch]).is_ok() {
+                return Err(err);
+            }
+            if let Err(fetch_err) = ensure_success(&["fetch", "origin", branch]) {
+                append_error_log(format!(
+                    "git.switch: fetch origin/{branch} failed: {fetch_err}"
+                ));
+                return Err(err);
+            }
+            let tracking = format!("origin/{branch}");
+            ensure_success(&["checkout", "-b", branch, &tracking]).map_err(|create_err| {
+                append_error_log(format!(
+                    "git.switch: checkout -b {branch} {tracking} failed: {create_err}"
+                ));
+                create_err
+            })
+        }
+    }
+}
+
+fn current_branch() -> Result<String, String> {
+    let output = run_git(&["rev-parse", "--abbrev-ref", "HEAD"])?;
+    if !output.status.success() {
+        return Err(format!(
+            "git rev-parse --abbrev-ref failed: {}",
+            format_command_failure(output, &["rev-parse", "--abbrev-ref", "HEAD"])
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn ensure_success(args: &[&str]) -> Result<(), String> {
+    let output = run_git(args)?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(format_command_failure(output, args))
+}
+
+fn run_git(args: &[&str]) -> Result<std::process::Output, String> {
+    Command::new("git")
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to launch git {}: {e}", join_args(args)))
+}
+
+fn format_command_failure(output: std::process::Output, args: &[&str]) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    format!(
+        "git {} exited with status {}. stdout: {} stderr: {}",
+        join_args(args),
+        output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "<signal>".to_string()),
+        stdout.trim(),
+        stderr.trim()
+    )
+}
+
+fn join_args(args: &[&str]) -> String {
+    args.join(" ")
 }
 
 /// Build headers for ChatGPT-backed requests: `User-Agent`, optional `Authorization`,
