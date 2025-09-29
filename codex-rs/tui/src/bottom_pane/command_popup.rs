@@ -250,7 +250,7 @@ fn description_excerpt(desc: &str) -> Option<String> {
 /// Extract a five-word excerpt from the first non-empty line of `content`.
 /// Cleans basic markdown/backticks and removes placeholder tokens.
 fn five_word_excerpt(content: &str) -> Option<String> {
-    let line = content.lines().map(|l| l.trim()).find(|l| !l.is_empty())?;
+    let line = content.lines().map(str::trim).find(|l| !l.is_empty())?;
 
     // Strip simple markdown markers and placeholders from the excerpt source.
     let mut cleaned = line.replace(['`', '*', '_'], "");

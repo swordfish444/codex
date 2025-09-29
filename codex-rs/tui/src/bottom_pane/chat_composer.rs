@@ -434,17 +434,17 @@ impl ChatComposer {
                         }
                     }
                     let name = &stripped[..name_end];
-                    if !name.is_empty() {
-                        if let Some(prompt) = self.custom_prompts.iter().find(|p| p.name == name) {
-                            let has_named =
-                                !prompt_args::prompt_argument_names(&prompt.content).is_empty();
-                            let has_numeric = prompt_has_numeric_placeholders(&prompt.content);
-                            let args = extract_args_for_prompt(first_line, name);
-                            if has_numeric && !has_named && !args.is_empty() {
-                                let expanded = expand_prompt_with_args(&prompt.content, &args);
-                                self.textarea.set_text("");
-                                return (InputResult::Submitted(expanded), true);
-                            }
+                    if !name.is_empty()
+                        && let Some(prompt) = self.custom_prompts.iter().find(|p| p.name == name)
+                    {
+                        let has_named =
+                            !prompt_args::prompt_argument_names(&prompt.content).is_empty();
+                        let has_numeric = prompt_has_numeric_placeholders(&prompt.content);
+                        let args = extract_args_for_prompt(first_line, name);
+                        if has_numeric && !has_named && !args.is_empty() {
+                            let expanded = expand_prompt_with_args(&prompt.content, &args);
+                            self.textarea.set_text("");
+                            return (InputResult::Submitted(expanded), true);
                         }
                     }
                 }
@@ -788,7 +788,7 @@ impl ChatComposer {
         // If the path contains whitespace, wrap it in double quotes so the
         // local prompt arg parser treats it as a single argument. Avoid adding
         // quotes when the path already contains one to keep behavior simple.
-        let needs_quotes = path.chars().any(|c| c.is_whitespace());
+        let needs_quotes = path.chars().any(char::is_whitespace);
         let inserted = if needs_quotes && !path.contains('"') {
             format!("\"{path}\"")
         } else {
@@ -952,13 +952,12 @@ impl ChatComposer {
                             }
                         }
                         let name = &stripped[..name_end];
-                        if !name.is_empty() {
-                            if let Some(prompt) =
+                        if !name.is_empty()
+                            && let Some(prompt) =
                                 self.custom_prompts.iter().find(|p| p.name == name)
-                            {
-                                let args = extract_args_for_prompt(&text, name);
-                                text = expand_prompt_with_args(&prompt.content, &args);
-                            }
+                        {
+                            let args = extract_args_for_prompt(&text, name);
+                            text = expand_prompt_with_args(&prompt.content, &args);
                         }
                     }
                 }
