@@ -41,6 +41,7 @@ use codex_core::protocol::TurnDiffEvent;
 use codex_core::protocol::UserMessageEvent;
 use codex_core::protocol::WebSearchBeginEvent;
 use codex_core::protocol::WebSearchEndEvent;
+use codex_core::protocol::WorktreeRemovedEvent;
 use codex_protocol::mcp_protocol::ConversationId;
 use codex_protocol::parse_command::ParsedCommand;
 use crossterm::event::KeyCode;
@@ -588,6 +589,12 @@ impl ChatWidget {
 
     fn on_background_event(&mut self, message: String) {
         debug!("BackgroundEvent: {message}");
+    }
+
+    fn on_worktree_removed(&mut self, event: WorktreeRemovedEvent) {
+        let message = format!("Git worktree removed: {}", event.path.display());
+        self.add_to_history(history_cell::new_info_event(message, None));
+        self.request_redraw();
     }
 
     fn on_stream_error(&mut self, message: String) {
@@ -1400,6 +1407,7 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(crate::app_event::AppEvent::ConversationHistory(ev));
             }
+            EventMsg::WorktreeRemoved(ev) => self.on_worktree_removed(ev),
             EventMsg::EnteredReviewMode(review_request) => {
                 self.on_entered_review_mode(review_request)
             }
