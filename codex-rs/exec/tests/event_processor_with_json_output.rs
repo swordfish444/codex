@@ -57,6 +57,7 @@ fn session_configured_produces_session_created_event() {
             history_entry_count: 0,
             initial_messages: None,
             rollout_path,
+            worktree_path: None,
         }),
     );
     let out = ep.collect_conversation_events(&ev);

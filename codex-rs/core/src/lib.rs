@@ -30,7 +30,6 @@ pub mod exec_env;
 mod flags;
 pub mod git_info;
 mod git_worktree;
-pub mod internal_storage;
 pub mod landlock;
 mod mcp_connection_manager;
 mod mcp_tool_call;
