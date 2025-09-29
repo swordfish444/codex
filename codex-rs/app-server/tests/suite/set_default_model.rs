@@ -1,10 +1,10 @@
 use std::path::Path;
 
+use app_test_support::McpProcess;
+use app_test_support::to_response;
 use codex_core::config::ConfigToml;
 use codex_protocol::mcp_protocol::SetDefaultModelParams;
 use codex_protocol::mcp_protocol::SetDefaultModelResponse;
-use mcp_test_support::McpProcess;
-use mcp_test_support::to_response;
 use mcp_types::JSONRPCResponse;
 use mcp_types::RequestId;
 use pretty_assertions::assert_eq;
@@ -24,7 +24,7 @@ async fn set_default_model_persists_overrides() {
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize())
         .await
         .expect("init timeout")
-        .expect("init failed");
+        .expect("init error");
 
     let params = SetDefaultModelParams {
         model: Some("gpt-4.1".to_string()),

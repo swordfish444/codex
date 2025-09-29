@@ -375,7 +375,7 @@ startup_timeout_sec = 20
 tool_timeout_sec = 30
 ```
 
-You can also manage these entries from the CLI [experimental]:
+You can also manage these entries from the CLI [experimental]. Use `codex mcp-server` when you want to launch the built-in server; the `codex mcp` command shown below only manages configured launchers:
 
 ```shell
 # Add a server (env can be repeated; `--` separates the launcher command)

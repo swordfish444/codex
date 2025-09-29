@@ -1,12 +1,12 @@
 use std::path::Path;
 
+use app_test_support::McpProcess;
+use app_test_support::to_response;
 use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_protocol::mcp_protocol::ArchiveConversationParams;
 use codex_protocol::mcp_protocol::ArchiveConversationResponse;
 use codex_protocol::mcp_protocol::NewConversationParams;
 use codex_protocol::mcp_protocol::NewConversationResponse;
-use mcp_test_support::McpProcess;
-use mcp_test_support::to_response;
 use mcp_types::JSONRPCResponse;
 use mcp_types::RequestId;
 use tempfile::TempDir;
@@ -24,8 +24,8 @@ async fn archive_conversation_moves_rollout_into_archived_directory() {
         .expect("spawn mcp process");
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize())
         .await
-        .expect("initialize timeout")
-        .expect("initialize request");
+        .expect("init timeout")
+        .expect("init error");
 
     let new_request_id = mcp
         .send_new_conversation_request(NewConversationParams {

@@ -1,12 +1,12 @@
 use std::path::Path;
 
+use app_test_support::McpProcess;
+use app_test_support::to_response;
 use codex_protocol::mcp_protocol::AuthMode;
 use codex_protocol::mcp_protocol::GetAuthStatusParams;
 use codex_protocol::mcp_protocol::GetAuthStatusResponse;
 use codex_protocol::mcp_protocol::LoginApiKeyParams;
 use codex_protocol::mcp_protocol::LoginApiKeyResponse;
-use mcp_test_support::McpProcess;
-use mcp_test_support::to_response;
 use mcp_types::JSONRPCResponse;
 use mcp_types::RequestId;
 use pretty_assertions::assert_eq;
@@ -87,7 +87,7 @@ async fn get_auth_status_no_auth() {
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize())
         .await
         .expect("init timeout")
-        .expect("init failed");
+        .expect("init error");
 
     let request_id = mcp
         .send_get_auth_status_request(GetAuthStatusParams {
@@ -120,7 +120,7 @@ async fn get_auth_status_with_api_key() {
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize())
         .await
         .expect("init timeout")
-        .expect("init failed");
+        .expect("init error");
 
     login_with_api_key_via_request(&mut mcp, "sk-test-key").await;
 
@@ -156,7 +156,7 @@ async fn get_auth_status_with_api_key_when_auth_not_required() {
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize())
         .await
         .expect("init timeout")
-        .expect("init failed");
+        .expect("init error");
 
     login_with_api_key_via_request(&mut mcp, "sk-test-key").await;
 
@@ -196,7 +196,7 @@ async fn get_auth_status_with_api_key_no_include_token() {
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize())
         .await
         .expect("init timeout")
-        .expect("init failed");
+        .expect("init error");
 
     login_with_api_key_via_request(&mut mcp, "sk-test-key").await;
 
