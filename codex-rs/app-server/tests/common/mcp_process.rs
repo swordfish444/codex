@@ -11,11 +11,13 @@ use tokio::process::ChildStdout;
 
 use anyhow::Context;
 use assert_cmd::prelude::*;
-use codex_mcp_server::CodexToolCallParam;
 use codex_protocol::mcp_protocol::AddConversationListenerParams;
 use codex_protocol::mcp_protocol::ArchiveConversationParams;
 use codex_protocol::mcp_protocol::CancelLoginChatGptParams;
+use codex_protocol::mcp_protocol::ClientInfo;
+use codex_protocol::mcp_protocol::ClientNotification;
 use codex_protocol::mcp_protocol::GetAuthStatusParams;
+use codex_protocol::mcp_protocol::InitializeParams;
 use codex_protocol::mcp_protocol::InterruptConversationParams;
 use codex_protocol::mcp_protocol::ListConversationsParams;
 use codex_protocol::mcp_protocol::LoginApiKeyParams;
@@ -26,20 +28,12 @@ use codex_protocol::mcp_protocol::SendUserMessageParams;
 use codex_protocol::mcp_protocol::SendUserTurnParams;
 use codex_protocol::mcp_protocol::SetDefaultModelParams;
 
-use mcp_types::CallToolRequestParams;
-use mcp_types::ClientCapabilities;
-use mcp_types::Implementation;
-use mcp_types::InitializeRequestParams;
 use mcp_types::JSONRPC_VERSION;
 use mcp_types::JSONRPCMessage;
 use mcp_types::JSONRPCNotification;
 use mcp_types::JSONRPCRequest;
 use mcp_types::JSONRPCResponse;
-use mcp_types::ModelContextProtocolNotification;
-use mcp_types::ModelContextProtocolRequest;
 use mcp_types::RequestId;
-use pretty_assertions::assert_eq;
-use serde_json::json;
 use std::process::Command as StdCommand;
 use tokio::process::Command;
 
@@ -69,7 +63,7 @@ impl McpProcess {
         env_overrides: &[(&str, Option<&str>)],
     ) -> anyhow::Result<Self> {
         // Use assert_cmd to locate the binary path and then switch to tokio::process::Command
-        let std_cmd = StdCommand::cargo_bin("codex-mcp-server")
+        let std_cmd = StdCommand::cargo_bin("codex-app-server")
             .context("should find binary for codex-mcp-server")?;
 
         let program = std_cmd.get_program().to_owned();
@@ -127,90 +121,31 @@ impl McpProcess {
 
     /// Performs the initialization handshake with the MCP server.
     pub async fn initialize(&mut self) -> anyhow::Result<()> {
-        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
-
-        let params = InitializeRequestParams {
-            capabilities: ClientCapabilities {
-                elicitation: Some(json!({})),
-                experimental: None,
-                roots: None,
-                sampling: None,
+        let params = Some(serde_json::to_value(InitializeParams {
+            client_info: ClientInfo {
+                name: "codex-app-server-tests".to_string(),
+                title: None,
+                version: "0.1.0".to_string(),
             },
-            client_info: Implementation {
-                name: "elicitation test".into(),
-                title: Some("Elicitation Test".into()),
-                version: "0.0.0".into(),
-                user_agent: None,
-            },
-            protocol_version: mcp_types::MCP_SCHEMA_VERSION.into(),
-        };
-        let params_value = serde_json::to_value(params)?;
-
-        self.send_jsonrpc_message(JSONRPCMessage::Request(JSONRPCRequest {
-            jsonrpc: JSONRPC_VERSION.into(),
-            id: RequestId::Integer(request_id),
-            method: mcp_types::InitializeRequest::METHOD.into(),
-            params: Some(params_value),
-        }))
-        .await?;
-
+        })?);
+        let req_id = self.send_request("initialize", params).await?;
         let initialized = self.read_jsonrpc_message().await?;
-        let os_info = os_info::get();
-        let user_agent = format!(
-            "codex_cli_rs/0.0.0 ({} {}; {}) {} (elicitation test; 0.0.0)",
-            os_info.os_type(),
-            os_info.version(),
-            os_info.architecture().unwrap_or("unknown"),
-            codex_core::terminal::user_agent()
-        );
-        assert_eq!(
-            JSONRPCMessage::Response(JSONRPCResponse {
-                jsonrpc: JSONRPC_VERSION.into(),
-                id: RequestId::Integer(request_id),
-                result: json!({
-                    "capabilities": {
-                        "tools": {
-                            "listChanged": true
-                        },
-                    },
-                    "serverInfo": {
-                        "name": "codex-mcp-server",
-                        "title": "Codex",
-                        "version": "0.0.0",
-                        "user_agent": user_agent
-                    },
-                    "protocolVersion": mcp_types::MCP_SCHEMA_VERSION
-                })
-            }),
-            initialized
-        );
+        let JSONRPCMessage::Response(response) = initialized else {
+            unreachable!("expected JSONRPCMessage::Response for initialize, got {initialized:?}");
+        };
+        if response.id != RequestId::Integer(req_id) {
+            anyhow::bail!(
+                "initialize response id mismatch: expected {}, got {:?}",
+                req_id,
+                response.id
+            );
+        }
 
         // Send notifications/initialized to ack the response.
-        self.send_jsonrpc_message(JSONRPCMessage::Notification(JSONRPCNotification {
-            jsonrpc: JSONRPC_VERSION.into(),
-            method: mcp_types::InitializedNotification::METHOD.into(),
-            params: None,
-        }))
-        .await?;
+        self.send_notification(ClientNotification::Initialized)
+            .await?;
 
         Ok(())
-    }
-
-    /// Returns the id used to make the request so it can be used when
-    /// correlating notifications.
-    pub async fn send_codex_tool_call(
-        &mut self,
-        params: CodexToolCallParam,
-    ) -> anyhow::Result<i64> {
-        let codex_tool_call_params = CallToolRequestParams {
-            name: "codex".to_string(),
-            arguments: Some(serde_json::to_value(params)?),
-        };
-        self.send_request(
-            mcp_types::CallToolRequest::METHOD,
-            Some(serde_json::to_value(codex_tool_call_params)?),
-        )
-        .await
     }
 
     /// Send a `newConversation` JSON-RPC request.
@@ -357,6 +292,23 @@ impl McpProcess {
         self.send_request("logoutChatGpt", None).await
     }
 
+    /// Send a `fuzzyFileSearch` JSON-RPC request.
+    pub async fn send_fuzzy_file_search_request(
+        &mut self,
+        query: &str,
+        roots: Vec<String>,
+        cancellation_token: Option<String>,
+    ) -> anyhow::Result<i64> {
+        let mut params = serde_json::json!({
+            "query": query,
+            "roots": roots,
+        });
+        if let Some(token) = cancellation_token {
+            params["cancellationToken"] = serde_json::json!(token);
+        }
+        self.send_request("fuzzyFileSearch", Some(params)).await
+    }
+
     async fn send_request(
         &mut self,
         method: &str,
@@ -383,6 +335,23 @@ impl McpProcess {
             jsonrpc: JSONRPC_VERSION.into(),
             id,
             result,
+        }))
+        .await
+    }
+
+    pub async fn send_notification(
+        &mut self,
+        notification: ClientNotification,
+    ) -> anyhow::Result<()> {
+        let value = serde_json::to_value(notification)?;
+        self.send_jsonrpc_message(JSONRPCMessage::Notification(JSONRPCNotification {
+            jsonrpc: JSONRPC_VERSION.into(),
+            method: value
+                .get("method")
+                .and_then(|m| m.as_str())
+                .ok_or_else(|| anyhow::format_err!("notification missing method field"))?
+                .to_string(),
+            params: value.get("params").cloned(),
         }))
         .await
     }
@@ -491,50 +460,6 @@ impl McpProcess {
                 JSONRPCMessage::Notification(notification) => {
                     if notification.method == method {
                         return Ok(notification);
-                    }
-                }
-                JSONRPCMessage::Request(_) => {
-                    anyhow::bail!("unexpected JSONRPCMessage::Request: {message:?}");
-                }
-                JSONRPCMessage::Error(_) => {
-                    anyhow::bail!("unexpected JSONRPCMessage::Error: {message:?}");
-                }
-                JSONRPCMessage::Response(_) => {
-                    anyhow::bail!("unexpected JSONRPCMessage::Response: {message:?}");
-                }
-            }
-        }
-    }
-
-    /// Reads notifications until a legacy TaskComplete event is observed:
-    /// Method "codex/event" with params.msg.type == "task_complete".
-    pub async fn read_stream_until_legacy_task_complete_notification(
-        &mut self,
-    ) -> anyhow::Result<JSONRPCNotification> {
-        eprintln!("in read_stream_until_legacy_task_complete_notification()");
-
-        loop {
-            let message = self.read_jsonrpc_message().await?;
-            match message {
-                JSONRPCMessage::Notification(notification) => {
-                    let is_match = if notification.method == "codex/event" {
-                        if let Some(params) = &notification.params {
-                            params
-                                .get("msg")
-                                .and_then(|m| m.get("type"))
-                                .and_then(|t| t.as_str())
-                                == Some("task_complete")
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
-
-                    if is_match {
-                        return Ok(notification);
-                    } else {
-                        eprintln!("ignoring notification: {notification:?}");
                     }
                 }
                 JSONRPCMessage::Request(_) => {

@@ -1,5 +1,9 @@
 use std::path::Path;
 
+use app_test_support::McpProcess;
+use app_test_support::create_final_assistant_message_sse_response;
+use app_test_support::create_mock_chat_completions_server;
+use app_test_support::to_response;
 use codex_protocol::mcp_protocol::AddConversationListenerParams;
 use codex_protocol::mcp_protocol::AddConversationSubscriptionResponse;
 use codex_protocol::mcp_protocol::ConversationId;
@@ -8,10 +12,6 @@ use codex_protocol::mcp_protocol::NewConversationParams;
 use codex_protocol::mcp_protocol::NewConversationResponse;
 use codex_protocol::mcp_protocol::SendUserMessageParams;
 use codex_protocol::mcp_protocol::SendUserMessageResponse;
-use mcp_test_support::McpProcess;
-use mcp_test_support::create_final_assistant_message_sse_response;
-use mcp_test_support::create_mock_chat_completions_server;
-use mcp_test_support::to_response;
 use mcp_types::JSONRPCNotification;
 use mcp_types::JSONRPCResponse;
 use mcp_types::RequestId;
@@ -41,8 +41,8 @@ async fn test_send_message_success() {
         .expect("spawn mcp process");
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize())
         .await
-        .expect("init timed out")
-        .expect("init failed");
+        .expect("init timeout")
+        .expect("init error");
 
     // Start a conversation using the new wire API.
     let new_conv_id = mcp
@@ -133,8 +133,8 @@ async fn test_send_message_session_not_found() {
     let mut mcp = McpProcess::new(codex_home.path()).await.expect("spawn");
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize())
         .await
-        .expect("timeout")
-        .expect("init");
+        .expect("init timeout")
+        .expect("init error");
 
     let unknown = ConversationId::new();
     let req_id = mcp
