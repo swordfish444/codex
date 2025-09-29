@@ -11,6 +11,7 @@ use crate::exec_command::ExecCommandOutput;
 use crate::exec_command::ExecCommandParams;
 use crate::exec_command::WriteStdinParams;
 use crate::notifications::UserNotification;
+use crate::rollout::RolloutRecorder;
 use crate::token_data::PlanType;
 use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::UnifiedExecRequest;
@@ -66,6 +67,25 @@ pub trait RolloutSink: Send + Sync {
     async fn shutdown(&self) -> std::io::Result<()>;
 
     fn get_rollout_path(&self) -> PathBuf;
+}
+
+#[async_trait]
+impl RolloutSink for RolloutRecorder {
+    async fn record_items(&self, items: &[RolloutItem]) -> std::io::Result<()> {
+        RolloutRecorder::record_items(self, items).await
+    }
+
+    async fn flush(&self) -> std::io::Result<()> {
+        RolloutRecorder::flush(self).await
+    }
+
+    async fn shutdown(&self) -> std::io::Result<()> {
+        RolloutRecorder::shutdown(self).await
+    }
+
+    fn get_rollout_path(&self) -> PathBuf {
+        RolloutRecorder::get_rollout_path(self)
+    }
 }
 
 /// Handles sandboxed exec orchestration, including long-running sessions.

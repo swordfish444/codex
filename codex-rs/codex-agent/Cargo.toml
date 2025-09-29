@@ -21,6 +21,9 @@ tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread", 
 uuid = { workspace = true, features = ["serde", "v4"] }
 which = { workspace = true }
 wildmatch = { workspace = true }
+codex-file-search = { workspace = true }
+time = { workspace = true, features = ["formatting", "parsing", "local-offset", "macros"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
 core_test_support = { workspace = true }

@@ -115,6 +115,8 @@ use crate::protocol::TokenCountEvent;
 use crate::protocol::TokenUsage;
 use crate::protocol::TurnDiffEvent;
 use crate::protocol::WebSearchBeginEvent;
+use crate::rollout::CoreGitInfoCollector;
+use crate::rollout::RolloutConfig;
 use crate::rollout::RolloutRecorder;
 use crate::rollout::RolloutRecorderParams;
 use crate::sandbox::BackendRegistry;
@@ -385,7 +387,11 @@ impl Session {
                 let conversation_id = ConversationId::default();
                 (
                     conversation_id,
-                    RolloutRecorderParams::new(conversation_id, user_instructions.clone()),
+                    RolloutRecorderParams::new(
+                        conversation_id,
+                        agent_config.cwd.clone(),
+                        user_instructions.clone(),
+                    ),
                 )
             }
             InitialHistory::Resumed(resumed_history) => (
@@ -403,7 +409,13 @@ impl Session {
         // - spin up MCP connection manager
         // - perform default shell discovery
         // - load history metadata
-        let rollout_fut = RolloutRecorder::new(&agent_config, rollout_params);
+        let rollout_config = RolloutConfig {
+            codex_home: agent_config.codex_home.clone(),
+            originator: crate::default_client::ORIGINATOR.value.clone(),
+            cli_version: env!("CARGO_PKG_VERSION").to_string(),
+            git_info_collector: Some(Arc::new(CoreGitInfoCollector)),
+        };
+        let rollout_fut = RolloutRecorder::new(&rollout_config, rollout_params);
 
         let mcp_fut = McpConnectionManager::new(agent_config.mcp_servers.clone());
         let default_shell_fut = shell::default_user_shell();

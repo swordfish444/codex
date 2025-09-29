@@ -9,7 +9,6 @@ use codex_agent::services::CredentialsProvider;
 use codex_agent::services::McpInterface;
 use codex_agent::services::Notifier;
 use codex_agent::services::ProviderAuth;
-use codex_agent::services::RolloutSink;
 use codex_agent::services::SandboxManager;
 use codex_agent::token_data::PlanType;
 use codex_protocol::mcp_protocol::AuthMode;
@@ -24,7 +23,6 @@ use crate::exec_command::ExecCommandParams;
 use crate::exec_command::ExecSessionManager;
 use crate::exec_command::WriteStdinParams;
 use crate::mcp_connection_manager::McpConnectionManager;
-use crate::rollout::RolloutRecorder;
 use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::UnifiedExecRequest;
 use crate::unified_exec::UnifiedExecResult;
@@ -84,28 +82,6 @@ impl McpInterface for McpConnectionManager {
         arguments: Option<Value>,
     ) -> Result<CallToolResult> {
         McpConnectionManager::call_tool(self, server, tool, arguments).await
-    }
-}
-
-#[async_trait]
-impl RolloutSink for RolloutRecorder {
-    async fn record_items(
-        &self,
-        items: &[codex_protocol::protocol::RolloutItem],
-    ) -> std::io::Result<()> {
-        RolloutRecorder::record_items(self, items).await
-    }
-
-    async fn flush(&self) -> std::io::Result<()> {
-        RolloutRecorder::flush(self).await
-    }
-
-    async fn shutdown(&self) -> std::io::Result<()> {
-        RolloutRecorder::shutdown(self).await
-    }
-
-    fn get_rollout_path(&self) -> PathBuf {
-        RolloutRecorder::get_rollout_path(self)
     }
 }
 

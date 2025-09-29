@@ -1,9 +1,11 @@
 pub mod config_types;
+pub mod conversation_history;
 pub mod exec_command;
 pub mod function_tool;
 pub mod model_family;
 pub mod model_provider;
 pub mod notifications;
+pub mod rollout;
 pub mod runtime;
 pub mod runtime_config;
 pub mod services;
@@ -15,10 +17,12 @@ pub mod turn_diff_tracker;
 pub mod unified_exec;
 
 pub use config_types::*;
+pub use conversation_history::*;
 pub use function_tool::*;
 pub use model_family::*;
 pub use model_provider::*;
 pub use notifications::*;
+pub use rollout::*;
 pub use runtime::*;
 pub use runtime_config::*;
 pub use services::*;
