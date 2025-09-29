@@ -530,6 +530,7 @@ mod tests {
                 history_entry_count: 0,
                 initial_messages: None,
                 rollout_path: PathBuf::new(),
+                worktree_path: None,
             };
             Arc::new(new_session_info(
                 app.chat_widget.config_ref(),
