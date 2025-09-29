@@ -12,7 +12,7 @@
 //!     that order.
 //! 3.  We do **not** walk past the Git root.
 
-use crate::config::Config;
+use crate::agent_config::AgentConfig;
 use std::path::PathBuf;
 use tokio::io::AsyncReadExt;
 use tracing::error;
@@ -26,7 +26,7 @@ const PROJECT_DOC_SEPARATOR: &str = "\n\n--- project-doc ---\n\n";
 
 /// Combines `Config::instructions` and `AGENTS.md` (if present) into a single
 /// string of instructions.
-pub(crate) async fn get_user_instructions(config: &Config) -> Option<String> {
+pub(crate) async fn get_user_instructions(config: &AgentConfig) -> Option<String> {
     match read_project_docs(config).await {
         Ok(Some(project_doc)) => match &config.user_instructions {
             Some(original_instructions) => Some(format!(
@@ -48,7 +48,7 @@ pub(crate) async fn get_user_instructions(config: &Config) -> Option<String> {
 /// concatenation of all discovered docs. If no documentation file is found the
 /// function returns `Ok(None)`. Unexpected I/O failures bubble up as `Err` so
 /// callers can decide how to handle them.
-pub async fn read_project_docs(config: &Config) -> std::io::Result<Option<String>> {
+pub async fn read_project_docs(config: &AgentConfig) -> std::io::Result<Option<String>> {
     let max_total = config.project_doc_max_bytes;
 
     if max_total == 0 {
@@ -106,7 +106,7 @@ pub async fn read_project_docs(config: &Config) -> std::io::Result<Option<String
 /// contents. The list is ordered from repository root to the current working
 /// directory (inclusive). Symlinks are allowed. When `project_doc_max_bytes`
 /// is zero, returns an empty list.
-pub fn discover_project_doc_paths(config: &Config) -> std::io::Result<Vec<PathBuf>> {
+pub fn discover_project_doc_paths(config: &AgentConfig) -> std::io::Result<Vec<PathBuf>> {
     let mut dir = config.cwd.clone();
     if let Ok(canon) = dir.canonicalize() {
         dir = canon;
@@ -176,6 +176,7 @@ pub fn discover_project_doc_paths(config: &Config) -> std::io::Result<Vec<PathBu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use crate::config::ConfigOverrides;
     use crate::config::ConfigToml;
     use std::fs;
@@ -186,7 +187,7 @@ mod tests {
     /// optionally specify a custom `instructions` string – when `None` the
     /// value is cleared to mimic a scenario where no system instructions have
     /// been configured.
-    fn make_config(root: &TempDir, limit: usize, instructions: Option<&str>) -> Config {
+    fn make_config(root: &TempDir, limit: usize, instructions: Option<&str>) -> AgentConfig {
         let codex_home = TempDir::new().unwrap();
         let mut config = Config::load_from_base_config_with_overrides(
             ConfigToml::default(),
@@ -199,7 +200,8 @@ mod tests {
         config.project_doc_max_bytes = limit;
 
         config.user_instructions = instructions.map(ToOwned::to_owned);
-        config
+
+        AgentConfig::from(&config)
     }
 
     /// AGENTS.md missing – should yield `None`.

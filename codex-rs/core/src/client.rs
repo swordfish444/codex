@@ -1,9 +1,10 @@
+use std::fmt;
 use std::io::BufRead;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use crate::AuthManager;
+use crate::agent_services::CredentialsProvider;
 use crate::auth::CodexAuth;
 use bytes::Bytes;
 use codex_protocol::mcp_protocol::AuthMode;
@@ -23,6 +24,7 @@ use tracing::debug;
 use tracing::trace;
 use tracing::warn;
 
+use crate::agent_config::AgentConfig;
 use crate::chat_completions::AggregateStreamExt;
 use crate::chat_completions::stream_chat_completions;
 use crate::client_common::Prompt;
@@ -31,7 +33,6 @@ use crate::client_common::ResponseStream;
 use crate::client_common::ResponsesApiRequest;
 use crate::client_common::create_reasoning_param_for_request;
 use crate::client_common::create_text_param_for_request;
-use crate::config::Config;
 use crate::default_client::create_client;
 use crate::error::CodexErr;
 use crate::error::Result;
@@ -69,10 +70,10 @@ struct Error {
     resets_in_seconds: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ModelClient {
-    config: Arc<Config>,
-    auth_manager: Option<Arc<AuthManager>>,
+    config: Arc<AgentConfig>,
+    auth_manager: Option<Arc<dyn CredentialsProvider>>,
     client: reqwest::Client,
     provider: ModelProviderInfo,
     conversation_id: ConversationId,
@@ -80,10 +81,22 @@ pub struct ModelClient {
     summary: ReasoningSummaryConfig,
 }
 
+impl fmt::Debug for ModelClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ModelClient")
+            .field("config", &self.config)
+            .field("provider", &self.provider)
+            .field("conversation_id", &self.conversation_id)
+            .field("effort", &self.effort)
+            .field("summary", &self.summary)
+            .finish()
+    }
+}
+
 impl ModelClient {
     pub fn new(
-        config: Arc<Config>,
-        auth_manager: Option<Arc<AuthManager>>,
+        config: Arc<AgentConfig>,
+        auth_manager: Option<Arc<dyn CredentialsProvider>>,
         provider: ModelProviderInfo,
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
@@ -259,7 +272,7 @@ impl ModelClient {
     async fn attempt_stream_responses(
         &self,
         payload_json: &Value,
-        auth_manager: &Option<Arc<AuthManager>>,
+        auth_manager: &Option<Arc<dyn CredentialsProvider>>,
     ) -> std::result::Result<ResponseStream, StreamAttemptError> {
         // Always fetch the latest auth in case a prior attempt refreshed the token.
         let auth = auth_manager.as_ref().and_then(|m| m.auth());
@@ -419,7 +432,7 @@ impl ModelClient {
         self.summary
     }
 
-    pub fn get_auth_manager(&self) -> Option<Arc<AuthManager>> {
+    pub fn get_auth_manager(&self) -> Option<Arc<dyn CredentialsProvider>> {
         self.auth_manager.clone()
     }
 }

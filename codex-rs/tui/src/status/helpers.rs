@@ -2,6 +2,7 @@ use crate::exec_command::relativize_to_home;
 use crate::text_formatting;
 use chrono::DateTime;
 use chrono::Local;
+use codex_core::AgentConfig;
 use codex_core::auth::get_auth_file;
 use codex_core::auth::try_read_auth_json;
 use codex_core::config::Config;
@@ -32,7 +33,8 @@ pub(crate) fn compose_model_display(
 }
 
 pub(crate) fn compose_agents_summary(config: &Config) -> String {
-    match discover_project_doc_paths(config) {
+    let agent_config = AgentConfig::from(config);
+    match discover_project_doc_paths(&agent_config) {
         Ok(paths) => {
             let mut rels: Vec<String> = Vec::new();
             for p in paths {

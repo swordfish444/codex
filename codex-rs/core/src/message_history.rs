@@ -27,7 +27,7 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 
-use crate::config::Config;
+use crate::agent_config::AgentConfig;
 use crate::config_types::HistoryPersistence;
 
 use codex_protocol::mcp_protocol::ConversationId;
@@ -49,7 +49,7 @@ pub struct HistoryEntry {
     pub text: String,
 }
 
-fn history_filepath(config: &Config) -> PathBuf {
+fn history_filepath(config: &AgentConfig) -> PathBuf {
     let mut path = config.codex_home.clone();
     path.push(HISTORY_FILENAME);
     path
@@ -61,7 +61,7 @@ fn history_filepath(config: &Config) -> PathBuf {
 pub(crate) async fn append_entry(
     text: &str,
     conversation_id: &ConversationId,
-    config: &Config,
+    config: &AgentConfig,
 ) -> Result<()> {
     match config.history.persistence {
         HistoryPersistence::SaveAll => {
@@ -140,7 +140,7 @@ pub(crate) async fn append_entry(
 
 /// Asynchronously fetch the history file's *identifier* (inode on Unix) and
 /// the current number of entries by counting newline characters.
-pub(crate) async fn history_metadata(config: &Config) -> (u64, usize) {
+pub(crate) async fn history_metadata(config: &AgentConfig) -> (u64, usize) {
     let path = history_filepath(config);
 
     #[cfg(unix)]
@@ -187,7 +187,7 @@ pub(crate) async fn history_metadata(config: &Config) -> (u64, usize) {
 /// Note this function is not async because it uses a sync advisory file
 /// locking API.
 #[cfg(unix)]
-pub(crate) fn lookup(log_id: u64, offset: usize, config: &Config) -> Option<HistoryEntry> {
+pub(crate) fn lookup(log_id: u64, offset: usize, config: &AgentConfig) -> Option<HistoryEntry> {
     use std::io::BufRead;
     use std::io::BufReader;
     use std::os::unix::fs::MetadataExt;

@@ -22,27 +22,27 @@ use crate::truncate::truncate_middle;
 
 mod errors;
 
-pub(crate) use errors::UnifiedExecError;
+pub use errors::UnifiedExecError;
 
 const DEFAULT_TIMEOUT_MS: u64 = 1_000;
 const MAX_TIMEOUT_MS: u64 = 60_000;
 const UNIFIED_EXEC_OUTPUT_MAX_BYTES: usize = 128 * 1024; // 128 KiB
 
 #[derive(Debug)]
-pub(crate) struct UnifiedExecRequest<'a> {
+pub struct UnifiedExecRequest<'a> {
     pub session_id: Option<i32>,
     pub input_chunks: &'a [String],
     pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct UnifiedExecResult {
+pub struct UnifiedExecResult {
     pub session_id: Option<i32>,
     pub output: String,
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct UnifiedExecSessionManager {
+pub struct UnifiedExecSessionManager {
     next_session_id: AtomicI32,
     sessions: Mutex<HashMap<i32, ManagedUnifiedExecSession>>,
 }

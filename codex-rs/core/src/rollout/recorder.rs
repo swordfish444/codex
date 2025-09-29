@@ -23,7 +23,7 @@ use super::list::ConversationsPage;
 use super::list::Cursor;
 use super::list::get_conversations;
 use super::policy::is_persisted_response_item;
-use crate::config::Config;
+use crate::agent_config::AgentConfig;
 use crate::default_client::ORIGINATOR;
 use crate::git_info::collect_git_info;
 use codex_protocol::protocol::InitialHistory;
@@ -96,7 +96,7 @@ impl RolloutRecorder {
     /// Attempt to create a new [`RolloutRecorder`]. If the sessions directory
     /// cannot be created or the rollout file cannot be opened we return the
     /// error so the caller can decide whether to disable persistence.
-    pub async fn new(config: &Config, params: RolloutRecorderParams) -> std::io::Result<Self> {
+    pub async fn new(config: &AgentConfig, params: RolloutRecorderParams) -> std::io::Result<Self> {
         let (file, rollout_path, meta) = match params {
             RolloutRecorderParams::Create {
                 conversation_id,
@@ -292,7 +292,7 @@ struct LogFileInfo {
 }
 
 fn create_log_file(
-    config: &Config,
+    config: &AgentConfig,
     conversation_id: ConversationId,
 ) -> std::io::Result<LogFileInfo> {
     // Resolve ~/.codex/sessions/YYYY/MM/DD and create it if missing.

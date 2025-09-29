@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use codex_core::AgentConfig;
 use codex_core::ContentItem;
 use codex_core::LocalShellAction;
 use codex_core::LocalShellExecAction;
@@ -69,9 +70,10 @@ async fn run_request(input: Vec<ResponseItem>) -> Value {
     let effort = config.model_reasoning_effort;
     let summary = config.model_reasoning_summary;
     let config = Arc::new(config);
+    let agent_config = Arc::new(AgentConfig::from(config.as_ref()));
 
     let client = ModelClient::new(
-        Arc::clone(&config),
+        Arc::clone(&agent_config),
         None,
         provider,
         effort,

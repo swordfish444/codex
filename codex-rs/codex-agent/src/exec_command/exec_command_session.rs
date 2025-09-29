@@ -5,7 +5,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 #[derive(Debug)]
-pub(crate) struct ExecCommandSession {
+#[allow(dead_code)]
+pub struct ExecCommandSession {
     /// Queue for writing bytes to the process stdin (PTY master write side).
     writer_tx: mpsc::Sender<Vec<u8>>,
     /// Broadcast stream of output chunks read from the PTY. New subscribers
@@ -29,8 +30,9 @@ pub(crate) struct ExecCommandSession {
     exit_status: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
+#[allow(dead_code)]
 impl ExecCommandSession {
-    pub(crate) fn new(
+    pub fn new(
         writer_tx: mpsc::Sender<Vec<u8>>,
         output_tx: broadcast::Sender<Vec<u8>>,
         killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
@@ -54,7 +56,7 @@ impl ExecCommandSession {
         )
     }
 
-    pub(crate) fn writer_sender(&self) -> mpsc::Sender<Vec<u8>> {
+    pub fn writer_sender(&self) -> mpsc::Sender<Vec<u8>> {
         self.writer_tx.clone()
     }
 
@@ -62,7 +64,7 @@ impl ExecCommandSession {
         self.output_tx.subscribe()
     }
 
-    pub(crate) fn has_exited(&self) -> bool {
+    pub fn has_exited(&self) -> bool {
         self.exit_status.load(std::sync::atomic::Ordering::SeqCst)
     }
 }

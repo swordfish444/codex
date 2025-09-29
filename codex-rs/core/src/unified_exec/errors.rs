@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub(crate) enum UnifiedExecError {
+pub enum UnifiedExecError {
     #[error("Failed to create unified exec session: {pty_error}")]
     CreateSession {
         #[source]

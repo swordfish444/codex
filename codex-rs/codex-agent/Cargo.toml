@@ -1,0 +1,15 @@
+[package]
+name = "codex-agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+portable-pty = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+codex-protocol = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+wildmatch = { workspace = true }
+
+[lints]
+workspace = true

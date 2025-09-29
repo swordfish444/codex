@@ -97,6 +97,7 @@ The same setting can be persisted in `~/.codex/config.toml` via the top-level `s
 This folder is the root of a Cargo workspace. It contains quite a bit of experimental code, but here are the key crates:
 
 - [`core/`](./core) contains the business logic for Codex. Ultimately, we hope this to be a library crate that is generally useful for building other Rust/native applications that use Codex.
+- [`docs/agent_runtime_baseline.md`](./docs/agent_runtime_baseline.md) documents the current agent runtime interfaces (`Codex`, `Session`, `SessionTask`) and links to the ongoing refactor plan in `agent_refactor.md`.
 - [`exec/`](./exec) "headless" CLI for use in automation.
 - [`tui/`](./tui) CLI that launches a fullscreen TUI built with [Ratatui](https://ratatui.rs/).
 - [`cli/`](./cli) CLI multitool that provides the aforementioned CLIs via subcommands.

@@ -1,3 +1,4 @@
+use codex_core::AgentConfig;
 use codex_core::CodexAuth;
 use codex_core::ContentItem;
 use codex_core::ConversationManager;
@@ -661,9 +662,10 @@ async fn azure_responses_request_includes_store_and_reasoning_ids() {
     let effort = config.model_reasoning_effort;
     let summary = config.model_reasoning_summary;
     let config = Arc::new(config);
+    let agent_config = Arc::new(AgentConfig::from(config.as_ref()));
 
     let client = ModelClient::new(
-        Arc::clone(&config),
+        Arc::clone(&agent_config),
         None,
         provider,
         effort,

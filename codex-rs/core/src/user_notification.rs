@@ -46,7 +46,7 @@ impl UserNotifier {
 /// program.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
-pub(crate) enum UserNotification {
+pub enum UserNotification {
     #[serde(rename_all = "kebab-case")]
     AgentTurnComplete {
         turn_id: String,

@@ -574,6 +574,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e9b18233253483ce2f65329a24072ec414db782531bdbb7d0bbc4bd2ce6b7e21"
 
 [[package]]
+name = "codex-agent"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "codex-protocol",
+ "portable-pty",
+ "serde",
+ "tokio",
+ "wildmatch",
+]
+
+[[package]]
 name = "codex-ansi-escape"
 version = "0.0.0"
 dependencies = [
@@ -677,6 +689,7 @@ dependencies = [
  "base64",
  "bytes",
  "chrono",
+ "codex-agent",
  "codex-apply-patch",
  "codex-file-search",
  "codex-mcp-client",

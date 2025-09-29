@@ -5,6 +5,8 @@
 // the TUI or the tracing stack).
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+pub mod agent_config;
+pub mod agent_services;
 mod apply_patch;
 pub mod auth;
 pub mod bash;
@@ -92,6 +94,13 @@ pub use codex_protocol::protocol;
 // as those in the protocol crate when constructing protocol messages.
 pub use codex_protocol::config_types as protocol_config_types;
 
+pub use agent_config::AgentConfig;
+pub use agent_services::CredentialsProvider;
+pub use agent_services::DefaultSandboxManager;
+pub use agent_services::McpInterface;
+pub use agent_services::Notifier;
+pub use agent_services::RolloutSink;
+pub use agent_services::SandboxManager;
 pub use client::ModelClient;
 pub use client_common::Prompt;
 pub use client_common::REVIEW_PROMPT;

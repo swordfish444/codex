@@ -12,6 +12,7 @@ mod fork_conversation;
 mod json_result;
 mod live_cli;
 mod model_overrides;
+mod multi_task_smoke;
 mod prompt_caching;
 mod review;
 mod rollout_list_find;

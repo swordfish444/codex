@@ -1,18 +1,14 @@
-use crate::RolloutRecorder;
-use crate::exec_command::ExecSessionManager;
-use crate::mcp_connection_manager::McpConnectionManager;
-use crate::unified_exec::UnifiedExecSessionManager;
-use crate::user_notification::UserNotifier;
-use std::path::PathBuf;
+use crate::agent_services::McpInterface;
+use crate::agent_services::Notifier;
+use crate::agent_services::RolloutSink;
+use crate::agent_services::SandboxManager;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 pub(crate) struct SessionServices {
-    pub(crate) mcp_connection_manager: McpConnectionManager,
-    pub(crate) session_manager: ExecSessionManager,
-    pub(crate) unified_exec_manager: UnifiedExecSessionManager,
-    pub(crate) notifier: UserNotifier,
-    pub(crate) rollout: Mutex<Option<RolloutRecorder>>,
-    pub(crate) codex_linux_sandbox_exe: Option<PathBuf>,
-    pub(crate) user_shell: crate::shell::Shell,
+    pub(crate) mcp: Arc<dyn McpInterface>,
+    pub(crate) notifier: Arc<dyn Notifier>,
+    pub(crate) sandbox: Arc<dyn SandboxManager>,
+    pub(crate) rollout: Mutex<Option<Arc<dyn RolloutSink>>>,
     pub(crate) show_raw_agent_reasoning: bool,
 }

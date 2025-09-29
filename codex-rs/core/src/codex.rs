@@ -40,6 +40,13 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::ModelProviderInfo;
+use crate::agent_config::AgentConfig;
+use crate::agent_services::CredentialsProvider;
+use crate::agent_services::DefaultSandboxManager;
+use crate::agent_services::McpInterface;
+use crate::agent_services::Notifier;
+use crate::agent_services::RolloutSink;
+use crate::agent_services::SandboxManager;
 use crate::apply_patch;
 use crate::apply_patch::ApplyPatchExec;
 use crate::apply_patch::InternalApplyPatchInvocation;
@@ -177,27 +184,28 @@ impl Codex {
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
 
-        let user_instructions = get_user_instructions(&config).await;
+        let agent_config = AgentConfig::from(&config);
+        let user_instructions = get_user_instructions(&agent_config).await;
 
-        let config = Arc::new(config);
+        let agent_config = Arc::new(agent_config);
 
         let configure_session = ConfigureSession {
-            provider: config.model_provider.clone(),
-            model: config.model.clone(),
-            model_reasoning_effort: config.model_reasoning_effort,
-            model_reasoning_summary: config.model_reasoning_summary,
+            provider: agent_config.model_provider.clone(),
+            model: agent_config.model.clone(),
+            model_reasoning_effort: agent_config.model_reasoning_effort,
+            model_reasoning_summary: agent_config.model_reasoning_summary,
             user_instructions,
-            base_instructions: config.base_instructions.clone(),
-            approval_policy: config.approval_policy,
-            sandbox_policy: config.sandbox_policy.clone(),
-            notify: UserNotifier::new(config.notify.clone()),
-            cwd: config.cwd.clone(),
+            base_instructions: agent_config.base_instructions.clone(),
+            approval_policy: agent_config.approval_policy,
+            sandbox_policy: agent_config.sandbox_policy.clone(),
+            notify: UserNotifier::new(agent_config.notify.clone()),
+            cwd: agent_config.cwd.clone(),
         };
 
         // Generate a unique ID for the lifetime of this Codex session.
         let (session, turn_context) = Session::new(
             configure_session,
-            config.clone(),
+            agent_config.clone(),
             auth_manager.clone(),
             tx_event.clone(),
             conversation_history,
@@ -210,7 +218,7 @@ impl Codex {
         let conversation_id = session.conversation_id;
 
         // This task will run until Op::Shutdown is received.
-        tokio::spawn(submission_loop(session, turn_context, config, rx_sub));
+        tokio::spawn(submission_loop(session, turn_context, agent_config, rx_sub));
         let codex = Codex {
             next_id: AtomicU64::new(0),
             tx_sub,
@@ -265,6 +273,7 @@ pub(crate) struct Session {
     state: Mutex<SessionState>,
     pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
     services: SessionServices,
+    agent_config: Arc<AgentConfig>,
     next_internal_sub_id: AtomicU64,
 }
 
@@ -331,7 +340,7 @@ struct ConfigureSession {
 impl Session {
     async fn new(
         configure_session: ConfigureSession,
-        config: Arc<Config>,
+        agent_config: Arc<AgentConfig>,
         auth_manager: Arc<AuthManager>,
         tx_event: Sender<Event>,
         initial_history: InitialHistory,
@@ -376,11 +385,11 @@ impl Session {
         // - spin up MCP connection manager
         // - perform default shell discovery
         // - load history metadata
-        let rollout_fut = RolloutRecorder::new(&config, rollout_params);
+        let rollout_fut = RolloutRecorder::new(&agent_config, rollout_params);
 
-        let mcp_fut = McpConnectionManager::new(config.mcp_servers.clone());
+        let mcp_fut = McpConnectionManager::new(agent_config.mcp_servers.clone());
         let default_shell_fut = shell::default_user_shell();
-        let history_meta_fut = crate::message_history::history_metadata(&config);
+        let history_meta_fut = crate::message_history::history_metadata(&agent_config);
 
         // Join all independent futures.
         let (rollout_recorder, mcp_res, default_shell, (history_log_id, history_entry_count)) =
@@ -390,13 +399,14 @@ impl Session {
             error!("failed to initialize rollout recorder: {e:#}");
             anyhow::anyhow!("failed to initialize rollout recorder: {e:#}")
         })?;
-        let rollout_path = rollout_recorder.rollout_path.clone();
+        let rollout_path = rollout_recorder.get_rollout_path();
+        let rollout_sink: Arc<dyn RolloutSink> = Arc::new(rollout_recorder);
         // Create the mutable state for the Session.
         let state = SessionState::new();
 
         // Handle MCP manager result and record any startup failures.
         let (mcp_connection_manager, failed_clients) = match mcp_res {
-            Ok((mgr, failures)) => (mgr, failures),
+            Ok((mgr, failures)) => (Arc::new(mgr) as Arc<dyn McpInterface>, failures),
             Err(e) => {
                 let message = format!("Failed to create MCP connection manager: {e:#}");
                 error!("{message}");
@@ -404,7 +414,10 @@ impl Session {
                     id: INITIAL_SUBMIT_ID.to_owned(),
                     msg: EventMsg::Error(ErrorEvent { message }),
                 });
-                (McpConnectionManager::default(), Default::default())
+                (
+                    Arc::new(McpConnectionManager::default()) as Arc<dyn McpInterface>,
+                    Default::default(),
+                )
             }
         };
 
@@ -422,9 +435,10 @@ impl Session {
 
         // Now that the conversation id is final (may have been updated by resume),
         // construct the model client.
+        let credentials_provider: Option<Arc<dyn CredentialsProvider>> = Some(auth_manager.clone());
         let client = ModelClient::new(
-            config.clone(),
-            Some(auth_manager.clone()),
+            agent_config.clone(),
+            credentials_provider,
             provider.clone(),
             model_reasoning_effort,
             model_reasoning_summary,
@@ -433,32 +447,36 @@ impl Session {
         let turn_context = TurnContext {
             client,
             tools_config: ToolsConfig::new(&ToolsConfigParams {
-                model_family: &config.model_family,
-                include_plan_tool: config.include_plan_tool,
-                include_apply_patch_tool: config.include_apply_patch_tool,
-                include_web_search_request: config.tools_web_search_request,
-                use_streamable_shell_tool: config.use_experimental_streamable_shell_tool,
-                include_view_image_tool: config.include_view_image_tool,
-                experimental_unified_exec_tool: config.use_experimental_unified_exec_tool,
+                model_family: &agent_config.model_family,
+                include_plan_tool: agent_config.include_plan_tool,
+                include_apply_patch_tool: agent_config.include_apply_patch_tool,
+                include_web_search_request: agent_config.tools_web_search_request,
+                use_streamable_shell_tool: agent_config.use_experimental_streamable_shell_tool,
+                include_view_image_tool: agent_config.include_view_image_tool,
+                experimental_unified_exec_tool: agent_config.use_experimental_unified_exec_tool,
             }),
             user_instructions,
             base_instructions,
             approval_policy,
             sandbox_policy,
-            shell_environment_policy: config.shell_environment_policy.clone(),
+            shell_environment_policy: agent_config.shell_environment_policy.clone(),
             cwd,
             is_review_mode: false,
             final_output_json_schema: None,
         };
+        let notifier: Arc<dyn Notifier> = Arc::new(notify);
+        let sandbox: Arc<dyn SandboxManager> = Arc::new(DefaultSandboxManager::new(
+            ExecSessionManager::default(),
+            UnifiedExecSessionManager::default(),
+            agent_config.codex_linux_sandbox_exe.clone(),
+            default_shell,
+        ));
         let services = SessionServices {
-            mcp_connection_manager,
-            session_manager: ExecSessionManager::default(),
-            unified_exec_manager: UnifiedExecSessionManager::default(),
-            notifier: notify,
-            rollout: Mutex::new(Some(rollout_recorder)),
-            codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
-            user_shell: default_shell,
-            show_raw_agent_reasoning: config.show_raw_agent_reasoning,
+            mcp: mcp_connection_manager,
+            notifier,
+            sandbox,
+            rollout: Mutex::new(Some(rollout_sink)),
+            show_raw_agent_reasoning: agent_config.show_raw_agent_reasoning,
         };
 
         let sess = Arc::new(Session {
@@ -467,6 +485,7 @@ impl Session {
             state: Mutex::new(state),
             active_turn: Mutex::new(None),
             services,
+            agent_config: agent_config.clone(),
             next_internal_sub_id: AtomicU64::new(0),
         });
 
@@ -1021,10 +1040,7 @@ impl Session {
         tool: &str,
         arguments: Option<serde_json::Value>,
     ) -> anyhow::Result<CallToolResult> {
-        self.services
-            .mcp_connection_manager
-            .call_tool(server, tool, arguments)
-            .await
+        self.services.mcp.call_tool(server, tool, arguments).await
     }
 
     pub async fn interrupt_task(self: &Arc<Self>) {
@@ -1045,12 +1061,12 @@ impl Session {
         }
     }
 
-    pub(crate) fn notifier(&self) -> &UserNotifier {
-        &self.services.notifier
+    pub(crate) fn notifier(&self) -> &dyn Notifier {
+        self.services.notifier.as_ref()
     }
 
     fn user_shell(&self) -> &shell::Shell {
-        &self.services.user_shell
+        self.services.sandbox.user_shell()
     }
 
     fn show_raw_agent_reasoning(&self) -> bool {
@@ -1082,7 +1098,7 @@ pub(crate) struct ApplyPatchCommandContext {
 async fn submission_loop(
     sess: Arc<Session>,
     turn_context: TurnContext,
-    config: Arc<Config>,
+    agent_config: Arc<AgentConfig>,
     rx_sub: Receiver<Submission>,
 ) {
     // Wrap once to avoid cloning TurnContext for each task.
@@ -1108,8 +1124,8 @@ async fn submission_loop(
 
                 // Effective model + family
                 let (effective_model, effective_family) = if let Some(ref m) = model {
-                    let fam =
-                        find_family_for_model(m).unwrap_or_else(|| config.model_family.clone());
+                    let fam = find_family_for_model(m)
+                        .unwrap_or_else(|| agent_config.model_family.clone());
                     (m.clone(), fam)
                 } else {
                     (prev.client.get_model(), prev.client.get_model_family())
@@ -1122,7 +1138,7 @@ async fn submission_loop(
                 let auth_manager = prev.client.get_auth_manager();
 
                 // Build updated config for the client
-                let mut updated_config = (*config).clone();
+                let mut updated_config = (*agent_config).clone();
                 updated_config.model = effective_model.clone();
                 updated_config.model_family = effective_family.clone();
                 if let Some(model_info) = get_model_info(&effective_family) {
@@ -1146,12 +1162,12 @@ async fn submission_loop(
 
                 let tools_config = ToolsConfig::new(&ToolsConfigParams {
                     model_family: &effective_family,
-                    include_plan_tool: config.include_plan_tool,
-                    include_apply_patch_tool: config.include_apply_patch_tool,
-                    include_web_search_request: config.tools_web_search_request,
-                    use_streamable_shell_tool: config.use_experimental_streamable_shell_tool,
-                    include_view_image_tool: config.include_view_image_tool,
-                    experimental_unified_exec_tool: config.use_experimental_unified_exec_tool,
+                    include_plan_tool: agent_config.include_plan_tool,
+                    include_apply_patch_tool: agent_config.include_apply_patch_tool,
+                    include_web_search_request: agent_config.tools_web_search_request,
+                    use_streamable_shell_tool: agent_config.use_experimental_streamable_shell_tool,
+                    include_view_image_tool: agent_config.include_view_image_tool,
+                    experimental_unified_exec_tool: agent_config.use_experimental_unified_exec_tool,
                 });
 
                 let new_turn_context = TurnContext {
@@ -1208,10 +1224,10 @@ async fn submission_loop(
 
                     // Derive a model family for the requested model; fall back to the session's.
                     let model_family = find_family_for_model(&model)
-                        .unwrap_or_else(|| config.model_family.clone());
+                        .unwrap_or_else(|| agent_config.model_family.clone());
 
                     // Create a per‑turn Config clone with the requested model/family.
-                    let mut per_turn_config = (*config).clone();
+                    let mut per_turn_config = (*agent_config).clone();
                     per_turn_config.model = model.clone();
                     per_turn_config.model_family = model_family.clone();
                     if let Some(model_info) = get_model_info(&model_family) {
@@ -1233,13 +1249,13 @@ async fn submission_loop(
                         client,
                         tools_config: ToolsConfig::new(&ToolsConfigParams {
                             model_family: &model_family,
-                            include_plan_tool: config.include_plan_tool,
-                            include_apply_patch_tool: config.include_apply_patch_tool,
-                            include_web_search_request: config.tools_web_search_request,
-                            use_streamable_shell_tool: config
+                            include_plan_tool: agent_config.include_plan_tool,
+                            include_apply_patch_tool: agent_config.include_apply_patch_tool,
+                            include_web_search_request: agent_config.tools_web_search_request,
+                            use_streamable_shell_tool: agent_config
                                 .use_experimental_streamable_shell_tool,
-                            include_view_image_tool: config.include_view_image_tool,
-                            experimental_unified_exec_tool: config
+                            include_view_image_tool: agent_config.include_view_image_tool,
+                            experimental_unified_exec_tool: agent_config
                                 .use_experimental_unified_exec_tool,
                         }),
                         user_instructions: turn_context.user_instructions.clone(),
@@ -1282,9 +1298,10 @@ async fn submission_loop(
             },
             Op::AddToHistory { text } => {
                 let id = sess.conversation_id;
-                let config = config.clone();
+                let agent_config_clone = agent_config.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = crate::message_history::append_entry(&text, &id, &config).await
+                    if let Err(e) =
+                        crate::message_history::append_entry(&text, &id, &agent_config_clone).await
                     {
                         warn!("failed to append to message history: {e}");
                     }
@@ -1292,14 +1309,14 @@ async fn submission_loop(
             }
 
             Op::GetHistoryEntryRequest { offset, log_id } => {
-                let config = config.clone();
+                let agent_config_clone = agent_config.clone();
                 let sess_clone = sess.clone();
                 let sub_id = sub.id.clone();
 
                 tokio::spawn(async move {
                     // Run lookup in blocking thread because it does file IO + locking.
                     let entry_opt = tokio::task::spawn_blocking(move || {
-                        crate::message_history::lookup(log_id, offset, &config)
+                        crate::message_history::lookup(log_id, offset, &agent_config_clone)
                     })
                     .await
                     .unwrap_or(None);
@@ -1328,7 +1345,7 @@ async fn submission_loop(
                 let sub_id = sub.id.clone();
 
                 // This is a cheap lookup from the connection manager's cache.
-                let tools = sess.services.mcp_connection_manager.list_all_tools();
+                let tools = sess.services.mcp.list_all_tools();
                 let event = Event {
                     id: sub_id,
                     msg: EventMsg::McpListToolsResponse(
@@ -1427,7 +1444,7 @@ async fn submission_loop(
             Op::Review { review_request } => {
                 spawn_review_thread(
                     sess.clone(),
-                    config.clone(),
+                    sess.agent_config.clone(),
                     turn_context.clone(),
                     sub.id,
                     review_request,
@@ -1445,22 +1462,22 @@ async fn submission_loop(
 /// Spawn a review thread using the given prompt.
 async fn spawn_review_thread(
     sess: Arc<Session>,
-    config: Arc<Config>,
+    agent_config: Arc<AgentConfig>,
     parent_turn_context: Arc<TurnContext>,
     sub_id: String,
     review_request: ReviewRequest,
 ) {
-    let model = config.review_model.clone();
+    let model = agent_config.review_model.clone();
     let review_model_family = find_family_for_model(&model)
         .unwrap_or_else(|| parent_turn_context.client.get_model_family());
     let tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_family: &review_model_family,
         include_plan_tool: false,
-        include_apply_patch_tool: config.include_apply_patch_tool,
+        include_apply_patch_tool: agent_config.include_apply_patch_tool,
         include_web_search_request: false,
         use_streamable_shell_tool: false,
         include_view_image_tool: false,
-        experimental_unified_exec_tool: config.use_experimental_unified_exec_tool,
+        experimental_unified_exec_tool: agent_config.use_experimental_unified_exec_tool,
     });
 
     let base_instructions = REVIEW_PROMPT.to_string();
@@ -1470,7 +1487,7 @@ async fn spawn_review_thread(
     let model_family = review_model_family.clone();
 
     // Build per‑turn client with the requested model/family.
-    let mut per_turn_config = (*config).clone();
+    let mut per_turn_config = (*agent_config).clone();
     per_turn_config.model = model.clone();
     per_turn_config.model_family = model_family.clone();
     per_turn_config.model_reasoning_effort = Some(ReasoningEffortConfig::Low);
@@ -1853,7 +1870,7 @@ async fn run_turn(
 ) -> CodexResult<TurnRunResult> {
     let tools = get_openai_tools(
         &turn_context.tools_config,
-        Some(sess.services.mcp_connection_manager.list_all_tools()),
+        Some(sess.services.mcp.list_all_tools()),
     );
 
     let prompt = Prompt {
@@ -2133,9 +2150,7 @@ async fn handle_response_item(
             ..
         } => {
             info!("FunctionCall: {name}({arguments})");
-            if let Some((server, tool_name)) =
-                sess.services.mcp_connection_manager.parse_tool_name(&name)
-            {
+            if let Some((server, tool_name)) = sess.services.mcp.parse_tool_name(&name) {
                 let resp = handle_mcp_tool_call(
                     sess,
                     sub_id,
@@ -2314,8 +2329,8 @@ async fn handle_unified_exec_tool_call(
 
     let value = sess
         .services
-        .unified_exec_manager
-        .handle_request(request)
+        .sandbox
+        .handle_unified_exec_request(request)
         .await
         .map_err(|err| {
             FunctionCallError::RespondToModel(format!("unified exec failed: {err:?}"))
@@ -2433,7 +2448,7 @@ async fn handle_function_call(
             })?;
             let result = sess
                 .services
-                .session_manager
+                .sandbox
                 .handle_exec_command_request(exec_params)
                 .await;
             match result {
@@ -2451,7 +2466,7 @@ async fn handle_function_call(
 
             let result = sess
                 .services
-                .session_manager
+                .sandbox
                 .handle_write_stdin_request(write_stdin_params)
                 .await
                 .map_err(FunctionCallError::RespondToModel)?;
@@ -2646,7 +2661,7 @@ async fn handle_container_exec_with_params(
                 plan: plan_for_invocation,
                 sandbox_policy: &turn_context.sandbox_policy,
                 sandbox_cwd: &turn_context.cwd,
-                codex_linux_sandbox_exe: &sess.services.codex_linux_sandbox_exe,
+                codex_linux_sandbox_exe: sess.services.sandbox.codex_linux_sandbox_exe(),
                 stdout_stream: if exec_command_context.apply_patch.is_some() {
                     None
                 } else {
@@ -2768,7 +2783,7 @@ async fn handle_sandbox_error(
                         plan: ExecPlan::approved(SandboxType::None, false, true),
                         sandbox_policy: &turn_context.sandbox_policy,
                         sandbox_cwd: &turn_context.cwd,
-                        codex_linux_sandbox_exe: &sess.services.codex_linux_sandbox_exe,
+                        codex_linux_sandbox_exe: sess.services.sandbox.codex_linux_sandbox_exe(),
                         stdout_stream: if exec_command_context.apply_patch.is_some() {
                             None
                         } else {
@@ -3323,45 +3338,48 @@ mod tests {
         )
         .expect("load default test config");
         let config = Arc::new(config);
+        let agent_config = Arc::new(AgentConfig::from(config.as_ref()));
         let conversation_id = ConversationId::default();
         let client = ModelClient::new(
-            config.clone(),
+            agent_config.clone(),
             None,
-            config.model_provider.clone(),
-            config.model_reasoning_effort,
-            config.model_reasoning_summary,
+            agent_config.model_provider.clone(),
+            agent_config.model_reasoning_effort,
+            agent_config.model_reasoning_summary,
             conversation_id,
         );
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &config.model_family,
-            include_plan_tool: config.include_plan_tool,
-            include_apply_patch_tool: config.include_apply_patch_tool,
-            include_web_search_request: config.tools_web_search_request,
-            use_streamable_shell_tool: config.use_experimental_streamable_shell_tool,
-            include_view_image_tool: config.include_view_image_tool,
-            experimental_unified_exec_tool: config.use_experimental_unified_exec_tool,
+            model_family: &agent_config.model_family,
+            include_plan_tool: agent_config.include_plan_tool,
+            include_apply_patch_tool: agent_config.include_apply_patch_tool,
+            include_web_search_request: agent_config.tools_web_search_request,
+            use_streamable_shell_tool: agent_config.use_experimental_streamable_shell_tool,
+            include_view_image_tool: agent_config.include_view_image_tool,
+            experimental_unified_exec_tool: agent_config.use_experimental_unified_exec_tool,
         });
         let turn_context = TurnContext {
             client,
-            cwd: config.cwd.clone(),
-            base_instructions: config.base_instructions.clone(),
-            user_instructions: config.user_instructions.clone(),
-            approval_policy: config.approval_policy,
-            sandbox_policy: config.sandbox_policy.clone(),
-            shell_environment_policy: config.shell_environment_policy.clone(),
+            cwd: agent_config.cwd.clone(),
+            base_instructions: agent_config.base_instructions.clone(),
+            user_instructions: agent_config.user_instructions.clone(),
+            approval_policy: agent_config.approval_policy,
+            sandbox_policy: agent_config.sandbox_policy.clone(),
+            shell_environment_policy: agent_config.shell_environment_policy.clone(),
             tools_config,
             is_review_mode: false,
             final_output_json_schema: None,
         };
         let services = SessionServices {
-            mcp_connection_manager: McpConnectionManager::default(),
-            session_manager: ExecSessionManager::default(),
-            unified_exec_manager: UnifiedExecSessionManager::default(),
-            notifier: UserNotifier::default(),
+            mcp: Arc::new(McpConnectionManager::default()),
+            notifier: Arc::new(UserNotifier::default()),
+            sandbox: Arc::new(DefaultSandboxManager::new(
+                ExecSessionManager::default(),
+                UnifiedExecSessionManager::default(),
+                None,
+                shell::Shell::Unknown,
+            )),
             rollout: Mutex::new(None),
-            codex_linux_sandbox_exe: None,
-            user_shell: shell::Shell::Unknown,
-            show_raw_agent_reasoning: config.show_raw_agent_reasoning,
+            show_raw_agent_reasoning: agent_config.show_raw_agent_reasoning,
         };
         let session = Session {
             conversation_id,
@@ -3369,6 +3387,7 @@ mod tests {
             state: Mutex::new(SessionState::new()),
             active_turn: Mutex::new(None),
             services,
+            agent_config,
             next_internal_sub_id: AtomicU64::new(0),
         };
         (session, turn_context)
@@ -3390,45 +3409,48 @@ mod tests {
         )
         .expect("load default test config");
         let config = Arc::new(config);
+        let agent_config = Arc::new(AgentConfig::from(config.as_ref()));
         let conversation_id = ConversationId::default();
         let client = ModelClient::new(
-            config.clone(),
+            agent_config.clone(),
             None,
-            config.model_provider.clone(),
-            config.model_reasoning_effort,
-            config.model_reasoning_summary,
+            agent_config.model_provider.clone(),
+            agent_config.model_reasoning_effort,
+            agent_config.model_reasoning_summary,
             conversation_id,
         );
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &config.model_family,
-            include_plan_tool: config.include_plan_tool,
-            include_apply_patch_tool: config.include_apply_patch_tool,
-            include_web_search_request: config.tools_web_search_request,
-            use_streamable_shell_tool: config.use_experimental_streamable_shell_tool,
-            include_view_image_tool: config.include_view_image_tool,
-            experimental_unified_exec_tool: config.use_experimental_unified_exec_tool,
+            model_family: &agent_config.model_family,
+            include_plan_tool: agent_config.include_plan_tool,
+            include_apply_patch_tool: agent_config.include_apply_patch_tool,
+            include_web_search_request: agent_config.tools_web_search_request,
+            use_streamable_shell_tool: agent_config.use_experimental_streamable_shell_tool,
+            include_view_image_tool: agent_config.include_view_image_tool,
+            experimental_unified_exec_tool: agent_config.use_experimental_unified_exec_tool,
         });
         let turn_context = Arc::new(TurnContext {
             client,
-            cwd: config.cwd.clone(),
-            base_instructions: config.base_instructions.clone(),
-            user_instructions: config.user_instructions.clone(),
-            approval_policy: config.approval_policy,
-            sandbox_policy: config.sandbox_policy.clone(),
-            shell_environment_policy: config.shell_environment_policy.clone(),
+            cwd: agent_config.cwd.clone(),
+            base_instructions: agent_config.base_instructions.clone(),
+            user_instructions: agent_config.user_instructions.clone(),
+            approval_policy: agent_config.approval_policy,
+            sandbox_policy: agent_config.sandbox_policy.clone(),
+            shell_environment_policy: agent_config.shell_environment_policy.clone(),
             tools_config,
             is_review_mode: false,
             final_output_json_schema: None,
         });
         let services = SessionServices {
-            mcp_connection_manager: McpConnectionManager::default(),
-            session_manager: ExecSessionManager::default(),
-            unified_exec_manager: UnifiedExecSessionManager::default(),
-            notifier: UserNotifier::default(),
+            mcp: Arc::new(McpConnectionManager::default()),
+            notifier: Arc::new(UserNotifier::default()),
+            sandbox: Arc::new(DefaultSandboxManager::new(
+                ExecSessionManager::default(),
+                UnifiedExecSessionManager::default(),
+                None,
+                shell::Shell::Unknown,
+            )),
             rollout: Mutex::new(None),
-            codex_linux_sandbox_exe: None,
-            user_shell: shell::Shell::Unknown,
-            show_raw_agent_reasoning: config.show_raw_agent_reasoning,
+            show_raw_agent_reasoning: agent_config.show_raw_agent_reasoning,
         };
         let session = Arc::new(Session {
             conversation_id,
@@ -3436,6 +3458,7 @@ mod tests {
             state: Mutex::new(SessionState::new()),
             active_turn: Mutex::new(None),
             services,
+            agent_config,
             next_internal_sub_id: AtomicU64::new(0),
         });
         (session, turn_context, rx_event)

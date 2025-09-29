@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU32;
+use std::vec::Vec;
 
 use portable_pty::CommandBuilder;
 use portable_pty::PtySize;
@@ -28,6 +29,7 @@ pub struct SessionManager {
     sessions: Mutex<HashMap<SessionId, ExecCommandSession>>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ExecCommandOutput {
     wall_time: Duration,
@@ -37,7 +39,7 @@ pub struct ExecCommandOutput {
 }
 
 impl ExecCommandOutput {
-    pub(crate) fn to_text_output(&self) -> String {
+    pub fn to_text_output(&self) -> String {
         let wall_time_secs = self.wall_time.as_secs_f32();
         let termination_status = match self.exit_status {
             ExitStatus::Exited(code) => format!("Process exited with code {code}"),
@@ -61,6 +63,7 @@ Output:
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum ExitStatus {
     Exited(i32),
@@ -79,7 +82,11 @@ impl SessionManager {
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
         );
 
-        let (session, mut output_rx, mut exit_rx) = create_exec_command_session(params.clone())
+        let (session, mut output_rx, mut exit_rx): (
+            ExecCommandSession,
+            tokio::sync::broadcast::Receiver<Vec<u8>>,
+            tokio::sync::oneshot::Receiver<i32>,
+        ) = create_exec_command_session(params.clone())
             .await
             .map_err(|err| {
                 format!(
