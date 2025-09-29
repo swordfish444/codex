@@ -1,10 +1,8 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::time::Duration;
 
 use crate::AuthManager;
 use crate::client_common::REVIEW_PROMPT;
@@ -54,11 +52,10 @@ use crate::environment_context::EnvironmentContext;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
 use crate::error::SandboxErr;
-use crate::error::get_error_message_ui;
 use crate::exec::ExecParams;
 use crate::exec::ExecToolCallOutput;
-use crate::exec::SandboxType;
 use crate::exec::StdoutStream;
+#[cfg(test)]
 use crate::exec::StreamOutput;
 use crate::exec_command::EXEC_COMMAND_TOOL_NAME;
 use crate::exec_command::ExecCommandParams;
@@ -66,6 +63,12 @@ use crate::exec_command::ExecSessionManager;
 use crate::exec_command::WRITE_STDIN_TOOL_NAME;
 use crate::exec_command::WriteStdinParams;
 use crate::exec_env::create_env;
+use crate::executor::ExecError;
+use crate::executor::ExecutionMode;
+use crate::executor::ExecutionRequest;
+use crate::executor::Executor;
+use crate::executor::ExecutorConfig;
+use crate::executor::normalize_exec_result;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::mcp_tool_call::handle_mcp_tool_call;
 use crate::model_family::find_family_for_model;
@@ -109,12 +112,6 @@ use crate::protocol::TurnDiffEvent;
 use crate::protocol::WebSearchBeginEvent;
 use crate::rollout::RolloutRecorder;
 use crate::rollout::RolloutRecorderParams;
-use crate::sandbox::BackendRegistry;
-use crate::sandbox::ExecPlan;
-use crate::sandbox::ExecRuntimeContext;
-use crate::sandbox::PreparedExec;
-use crate::sandbox::prepare_exec_invocation;
-use crate::sandbox::run_with_plan;
 use crate::shell;
 use crate::state::ActiveTurn;
 use crate::state::SessionServices;
@@ -266,6 +263,7 @@ pub(crate) struct Session {
     pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
     services: SessionServices,
     next_internal_sub_id: AtomicU64,
+    executor: Executor,
 }
 
 /// The context needed for a single turn of the conversation.
@@ -464,6 +462,12 @@ impl Session {
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
         };
 
+        let executor = Executor::new(ExecutorConfig::new(
+            turn_context.sandbox_policy.clone(),
+            turn_context.cwd.clone(),
+            config.codex_linux_sandbox_exe.clone(),
+        ));
+
         let sess = Arc::new(Session {
             conversation_id,
             tx_event: tx_event.clone(),
@@ -471,6 +475,7 @@ impl Session {
             active_turn: Mutex::new(None),
             services,
             next_internal_sub_id: AtomicU64::new(0),
+            executor,
         });
 
         // Dispatch the SessionConfiguredEvent first and then report any errors.
@@ -546,6 +551,11 @@ impl Session {
         }
     }
 
+    /// Emit an exec approval request event and await the user's decision.
+    ///
+    /// The request is keyed by `sub_id`/`call_id` so matching responses are delivered
+    /// to the correct in-flight turn. If the task is aborted, this returns the
+    /// default `ReviewDecision` (`Denied`).
     pub async fn request_command_approval(
         &self,
         sub_id: String,
@@ -641,11 +651,6 @@ impl Session {
                 warn!("No pending approval found for sub_id: {sub_id}");
             }
         }
-    }
-
-    pub async fn add_approved_command(&self, cmd: Vec<String>) {
-        let mut state = self.state.lock().await;
-        state.add_approved_command(cmd);
     }
 
     /// Records input items: always append to conversation history and
@@ -901,12 +906,13 @@ impl Session {
     /// command even on error.
     ///
     /// Returns the output of the exec tool call.
-    async fn run_exec_with_events<'a>(
+    async fn run_exec_with_events(
         &self,
         turn_diff_tracker: &mut TurnDiffTracker,
         begin_ctx: ExecCommandContext,
-        exec_args: ExecInvokeArgs<'a>,
-    ) -> crate::error::Result<ExecToolCallOutput> {
+        request: ExecutionRequest,
+        approval_policy: AskForApproval,
+    ) -> Result<ExecToolCallOutput, ExecError> {
         let is_apply_patch = begin_ctx.apply_patch.is_some();
         let sub_id = begin_ctx.sub_id.clone();
         let call_id = begin_ctx.call_id.clone();
@@ -914,41 +920,14 @@ impl Session {
         self.on_exec_command_begin(turn_diff_tracker, begin_ctx.clone())
             .await;
 
-        let ExecInvokeArgs {
-            params,
-            plan,
-            sandbox_policy,
-            sandbox_cwd,
-            codex_linux_sandbox_exe,
-            stdout_stream,
-        } = exec_args;
+        let result = self
+            .executor
+            .run(request, self, approval_policy, &sub_id, &call_id)
+            .await;
 
-        let registry = BackendRegistry::new();
-        let runtime_ctx = ExecRuntimeContext {
-            sandbox_policy,
-            sandbox_cwd,
-            codex_linux_sandbox_exe,
-            stdout_stream,
-        };
+        let normalized = normalize_exec_result(&result);
+        let borrowed = normalized.event_output();
 
-        let result = run_with_plan(params, &plan, &registry, &runtime_ctx).await;
-
-        let output_stderr;
-        let borrowed: &ExecToolCallOutput = match &result {
-            Ok(output) => output,
-            Err(CodexErr::Sandbox(SandboxErr::Timeout { output })) => output,
-            Err(e) => {
-                output_stderr = ExecToolCallOutput {
-                    exit_code: -1,
-                    stdout: StreamOutput::new(String::new()),
-                    stderr: StreamOutput::new(get_error_message_ui(e)),
-                    aggregated_output: StreamOutput::new(get_error_message_ui(e)),
-                    duration: Duration::default(),
-                    timed_out: false,
-                };
-                &output_stderr
-            }
-        };
         self.on_exec_command_end(
             turn_diff_tracker,
             &sub_id,
@@ -958,13 +937,15 @@ impl Session {
         )
         .await;
 
+        drop(normalized);
+
         result
     }
 
     /// Helper that emits a BackgroundEvent with the given message. This keeps
     /// the call‑sites terse so adding more diagnostics does not clutter the
     /// core agent logic.
-    async fn notify_background_event(&self, sub_id: &str, message: impl Into<String>) {
+    pub(crate) async fn notify_background_event(&self, sub_id: &str, message: impl Into<String>) {
         let event = Event {
             id: sub_id.to_string(),
             msg: EventMsg::BackgroundEvent(BackgroundEventEvent {
@@ -2530,15 +2511,6 @@ fn parse_container_exec_arguments(
         })
 }
 
-pub struct ExecInvokeArgs<'a> {
-    pub params: ExecParams,
-    pub plan: ExecPlan,
-    pub sandbox_policy: &'a SandboxPolicy,
-    pub sandbox_cwd: &'a Path,
-    pub codex_linux_sandbox_exe: &'a Option<PathBuf>,
-    pub stdout_stream: Option<StdoutStream>,
-}
-
 fn maybe_translate_shell_command(
     params: ExecParams,
     sess: &Session,
@@ -2599,28 +2571,11 @@ async fn handle_container_exec_with_params(
         MaybeApplyPatchVerified::NotApplyPatch => None,
     };
 
-    let approved_session_commands = {
-        let state = sess.state.lock().await;
-        state.approved_commands_ref().clone()
+    let command_for_display = if let Some(exec) = apply_patch_exec.as_ref() {
+        vec!["apply_patch".to_string(), exec.action.patch.clone()]
+    } else {
+        params.command.clone()
     };
-
-    let prepared = prepare_exec_invocation(
-        sess,
-        turn_context,
-        &sub_id,
-        &call_id,
-        params,
-        apply_patch_exec,
-        approved_session_commands,
-    )
-    .await?;
-
-    let PreparedExec {
-        params,
-        plan,
-        command_for_display,
-        apply_patch_exec,
-    } = prepared;
 
     let exec_command_context = ExecCommandContext {
         sub_id: sub_id.clone(),
@@ -2638,28 +2593,41 @@ async fn handle_container_exec_with_params(
         ),
     };
 
-    let params = maybe_translate_shell_command(params, sess, turn_context);
-    let plan_for_invocation = plan.clone();
+    let translated_params = maybe_translate_shell_command(params, sess, turn_context);
+    let stdout_stream = if exec_command_context.apply_patch.is_some() {
+        None
+    } else {
+        Some(StdoutStream {
+            sub_id: sub_id.clone(),
+            call_id: call_id.clone(),
+            tx_event: sess.tx_event.clone(),
+        })
+    };
+
+    let mode = match apply_patch_exec {
+        Some(exec) => ExecutionMode::ApplyPatch(exec),
+        None => ExecutionMode::Shell,
+    };
+
+    let request = ExecutionRequest {
+        params: translated_params,
+        approval_command: command_for_display,
+        mode,
+        stdout_stream,
+    };
+
+    sess.executor.update_environment(
+        turn_context.sandbox_policy.clone(),
+        turn_context.cwd.clone(),
+        sess.services.codex_linux_sandbox_exe.clone(),
+    );
+
     let output_result = sess
         .run_exec_with_events(
             turn_diff_tracker,
-            exec_command_context.clone(),
-            ExecInvokeArgs {
-                params: params.clone(),
-                plan: plan_for_invocation,
-                sandbox_policy: &turn_context.sandbox_policy,
-                sandbox_cwd: &turn_context.cwd,
-                codex_linux_sandbox_exe: &sess.services.codex_linux_sandbox_exe,
-                stdout_stream: if exec_command_context.apply_patch.is_some() {
-                    None
-                } else {
-                    Some(StdoutStream {
-                        sub_id: sub_id.clone(),
-                        call_id: call_id.clone(),
-                        tx_event: sess.tx_event.clone(),
-                    })
-                },
-            },
+            exec_command_context,
+            request,
+            turn_context.approval_policy,
         )
         .await;
 
@@ -2673,139 +2641,13 @@ async fn handle_container_exec_with_params(
                 Err(FunctionCallError::RespondToModel(content))
             }
         }
-        Err(CodexErr::Sandbox(error)) => {
-            handle_sandbox_error(
-                turn_diff_tracker,
-                params,
-                exec_command_context,
-                error,
-                &plan,
-                sess,
-                turn_context,
-            )
-            .await
-        }
-        Err(e) => Err(FunctionCallError::RespondToModel(format!(
-            "execution error: {e:?}"
+        Err(ExecError::Function(err)) => Err(err),
+        Err(ExecError::Codex(CodexErr::Sandbox(SandboxErr::Timeout { output }))) => Err(
+            FunctionCallError::RespondToModel(format_exec_output(&output)),
+        ),
+        Err(ExecError::Codex(err)) => Err(FunctionCallError::RespondToModel(format!(
+            "execution error: {err:?}"
         ))),
-    }
-}
-
-async fn handle_sandbox_error(
-    turn_diff_tracker: &mut TurnDiffTracker,
-    params: ExecParams,
-    exec_command_context: ExecCommandContext,
-    error: SandboxErr,
-    plan: &ExecPlan,
-    sess: &Session,
-    turn_context: &TurnContext,
-) -> Result<String, FunctionCallError> {
-    let call_id = exec_command_context.call_id.clone();
-    let sub_id = exec_command_context.sub_id.clone();
-    let cwd = exec_command_context.cwd.clone();
-
-    if let SandboxErr::Timeout { output } = &error {
-        let content = format_exec_output(output);
-        return Err(FunctionCallError::RespondToModel(content));
-    }
-
-    let ExecPlan::Approved {
-        sandbox: sandbox_type,
-        on_failure_escalate,
-        ..
-    } = plan
-    else {
-        return Err(FunctionCallError::RespondToModel(
-            "execution failed without an approved plan".to_string(),
-        ));
-    };
-
-    if !on_failure_escalate {
-        return Err(FunctionCallError::RespondToModel(format!(
-            "failed in sandbox {sandbox_type:?} with execution error: {error:?}"
-        )));
-    }
-
-    // Note that when `error` is `SandboxErr::Denied`, it could be a false
-    // positive. That is, it may have exited with a non-zero exit code, not
-    // because the sandbox denied it, but because that is its expected behavior,
-    // i.e., a grep command that did not match anything. Ideally we would
-    // include additional metadata on the command to indicate whether non-zero
-    // exit codes merit a retry.
-
-    // For now, we categorically ask the user to retry without sandbox and
-    // emit the raw error as a background event.
-    sess.notify_background_event(&sub_id, format!("Execution failed: {error}"))
-        .await;
-
-    let command_for_retry = params.command.clone();
-    let decision = sess
-        .request_command_approval(
-            sub_id.clone(),
-            call_id.clone(),
-            command_for_retry.clone(),
-            cwd.clone(),
-            Some("command failed; retry without sandbox?".to_string()),
-        )
-        .await;
-
-    match decision {
-        ReviewDecision::Approved | ReviewDecision::ApprovedForSession => {
-            // Persist this command as pre‑approved for the
-            // remainder of the session so future
-            // executions skip the sandbox directly.
-            // TODO(ragona): Isn't this a bug? It always saves the command in an | fork?
-            sess.add_approved_command(command_for_retry.clone()).await;
-            // Inform UI we are retrying without sandbox.
-            sess.notify_background_event(&sub_id, "retrying command without sandbox")
-                .await;
-
-            // This is an escalated retry; the policy will not be
-            // examined and the sandbox has been set to `None`.
-            let retry_output_result = sess
-                .run_exec_with_events(
-                    turn_diff_tracker,
-                    exec_command_context.clone(),
-                    ExecInvokeArgs {
-                        params,
-                        plan: ExecPlan::approved(SandboxType::None, false, true),
-                        sandbox_policy: &turn_context.sandbox_policy,
-                        sandbox_cwd: &turn_context.cwd,
-                        codex_linux_sandbox_exe: &sess.services.codex_linux_sandbox_exe,
-                        stdout_stream: if exec_command_context.apply_patch.is_some() {
-                            None
-                        } else {
-                            Some(StdoutStream {
-                                sub_id: sub_id.clone(),
-                                call_id: call_id.clone(),
-                                tx_event: sess.tx_event.clone(),
-                            })
-                        },
-                    },
-                )
-                .await;
-
-            match retry_output_result {
-                Ok(retry_output) => {
-                    let ExecToolCallOutput { exit_code, .. } = &retry_output;
-                    let content = format_exec_output(&retry_output);
-                    if *exit_code == 0 {
-                        Ok(content)
-                    } else {
-                        Err(FunctionCallError::RespondToModel(content))
-                    }
-                }
-                Err(e) => Err(FunctionCallError::RespondToModel(format!(
-                    "retry failed: {e}"
-                ))),
-            }
-        }
-        ReviewDecision::Denied | ReviewDecision::Abort => {
-            // Fall through to original failure handling.
-            Err(FunctionCallError::RespondToModel(
-                "exec command rejected by user".to_string(),
-            ))
-        }
     }
 }
 
@@ -3366,6 +3208,11 @@ mod tests {
             user_shell: shell::Shell::Unknown,
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
         };
+        let executor = Executor::new(ExecutorConfig::new(
+            turn_context.sandbox_policy.clone(),
+            turn_context.cwd.clone(),
+            None,
+        ));
         let session = Session {
             conversation_id,
             tx_event,
@@ -3373,6 +3220,7 @@ mod tests {
             active_turn: Mutex::new(None),
             services,
             next_internal_sub_id: AtomicU64::new(0),
+            executor,
         };
         (session, turn_context)
     }
@@ -3433,6 +3281,11 @@ mod tests {
             user_shell: shell::Shell::Unknown,
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
         };
+        let executor = Executor::new(ExecutorConfig::new(
+            config.sandbox_policy.clone(),
+            config.cwd.clone(),
+            None,
+        ));
         let session = Arc::new(Session {
             conversation_id,
             tx_event,
@@ -3440,6 +3293,7 @@ mod tests {
             active_turn: Mutex::new(None),
             services,
             next_internal_sub_id: AtomicU64::new(0),
+            executor,
         });
         (session, turn_context, rx_event)
     }

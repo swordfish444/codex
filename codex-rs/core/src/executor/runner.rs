@@ -1,0 +1,306 @@
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::RwLock;
+use std::time::Duration;
+
+use thiserror::Error;
+
+use super::backends::BackendStore;
+use super::backends::ExecutionBackend;
+use super::backends::ExecutionMode;
+use super::backends::default_backends;
+use super::cache::ApprovalCache;
+use crate::codex::Session;
+use crate::error::CodexErr;
+use crate::error::SandboxErr;
+use crate::error::get_error_message_ui;
+use crate::exec::ExecParams;
+use crate::exec::ExecToolCallOutput;
+use crate::exec::SandboxType;
+use crate::exec::StdoutStream;
+use crate::exec::StreamOutput;
+use crate::exec::process_exec_tool_call;
+use crate::executor::sandbox::select_sandbox;
+use crate::function_tool::FunctionCallError;
+use crate::protocol::AskForApproval;
+use crate::protocol::ReviewDecision;
+use crate::protocol::SandboxPolicy;
+
+#[derive(Clone, Debug)]
+pub(crate) struct ExecutorConfig {
+    pub(crate) sandbox_policy: SandboxPolicy,
+    pub(crate) sandbox_cwd: PathBuf,
+    codex_linux_sandbox_exe: Option<PathBuf>,
+}
+
+impl ExecutorConfig {
+    pub(crate) fn new(
+        sandbox_policy: SandboxPolicy,
+        sandbox_cwd: PathBuf,
+        codex_linux_sandbox_exe: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            sandbox_policy,
+            sandbox_cwd,
+            codex_linux_sandbox_exe,
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum ExecError {
+    #[error(transparent)]
+    Function(#[from] FunctionCallError),
+    #[error(transparent)]
+    Codex(#[from] CodexErr),
+}
+
+impl ExecError {
+    pub(crate) fn rejection(msg: impl Into<String>) -> Self {
+        FunctionCallError::RespondToModel(msg.into()).into()
+    }
+}
+
+/// Coordinates sandbox selection, backend-specific preparation, and command
+/// execution for tool calls requested by the model.
+pub(crate) struct Executor {
+    backends: BackendStore,
+    approval_cache: ApprovalCache,
+    config: Arc<RwLock<ExecutorConfig>>,
+}
+
+impl Executor {
+    pub(crate) fn new(config: ExecutorConfig) -> Self {
+        Self {
+            backends: default_backends(),
+            approval_cache: ApprovalCache::default(),
+            config: Arc::new(RwLock::new(config)),
+        }
+    }
+
+    /// Updates the sandbox policy and working directory used for future
+    /// executions without recreating the executor.
+    pub(crate) fn update_environment(
+        &self,
+        sandbox_policy: SandboxPolicy,
+        sandbox_cwd: PathBuf,
+        codex_linux_sandbox_exe: Option<PathBuf>,
+    ) {
+        if let Ok(mut cfg) = self.config.write() {
+            cfg.sandbox_policy = sandbox_policy;
+            cfg.sandbox_cwd = sandbox_cwd;
+            cfg.codex_linux_sandbox_exe = codex_linux_sandbox_exe;
+        }
+    }
+
+    /// Runs a prepared execution request end-to-end: prepares parameters, decides on
+    /// sandbox placement (prompting the user when necessary), launches the command,
+    /// and lets the backend post-process the final output.
+    pub(crate) async fn run(
+        &self,
+        mut request: ExecutionRequest,
+        session: &Session,
+        approval_policy: AskForApproval,
+        sub_id: &str,
+        call_id: &str,
+    ) -> Result<ExecToolCallOutput, ExecError> {
+        // Step 1: Normalise parameters via the selected backend.
+        let backend = self.backends.for_mode(&request.mode);
+        request.params = backend
+            .prepare(request.params, &request.mode)
+            .map_err(ExecError::from)?;
+
+        // Step 2: Snapshot sandbox configuration so it stays stable for this run.
+        let config = self
+            .config
+            .read()
+            .map_err(|_| ExecError::rejection("executor config poisoned"))?
+            .clone();
+
+        // Step 3: Decide sandbox placement, prompting for approval when needed.
+        let sandbox_decision = select_sandbox(
+            &request,
+            approval_policy,
+            self.approval_cache.snapshot(),
+            &config,
+            session,
+            sub_id,
+            call_id,
+        )
+        .await?;
+        if sandbox_decision.record_session_approval {
+            self.approval_cache.insert(request.approval_command.clone());
+        }
+
+        // Step 4: Launch the command within the chosen sandbox.
+        let first_attempt = self
+            .spawn(
+                request.params.clone(),
+                sandbox_decision.initial_sandbox,
+                &config,
+                request.stdout_stream.clone(),
+            )
+            .await;
+
+        // Step 5: Handle sandbox outcomes, optionally escalating to an unsandboxed retry.
+        let raw_output = match first_attempt {
+            Ok(output) => output,
+            Err(CodexErr::Sandbox(SandboxErr::Timeout { output })) => {
+                return Err(CodexErr::Sandbox(SandboxErr::Timeout { output }).into());
+            }
+            Err(CodexErr::Sandbox(error @ SandboxErr::Denied { .. })) => {
+                return if sandbox_decision.escalate_on_failure {
+                    self.retry_without_sandbox(
+                        &*backend, &request, &config, session, sub_id, call_id, error,
+                    )
+                    .await
+                } else {
+                    Err(ExecError::rejection(format!(
+                        "failed in sandbox {:?} with execution error: {error:?}",
+                        sandbox_decision.initial_sandbox
+                    )))
+                };
+            }
+            Err(err) => return Err(err.into()),
+        };
+
+        // Step 6: Allow the backend to post-process the raw output.
+        backend
+            .finalize(raw_output, &request.mode)
+            .await
+            .map_err(ExecError::from)
+    }
+
+    /// Fallback path invoked when a sandboxed run is denied so the user can
+    /// approve rerunning without isolation.
+    #[allow(clippy::too_many_arguments)]
+    async fn retry_without_sandbox(
+        &self,
+        backend: &dyn ExecutionBackend,
+        request: &ExecutionRequest,
+        config: &ExecutorConfig,
+        session: &Session,
+        sub_id: &str,
+        call_id: &str,
+        sandbox_error: SandboxErr,
+    ) -> Result<ExecToolCallOutput, ExecError> {
+        session
+            .notify_background_event(sub_id, format!("Execution failed: {sandbox_error}"))
+            .await;
+        let decision = session
+            .request_command_approval(
+                sub_id.to_string(),
+                call_id.to_string(),
+                request.approval_command.clone(),
+                request.params.cwd.clone(),
+                Some("command failed; retry without sandbox?".to_string()),
+            )
+            .await;
+
+        match decision {
+            ReviewDecision::Approved | ReviewDecision::ApprovedForSession => {
+                if matches!(decision, ReviewDecision::ApprovedForSession) {
+                    self.approval_cache.insert(request.approval_command.clone());
+                }
+                session
+                    .notify_background_event(sub_id, "retrying command without sandbox")
+                    .await;
+
+                let retry_output = self
+                    .spawn(
+                        request.params.clone(),
+                        SandboxType::None,
+                        config,
+                        request.stdout_stream.clone(),
+                    )
+                    .await?;
+
+                backend
+                    .finalize(retry_output, &request.mode)
+                    .await
+                    .map_err(ExecError::from)
+            }
+            ReviewDecision::Denied | ReviewDecision::Abort => {
+                Err(ExecError::rejection("exec command rejected by user"))
+            }
+        }
+    }
+
+    async fn spawn(
+        &self,
+        params: ExecParams,
+        sandbox: SandboxType,
+        config: &ExecutorConfig,
+        stdout_stream: Option<StdoutStream>,
+    ) -> Result<ExecToolCallOutput, CodexErr> {
+        process_exec_tool_call(
+            params,
+            sandbox,
+            &config.sandbox_policy,
+            &config.sandbox_cwd,
+            &config.codex_linux_sandbox_exe,
+            stdout_stream,
+        )
+        .await
+    }
+}
+
+pub(crate) struct ExecutionRequest {
+    pub params: ExecParams,
+    pub approval_command: Vec<String>,
+    pub mode: ExecutionMode,
+    pub stdout_stream: Option<StdoutStream>,
+}
+
+pub(crate) struct NormalizedExecOutput<'a> {
+    borrowed: Option<&'a ExecToolCallOutput>,
+    synthetic: Option<ExecToolCallOutput>,
+}
+
+impl<'a> NormalizedExecOutput<'a> {
+    pub(crate) fn event_output(&'a self) -> &'a ExecToolCallOutput {
+        match (self.borrowed, self.synthetic.as_ref()) {
+            (Some(output), _) => output,
+            (None, Some(output)) => output,
+            (None, None) => unreachable!("normalized exec output missing data"),
+        }
+    }
+}
+
+/// Converts a raw execution result into a uniform view that always exposes an
+/// [`ExecToolCallOutput`], synthesizing error output when the command fails
+/// before producing a response.
+pub(crate) fn normalize_exec_result(
+    result: &Result<ExecToolCallOutput, ExecError>,
+) -> NormalizedExecOutput<'_> {
+    match result {
+        Ok(output) => NormalizedExecOutput {
+            borrowed: Some(output),
+            synthetic: None,
+        },
+        Err(ExecError::Codex(CodexErr::Sandbox(SandboxErr::Timeout { output }))) => {
+            NormalizedExecOutput {
+                borrowed: Some(output.as_ref()),
+                synthetic: None,
+            }
+        }
+        Err(err) => {
+            let message = match err {
+                ExecError::Function(FunctionCallError::RespondToModel(msg)) => msg.clone(),
+                ExecError::Codex(e) => get_error_message_ui(e),
+            };
+            let synthetic = ExecToolCallOutput {
+                exit_code: -1,
+                stdout: StreamOutput::new(String::new()),
+                stderr: StreamOutput::new(message.clone()),
+                aggregated_output: StreamOutput::new(message),
+                duration: Duration::default(),
+                timed_out: false,
+            };
+            NormalizedExecOutput {
+                borrowed: None,
+                synthetic: Some(synthetic),
+            }
+        }
+    }
+}
