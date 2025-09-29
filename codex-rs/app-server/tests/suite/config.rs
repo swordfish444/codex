@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use app_test_support::McpProcess;
+use app_test_support::to_response;
 use codex_core::protocol::AskForApproval;
 use codex_protocol::config_types::ReasoningEffort;
 use codex_protocol::config_types::ReasoningSummary;
@@ -11,8 +13,6 @@ use codex_protocol::mcp_protocol::Profile;
 use codex_protocol::mcp_protocol::SandboxSettings;
 use codex_protocol::mcp_protocol::Tools;
 use codex_protocol::mcp_protocol::UserSavedConfig;
-use mcp_test_support::McpProcess;
-use mcp_test_support::to_response;
 use mcp_types::JSONRPCResponse;
 use mcp_types::RequestId;
 use pretty_assertions::assert_eq;
@@ -67,7 +67,7 @@ async fn get_config_toml_parses_all_fields() {
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize())
         .await
         .expect("init timeout")
-        .expect("init failed");
+        .expect("init error");
 
     let request_id = mcp
         .send_get_user_saved_config_request()
@@ -129,7 +129,7 @@ async fn get_config_toml_empty() {
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize())
         .await
         .expect("init timeout")
-        .expect("init failed");
+        .expect("init error");
 
     let request_id = mcp
         .send_get_user_saved_config_request()

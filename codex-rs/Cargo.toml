@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "ansi-escape",
+    "app-server",
     "apply-patch",
     "arg0",
     "cli",
@@ -22,6 +23,7 @@ members = [
     "rmcp-client",
     "responses-api-proxy",
     "tui",
+    "utils/json-to-toml",
     "utils/readiness",
 ]
 resolver = "2"
@@ -36,7 +38,9 @@ edition = "2024"
 
 [workspace.dependencies]
 # Internal
+app_test_support = { path = "app-server/tests/common" }
 codex-ansi-escape = { path = "ansi-escape" }
+codex-app-server = { path = "app-server" }
 codex-apply-patch = { path = "apply-patch" }
 codex-arg0 = { path = "arg0" }
 codex-chatgpt = { path = "chatgpt" }
@@ -55,6 +59,7 @@ codex-protocol = { path = "protocol" }
 codex-protocol-ts = { path = "protocol-ts" }
 codex-rmcp-client = { path = "rmcp-client" }
 codex-tui = { path = "tui" }
+codex-utils-json-to-toml = { path = "utils/json-to-toml" }
 codex-utils-readiness = { path = "utils/readiness" }
 core_test_support = { path = "core/tests/common" }
 mcp-types = { path = "mcp-types" }
