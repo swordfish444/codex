@@ -6,8 +6,8 @@ use ts_rs::TS;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(tag = "type")]
 pub enum ConversationEvent {
-    #[serde(rename = "session.created")]
-    SessionCreated(SessionCreatedEvent),
+    #[serde(rename = "collaboration.started")]
+    CollaborationStarted(CollaborationStartedEvent),
     #[serde(rename = "turn.started")]
     TurnStarted(TurnStartedEvent),
     #[serde(rename = "turn.completed")]
@@ -23,7 +23,7 @@ pub enum ConversationEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
-pub struct SessionCreatedEvent {
+pub struct CollaborationStartedEvent {
     pub session_id: String,
 }
 

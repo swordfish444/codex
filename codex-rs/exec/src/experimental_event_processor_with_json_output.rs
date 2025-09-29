@@ -6,6 +6,7 @@ use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
 use crate::event_processor::handle_last_message;
 use crate::exec_events::AssistantMessageItem;
+use crate::exec_events::CollaborationStartedEvent;
 use crate::exec_events::CommandExecutionItem;
 use crate::exec_events::CommandExecutionStatus;
 use crate::exec_events::ConversationErrorEvent;
@@ -20,7 +21,6 @@ use crate::exec_events::ItemUpdatedEvent;
 use crate::exec_events::PatchApplyStatus;
 use crate::exec_events::PatchChangeKind;
 use crate::exec_events::ReasoningItem;
-use crate::exec_events::SessionCreatedEvent;
 use crate::exec_events::TodoItem;
 use crate::exec_events::TodoListItem;
 use crate::exec_events::TurnCompletedEvent;
@@ -119,9 +119,11 @@ impl ExperimentalEventProcessorWithJsonOutput {
         &self,
         payload: &SessionConfiguredEvent,
     ) -> Vec<ConversationEvent> {
-        vec![ConversationEvent::SessionCreated(SessionCreatedEvent {
-            session_id: payload.session_id.to_string(),
-        })]
+        vec![ConversationEvent::CollaborationStarted(
+            CollaborationStartedEvent {
+                session_id: payload.session_id.to_string(),
+            },
+        )]
     }
 
     fn handle_agent_message(&self, payload: &AgentMessageEvent) -> Vec<ConversationEvent> {

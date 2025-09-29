@@ -9,6 +9,7 @@ use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::PatchApplyEndEvent;
 use codex_core::protocol::SessionConfiguredEvent;
 use codex_exec::exec_events::AssistantMessageItem;
+use codex_exec::exec_events::CollaborationStartedEvent;
 use codex_exec::exec_events::CommandExecutionItem;
 use codex_exec::exec_events::CommandExecutionStatus;
 use codex_exec::exec_events::ConversationErrorEvent;
@@ -21,7 +22,6 @@ use codex_exec::exec_events::ItemUpdatedEvent;
 use codex_exec::exec_events::PatchApplyStatus;
 use codex_exec::exec_events::PatchChangeKind;
 use codex_exec::exec_events::ReasoningItem;
-use codex_exec::exec_events::SessionCreatedEvent;
 use codex_exec::exec_events::TodoItem as ExecTodoItem;
 use codex_exec::exec_events::TodoListItem as ExecTodoListItem;
 use codex_exec::exec_events::TurnCompletedEvent;
@@ -62,9 +62,11 @@ fn session_configured_produces_session_created_event() {
     let out = ep.collect_conversation_events(&ev);
     assert_eq!(
         out,
-        vec![ConversationEvent::SessionCreated(SessionCreatedEvent {
-            session_id: "67e55044-10b1-426f-9247-bb680e5fe0c8".to_string(),
-        })]
+        vec![ConversationEvent::CollaborationStarted(
+            CollaborationStartedEvent {
+                session_id: "67e55044-10b1-426f-9247-bb680e5fe0c8".to_string(),
+            }
+        )]
     );
 }
 
