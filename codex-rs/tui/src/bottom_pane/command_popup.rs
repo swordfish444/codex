@@ -3,13 +3,14 @@ use ratatui::layout::Rect;
 use ratatui::widgets::WidgetRef;
 
 use super::popup_consts::MAX_POPUP_ROWS;
+use super::prompt_args;
 use super::scroll_state::ScrollState;
 use super::selection_popup_common::GenericDisplayRow;
 use super::selection_popup_common::render_rows;
 use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
 use codex_common::fuzzy_match::fuzzy_match;
-use codex_protocol::custom_prompts::CustomPrompt;
+use codex_protocol::custom_prompts::CustomPrompt; // for extracting named argument placeholders
 // no additional imports
 use std::collections::HashSet;
 
@@ -231,15 +232,27 @@ fn build_prompt_row_description(prompt: &CustomPrompt) -> String {
         five_word_excerpt(&prompt.content)
     };
     let base = base.unwrap_or_else(|| "send saved prompt".to_string());
+    // If an explicit hint is provided via frontmatter, prefer it as-is.
     if let Some(hint) = &prompt.argument_hint {
-        if hint.is_empty() {
-            base
-        } else {
-            format!("{base}  {hint}")
+        if !hint.is_empty() {
+            return format!("{base}  {hint}");
         }
-    } else {
-        base
     }
+
+    // Otherwise, include minimal hints for named custom args (e.g., $USER, $BRANCH).
+    let named = prompt_args::prompt_argument_names(&prompt.content);
+    if !named.is_empty() {
+        let tokens = named
+            .into_iter()
+            .map(|n| format!("<{n}>"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !tokens.is_empty() {
+            return format!("{base}  {tokens}");
+        }
+    }
+
+    base
 }
 
 fn description_excerpt(desc: &str) -> Option<String> {
@@ -265,6 +278,10 @@ fn five_word_excerpt(content: &str) -> Option<String> {
         cleaned = cleaned.replace(&format!("${n}"), "");
     }
     cleaned = cleaned.replace("$ARGUMENTS", "");
+    // Also strip named placeholders like $USER or $BRANCH to avoid noise.
+    for name in prompt_args::prompt_argument_names(&cleaned) {
+        cleaned = cleaned.replace(&format!("${name}"), "");
+    }
 
     // Remove a small set of common punctuation that can look odd mid-excerpt
     // once placeholders are stripped (keep hyphens and slashes).
@@ -458,6 +475,28 @@ mod tests {
         let screen = buffer_to_string(&buf);
         assert!(screen.contains("/review-pr"));
         assert!(screen.contains("Review a PR with context  [pr-number] [priority]"));
+    }
+
+    #[test]
+    fn prompt_displays_named_argument_hints_when_present() {
+        let prompts = vec![CustomPrompt {
+            name: "with-named".to_string(),
+            path: "/tmp/with-named.md".into(),
+            content: "Work with $USER on $BRANCH".to_string(),
+            description: None,
+            argument_hint: None,
+        }];
+        let mut popup = CommandPopup::new(prompts);
+        popup.on_composer_text_change("/with-named".to_string());
+
+        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 10));
+        popup.render_ref(Rect::new(0, 0, 80, 10), &mut buf);
+        let screen = buffer_to_string(&buf);
+        // Ensure the excerpt stripped named placeholders and tokens are shown as hints instead.
+        assert!(screen.contains("Work with on"));
+        assert!(screen.contains("<USER> <BRANCH>"));
+        assert!(!screen.contains("$USER"));
+        assert!(!screen.contains("$BRANCH"));
     }
 
     fn buffer_to_string(buf: &Buffer) -> String {
