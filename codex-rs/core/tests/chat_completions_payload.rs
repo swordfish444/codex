@@ -81,8 +81,10 @@ async fn run_request(input: Vec<ResponseItem>) -> Value {
         ConversationId::new(),
     );
 
-    let mut prompt = Prompt::default();
-    prompt.input = input;
+    let prompt = Prompt {
+        input,
+        ..Default::default()
+    };
 
     let mut stream = match client.stream(&prompt).await {
         Ok(s) => s,

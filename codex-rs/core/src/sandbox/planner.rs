@@ -24,6 +24,7 @@ pub(crate) struct PreparedExec {
     pub(crate) apply_patch_exec: Option<ApplyPatchExec>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn prepare_exec_invocation(
     approvals: &dyn ApprovalCoordinator,
     approval_policy: AskForApproval,
