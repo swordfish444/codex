@@ -5,7 +5,6 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-use crate::model_family::ModelFamily;
 use crate::plan_tool::PLAN_TOOL;
 use crate::tool_apply_patch::ApplyPatchToolType;
 use crate::tool_apply_patch::create_apply_patch_freeform_tool;

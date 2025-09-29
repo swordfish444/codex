@@ -1,5 +1,5 @@
-use crate::tooling::ApplyPatchToolType;
 use crate::model_family::ModelFamily;
+use crate::tooling::ApplyPatchToolType;
 
 #[derive(Debug, Clone)]
 pub enum ConfigShellToolType {
@@ -69,4 +69,3 @@ impl ToolsConfig {
         }
     }
 }
-

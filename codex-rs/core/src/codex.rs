@@ -139,6 +139,8 @@ use codex_agent::apply_patch::InternalApplyPatchInvocation;
 use codex_agent::apply_patch::apply_patch;
 use codex_agent::apply_patch::convert_apply_patch_to_protocol;
 use codex_agent::model_client::ModelClientAdapter;
+use codex_agent::runtime::ProcessedResponseItem;
+use codex_agent::runtime::TurnRunResult;
 use codex_agent::services::ApprovalCoordinator;
 use codex_agent::session_services::SessionServices;
 use codex_protocol::config_types::ReasoningEffort as ReasoningEffortConfig;
@@ -2040,18 +2042,6 @@ async fn run_turn(
 /// events map to a `ResponseItem`. A `ResponseItem` may need to be
 /// "handled" such that it produces a `ResponseInputItem` that needs to be
 /// sent back to the model on the next turn.
-#[derive(Debug)]
-struct ProcessedResponseItem {
-    item: ResponseItem,
-    response: Option<ResponseInputItem>,
-}
-
-#[derive(Debug)]
-struct TurnRunResult {
-    processed_items: Vec<ProcessedResponseItem>,
-    total_token_usage: Option<TokenUsage>,
-}
-
 async fn try_run_turn(
     sess: &Session,
     turn_context: &TurnContext,
