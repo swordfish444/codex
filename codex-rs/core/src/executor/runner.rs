@@ -3,8 +3,6 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
 
-use thiserror::Error;
-
 use super::backends::ExecutionMode;
 use super::backends::backend_for_mode;
 use super::cache::ApprovalCache;
@@ -18,6 +16,7 @@ use crate::exec::SandboxType;
 use crate::exec::StdoutStream;
 use crate::exec::StreamOutput;
 use crate::exec::process_exec_tool_call;
+use crate::executor::errors::ExecError;
 use crate::executor::sandbox::select_sandbox;
 use crate::function_tool::FunctionCallError;
 use crate::protocol::AskForApproval;
@@ -43,20 +42,6 @@ impl ExecutorConfig {
             sandbox_cwd,
             codex_linux_sandbox_exe,
         }
-    }
-}
-
-#[derive(Debug, Error)]
-pub enum ExecError {
-    #[error(transparent)]
-    Function(#[from] FunctionCallError),
-    #[error(transparent)]
-    Codex(#[from] CodexErr),
-}
-
-impl ExecError {
-    pub(crate) fn rejection(msg: impl Into<String>) -> Self {
-        FunctionCallError::RespondToModel(msg.into()).into()
     }
 }
 

@@ -3,7 +3,7 @@ use crate::apply_patch::ApplyPatchExec;
 use crate::codex::Session;
 use crate::exec::ExecParams;
 use crate::exec::SandboxType;
-use crate::executor::ExecError;
+use crate::executor::errors::ExecError;
 use crate::executor::ExecutionMode;
 use crate::executor::ExecutionRequest;
 use crate::executor::ExecutorConfig;

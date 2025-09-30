@@ -63,7 +63,6 @@ use crate::exec_command::ExecSessionManager;
 use crate::exec_command::WRITE_STDIN_TOOL_NAME;
 use crate::exec_command::WriteStdinParams;
 use crate::exec_env::create_env;
-use crate::executor::ExecError;
 use crate::executor::ExecutionMode;
 use crate::executor::ExecutionRequest;
 use crate::executor::Executor;
@@ -905,28 +904,16 @@ impl Session {
     async fn run_exec_with_events(
         &self,
         turn_diff_tracker: &mut TurnDiffTracker,
-        begin_ctx: ExecCommandContext,
-        params: ExecParams,
-        approval_command: Vec<String>,
-        mode: ExecutionMode,
-        stdout_stream: Option<StdoutStream>,
-        use_shell_profile: bool,
+        prepared: PreparedExec,
         approval_policy: AskForApproval,
     ) -> Result<ExecToolCallOutput, ExecError> {
-        let is_apply_patch = begin_ctx.apply_patch.is_some();
-        let sub_id = begin_ctx.sub_id.clone();
-        let call_id = begin_ctx.call_id.clone();
+        let PreparedExec { context, request } = prepared;
+        let is_apply_patch = context.apply_patch.is_some();
+        let sub_id = context.sub_id.clone();
+        let call_id = context.call_id.clone();
 
-        self.on_exec_command_begin(turn_diff_tracker, begin_ctx.clone())
+        self.on_exec_command_begin(turn_diff_tracker, context.clone())
             .await;
-
-        let request = ExecutionRequest {
-            params,
-            approval_command,
-            mode,
-            stdout_stream,
-            use_shell_profile,
-        };
 
         let result = self
             .services
@@ -2594,19 +2581,23 @@ async fn handle_container_exec_with_params(
         turn_context.cwd.clone(),
     );
 
+    let prepared_exec = PreparedExec::new(
+        exec_command_context,
+        params,
+        command_for_display,
+        mode,
+        Some(StdoutStream {
+            sub_id: sub_id.clone(),
+            call_id: call_id.clone(),
+            tx_event: sess.tx_event.clone(),
+        }),
+        turn_context.shell_environment_policy.use_profile,
+    );
+
     let output_result = sess
         .run_exec_with_events(
             turn_diff_tracker,
-            exec_command_context,
-            params,
-            command_for_display,
-            mode,
-            Some(StdoutStream {
-                sub_id: sub_id.clone(), // todo we should not nead the ids
-                call_id: call_id.clone(),
-                tx_event: sess.tx_event.clone(),
-            }),
-            turn_context.shell_environment_policy.use_profile,
+            prepared_exec,
             turn_context.approval_policy,
         )
         .await;
@@ -2889,6 +2880,8 @@ pub(crate) async fn exit_review_mode(
         .await;
 }
 
+use crate::executor::errors::ExecError;
+use crate::executor::linkers::PreparedExec;
 #[cfg(test)]
 pub(crate) use tests::make_session_and_context;
 
