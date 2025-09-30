@@ -1,5 +1,7 @@
 use clap::CommandFactory;
 use clap::Parser;
+use clap::error::Error as ClapError;
+use clap::error::ErrorKind as ClapErrorKind;
 use clap_complete::Shell;
 use clap_complete::generate;
 use codex_arg0::arg0_dispatch_or_else;
@@ -22,6 +24,7 @@ use codex_tui::Cli as TuiCli;
 use owo_colors::OwoColorize;
 use std::path::PathBuf;
 use supports_color::Stream;
+use uuid::Uuid;
 
 mod mcp_cmd;
 
@@ -112,17 +115,17 @@ struct CompletionCommand {
 
 #[derive(Debug, Parser)]
 struct ResumeCommand {
-    /// Conversation/session id (UUID). When provided, resumes this session.
-    /// If omitted, use --last to pick the most recent recorded session.
-    #[arg(value_name = "SESSION_ID")]
-    session_id: Option<String>,
-
-    /// Continue the most recent session without showing the picker.
-    #[arg(long = "last", default_value_t = false, conflicts_with = "session_id")]
-    last: bool,
-
     #[clap(flatten)]
     config_overrides: TuiCli,
+
+    /// Continue the most recent session without showing the picker.
+    #[arg(long = "last", default_value_t = false)]
+    last: bool,
+
+    /// Conversation/session id (UUID). When provided, resumes this session.
+    /// If omitted, use --last to pick the most recent recorded session.
+    #[arg(value_name = "SESSION_ID", index = 2)]
+    session_id: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -286,11 +289,15 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
         Some(Subcommand::AppServer) => {
             codex_app_server::run_main(codex_linux_sandbox_exe, root_config_overrides).await?;
         }
-        Some(Subcommand::Resume(ResumeCommand {
-            session_id,
-            last,
-            config_overrides,
-        })) => {
+        Some(Subcommand::Resume(mut resume_cmd)) => {
+            if let Err(err) = resume_cmd.normalize() {
+                err.exit();
+            }
+            let ResumeCommand {
+                config_overrides,
+                last,
+                session_id,
+            } = resume_cmd;
             interactive = finalize_resume_interactive(
                 interactive,
                 root_config_overrides.clone(),
@@ -491,14 +498,16 @@ mod tests {
             subcommand,
         } = cli;
 
-        let Subcommand::Resume(ResumeCommand {
-            session_id,
-            last,
-            config_overrides: resume_cli,
-        }) = subcommand.expect("resume present")
-        else {
-            unreachable!()
+        let mut resume_cmd = match subcommand.expect("resume present") {
+            Subcommand::Resume(cmd) => cmd,
+            _ => unreachable!(),
         };
+        resume_cmd.normalize().expect("normalize resume args");
+        let ResumeCommand {
+            config_overrides: resume_cli,
+            last,
+            session_id,
+        } = resume_cmd;
 
         finalize_resume_interactive(interactive, root_overrides, session_id, last, resume_cli)
     }
@@ -576,11 +585,44 @@ mod tests {
     }
 
     #[test]
+    fn resume_last_accepts_follow_up_prompt() {
+        let interactive = finalize_from_args(["codex", "resume", "--last", "hi there"].as_ref());
+        assert!(interactive.resume_last);
+        assert_eq!(interactive.prompt.as_deref(), Some("hi there"));
+        assert_eq!(interactive.resume_session_id, None);
+    }
+
+    #[test]
+    fn resume_prompt_before_session_id() {
+        let interactive = finalize_from_args(
+            [
+                "codex",
+                "resume",
+                "summarize progress",
+                "123e4567-e89b-12d3-a456-426614174000",
+            ]
+            .as_ref(),
+        );
+        assert_eq!(interactive.prompt.as_deref(), Some("summarize progress"));
+        assert_eq!(
+            interactive.resume_session_id.as_deref(),
+            Some("123e4567-e89b-12d3-a456-426614174000"),
+        );
+        assert!(!interactive.resume_last);
+        assert!(!interactive.resume_picker);
+    }
+
+    #[test]
     fn resume_picker_logic_with_session_id() {
-        let interactive = finalize_from_args(["codex", "resume", "1234"].as_ref());
+        let interactive = finalize_from_args(
+            ["codex", "resume", "123e4567-e89b-12d3-a456-426614174000"].as_ref(),
+        );
         assert!(!interactive.resume_picker);
         assert!(!interactive.resume_last);
-        assert_eq!(interactive.resume_session_id.as_deref(), Some("1234"));
+        assert_eq!(
+            interactive.resume_session_id.as_deref(),
+            Some("123e4567-e89b-12d3-a456-426614174000")
+        );
     }
 
     #[test]
@@ -589,7 +631,7 @@ mod tests {
             [
                 "codex",
                 "resume",
-                "sid",
+                "123e4567-e89b-12d3-a456-426614174000",
                 "--oss",
                 "--full-auto",
                 "--search",
@@ -637,7 +679,10 @@ mod tests {
         assert!(has_a && has_b);
         assert!(!interactive.resume_picker);
         assert!(!interactive.resume_last);
-        assert_eq!(interactive.resume_session_id.as_deref(), Some("sid"));
+        assert_eq!(
+            interactive.resume_session_id.as_deref(),
+            Some("123e4567-e89b-12d3-a456-426614174000")
+        );
     }
 
     #[test]
@@ -654,5 +699,47 @@ mod tests {
         assert!(interactive.resume_picker);
         assert!(!interactive.resume_last);
         assert_eq!(interactive.resume_session_id, None);
+    }
+}
+
+impl ResumeCommand {
+    fn normalize(&mut self) -> Result<(), ClapError> {
+        if self.last {
+            if let Some(value) = self.session_id.take() {
+                if Self::looks_like_session_id(&value) {
+                    return Err(ClapError::raw(
+                        ClapErrorKind::ArgumentConflict,
+                        "The argument '--last' cannot be used with '[SESSION_ID]'",
+                    ));
+                }
+                if let Some(existing) = &mut self.config_overrides.prompt {
+                    if !existing.is_empty() {
+                        existing.push(' ');
+                    }
+                    existing.push_str(&value);
+                } else {
+                    self.config_overrides.prompt = Some(value);
+                }
+            }
+            return Ok(());
+        }
+
+        if self.session_id.is_some() {
+            return Ok(());
+        }
+
+        if let Some(prompt) = self.config_overrides.prompt.take() {
+            if Self::looks_like_session_id(&prompt) {
+                self.session_id = Some(prompt);
+            } else {
+                self.config_overrides.prompt = Some(prompt);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn looks_like_session_id(value: &str) -> bool {
+        Uuid::parse_str(value).is_ok()
     }
 }

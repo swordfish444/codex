@@ -61,18 +61,24 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         json: json_mode,
         experimental_json,
         sandbox_mode: sandbox_mode_cli_arg,
-        prompt,
+        prompt: parent_prompt,
         output_schema: output_schema_path,
         include_plan_tool,
         config_overrides,
     } = cli;
 
     // Determine the prompt source (parent or subcommand) and read from stdin if needed.
-    let prompt_arg = match &command {
+    let mut command = command;
+    let prompt_arg = match &mut command {
         // Allow prompt before the subcommand by falling back to the parent-level prompt
         // when the Resume subcommand did not provide its own prompt.
-        Some(ExecCommand::Resume(args)) => args.prompt.clone().or(prompt),
-        None => prompt,
+        Some(ExecCommand::Resume(args)) => {
+            if let Err(err) = args.normalize() {
+                err.exit();
+            }
+            args.prompt.clone().or_else(|| parent_prompt.clone())
+        }
+        None => parent_prompt,
     };
 
     let prompt = match prompt_arg {

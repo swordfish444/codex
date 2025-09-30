@@ -30,6 +30,7 @@ codex-protocol = { workspace = true }
 owo-colors = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+uuid = { workspace = true }
 shlex = { workspace = true }
 tokio = { workspace = true, features = [
     "io-std",

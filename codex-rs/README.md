@@ -55,6 +55,14 @@ In the transcript preview, the footer shows an `Esc edit prev` hint while editin
 
 Sometimes it is not convenient to `cd` to the directory you want Codex to use as the "working root" before running Codex. Fortunately, `codex` supports a `--cd` option so you can specify whatever folder you want. You can confirm that Codex is honoring `--cd` by double-checking the **workdir** it reports in the TUI at the start of a new session.
 
+### Resuming sessions
+
+When you use `codex resume`, provide any follow-up prompt *before* an optional session id. This keeps combinations like `codex resume --last "fix the tests"` working while still letting you resume a specific session when needed:
+
+- `codex resume --last "kick off linting"` — resume the most recent session and immediately send a new prompt.
+- `codex resume "draft release notes" d9b7b8b8-3a1f-4a4d-b0a2-4f04bb8d58df` — resume a specific session and send a follow-up prompt.
+- `codex resume d9b7b8b8-3a1f-4a4d-b0a2-4f04bb8d58df` — resume a session without sending a prompt (the CLI treats lone UUIDs as session ids).
+
 ### Shell completions
 
 Generate shell completion scripts via:

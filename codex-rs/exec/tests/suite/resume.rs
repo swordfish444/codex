@@ -131,6 +131,62 @@ fn exec_resume_last_appends_to_existing_file() -> anyhow::Result<()> {
 }
 
 #[test]
+fn exec_resume_last_accepts_prompt_after_flag() -> anyhow::Result<()> {
+    let home = TempDir::new()?;
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/cli_responses_fixture.sse");
+
+    let marker = format!("resume-last-flag-{}", Uuid::new_v4());
+    let prompt = format!("echo {marker}");
+
+    Command::cargo_bin("codex-exec")
+        .context("should find binary for codex-exec")?
+        .env("CODEX_HOME", home.path())
+        .env("OPENAI_API_KEY", "dummy")
+        .env("CODEX_RS_SSE_FIXTURE", &fixture)
+        .env("OPENAI_BASE_URL", "http://unused.local")
+        .arg("--skip-git-repo-check")
+        .arg("-C")
+        .arg(env!("CARGO_MANIFEST_DIR"))
+        .arg(&prompt)
+        .assert()
+        .success();
+
+    let sessions_dir = home.path().join("sessions");
+    let path = find_session_file_containing_marker(&sessions_dir, &marker)
+        .expect("no session file found after first run");
+
+    let marker2 = format!("resume-last-flag-2-{}", Uuid::new_v4());
+    let prompt2 = format!("echo {marker2}");
+
+    Command::cargo_bin("codex-exec")
+        .context("should find binary for codex-exec")?
+        .env("CODEX_HOME", home.path())
+        .env("OPENAI_API_KEY", "dummy")
+        .env("CODEX_RS_SSE_FIXTURE", &fixture)
+        .env("OPENAI_BASE_URL", "http://unused.local")
+        .arg("--skip-git-repo-check")
+        .arg("-C")
+        .arg(env!("CARGO_MANIFEST_DIR"))
+        .arg("resume")
+        .arg("--last")
+        .arg(&prompt2)
+        .assert()
+        .success();
+
+    let resumed_path = find_session_file_containing_marker(&sessions_dir, &marker2)
+        .expect("no resumed session file containing marker2");
+    assert_eq!(
+        resumed_path, path,
+        "resume --last should reuse the existing file",
+    );
+    let content = std::fs::read_to_string(&resumed_path)?;
+    assert!(content.contains(&marker));
+    assert!(content.contains(&marker2));
+    Ok(())
+}
+
+#[test]
 fn exec_resume_by_id_appends_to_existing_file() -> anyhow::Result<()> {
     let home = TempDir::new()?;
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

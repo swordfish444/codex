@@ -1,7 +1,10 @@
 use clap::Parser;
 use clap::ValueEnum;
+use clap::error::Error as ClapError;
+use clap::error::ErrorKind as ClapErrorKind;
 use codex_common::CliConfigOverrides;
 use std::path::PathBuf;
+use uuid::Uuid;
 
 #[derive(Parser, Debug)]
 #[command(version)]
@@ -100,18 +103,59 @@ pub enum Command {
 
 #[derive(Parser, Debug)]
 pub struct ResumeArgs {
-    /// Conversation/session id (UUID). When provided, resumes this session.
-    /// If omitted, use --last to pick the most recent recorded session.
-    #[arg(value_name = "SESSION_ID")]
-    pub session_id: Option<String>,
+    /// Prompt to send after resuming the session. If `-` is used, read from stdin.
+    #[arg(value_name = "PROMPT", index = 1)]
+    pub prompt: Option<String>,
 
     /// Resume the most recent recorded session (newest) without specifying an id.
-    #[arg(long = "last", default_value_t = false, conflicts_with = "session_id")]
+    #[arg(long = "last", default_value_t = false)]
     pub last: bool,
 
-    /// Prompt to send after resuming the session. If `-` is used, read from stdin.
-    #[arg(value_name = "PROMPT")]
-    pub prompt: Option<String>,
+    /// Conversation/session id (UUID). When provided, resumes this session.
+    /// If omitted, use --last to pick the most recent recorded session.
+    #[arg(value_name = "SESSION_ID", index = 2)]
+    pub session_id: Option<String>,
+}
+
+impl ResumeArgs {
+    pub fn normalize(&mut self) -> Result<(), ClapError> {
+        if self.last {
+            if let Some(value) = self.session_id.take() {
+                if Self::looks_like_session_id(&value) {
+                    return Err(ClapError::raw(
+                        ClapErrorKind::ArgumentConflict,
+                        "The argument '--last' cannot be used with '[SESSION_ID]'",
+                    ));
+                }
+                if let Some(existing) = &mut self.prompt {
+                    if !existing.is_empty() {
+                        existing.push(' ');
+                    }
+                    existing.push_str(&value);
+                } else {
+                    self.prompt = Some(value);
+                }
+            }
+            return Ok(());
+        }
+
+        if self.session_id.is_some() {
+            return Ok(());
+        }
+
+        if let Some(value) = self.prompt.take() {
+            if Self::looks_like_session_id(&value) {
+                self.session_id = Some(value);
+            } else {
+                self.prompt = Some(value);
+            }
+        }
+        Ok(())
+    }
+
+    fn looks_like_session_id(value: &str) -> bool {
+        Uuid::parse_str(value).is_ok()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
