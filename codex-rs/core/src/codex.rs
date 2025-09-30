@@ -1286,8 +1286,19 @@ async fn submission_loop(
                     let previous_env_context = EnvironmentContext::from(turn_context.as_ref());
                     let new_env_context = EnvironmentContext::from(&fresh_turn_context);
                     if !new_env_context.equals_except_shell(&previous_env_context) {
-                        sess.record_conversation_items(&[ResponseItem::from(new_env_context)])
+                        let env_response_item = ResponseItem::from(new_env_context);
+                        sess.record_conversation_items(std::slice::from_ref(&env_response_item))
                             .await;
+                        for msg in map_response_item_to_event_messages(
+                            &env_response_item,
+                            sess.show_raw_agent_reasoning(),
+                        ) {
+                            let event = Event {
+                                id: sub.id.clone(),
+                                msg,
+                            };
+                            sess.send_event(event).await;
+                        }
                     }
 
                     // Install the new persistent context for subsequent tasks/turns.

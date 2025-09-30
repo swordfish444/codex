@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::AtomicI64;
@@ -46,6 +47,7 @@ pub struct McpProcess {
     process: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    pending_user_messages: VecDeque<JSONRPCNotification>,
 }
 
 impl McpProcess {
@@ -116,6 +118,7 @@ impl McpProcess {
             process,
             stdin,
             stdout,
+            pending_user_messages: VecDeque::new(),
         })
     }
 
@@ -380,8 +383,9 @@ impl McpProcess {
             let message = self.read_jsonrpc_message().await?;
 
             match message {
-                JSONRPCMessage::Notification(_) => {
-                    eprintln!("notification: {message:?}");
+                JSONRPCMessage::Notification(notification) => {
+                    eprintln!("notification: {notification:?}");
+                    self.enqueue_user_message(notification);
                 }
                 JSONRPCMessage::Request(jsonrpc_request) => {
                     return Ok(jsonrpc_request);
@@ -405,8 +409,9 @@ impl McpProcess {
         loop {
             let message = self.read_jsonrpc_message().await?;
             match message {
-                JSONRPCMessage::Notification(_) => {
-                    eprintln!("notification: {message:?}");
+                JSONRPCMessage::Notification(notification) => {
+                    eprintln!("notification: {notification:?}");
+                    self.enqueue_user_message(notification);
                 }
                 JSONRPCMessage::Request(_) => {
                     anyhow::bail!("unexpected JSONRPCMessage::Request: {message:?}");
@@ -430,8 +435,9 @@ impl McpProcess {
         loop {
             let message = self.read_jsonrpc_message().await?;
             match message {
-                JSONRPCMessage::Notification(_) => {
-                    eprintln!("notification: {message:?}");
+                JSONRPCMessage::Notification(notification) => {
+                    eprintln!("notification: {notification:?}");
+                    self.enqueue_user_message(notification);
                 }
                 JSONRPCMessage::Request(_) => {
                     anyhow::bail!("unexpected JSONRPCMessage::Request: {message:?}");
@@ -454,6 +460,10 @@ impl McpProcess {
     ) -> anyhow::Result<JSONRPCNotification> {
         eprintln!("in read_stream_until_notification_message({method})");
 
+        if let Some(notification) = self.take_pending_notification_by_method(method) {
+            return Ok(notification);
+        }
+
         loop {
             let message = self.read_jsonrpc_message().await?;
             match message {
@@ -461,6 +471,7 @@ impl McpProcess {
                     if notification.method == method {
                         return Ok(notification);
                     }
+                    self.enqueue_user_message(notification);
                 }
                 JSONRPCMessage::Request(_) => {
                     anyhow::bail!("unexpected JSONRPCMessage::Request: {message:?}");
@@ -472,6 +483,23 @@ impl McpProcess {
                     anyhow::bail!("unexpected JSONRPCMessage::Response: {message:?}");
                 }
             }
+        }
+    }
+
+    fn take_pending_notification_by_method(&mut self, method: &str) -> Option<JSONRPCNotification> {
+        if let Some(pos) = self
+            .pending_user_messages
+            .iter()
+            .position(|notification| notification.method == method)
+        {
+            return self.pending_user_messages.remove(pos);
+        }
+        None
+    }
+
+    fn enqueue_user_message(&mut self, notification: JSONRPCNotification) {
+        if notification.method == "codex/event/user_message" {
+            self.pending_user_messages.push_back(notification);
         }
     }
 }
