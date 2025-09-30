@@ -84,12 +84,10 @@ impl Executor {
         &self,
         sandbox_policy: SandboxPolicy,
         sandbox_cwd: PathBuf,
-        codex_linux_sandbox_exe: Option<PathBuf>,
     ) {
         if let Ok(mut cfg) = self.config.write() {
             cfg.sandbox_policy = sandbox_policy;
             cfg.sandbox_cwd = sandbox_cwd;
-            cfg.codex_linux_sandbox_exe = codex_linux_sandbox_exe;
         }
     }
 
@@ -164,11 +162,7 @@ impl Executor {
             Err(err) => return Err(err.into()),
         };
 
-        // Step 6: Allow the backend to post-process the raw output.
-        backend
-            .finalize(raw_output, &request.mode)
-            .await
-            .map_err(ExecError::from)
+        Ok(raw_output)
     }
 
     /// Fallback path invoked when a sandboxed run is denied so the user can
@@ -215,10 +209,7 @@ impl Executor {
                     )
                     .await?;
 
-                backend
-                    .finalize(retry_output, &request.mode)
-                    .await
-                    .map_err(ExecError::from)
+                Ok(retry_output)
             }
             ReviewDecision::Denied | ReviewDecision::Abort => {
                 Err(ExecError::rejection("exec command rejected by user"))
@@ -302,5 +293,75 @@ pub(crate) fn normalize_exec_result(
                 synthetic: Some(synthetic),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::CodexErr;
+    use crate::error::EnvVarError;
+    use crate::error::SandboxErr;
+    use crate::exec::StreamOutput;
+    use pretty_assertions::assert_eq;
+
+    fn make_output(text: &str) -> ExecToolCallOutput {
+        ExecToolCallOutput {
+            exit_code: 1,
+            stdout: StreamOutput::new(String::new()),
+            stderr: StreamOutput::new(String::new()),
+            aggregated_output: StreamOutput::new(text.to_string()),
+            duration: Duration::from_millis(123),
+            timed_out: false,
+        }
+    }
+
+    #[test]
+    fn normalize_success_borrows() {
+        let out = make_output("ok");
+        let result: Result<ExecToolCallOutput, ExecError> = Ok(out);
+        let normalized = normalize_exec_result(&result);
+        assert_eq!(normalized.event_output().aggregated_output.text, "ok");
+    }
+
+    #[test]
+    fn normalize_timeout_borrows_embedded_output() {
+        let out = make_output("timed out payload");
+        let err = CodexErr::Sandbox(SandboxErr::Timeout {
+            output: Box::new(out),
+        });
+        let result: Result<ExecToolCallOutput, ExecError> = Err(ExecError::Codex(err));
+        let normalized = normalize_exec_result(&result);
+        assert_eq!(
+            normalized.event_output().aggregated_output.text,
+            "timed out payload"
+        );
+    }
+
+    #[test]
+    fn normalize_function_error_synthesizes_payload() {
+        let err = FunctionCallError::RespondToModel("boom".to_string());
+        let result: Result<ExecToolCallOutput, ExecError> = Err(ExecError::Function(err));
+        let normalized = normalize_exec_result(&result);
+        assert_eq!(normalized.event_output().aggregated_output.text, "boom");
+    }
+
+    #[test]
+    fn normalize_codex_error_synthesizes_user_message() {
+        // Use a simple EnvVar error which formats to a clear message
+        let e = CodexErr::EnvVar(EnvVarError {
+            var: "FOO".to_string(),
+            instructions: Some("set it".to_string()),
+        });
+        let result: Result<ExecToolCallOutput, ExecError> = Err(ExecError::Codex(e));
+        let normalized = normalize_exec_result(&result);
+        assert!(
+            normalized
+                .event_output()
+                .aggregated_output
+                .text
+                .contains("Missing environment variable: `FOO`"),
+            "expected synthesized user-friendly message"
+        );
     }
 }

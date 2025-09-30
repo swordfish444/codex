@@ -1,11 +1,13 @@
+use std::collections::HashMap;
+use std::env;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use crate::apply_patch::ApplyPatchExec;
+use crate::CODEX_APPLY_PATCH_ARG1;
 use crate::exec::ExecParams;
 use crate::exec::ExecToolCallOutput;
-use crate::executor::sandbox::build_exec_params_for_apply_patch;
 use crate::function_tool::FunctionCallError;
 
 pub(crate) enum ExecutionMode {
@@ -23,14 +25,6 @@ pub(crate) trait ExecutionBackend: Send + Sync {
         // Required for downcasting the apply_patch.
         mode: &ExecutionMode,
     ) -> Result<ExecParams, FunctionCallError>;
-
-    async fn finalize(
-        &self,
-        output: ExecToolCallOutput,
-        _mode: &ExecutionMode,
-    ) -> Result<ExecToolCallOutput, FunctionCallError> {
-        Ok(output)
-    }
 }
 
 pub(crate) struct BackendStore {
@@ -86,7 +80,28 @@ impl ExecutionBackend for ApplyPatchBackend {
         mode: &ExecutionMode,
     ) -> Result<ExecParams, FunctionCallError> {
         match mode {
-            ExecutionMode::ApplyPatch(exec) => build_exec_params_for_apply_patch(exec, &params),
+            ExecutionMode::ApplyPatch(exec) => {
+                let path_to_codex = env::current_exe()
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .ok_or_else(|| {
+                        FunctionCallError::RespondToModel(
+                            "failed to determine path to codex executable".to_string(),
+                        )
+                    })?;
+
+                let patch = exec.action.patch.clone();
+                Ok(ExecParams {
+                    command: vec![path_to_codex, CODEX_APPLY_PATCH_ARG1.to_string(), patch],
+                    cwd: exec.action.cwd.clone(),
+                    timeout_ms: params.timeout_ms,
+                    // Run apply_patch with a minimal environment for determinism and to
+                    // avoid leaking host environment variables into the patch process.
+                    env: HashMap::new(),
+                    with_escalated_permissions: params.with_escalated_permissions,
+                    justification: params.justification,
+                })
+            },
             ExecutionMode::Shell => Err(FunctionCallError::RespondToModel(
                 "apply_patch backend invoked without patch context".to_string(),
             )),

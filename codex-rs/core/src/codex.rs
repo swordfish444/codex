@@ -2616,10 +2616,9 @@ async fn handle_container_exec_with_params(
         stdout_stream,
     };
 
-    sess.executor.update_environment(
+    sess.executor.update_environment( // todo this should not be needed ? Not sure what it means
         turn_context.sandbox_policy.clone(),
         turn_context.cwd.clone(),
-        sess.services.codex_linux_sandbox_exe.clone(),
     );
 
     let output_result = sess
