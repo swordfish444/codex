@@ -4,22 +4,32 @@ pub mod registry;
 pub mod router;
 pub mod spec;
 
-use serde::Serialize;
-use tracing::trace;
-use codex_apply_patch::{maybe_parse_apply_patch_verified, MaybeApplyPatchVerified};
-use codex_protocol::protocol::AskForApproval;
-use codex_utils_string::{take_bytes_at_char_boundary, take_last_bytes_at_char_boundary};
-pub use router::Router;
 use crate::apply_patch;
-use crate::apply_patch::{convert_apply_patch_to_protocol, ApplyPatchExec, InternalApplyPatchInvocation};
-use crate::codex::{ApplyPatchCommandContext, ExecCommandContext, Session, TurnContext};
-use crate::error::{CodexErr, SandboxErr};
-use crate::exec::{ExecParams, ExecToolCallOutput, StdoutStream};
-use crate::executor::errors::ExecError;
+use crate::apply_patch::ApplyPatchExec;
+use crate::apply_patch::InternalApplyPatchInvocation;
+use crate::apply_patch::convert_apply_patch_to_protocol;
+use crate::codex::ApplyPatchCommandContext;
+use crate::codex::ExecCommandContext;
+use crate::codex::Session;
+use crate::codex::TurnContext;
+use crate::error::CodexErr;
+use crate::error::SandboxErr;
+use crate::exec::ExecParams;
+use crate::exec::ExecToolCallOutput;
+use crate::exec::StdoutStream;
 use crate::executor::ExecutionMode;
+use crate::executor::errors::ExecError;
 use crate::executor::linkers::PreparedExec;
 use crate::function_tool::FunctionCallError;
 use crate::turn_diff_tracker::TurnDiffTracker;
+use codex_apply_patch::MaybeApplyPatchVerified;
+use codex_apply_patch::maybe_parse_apply_patch_verified;
+use codex_protocol::protocol::AskForApproval;
+use codex_utils_string::take_bytes_at_char_boundary;
+use codex_utils_string::take_last_bytes_at_char_boundary;
+pub use router::Router;
+use serde::Serialize;
+use tracing::trace;
 
 // Model-formatting limits: clients get full streams; oonly content sent to the model is truncated.
 pub(crate) const MODEL_FORMAT_MAX_BYTES: usize = 10 * 1024; // 10 KiB
@@ -27,7 +37,6 @@ pub(crate) const MODEL_FORMAT_MAX_LINES: usize = 256; // lines
 pub(crate) const MODEL_FORMAT_HEAD_LINES: usize = MODEL_FORMAT_MAX_LINES / 2;
 pub(crate) const MODEL_FORMAT_TAIL_LINES: usize = MODEL_FORMAT_MAX_LINES - MODEL_FORMAT_HEAD_LINES; // 128
 pub(crate) const MODEL_FORMAT_HEAD_BYTES: usize = MODEL_FORMAT_MAX_BYTES / 2;
-
 
 pub(crate) async fn handle_container_exec_with_params(
     tool_name: &str,

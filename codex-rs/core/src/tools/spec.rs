@@ -276,6 +276,43 @@ fn create_view_image_tool() -> ToolSpec {
         },
     })
 }
+
+fn create_read_file_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "file_path".to_string(),
+        JsonSchema::String {
+            description: Some("Absolute path to the file".to_string()),
+        },
+    );
+    properties.insert(
+        "offset".to_string(),
+        JsonSchema::Number {
+            description: Some(
+                "The line number to start reading from. Must be 1 or greater.".to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "limit".to_string(),
+        JsonSchema::Number {
+            description: Some("The maximum number of lines to return.".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "read_file".to_string(),
+        description:
+            "Reads a local file with 1-indexed line numbers and returns up to the requested number of lines."
+                .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["file_path".to_string()]),
+            additional_properties: Some(false),
+        },
+    })
+}
 /// TODO(dylan): deprecate once we get rid of json tool
 #[derive(Serialize, Deserialize)]
 pub(crate) struct ApplyPatchToolArgs {
@@ -487,6 +524,7 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::ExecStreamHandler;
     use crate::tools::handlers::McpHandler;
     use crate::tools::handlers::PlanHandler;
+    use crate::tools::handlers::ReadFileHandler;
     use crate::tools::handlers::ShellHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
@@ -499,6 +537,7 @@ pub(crate) fn build_specs(
     let exec_stream_handler = Arc::new(ExecStreamHandler);
     let unified_exec_handler = Arc::new(UnifiedExecHandler);
     let plan_handler = Arc::new(PlanHandler);
+    let read_file_handler = Arc::new(ReadFileHandler);
     let apply_patch_handler = Arc::new(ApplyPatchHandler);
     let view_image_handler = Arc::new(ViewImageHandler);
     let mcp_handler = Arc::new(McpHandler);
@@ -548,6 +587,9 @@ pub(crate) fn build_specs(
         }
         builder.register_handler("apply_patch", apply_patch_handler);
     }
+
+    specs.push(create_read_file_tool());
+    builder.register_handler("read_file", read_file_handler);
 
     if config.web_search_request {
         specs.push(ToolSpec::WebSearch {});
@@ -627,7 +669,13 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["unified_exec", "update_plan", "web_search", "view_image"],
+            &[
+                "unified_exec",
+                "update_plan",
+                "read_file",
+                "web_search",
+                "view_image",
+            ],
         );
     }
 
@@ -647,7 +695,13 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["unified_exec", "update_plan", "web_search", "view_image"],
+            &[
+                "unified_exec",
+                "update_plan",
+                "read_file",
+                "web_search",
+                "view_image",
+            ],
         );
     }
 
@@ -706,6 +760,7 @@ mod tests {
             &tools,
             &[
                 "unified_exec",
+                "read_file",
                 "web_search",
                 "view_image",
                 "test_server/do_something_cool",
@@ -713,7 +768,7 @@ mod tests {
         );
 
         assert_eq!(
-            tools[3],
+            tools[4],
             ToolSpec::Function(ResponsesApiTool {
                 name: "test_server/do_something_cool".to_string(),
                 parameters: JsonSchema::Object {
@@ -824,6 +879,7 @@ mod tests {
             &tools,
             &[
                 "unified_exec",
+                "read_file",
                 "view_image",
                 "test_server/cool",
                 "test_server/do",
@@ -871,11 +927,17 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["unified_exec", "web_search", "view_image", "dash/search"],
+            &[
+                "unified_exec",
+                "read_file",
+                "web_search",
+                "view_image",
+                "dash/search",
+            ],
         );
 
         assert_eq!(
-            tools[3],
+            tools[4],
             ToolSpec::Function(ResponsesApiTool {
                 name: "dash/search".to_string(),
                 parameters: JsonSchema::Object {
@@ -931,10 +993,16 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["unified_exec", "web_search", "view_image", "dash/paginate"],
+            &[
+                "unified_exec",
+                "read_file",
+                "web_search",
+                "view_image",
+                "dash/paginate",
+            ],
         );
         assert_eq!(
-            tools[3],
+            tools[4],
             ToolSpec::Function(ResponsesApiTool {
                 name: "dash/paginate".to_string(),
                 parameters: JsonSchema::Object {
@@ -988,10 +1056,16 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["unified_exec", "web_search", "view_image", "dash/tags"],
+            &[
+                "unified_exec",
+                "read_file",
+                "web_search",
+                "view_image",
+                "dash/tags",
+            ],
         );
         assert_eq!(
-            tools[3],
+            tools[4],
             ToolSpec::Function(ResponsesApiTool {
                 name: "dash/tags".to_string(),
                 parameters: JsonSchema::Object {
@@ -1048,10 +1122,16 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["unified_exec", "web_search", "view_image", "dash/value"],
+            &[
+                "unified_exec",
+                "read_file",
+                "web_search",
+                "view_image",
+                "dash/value",
+            ],
         );
         assert_eq!(
-            tools[3],
+            tools[4],
             ToolSpec::Function(ResponsesApiTool {
                 name: "dash/value".to_string(),
                 parameters: JsonSchema::Object {
