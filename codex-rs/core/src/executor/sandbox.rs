@@ -102,10 +102,19 @@ async fn select_shell_sandbox(
     );
 
     match safety {
-        SafetyCheck::AutoApprove { sandbox_type } => Ok(SandboxDecision::auto(
+        SafetyCheck::AutoApprove {
             sandbox_type,
-            should_escalate_on_failure(approval_policy, sandbox_type),
-        )),
+            user_explicitly_approved,
+        } => {
+            let mut decision = SandboxDecision::auto(
+                sandbox_type,
+                should_escalate_on_failure(approval_policy, sandbox_type),
+            );
+            if user_explicitly_approved {
+                decision.record_session_approval = true;
+            }
+            Ok(decision)
+        }
         SafetyCheck::AskUser => {
             let decision = session
                 .request_command_approval(
@@ -146,7 +155,7 @@ fn select_apply_patch_sandbox(
         &config.sandbox_policy,
         &config.sandbox_cwd,
     ) {
-        SafetyCheck::AutoApprove { sandbox_type } => Ok(SandboxDecision::auto(
+        SafetyCheck::AutoApprove { sandbox_type, .. } => Ok(SandboxDecision::auto(
             sandbox_type,
             should_escalate_on_failure(approval_policy, sandbox_type),
         )),
