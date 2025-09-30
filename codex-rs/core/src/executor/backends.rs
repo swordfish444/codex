@@ -23,6 +23,10 @@ pub(crate) trait ExecutionBackend: Send + Sync {
         // Required for downcasting the apply_patch.
         mode: &ExecutionMode,
     ) -> Result<ExecParams, FunctionCallError>;
+
+    fn stream_stdout(&self, _mode: &ExecutionMode) -> bool {
+        true
+    }
 }
 
 static SHELL_BACKEND: ShellBackend = ShellBackend;
@@ -89,5 +93,9 @@ impl ExecutionBackend for ApplyPatchBackend {
                 "apply_patch backend invoked without patch context".to_string(),
             )),
         }
+    }
+
+    fn stream_stdout(&self, _mode: &ExecutionMode) -> bool {
+        false
     }
 }

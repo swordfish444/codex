@@ -906,7 +906,11 @@ impl Session {
         &self,
         turn_diff_tracker: &mut TurnDiffTracker,
         begin_ctx: ExecCommandContext,
-        request: ExecutionRequest,
+        params: ExecParams,
+        approval_command: Vec<String>,
+        mode: ExecutionMode,
+        stdout_stream: Option<StdoutStream>,
+        use_shell_profile: bool,
         approval_policy: AskForApproval,
     ) -> Result<ExecToolCallOutput, ExecError> {
         let is_apply_patch = begin_ctx.apply_patch.is_some();
@@ -915,6 +919,14 @@ impl Session {
 
         self.on_exec_command_begin(turn_diff_tracker, begin_ctx.clone())
             .await;
+
+        let request = ExecutionRequest {
+            params,
+            approval_command,
+            mode,
+            stdout_stream,
+            use_shell_profile,
+        };
 
         let result = self
             .services
@@ -1030,7 +1042,7 @@ impl Session {
         &self.services.notifier
     }
 
-    fn user_shell(&self) -> &shell::Shell {
+    pub(crate) fn user_shell(&self) -> &shell::Shell {
         &self.services.user_shell
     }
 
@@ -2508,24 +2520,6 @@ fn parse_container_exec_arguments(
         })
 }
 
-fn maybe_translate_shell_command(
-    params: ExecParams,
-    sess: &Session,
-    turn_context: &TurnContext,
-) -> ExecParams {
-    let should_translate = matches!(sess.user_shell(), crate::shell::Shell::PowerShell(_))
-        || turn_context.shell_environment_policy.use_profile;
-
-    if should_translate
-        && let Some(command) = sess
-            .user_shell()
-            .format_default_shell_invocation(params.command.clone())
-    {
-        return ExecParams { command, ..params };
-    }
-    params
-}
-
 async fn handle_container_exec_with_params(
     params: ExecParams,
     sess: &Session,
@@ -2590,27 +2584,9 @@ async fn handle_container_exec_with_params(
         ),
     };
 
-    let translated_params = maybe_translate_shell_command(params, sess, turn_context);
-    let stdout_stream = if exec_command_context.apply_patch.is_some() {
-        None
-    } else {
-        Some(StdoutStream {
-            sub_id: sub_id.clone(),
-            call_id: call_id.clone(),
-            tx_event: sess.tx_event.clone(),
-        })
-    };
-
     let mode = match apply_patch_exec {
         Some(exec) => ExecutionMode::ApplyPatch(exec),
         None => ExecutionMode::Shell,
-    };
-
-    let request = ExecutionRequest {
-        params: translated_params,
-        approval_command: command_for_display,
-        mode,
-        stdout_stream,
     };
 
     sess.services.executor.update_environment(
@@ -2622,7 +2598,15 @@ async fn handle_container_exec_with_params(
         .run_exec_with_events(
             turn_diff_tracker,
             exec_command_context,
-            request,
+            params,
+            command_for_display,
+            mode,
+            Some(StdoutStream {
+                sub_id: sub_id.clone(), // todo we should not nead the ids
+                call_id: call_id.clone(),
+                tx_event: sess.tx_event.clone(),
+            }),
+            turn_context.shell_environment_policy.use_profile,
             turn_context.approval_policy,
         )
         .await;

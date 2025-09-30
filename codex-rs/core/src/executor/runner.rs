@@ -23,6 +23,7 @@ use crate::function_tool::FunctionCallError;
 use crate::protocol::AskForApproval;
 use crate::protocol::ReviewDecision;
 use crate::protocol::SandboxPolicy;
+use crate::shell;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ExecutorConfig {
@@ -94,8 +95,18 @@ impl Executor {
         sub_id: &str,
         call_id: &str,
     ) -> Result<ExecToolCallOutput, ExecError> {
+        if matches!(request.mode, ExecutionMode::Shell) {
+            request.params =
+                maybe_translate_shell_command(request.params, session, request.use_shell_profile);
+        }
+
         // Step 1: Normalise parameters via the selected backend.
         let backend = backend_for_mode(&request.mode);
+        let stdout_stream = if backend.stream_stdout(&request.mode) {
+            request.stdout_stream.clone()
+        } else {
+            None
+        };
         request.params = backend
             .prepare(request.params, &request.mode)
             .map_err(ExecError::from)?;
@@ -128,7 +139,7 @@ impl Executor {
                 request.params.clone(),
                 sandbox_decision.initial_sandbox,
                 &config,
-                request.stdout_stream.clone(),
+                stdout_stream.clone(),
             )
             .await;
 
@@ -140,8 +151,16 @@ impl Executor {
             }
             Err(CodexErr::Sandbox(error @ SandboxErr::Denied { .. })) => {
                 return if sandbox_decision.escalate_on_failure {
-                    self.retry_without_sandbox(&request, &config, session, sub_id, call_id, error)
-                        .await
+                    self.retry_without_sandbox(
+                        &request,
+                        &config,
+                        session,
+                        sub_id,
+                        call_id,
+                        stdout_stream.clone(),
+                        error,
+                    )
+                    .await
                 } else {
                     Err(ExecError::rejection(format!(
                         "failed in sandbox {:?} with execution error: {error:?}",
@@ -165,6 +184,7 @@ impl Executor {
         session: &Session,
         sub_id: &str,
         call_id: &str,
+        stdout_stream: Option<StdoutStream>,
         sandbox_error: SandboxErr,
     ) -> Result<ExecToolCallOutput, ExecError> {
         session
@@ -194,7 +214,7 @@ impl Executor {
                         request.params.clone(),
                         SandboxType::None,
                         config,
-                        request.stdout_stream.clone(),
+                        stdout_stream,
                     )
                     .await?;
 
@@ -225,11 +245,31 @@ impl Executor {
     }
 }
 
+fn maybe_translate_shell_command(
+    params: ExecParams,
+    session: &Session,
+    use_shell_profile: bool,
+) -> ExecParams {
+    let should_translate =
+        matches!(session.user_shell(), shell::Shell::PowerShell(_)) || use_shell_profile;
+
+    if should_translate
+        && let Some(command) = session
+            .user_shell()
+            .format_default_shell_invocation(params.command.clone())
+    {
+        return ExecParams { command, ..params };
+    }
+
+    params
+}
+
 pub(crate) struct ExecutionRequest {
     pub params: ExecParams,
     pub approval_command: Vec<String>,
     pub mode: ExecutionMode,
     pub stdout_stream: Option<StdoutStream>,
+    pub use_shell_profile: bool,
 }
 
 pub(crate) struct NormalizedExecOutput<'a> {

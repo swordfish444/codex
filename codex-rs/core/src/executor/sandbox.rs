@@ -196,6 +196,7 @@ mod tests {
             approval_command: vec!["apply_patch".into()],
             mode: ExecutionMode::ApplyPatch(exec),
             stdout_stream: None,
+            use_shell_profile: false,
         };
         let decision = select_sandbox(
             &request,
@@ -236,6 +237,7 @@ mod tests {
             approval_command: vec!["apply_patch".into()],
             mode: ExecutionMode::ApplyPatch(exec),
             stdout_stream: None,
+            use_shell_profile: false,
         };
         let decision = select_sandbox(
             &request,
@@ -277,6 +279,7 @@ mod tests {
             approval_command: vec!["apply_patch".into()],
             mode: ExecutionMode::ApplyPatch(exec),
             stdout_stream: None,
+            use_shell_profile: false,
         };
         let result = select_sandbox(
             &request,
@@ -313,6 +316,7 @@ mod tests {
             approval_command: vec!["some-unknown".into()],
             mode: ExecutionMode::Shell,
             stdout_stream: None,
+            use_shell_profile: false,
         };
         let decision = select_sandbox(
             &request,
@@ -347,6 +351,7 @@ mod tests {
             approval_command: vec!["some-unknown".into()],
             mode: ExecutionMode::Shell,
             stdout_stream: None,
+            use_shell_profile: false,
         };
         let decision = select_sandbox(
             &request,
