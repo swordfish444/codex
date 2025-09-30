@@ -19,6 +19,32 @@ async fn config_overrides_are_applied_resume() -> anyhow::Result<()> {
     )
     .await?;
 
+    config_overrides_are_applied_resume_inner(
+        &["-c", "model=o3", "prompt text"],
+        &[
+            "resume",
+            "--skip-git-repo-check",
+            "fake id",
+            "-c",
+            "model=o3",
+            "resume prompt text",
+        ],
+    )
+    .await?;
+
+    config_overrides_are_applied_resume_inner(
+        &["-c", "model=o3", "prompt text"],
+        &[
+            "-c",
+            "model=o3",
+            "resume",
+            "--skip-git-repo-check",
+            "fake id",
+            "resume prompt text",
+        ],
+    )
+    .await?;
+
     Ok(())
 }
 

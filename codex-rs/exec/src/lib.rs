@@ -49,6 +49,9 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
 
     let Cli { command, shared } = cli;
 
+    // Merge overrides from root CLI.
+    let mut config_overrides = shared.config_overrides.clone();
+
     let shared = command
         .as_ref()
         .map(|cmd| match cmd {
@@ -56,7 +59,6 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         })
         .unwrap_or(shared);
 
-    println!("shared: {shared:?}");
     let SharedExecArgs {
         images,
         model: model_cli_arg,
@@ -73,9 +75,13 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         sandbox_mode: sandbox_mode_cli_arg,
         output_schema: output_schema_path,
         include_plan_tool,
-        config_overrides,
         prompt: prompt_arg,
+        ..
     } = shared;
+
+    config_overrides
+        .raw_overrides
+        .splice(0..0, shared.config_overrides.raw_overrides);
 
     let prompt = match prompt_arg {
         Some(p) if p != "-" => p,
