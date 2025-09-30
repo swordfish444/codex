@@ -1,16 +1,18 @@
 ---
 source: tui/src/chatwidget/tests.rs
+assertion_line: 1235
 expression: terminal.backend()
 ---
 "                                                                                "
-"▌ Command: echo hello world                                                     "
-"▌                                                                               "
-"▌ Allow command?                                                                "
-"▌                                                                               "
-"▌ > 1. Approve and run now          (Y) Run this command one time               "
-"▌   2. Always approve this session  (A) Automatically approve this command for  "
-"▌                                   the rest of the session                     "
-"▌   3. Cancel                       (N) Do not run the command                  "
-"                                                                                "
-"Press Enter to confirm or Esc to cancel                                         "
+"╭──────────────────────────────────────────────────────────────────────────────╮"
+"│ $ echo hello world                                                           │"
+"│                                                                              │"
+"│ Would you like to run the following command?                                 │"
+"│                                                                              │"
+"│   › 1. Approve and run now          (Y) Run this command one time            │"
+"│     2. Always approve this session  (A) Automatically approve this command   │"
+"│                                     for the rest of the session              │"
+"│     3. Cancel                       (N) Do not run the command               │"
+"│ Press Enter to continue                                                      │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
 "                                                                                "

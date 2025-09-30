@@ -94,8 +94,14 @@ impl ApprovalOverlay {
             );
         };
         let (options, title) = match &state.variant {
-            ApprovalVariant::Exec { .. } => (exec_options(), "Allow command?".to_string()),
-            ApprovalVariant::ApplyPatch { .. } => (patch_options(), "Apply changes?".to_string()),
+            ApprovalVariant::Exec { .. } => (
+                exec_options(),
+                "Would you like to run the following command?".to_string(),
+            ),
+            ApprovalVariant::ApplyPatch { .. } => (
+                patch_options(),
+                "Would you like to apply these changes?".to_string(),
+            ),
         };
 
         let items = options
@@ -112,7 +118,7 @@ impl ApprovalOverlay {
 
         let params = SelectionViewParams {
             title,
-            footer_hint: Some("Press Enter to confirm or Esc to cancel".to_string()),
+            footer_hint: Some("Press Enter to continue".to_string()),
             items,
             header: state.header.clone(),
             ..Default::default()
@@ -281,9 +287,8 @@ impl From<ApprovalRequest> for ApprovalRequestState {
                 }
                 let command_snippet = exec_snippet(&command);
                 if !command_snippet.is_empty() {
-                    header.push(HeaderLine::Text {
-                        text: format!("Command: {command_snippet}"),
-                        italic: false,
+                    header.push(HeaderLine::Command {
+                        command: command_snippet,
                     });
                     header.push(HeaderLine::Spacer);
                 }
@@ -529,7 +534,7 @@ mod tests {
         assert!(
             rendered
                 .iter()
-                .any(|line| line.contains("Command: echo hello world")),
+                .any(|line| line.contains("$ echo hello world")),
             "expected header to include command snippet, got {rendered:?}"
         );
     }
