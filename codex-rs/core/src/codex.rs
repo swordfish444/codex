@@ -263,7 +263,6 @@ pub(crate) struct Session {
     pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
     services: SessionServices,
     next_internal_sub_id: AtomicU64,
-    executor: Executor,
 }
 
 /// The context needed for a single turn of the conversation.
@@ -457,16 +456,14 @@ impl Session {
             unified_exec_manager: UnifiedExecSessionManager::default(),
             notifier: notify,
             rollout: Mutex::new(Some(rollout_recorder)),
-            codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
             user_shell: default_shell,
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
+            executor: Executor::new(ExecutorConfig::new(
+                turn_context.sandbox_policy.clone(),
+                turn_context.cwd.clone(),
+                config.codex_linux_sandbox_exe.clone(),
+            )),
         };
-
-        let executor = Executor::new(ExecutorConfig::new(
-            turn_context.sandbox_policy.clone(),
-            turn_context.cwd.clone(),
-            config.codex_linux_sandbox_exe.clone(),
-        ));
 
         let sess = Arc::new(Session {
             conversation_id,
@@ -475,7 +472,6 @@ impl Session {
             active_turn: Mutex::new(None),
             services,
             next_internal_sub_id: AtomicU64::new(0),
-            executor,
         });
 
         // Dispatch the SessionConfiguredEvent first and then report any errors.
@@ -921,6 +917,7 @@ impl Session {
             .await;
 
         let result = self
+            .services
             .executor
             .run(request, self, approval_policy, &sub_id, &call_id)
             .await;
@@ -2616,7 +2613,7 @@ async fn handle_container_exec_with_params(
         stdout_stream,
     };
 
-    sess.executor.update_environment(
+    sess.services.executor.update_environment(
         turn_context.sandbox_policy.clone(),
         turn_context.cwd.clone(),
     );
@@ -3203,15 +3200,14 @@ mod tests {
             unified_exec_manager: UnifiedExecSessionManager::default(),
             notifier: UserNotifier::default(),
             rollout: Mutex::new(None),
-            codex_linux_sandbox_exe: None,
             user_shell: shell::Shell::Unknown,
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
+            executor: Executor::new(ExecutorConfig::new(
+                turn_context.sandbox_policy.clone(),
+                turn_context.cwd.clone(),
+                None,
+            )),
         };
-        let executor = Executor::new(ExecutorConfig::new(
-            turn_context.sandbox_policy.clone(),
-            turn_context.cwd.clone(),
-            None,
-        ));
         let session = Session {
             conversation_id,
             tx_event,
@@ -3219,7 +3215,6 @@ mod tests {
             active_turn: Mutex::new(None),
             services,
             next_internal_sub_id: AtomicU64::new(0),
-            executor,
         };
         (session, turn_context)
     }
@@ -3276,15 +3271,14 @@ mod tests {
             unified_exec_manager: UnifiedExecSessionManager::default(),
             notifier: UserNotifier::default(),
             rollout: Mutex::new(None),
-            codex_linux_sandbox_exe: None,
             user_shell: shell::Shell::Unknown,
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
+            executor: Executor::new(ExecutorConfig::new(
+                config.sandbox_policy.clone(),
+                config.cwd.clone(),
+                None,
+            )),
         };
-        let executor = Executor::new(ExecutorConfig::new(
-            config.sandbox_policy.clone(),
-            config.cwd.clone(),
-            None,
-        ));
         let session = Arc::new(Session {
             conversation_id,
             tx_event,
@@ -3292,7 +3286,6 @@ mod tests {
             active_turn: Mutex::new(None),
             services,
             next_internal_sub_id: AtomicU64::new(0),
-            executor,
         });
         (session, turn_context, rx_event)
     }
