@@ -1,3 +1,6 @@
+use crate::codex::Session;
+use crate::codex::TurnContext;
+use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_otel::otel_event_manager::OtelEventManager;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseInputItem;
@@ -7,10 +10,6 @@ use mcp_types::CallToolResult;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::PathBuf;
-
-use crate::codex::Session;
-use crate::codex::TurnContext;
-use crate::turn_diff_tracker::TurnDiffTracker;
 
 pub struct ToolInvocation<'a> {
     pub session: &'a Session,
@@ -98,7 +97,7 @@ pub(crate) struct ExecCommandContext {
     pub(crate) call_id: String,
     pub(crate) command_for_display: Vec<String>,
     pub(crate) cwd: PathBuf,
-    pub(crate) apply_patch: Option<crate::codex::ApplyPatchCommandContext>,
+    pub(crate) apply_patch: Option<ApplyPatchCommandContext>,
     pub(crate) tool_name: String,
     pub(crate) otel_event_manager: OtelEventManager,
 }

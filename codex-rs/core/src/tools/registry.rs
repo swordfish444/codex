@@ -13,18 +13,12 @@ use crate::tools::context::ToolPayload;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ToolKind {
     Function,
-    Custom,
-    LocalShell,
     UnifiedExec,
     Mcp,
 }
 
 #[async_trait]
 pub trait ToolHandler: Send + Sync {
-    fn spec(&self) -> Option<&crate::tools::spec::ResponsesApiTool> {
-        None
-    }
-
     fn kind(&self) -> ToolKind;
 
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
@@ -32,8 +26,6 @@ pub trait ToolHandler: Send + Sync {
             (self.kind(), payload),
             (ToolKind::Function, ToolPayload::Function { .. })
                 | (ToolKind::Function, ToolPayload::UnifiedExec { .. })
-                | (ToolKind::Custom, ToolPayload::Custom { .. })
-                | (ToolKind::LocalShell, ToolPayload::LocalShell { .. })
                 | (ToolKind::UnifiedExec, ToolPayload::UnifiedExec { .. })
                 | (ToolKind::Mcp, ToolPayload::Mcp { .. })
         )
@@ -64,10 +56,6 @@ impl ToolRegistry {
     //     }
     // }
 
-    pub fn iter_handlers(&self) -> impl Iterator<Item = (&String, &Arc<dyn ToolHandler>)> {
-        self.handlers.iter()
-    }
-
     pub async fn dispatch<'a>(
         &self,
         invocation: ToolInvocation<'a>,
@@ -97,7 +85,9 @@ impl ToolRegistry {
                     match handler.handle(invocation).await {
                         Ok(output) => {
                             let preview = output.log_preview();
-                            let mut guard = output_cell.lock().expect("mutex poisoned");
+                            let mut guard = output_cell
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                             *guard = Some(output);
                             Ok(preview)
                         }
@@ -109,7 +99,9 @@ impl ToolRegistry {
 
         match result {
             Ok(_) => {
-                let mut guard = output_cell.lock().expect("mutex poisoned");
+                let mut guard = output_cell
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let output = guard.take().ok_or_else(|| {
                     FunctionCallError::RespondToModel("tool produced no output".to_string())
                 })?;
@@ -159,14 +151,6 @@ impl ToolRegistryBuilder {
     //         }
     //     }
     // }
-
-    pub fn extend(&mut self, other: ToolRegistryBuilder) {
-        for (name, handler) in other.handlers {
-            if self.handlers.insert(name.clone(), handler).is_some() {
-                warn!("overwriting handler for tool {name}");
-            }
-        }
-    }
 
     pub fn build(self) -> ToolRegistry {
         ToolRegistry::new(self.handlers)

@@ -37,10 +37,6 @@ impl Router {
         Self { registry, specs }
     }
 
-    pub fn new(registry: ToolRegistry, specs: Vec<ToolSpec>) -> Self {
-        Self { registry, specs }
-    }
-
     pub fn specs(&self) -> &[ToolSpec] {
         &self.specs
     }
