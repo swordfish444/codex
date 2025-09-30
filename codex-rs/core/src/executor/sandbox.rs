@@ -52,7 +52,7 @@ fn should_escalate_on_failure(approval: AskForApproval, sandbox: SandboxType) ->
 
 /// Determines how a command should be sandboxed, prompting the user when
 /// policy requires explicit approval.
-#[warn(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub async fn select_sandbox(
     request: &ExecutionRequest,
     approval_policy: AskForApproval,
@@ -83,7 +83,7 @@ pub async fn select_sandbox(
     }
 }
 
-#[warn(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 async fn select_shell_sandbox(
     request: &ExecutionRequest,
     approval_policy: AskForApproval,
