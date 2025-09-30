@@ -69,6 +69,12 @@ impl ScrollState {
             self.scroll_top = 0;
             return;
         }
+
+        if self.scroll_top >= len {
+            let clamp = visible_rows.min(len);
+            self.scroll_top = len.saturating_sub(clamp);
+        }
+
         if let Some(sel) = self.selected_idx {
             if sel < self.scroll_top {
                 self.scroll_top = sel;
@@ -79,7 +85,7 @@ impl ScrollState {
                 }
             }
         } else {
-            self.scroll_top = 0;
+            self.selected_idx = Some(self.scroll_top.min(len - 1));
         }
     }
 }

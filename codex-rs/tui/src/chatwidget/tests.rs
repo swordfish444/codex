@@ -933,18 +933,31 @@ fn render_bottom_first_row(chat: &ChatWidget, width: u16) -> String {
     let area = Rect::new(0, 0, width, height);
     let mut buf = Buffer::empty(area);
     (chat).render_ref(area, &mut buf);
-    let mut row = String::new();
-    // Row 0 is the top spacer for the bottom pane; row 1 contains the header line
-    let y = 1u16.min(height.saturating_sub(1));
-    for x in 0..area.width {
-        let s = buf[(x, y)].symbol();
-        if s.is_empty() {
-            row.push(' ');
-        } else {
-            row.push_str(s);
+
+    for y in 0..area.height {
+        let mut row = String::new();
+        for x in 0..area.width {
+            let s = buf[(x, y)].symbol();
+            if s.is_empty() {
+                row.push(' ');
+            } else {
+                row.push_str(s);
+            }
+        }
+        if row.chars().any(|c| {
+            !c.is_whitespace()
+                && c != '╭'
+                && c != '╮'
+                && c != '╯'
+                && c != '╰'
+                && c != '─'
+                && c != '│'
+        }) {
+            return row;
         }
     }
-    row
+
+    String::new()
 }
 
 #[test]
@@ -1764,14 +1777,14 @@ fn apply_patch_untrusted_shows_approval_modal() {
         for x in 0..area.width {
             row.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
         }
-        if row.contains("Apply changes?") {
+        if row.contains("Would you like to apply these changes?") {
             contains_title = true;
             break;
         }
     }
     assert!(
         contains_title,
-        "expected approval modal to be visible with title 'Apply changes?'"
+        "expected approval modal to be visible with title 'Would you like to apply these changes?'"
     );
 }
 

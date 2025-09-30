@@ -11,6 +11,7 @@ use ratatui::widgets::Widget;
 use textwrap::wrap;
 
 use crate::app_event_sender::AppEventSender;
+use crate::render::border::draw_history_border;
 
 use super::CancellationEvent;
 use super::bottom_pane_view::BottomPaneView;
@@ -26,6 +27,7 @@ pub(crate) type SelectionAction = Box<dyn Fn(&AppEventSender) + Send + Sync>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum HeaderLine {
     Text { text: String, italic: bool },
+    Command { command: String },
     Spacer,
 }
 
@@ -66,15 +68,6 @@ pub(crate) struct ListSelectionView {
 }
 
 impl ListSelectionView {
-    fn dim_prefix_span() -> Span<'static> {
-        "▌ ".dim()
-    }
-
-    fn render_dim_prefix_line(area: Rect, buf: &mut Buffer) {
-        let para = Paragraph::new(Line::from(Self::dim_prefix_span()));
-        para.render(area, buf);
-    }
-
     pub fn new(params: SelectionViewParams, app_event_tx: AppEventSender) -> Self {
         let mut s = Self {
             title: params.title,
@@ -171,7 +164,7 @@ impl ListSelectionView {
             .filter_map(|(visible_idx, actual_idx)| {
                 self.items.get(*actual_idx).map(|item| {
                     let is_selected = self.state.selected_idx == Some(visible_idx);
-                    let prefix = if is_selected { '>' } else { ' ' };
+                    let prefix = if is_selected { '›' } else { ' ' };
                     let name = item.name.as_str();
                     let name_with_marker = if item.is_current {
                         format!("{name} (current)")
@@ -236,8 +229,7 @@ impl ListSelectionView {
         if self.header.is_empty() || width == 0 {
             return Vec::new();
         }
-        let prefix_width = Self::dim_prefix_span().width() as u16;
-        let available = width.saturating_sub(prefix_width).max(1) as usize;
+        let available = width.max(1) as usize;
         let mut lines = Vec::new();
         for entry in &self.header {
             match entry {
@@ -256,6 +248,22 @@ impl ListSelectionView {
                         lines.push(vec![span]);
                     }
                 }
+                HeaderLine::Command { command } => {
+                    if command.is_empty() {
+                        lines.push(Vec::new());
+                        continue;
+                    }
+                    let prompt_width = 2usize;
+                    let content_width = available.saturating_sub(prompt_width).max(1);
+                    let parts = wrap(command, content_width);
+                    for (idx, part) in parts.into_iter().enumerate() {
+                        let mut spans = Vec::new();
+                        let prefix = if idx == 0 { "$ " } else { "  " };
+                        spans.push(Span::from(prefix).dim());
+                        spans.push(Span::from(part.into_owned()));
+                        lines.push(spans);
+                    }
+                }
             }
         }
         lines
@@ -263,6 +271,28 @@ impl ListSelectionView {
 
     fn header_height(&self, width: u16) -> u16 {
         self.header_spans_for_width(width).len() as u16
+    }
+
+    fn push_line(
+        buf: &mut Buffer,
+        inner: Rect,
+        cursor_y: &mut u16,
+        inner_bottom: u16,
+        line: Line<'static>,
+    ) {
+        if *cursor_y >= inner_bottom {
+            return;
+        }
+        Paragraph::new(line).render(
+            Rect {
+                x: inner.x,
+                y: *cursor_y,
+                width: inner.width,
+                height: 1,
+            },
+            buf,
+        );
+        *cursor_y = (*cursor_y).saturating_add(1);
     }
 }
 
@@ -318,155 +348,161 @@ impl BottomPaneView for ListSelectionView {
     }
 
     fn desired_height(&self, width: u16) -> u16 {
-        // Measure wrapped height for up to MAX_POPUP_ROWS items at the given width.
-        // Build the same display rows used by the renderer so wrapping math matches.
+        let inner_width = width.saturating_sub(4);
+        if inner_width == 0 {
+            return 3;
+        }
         let rows = self.build_rows();
+        let rows_height = measure_rows_height(&rows, &self.state, MAX_POPUP_ROWS, inner_width, 0);
 
-        let rows_height = measure_rows_height(&rows, &self.state, MAX_POPUP_ROWS, width);
-
-        // +1 for the title row, +1 for a spacer line beneath the header,
-        // +1 for optional subtitle, +1 for optional footer (2 lines incl. spacing)
-        let mut height = self.header_height(width);
-        height = height.saturating_add(rows_height + 2);
+        let mut height = self.header_height(inner_width);
+        height = height.saturating_add(1); // title
         if self.is_searchable {
             height = height.saturating_add(1);
         }
         if self.subtitle.is_some() {
-            // +1 for subtitle (the spacer is accounted for above)
             height = height.saturating_add(1);
         }
+        height = height.saturating_add(1); // spacer between metadata and rows
+        height = height.saturating_add(rows_height);
         if self.footer_hint.is_some() {
             height = height.saturating_add(2);
         }
-        height
+        height = height.saturating_add(2); // top + bottom border
+        height.max(3)
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        if area.height == 0 || area.width == 0 {
+        if area.height < 3 || area.width < 4 {
             return;
         }
 
-        let mut next_y = area.y;
-        let header_spans = self.header_spans_for_width(area.width);
-        for spans in header_spans.into_iter() {
-            if next_y >= area.y + area.height {
-                return;
-            }
-            let row = Rect {
-                x: area.x,
-                y: next_y,
-                width: area.width,
-                height: 1,
-            };
-            let mut prefixed: Vec<Span<'static>> = vec![Self::dim_prefix_span()];
-            if spans.is_empty() {
-                prefixed.push(String::new().into());
-            } else {
-                prefixed.extend(spans);
-            }
-            Paragraph::new(Line::from(prefixed)).render(row, buf);
-            next_y = next_y.saturating_add(1);
-        }
-
-        if next_y >= area.y + area.height {
+        let Some(inner) = draw_history_border(buf, area) else {
             return;
-        }
-
-        let title_area = Rect {
-            x: area.x,
-            y: next_y,
-            width: area.width,
-            height: 1,
         };
-        Paragraph::new(Line::from(vec![
-            Self::dim_prefix_span(),
-            self.title.clone().bold(),
-        ]))
-        .render(title_area, buf);
-        next_y = next_y.saturating_add(1);
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
 
-        if self.is_searchable && next_y < area.y + area.height {
-            let search_area = Rect {
-                x: area.x,
-                y: next_y,
-                width: area.width,
-                height: 1,
+        let mut cursor_y = inner.y;
+        let inner_bottom = inner.y.saturating_add(inner.height);
+
+        for spans in self.header_spans_for_width(inner.width) {
+            if cursor_y >= inner_bottom {
+                break;
+            }
+            let line = if spans.is_empty() {
+                Line::from(String::new())
+            } else {
+                Line::from(spans)
             };
+            Self::push_line(buf, inner, &mut cursor_y, inner_bottom, line);
+        }
+
+        if cursor_y >= inner_bottom {
+            return;
+        }
+
+        Self::push_line(
+            buf,
+            inner,
+            &mut cursor_y,
+            inner_bottom,
+            Line::from(self.title.clone().bold()),
+        );
+
+        if cursor_y >= inner_bottom {
+            return;
+        }
+
+        if self.is_searchable {
             let query_span: Span<'static> = if self.search_query.is_empty() {
                 self.search_placeholder
                     .as_ref()
                     .map(|placeholder| placeholder.clone().dim())
-                    .unwrap_or_else(|| "".into())
+                    .unwrap_or_else(|| String::new().into())
             } else {
                 self.search_query.clone().into()
             };
-            Paragraph::new(Line::from(vec![Self::dim_prefix_span(), query_span]))
-                .render(search_area, buf);
-            next_y = next_y.saturating_add(1);
-        }
-
-        if let Some(sub) = &self.subtitle {
-            if next_y >= area.y + area.height {
-                return;
-            }
-            let subtitle_area = Rect {
-                x: area.x,
-                y: next_y,
-                width: area.width,
-                height: 1,
-            };
-            Paragraph::new(Line::from(vec![Self::dim_prefix_span(), sub.clone().dim()]))
-                .render(subtitle_area, buf);
-            next_y = next_y.saturating_add(1);
-        }
-
-        if next_y >= area.y + area.height {
-            return;
-        }
-        let spacer_area = Rect {
-            x: area.x,
-            y: next_y,
-            width: area.width,
-            height: 1,
-        };
-        Self::render_dim_prefix_line(spacer_area, buf);
-        next_y = next_y.saturating_add(1);
-
-        let footer_reserved = if self.footer_hint.is_some() { 2 } else { 0 };
-        if next_y >= area.y + area.height {
-            return;
-        }
-        let rows_area = Rect {
-            x: area.x,
-            y: next_y,
-            width: area.width,
-            height: area
-                .height
-                .saturating_sub(next_y.saturating_sub(area.y))
-                .saturating_sub(footer_reserved),
-        };
-
-        let rows = self.build_rows();
-        if rows_area.height > 0 {
-            render_rows(
-                rows_area,
+            Self::push_line(
                 buf,
-                &rows,
-                &self.state,
-                MAX_POPUP_ROWS,
-                "no matches",
-                true,
+                inner,
+                &mut cursor_y,
+                inner_bottom,
+                Line::from(vec![query_span]),
             );
         }
 
+        if cursor_y >= inner_bottom {
+            return;
+        }
+
+        if let Some(sub) = &self.subtitle {
+            Self::push_line(
+                buf,
+                inner,
+                &mut cursor_y,
+                inner_bottom,
+                Line::from(sub.clone().dim()),
+            );
+        }
+
+        let footer_reserved = if self.footer_hint.is_some() { 2 } else { 0 };
+        let mut rows_height = inner_bottom
+            .saturating_sub(cursor_y)
+            .saturating_sub(footer_reserved);
+
+        let rows = self.build_rows();
+        if !rows.is_empty() && rows_height > 0 {
+            let estimated_rows =
+                measure_rows_height(&rows, &self.state, MAX_POPUP_ROWS, inner.width, 0);
+
+            let mut rows_start = cursor_y;
+            if rows_height > estimated_rows && rows_height > 1 {
+                Self::push_line(
+                    buf,
+                    inner,
+                    &mut cursor_y,
+                    inner_bottom,
+                    Line::from(String::new()),
+                );
+                rows_start = cursor_y;
+                rows_height = rows_height.saturating_sub(1);
+            }
+
+            if rows_height > 0 {
+                let rows_area = Rect {
+                    x: inner.x,
+                    y: rows_start,
+                    width: inner.width,
+                    height: rows_height,
+                };
+                render_rows(
+                    rows_area,
+                    buf,
+                    &rows,
+                    &self.state,
+                    MAX_POPUP_ROWS,
+                    "no matches",
+                    false,
+                    0,
+                );
+            }
+        }
+
         if let Some(hint) = &self.footer_hint {
-            let footer_area = Rect {
-                x: area.x,
-                y: area.y + area.height - 1,
-                width: area.width,
-                height: 1,
-            };
-            Paragraph::new(hint.clone().dim()).render(footer_area, buf);
+            if inner.height > 0 && inner_bottom > 0 {
+                let footer_y = inner_bottom.saturating_sub(1);
+                Paragraph::new(hint.clone().dim()).render(
+                    Rect {
+                        x: inner.x,
+                        y: footer_y,
+                        width: inner.width,
+                        height: 1,
+                    },
+                    buf,
+                );
+            }
         }
     }
 }
@@ -579,6 +615,6 @@ mod tests {
         view.set_search_query("filters".to_string());
 
         let lines = render_lines(&view);
-        assert!(lines.contains("▌ filters"));
+        assert!(lines.contains("filters"));
     }
 }

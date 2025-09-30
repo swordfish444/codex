@@ -7,6 +7,7 @@ use super::popup_consts::MAX_POPUP_ROWS;
 use super::scroll_state::ScrollState;
 use super::selection_popup_common::GenericDisplayRow;
 use super::selection_popup_common::render_rows;
+use crate::ui_consts::LIVE_PREFIX_COLS;
 
 /// Visual state for the file-search popup.
 pub(crate) struct FileSearchPopup {
@@ -146,6 +147,7 @@ impl WidgetRef for &FileSearchPopup {
             MAX_POPUP_ROWS,
             empty_message,
             false,
+            LIVE_PREFIX_COLS,
         );
     }
 }

@@ -12,8 +12,10 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthChar;
 
+use crate::wrapping::RtOptions;
+use crate::wrapping::word_wrap_line;
+
 use super::scroll_state::ScrollState;
-use crate::ui_consts::LIVE_PREFIX_COLS;
 
 /// A generic representation of a display row for selection popups.
 pub(crate) struct GenericDisplayRow {
@@ -118,13 +120,13 @@ pub(crate) fn render_rows(
     max_results: usize,
     empty_message: &str,
     include_border: bool,
+    prefix_cols: u16,
 ) {
     if include_border {
         use ratatui::widgets::Block;
         use ratatui::widgets::BorderType;
         use ratatui::widgets::Borders;
 
-        // Always draw a dim left border to match other popups.
         let block = Block::default()
             .borders(Borders::LEFT)
             .border_type(BorderType::QuadrantOutside)
@@ -132,9 +134,6 @@ pub(crate) fn render_rows(
         block.render(area, buf);
     }
 
-    // Content renders to the right of the border with the same live prefix
-    // padding used by the composer so the popup aligns with the input text.
-    let prefix_cols = LIVE_PREFIX_COLS;
     let content_area = Rect {
         x: area.x.saturating_add(prefix_cols),
         y: area.y,
@@ -142,11 +141,13 @@ pub(crate) fn render_rows(
         height: area.height,
     };
 
-    // Clear the padding column(s) so stale characters never peek between the
-    // border and the popup contents.
-    let padding_cols = prefix_cols.saturating_sub(1);
+    let padding_cols = prefix_cols.saturating_sub(if include_border { 1 } else { 0 });
     if padding_cols > 0 {
-        let pad_start = area.x.saturating_add(1);
+        let pad_start = if include_border {
+            area.x.saturating_add(1)
+        } else {
+            area.x
+        };
         let pad_end = pad_start
             .saturating_add(padding_cols)
             .min(area.x.saturating_add(area.width));
@@ -160,45 +161,89 @@ pub(crate) fn render_rows(
         }
     }
 
-    if rows_all.is_empty() {
-        if content_area.height > 0 {
-            let para = Paragraph::new(Line::from(empty_message.dim().italic()));
-            para.render(
-                Rect {
-                    x: content_area.x,
-                    y: content_area.y,
-                    width: content_area.width,
-                    height: 1,
-                },
-                buf,
-            );
-        }
+    if content_area.width == 0 || content_area.height == 0 {
         return;
     }
 
-    // Determine which logical rows (items) are visible given the selection and
-    // the max_results clamp. Scrolling is still item-based for simplicity.
-    let max_rows_from_area = content_area.height as usize;
-    let visible_items = max_results
-        .min(rows_all.len())
-        .min(max_rows_from_area.max(1));
-
-    let mut start_idx = state.scroll_top.min(rows_all.len().saturating_sub(1));
-    if let Some(sel) = state.selected_idx {
-        if sel < start_idx {
-            start_idx = sel;
-        } else if visible_items > 0 {
-            let bottom = start_idx + visible_items - 1;
-            if sel > bottom {
-                start_idx = sel + 1 - visible_items;
-            }
-        }
+    if rows_all.is_empty() {
+        let para = Paragraph::new(Line::from(empty_message.dim().italic()));
+        para.render(
+            Rect {
+                x: content_area.x,
+                y: content_area.y,
+                width: content_area.width,
+                height: 1,
+            },
+            buf,
+        );
+        return;
     }
 
-    let desc_col = compute_desc_col(rows_all, start_idx, visible_items, content_area.width);
+    let max_rows_from_area = content_area.height as usize;
+    let max_items = max_results.min(rows_all.len());
 
-    // Render items, wrapping descriptions and aligning wrapped lines under the
-    // shared description column. Stop when we run out of vertical space.
+    let sel = state
+        .selected_idx
+        .unwrap_or(0)
+        .min(rows_all.len().saturating_sub(1));
+
+    let mut start_idx = state.scroll_top.min(rows_all.len().saturating_sub(1));
+    if start_idx > sel {
+        start_idx = sel;
+    }
+
+    let (visible_items, desc_col) = loop {
+        let candidate_count = max_items
+            .min(rows_all.len().saturating_sub(start_idx))
+            .max(1);
+
+        let desc_col_candidate =
+            compute_desc_col(rows_all, start_idx, candidate_count, content_area.width);
+
+        let mut used_lines = 0usize;
+        let mut temp_visible = 0usize;
+        for idx in start_idx..(start_idx + candidate_count) {
+            let full_line = build_full_line(&rows_all[idx], desc_col_candidate);
+            let options = RtOptions::new(content_area.width as usize)
+                .initial_indent(Line::from(""))
+                .subsequent_indent(Line::from(" ".repeat(desc_col_candidate)));
+            let line_count = word_wrap_line(&full_line, options).len();
+
+            if temp_visible > 0 && used_lines + line_count > max_rows_from_area {
+                break;
+            }
+
+            if used_lines + line_count > max_rows_from_area && temp_visible == 0 {
+                temp_visible = 1;
+                break;
+            }
+
+            used_lines = used_lines.saturating_add(line_count);
+            temp_visible += 1;
+
+            if used_lines >= max_rows_from_area {
+                break;
+            }
+        }
+
+        if temp_visible == 0 {
+            temp_visible = 1;
+        }
+
+        let end_idx = start_idx + temp_visible - 1;
+        if sel <= end_idx || start_idx == sel {
+            let desc = compute_desc_col(rows_all, start_idx, temp_visible, content_area.width);
+            break (temp_visible, desc);
+        }
+
+        if start_idx >= rows_all.len().saturating_sub(1) {
+            let desc = compute_desc_col(rows_all, start_idx, temp_visible, content_area.width);
+            break (temp_visible, desc);
+        }
+
+        start_idx += 1;
+    };
+
     let mut cur_y = content_area.y;
     for (i, row) in rows_all
         .iter()
@@ -210,44 +255,24 @@ pub(crate) fn render_rows(
             break;
         }
 
-        let GenericDisplayRow {
-            name,
-            match_indices,
-            is_current: _is_current,
-            description,
-        } = row;
-
-        let full_line = build_full_line(
-            &GenericDisplayRow {
-                name: name.clone(),
-                match_indices: match_indices.clone(),
-                is_current: *_is_current,
-                description: description.clone(),
-            },
-            desc_col,
-        );
-
-        // Wrap with subsequent indent aligned to the description column.
-        use crate::wrapping::RtOptions;
-        use crate::wrapping::word_wrap_line;
+        let full_line = build_full_line(row, desc_col);
         let options = RtOptions::new(content_area.width as usize)
             .initial_indent(Line::from(""))
             .subsequent_indent(Line::from(" ".repeat(desc_col)));
         let wrapped = word_wrap_line(&full_line, options);
 
-        // Render the wrapped lines.
         for mut line in wrapped {
             if cur_y >= content_area.y + content_area.height {
                 break;
             }
             if Some(i) == state.selected_idx {
-                // Match previous behavior: cyan + bold for the selected row.
                 line.style = Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD);
+            } else if row.is_current {
+                line.style = Style::default().add_modifier(Modifier::ITALIC);
             }
-            let para = Paragraph::new(line);
-            para.render(
+            Paragraph::new(line).render(
                 Rect {
                     x: content_area.x,
                     y: cur_y,
@@ -260,7 +285,6 @@ pub(crate) fn render_rows(
         }
     }
 }
-
 /// Compute the number of terminal rows required to render up to `max_results`
 /// items from `rows_all` given the current scroll/selection state and the
 /// available `width`. Accounts for description wrapping and alignment so the
@@ -270,14 +294,15 @@ pub(crate) fn measure_rows_height(
     state: &ScrollState,
     max_results: usize,
     width: u16,
+    prefix_cols: u16,
 ) -> u16 {
     if rows_all.is_empty() {
-        return 1; // placeholder "no matches" line
+        return 1;
     }
 
-    let content_width = width.saturating_sub(1).max(1);
-
+    let content_width = width.saturating_sub(prefix_cols).max(1);
     let visible_items = max_results.min(rows_all.len());
+
     let mut start_idx = state.scroll_top.min(rows_all.len().saturating_sub(1));
     if let Some(sel) = state.selected_idx {
         if sel < start_idx {

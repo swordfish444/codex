@@ -8,6 +8,7 @@ use super::selection_popup_common::GenericDisplayRow;
 use super::selection_popup_common::render_rows;
 use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
+use crate::ui_consts::LIVE_PREFIX_COLS;
 use codex_common::fuzzy_match::fuzzy_match;
 use codex_protocol::custom_prompts::CustomPrompt;
 use codex_protocol::custom_prompts::PROMPTS_CMD_PREFIX;
@@ -95,7 +96,7 @@ impl CommandPopup {
         use super::selection_popup_common::measure_rows_height;
         let rows = self.rows_from_matches(self.filtered());
 
-        measure_rows_height(&rows, &self.state, MAX_POPUP_ROWS, width)
+        measure_rows_height(&rows, &self.state, MAX_POPUP_ROWS, width, LIVE_PREFIX_COLS)
     }
 
     /// Compute fuzzy-filtered matches over built-in commands and user prompts,
@@ -212,6 +213,7 @@ impl WidgetRef for CommandPopup {
             MAX_POPUP_ROWS,
             "no matches",
             false,
+            LIVE_PREFIX_COLS,
         );
     }
 }
