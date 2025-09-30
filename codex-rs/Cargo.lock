@@ -1105,6 +1105,7 @@ dependencies = [
  "icu_locale_core",
  "mcp-types",
  "mime_guess",
+ "paste",
  "pretty_assertions",
  "serde",
  "serde_json",
