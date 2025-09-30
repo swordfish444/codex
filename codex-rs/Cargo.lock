@@ -3052,7 +3052,6 @@ dependencies = [
  "assert_cmd",
  "codex-core",
  "codex-mcp-server",
- "codex-protocol",
  "mcp-types",
  "os_info",
  "pretty_assertions",
