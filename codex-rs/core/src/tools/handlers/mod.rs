@@ -1,4 +1,4 @@
-mod apply_patch;
+pub mod apply_patch;
 mod exec_stream;
 mod mcp;
 mod plan;

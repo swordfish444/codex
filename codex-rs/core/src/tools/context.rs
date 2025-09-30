@@ -1,12 +1,12 @@
-use std::borrow::Cow;
-use std::collections::HashMap;
-use std::path::PathBuf;
 use codex_otel::otel_event_manager::OtelEventManager;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ShellToolCallParams;
 use codex_protocol::protocol::FileChange;
 use mcp_types::CallToolResult;
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::codex::Session;
 use crate::codex::TurnContext;
@@ -91,7 +91,6 @@ impl ToolOutput {
         }
     }
 }
-
 
 #[derive(Clone, Debug)]
 pub(crate) struct ExecCommandContext {

@@ -10,7 +10,6 @@ use crate::tools::spec::ToolSpec;
 use crate::tools::spec::ToolsConfig;
 use crate::tools::spec::build_specs;
 use crate::turn_diff_tracker::TurnDiffTracker;
-use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::LocalShellAction;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;

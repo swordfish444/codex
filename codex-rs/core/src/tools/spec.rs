@@ -505,7 +505,7 @@ pub(crate) fn build_specs(
 
     if config.experimental_unified_exec_tool {
         specs.push(create_unified_exec_tool());
-        builder.register_handler("unified_exec", unified_exec_handler.clone());
+        builder.register_handler("unified_exec", unified_exec_handler);
     } else {
         match &config.shell_type {
             ConfigShellToolType::Default => {
@@ -522,7 +522,7 @@ pub(crate) fn build_specs(
                     create_write_stdin_tool_for_responses_api(),
                 ));
                 builder.register_handler(EXEC_COMMAND_TOOL_NAME, exec_stream_handler.clone());
-                builder.register_handler(WRITE_STDIN_TOOL_NAME, exec_stream_handler.clone());
+                builder.register_handler(WRITE_STDIN_TOOL_NAME, exec_stream_handler);
             }
         }
     }
@@ -530,11 +530,11 @@ pub(crate) fn build_specs(
     // Always register shell aliases so older prompts remain compatible.
     builder.register_handler("shell", shell_handler.clone());
     builder.register_handler("container.exec", shell_handler.clone());
-    builder.register_handler("local_shell", shell_handler.clone());
+    builder.register_handler("local_shell", shell_handler);
 
     if config.plan_tool {
         specs.push(PLAN_TOOL.clone());
-        builder.register_handler("update_plan", plan_handler.clone());
+        builder.register_handler("update_plan", plan_handler);
     }
 
     if let Some(apply_patch_tool_type) = &config.apply_patch_tool_type {
@@ -546,7 +546,7 @@ pub(crate) fn build_specs(
                 specs.push(create_apply_patch_json_tool());
             }
         }
-        builder.register_handler("apply_patch", apply_patch_handler.clone());
+        builder.register_handler("apply_patch", apply_patch_handler);
     }
 
     if config.web_search_request {
@@ -555,7 +555,7 @@ pub(crate) fn build_specs(
 
     if config.include_view_image_tool {
         specs.push(create_view_image_tool());
-        builder.register_handler("view_image", view_image_handler.clone());
+        builder.register_handler("view_image", view_image_handler);
     }
 
     if let Some(mcp_tools) = mcp_tools {

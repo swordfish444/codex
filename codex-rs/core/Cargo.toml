@@ -25,6 +25,7 @@ codex-mcp-client = { workspace = true }
 codex-rmcp-client = { workspace = true }
 codex-protocol = { workspace = true }
 codex-otel = { workspace = true, features = ["otel"] }
+codex-utils-string = { workspace = true }
 dirs = { workspace = true }
 env-flags = { workspace = true }
 eventsource-stream = { workspace = true }
