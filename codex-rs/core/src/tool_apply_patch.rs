@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use crate::openai_tools::FreeformTool;
 use crate::openai_tools::FreeformToolFormat;
 use crate::openai_tools::JsonSchema;
-use crate::openai_tools::OpenAiTool;
 use crate::openai_tools::ResponsesApiTool;
+use crate::openai_tools::ToolSpec;
 
 const APPLY_PATCH_LARK_GRAMMAR: &str = include_str!("tool_apply_patch.lark");
 
@@ -19,8 +19,8 @@ pub enum ApplyPatchToolType {
 
 /// Returns a custom tool that can be used to edit files. Well-suited for GPT-5 models
 /// https://platform.openai.com/docs/guides/function-calling#custom-tools
-pub(crate) fn create_apply_patch_freeform_tool() -> OpenAiTool {
-    OpenAiTool::Freeform(FreeformTool {
+pub(crate) fn create_apply_patch_freeform_tool() -> ToolSpec {
+    ToolSpec::Freeform(FreeformTool {
         name: "apply_patch".to_string(),
         description: "Use the `apply_patch` tool to edit files".to_string(),
         format: FreeformToolFormat {
@@ -32,7 +32,7 @@ pub(crate) fn create_apply_patch_freeform_tool() -> OpenAiTool {
 }
 
 /// Returns a json tool that can be used to edit files. Should only be used with gpt-oss models
-pub(crate) fn create_apply_patch_json_tool() -> OpenAiTool {
+pub(crate) fn create_apply_patch_json_tool() -> ToolSpec {
     let mut properties = BTreeMap::new();
     properties.insert(
         "input".to_string(),
@@ -41,7 +41,7 @@ pub(crate) fn create_apply_patch_json_tool() -> OpenAiTool {
         },
     );
 
-    OpenAiTool::Function(ResponsesApiTool {
+    ToolSpec::Function(ResponsesApiTool {
         name: "apply_patch".to_string(),
         description: r#"Use the `apply_patch` tool to edit files.
 Your patch language is a stripped‑down, file‑oriented diff format designed to be easy to parse and safe to apply. You can think of it as a high‑level envelope:

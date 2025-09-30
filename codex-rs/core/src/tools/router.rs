@@ -1,0 +1,187 @@
+use std::collections::HashMap;
+
+use crate::codex::Session;
+use crate::codex::TurnContext;
+use crate::function_tool::FunctionCallError;
+use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolPayload;
+use crate::tools::registry::ToolRegistry;
+use crate::tools::spec::ToolSpec;
+use crate::tools::spec::ToolsConfig;
+use crate::tools::spec::build_specs;
+use crate::turn_diff_tracker::TurnDiffTracker;
+use codex_protocol::models::FunctionCallOutputPayload;
+use codex_protocol::models::LocalShellAction;
+use codex_protocol::models::ResponseInputItem;
+use codex_protocol::models::ResponseItem;
+use codex_protocol::models::ShellToolCallParams;
+
+#[derive(Clone)]
+pub struct ToolCall {
+    pub tool_name: String,
+    pub call_id: String,
+    pub payload: ToolPayload,
+}
+
+pub struct Router {
+    registry: ToolRegistry,
+    specs: Vec<ToolSpec>,
+}
+
+impl Router {
+    pub fn from_config(
+        config: &ToolsConfig,
+        mcp_tools: Option<HashMap<String, mcp_types::Tool>>,
+    ) -> Self {
+        let (specs, builder) = build_specs(config, mcp_tools);
+        let registry = builder.build();
+        Self { registry, specs }
+    }
+
+    pub fn new(registry: ToolRegistry, specs: Vec<ToolSpec>) -> Self {
+        Self { registry, specs }
+    }
+
+    pub fn specs(&self) -> &[ToolSpec] {
+        &self.specs
+    }
+
+    pub fn build_tool_call(
+        session: &Session,
+        item: ResponseItem,
+    ) -> Result<Option<ToolCall>, FunctionCallError> {
+        match item {
+            ResponseItem::FunctionCall {
+                name,
+                arguments,
+                call_id,
+                ..
+            } => {
+                if let Some((server, tool)) = session.parse_mcp_tool_name(&name) {
+                    let parsed_arguments = if arguments.trim().is_empty() {
+                        None
+                    } else {
+                        Some(serde_json::from_str(&arguments).map_err(|err| {
+                            FunctionCallError::RespondToModel(format!(
+                                "failed to parse tool call arguments: {err}"
+                            ))
+                        })?)
+                    };
+                    Ok(Some(ToolCall {
+                        tool_name: name,
+                        call_id,
+                        payload: ToolPayload::Mcp {
+                            server,
+                            tool,
+                            arguments: parsed_arguments,
+                            raw_arguments: arguments,
+                        },
+                    }))
+                } else {
+                    let payload = if name == "unified_exec" {
+                        ToolPayload::UnifiedExec { arguments }
+                    } else {
+                        ToolPayload::Function { arguments }
+                    };
+                    Ok(Some(ToolCall {
+                        tool_name: name,
+                        call_id,
+                        payload,
+                    }))
+                }
+            }
+            ResponseItem::CustomToolCall {
+                name,
+                input,
+                call_id,
+                ..
+            } => Ok(Some(ToolCall {
+                tool_name: name,
+                call_id,
+                payload: ToolPayload::Custom { input },
+            })),
+            ResponseItem::LocalShellCall {
+                id,
+                call_id,
+                action,
+                ..
+            } => {
+                let call_id = call_id.or(id).ok_or_else(|| {
+                    FunctionCallError::RespondToModel(
+                        "LocalShellCall without call_id or id".to_string(),
+                    )
+                })?;
+
+                match action {
+                    LocalShellAction::Exec(exec) => {
+                        let params = ShellToolCallParams {
+                            command: exec.command,
+                            workdir: exec.working_directory,
+                            timeout_ms: exec.timeout_ms,
+                            with_escalated_permissions: None,
+                            justification: None,
+                        };
+                        Ok(Some(ToolCall {
+                            tool_name: "local_shell".to_string(),
+                            call_id,
+                            payload: ToolPayload::LocalShell { params },
+                        }))
+                    }
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    pub async fn dispatch_tool_call(
+        &self,
+        session: &Session,
+        turn: &TurnContext,
+        tracker: &mut TurnDiffTracker,
+        sub_id: &str,
+        call: ToolCall,
+    ) -> ResponseInputItem {
+        let payload_clone = call.payload.clone();
+        let ToolCall {
+            tool_name,
+            call_id,
+            payload,
+        } = call;
+
+        let invocation = ToolInvocation {
+            session,
+            turn,
+            tracker,
+            sub_id,
+            call_id: call_id.clone(),
+            tool_name: tool_name.clone(),
+            payload,
+        };
+
+        match self.registry.dispatch(invocation).await {
+            Ok(response) => response,
+            Err(err) => Self::failure_response(call_id, payload_clone, err),
+        }
+    }
+
+    fn failure_response(
+        call_id: String,
+        payload: ToolPayload,
+        err: FunctionCallError,
+    ) -> ResponseInputItem {
+        let message = err.to_string();
+        match payload {
+            ToolPayload::Custom { .. } => ResponseInputItem::CustomToolCallOutput {
+                call_id,
+                output: message,
+            },
+            _ => ResponseInputItem::FunctionCallOutput {
+                call_id,
+                output: codex_protocol::models::FunctionCallOutputPayload {
+                    content: message,
+                    success: Some(false),
+                },
+            },
+        }
+    }
+}

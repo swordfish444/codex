@@ -27,7 +27,6 @@ use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnContextItem;
 use futures::prelude::*;
 use mcp_types::CallToolResult;
-use serde::Deserialize;
 use serde::Serialize;
 use serde_json;
 use serde_json::Value;
@@ -59,26 +58,19 @@ use crate::exec::ExecToolCallOutput;
 use crate::exec::StdoutStream;
 #[cfg(test)]
 use crate::exec::StreamOutput;
-use crate::exec_command::EXEC_COMMAND_TOOL_NAME;
 use crate::exec_command::ExecCommandParams;
 use crate::exec_command::ExecSessionManager;
-use crate::exec_command::WRITE_STDIN_TOOL_NAME;
 use crate::exec_command::WriteStdinParams;
-use crate::exec_env::create_env;
 use crate::executor::ExecutionMode;
 use crate::executor::Executor;
 use crate::executor::ExecutorConfig;
 use crate::executor::normalize_exec_result;
 use crate::mcp_connection_manager::McpConnectionManager;
-use crate::mcp_tool_call::handle_mcp_tool_call;
 use crate::model_family::find_family_for_model;
 use crate::openai_model_info::get_model_info;
-use crate::openai_tools::ApplyPatchToolArgs;
 use crate::openai_tools::ToolsConfig;
 use crate::openai_tools::ToolsConfigParams;
-use crate::openai_tools::get_openai_tools;
 use crate::parse_command::parse_command;
-use crate::plan_tool::handle_update_plan;
 use crate::project_doc::get_user_instructions;
 use crate::protocol::AgentMessageDeltaEvent;
 use crate::protocol::AgentReasoningDeltaEvent;
@@ -118,6 +110,7 @@ use crate::state::SessionServices;
 use crate::tasks::CompactTask;
 use crate::tasks::RegularTask;
 use crate::tasks::ReviewTask;
+use crate::tools::Router;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::unified_exec::UnifiedExecSessionManager;
 use crate::user_instructions::UserInstructions;
@@ -129,10 +122,8 @@ use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::custom_prompts::CustomPrompt;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
-use codex_protocol::models::LocalShellAction;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
-use codex_protocol::models::ShellToolCallParams;
 use codex_protocol::protocol::InitialHistory;
 
 pub mod compact;
@@ -285,7 +276,7 @@ pub(crate) struct TurnContext {
 }
 
 impl TurnContext {
-    fn resolve_path(&self, path: Option<String>) -> PathBuf {
+    pub(crate) fn resolve_path(&self, path: Option<String>) -> PathBuf {
         path.as_ref()
             .map(PathBuf::from)
             .map_or_else(|| self.cwd.clone(), |p| self.cwd.join(p))
@@ -1031,6 +1022,49 @@ impl Session {
         self.services
             .mcp_connection_manager
             .call_tool(server, tool, arguments)
+            .await
+    }
+
+    pub(crate) fn parse_mcp_tool_name(&self, tool_name: &str) -> Option<(String, String)> {
+        self.services
+            .mcp_connection_manager
+            .parse_tool_name(tool_name)
+    }
+
+    pub(crate) async fn handle_exec_command_tool(
+        &self,
+        params: ExecCommandParams,
+    ) -> Result<String, FunctionCallError> {
+        let result = self
+            .services
+            .session_manager
+            .handle_exec_command_request(params)
+            .await;
+        match result {
+            Ok(output) => Ok(output.to_text_output()),
+            Err(err) => Err(FunctionCallError::RespondToModel(err)),
+        }
+    }
+
+    pub(crate) async fn handle_write_stdin_tool(
+        &self,
+        params: WriteStdinParams,
+    ) -> Result<String, FunctionCallError> {
+        self.services
+            .session_manager
+            .handle_write_stdin_request(params)
+            .await
+            .map(|output| output.to_text_output())
+            .map_err(FunctionCallError::RespondToModel)
+    }
+
+    pub(crate) async fn run_unified_exec_request(
+        &self,
+        request: crate::unified_exec::UnifiedExecRequest<'_>,
+    ) -> Result<crate::unified_exec::UnifiedExecResult, crate::unified_exec::UnifiedExecError> {
+        self.services
+            .unified_exec_manager
+            .handle_request(request)
             .await
     }
 
@@ -1890,21 +1924,28 @@ async fn run_turn(
     sub_id: String,
     input: Vec<ResponseItem>,
 ) -> CodexResult<TurnRunResult> {
-    let tools = get_openai_tools(
-        &turn_context.tools_config,
-        Some(sess.services.mcp_connection_manager.list_all_tools()),
-    );
+    let mcp_tools = sess.services.mcp_connection_manager.list_all_tools();
+    let router = Router::from_config(&turn_context.tools_config, Some(mcp_tools));
 
     let prompt = Prompt {
         input,
-        tools,
+        tools: router.specs().to_vec(),
         base_instructions_override: turn_context.base_instructions.clone(),
         output_schema: turn_context.final_output_json_schema.clone(),
     };
 
     let mut retries = 0;
     loop {
-        match try_run_turn(sess, turn_context, turn_diff_tracker, &sub_id, &prompt).await {
+        match try_run_turn(
+            &router,
+            sess,
+            turn_context,
+            turn_diff_tracker,
+            &sub_id,
+            &prompt,
+        )
+        .await
+        {
             Ok(output) => return Ok(output),
             Err(CodexErr::Interrupted) => return Err(CodexErr::Interrupted),
             Err(CodexErr::EnvVar(var)) => return Err(CodexErr::EnvVar(var)),
@@ -1966,6 +2007,7 @@ struct TurnRunResult {
 }
 
 async fn try_run_turn(
+    router: &crate::tools::Router,
     sess: &Session,
     turn_context: &TurnContext,
     turn_diff_tracker: &mut TurnDiffTracker,
@@ -2067,6 +2109,7 @@ async fn try_run_turn(
             ResponseEvent::Created => {}
             ResponseEvent::OutputItemDone(item) => {
                 let response = handle_response_item(
+                    router,
                     sess,
                     turn_context,
                     turn_diff_tracker,
@@ -2157,6 +2200,7 @@ async fn try_run_turn(
 }
 
 async fn handle_response_item(
+    router: &crate::tools::Router,
     sess: &Session,
     turn_context: &TurnContext,
     turn_diff_tracker: &mut TurnDiffTracker,
@@ -2164,441 +2208,69 @@ async fn handle_response_item(
     item: ResponseItem,
 ) -> CodexResult<Option<ResponseInputItem>> {
     debug!(?item, "Output item");
-    let output = match item {
-        ResponseItem::FunctionCall {
-            name,
-            arguments,
-            call_id,
-            ..
-        } => {
-            info!("FunctionCall: {name}({arguments})");
-            if let Some((server, tool_name)) =
-                sess.services.mcp_connection_manager.parse_tool_name(&name)
-            {
-                let resp = handle_mcp_tool_call(
-                    sess,
-                    sub_id,
-                    call_id.clone(),
-                    server,
-                    tool_name,
-                    arguments,
-                )
+
+    match Router::build_tool_call(sess, item.clone()) {
+        Ok(Some(call)) => {
+            let payload_preview = call.payload.log_payload().into_owned();
+            tracing::info!("ToolCall: {} {}", call.tool_name, payload_preview);
+            let response = router
+                .dispatch_tool_call(sess, turn_context, turn_diff_tracker, sub_id, call)
                 .await;
-                Some(resp)
-            } else {
-                let result = turn_context
+            Ok(Some(response))
+        }
+        Ok(None) => {
+            match &item {
+                ResponseItem::Message { .. }
+                | ResponseItem::Reasoning { .. }
+                | ResponseItem::WebSearchCall { .. } => {
+                    let msgs = match &item {
+                        ResponseItem::Message { .. } if turn_context.is_review_mode => {
+                            trace!("suppressing assistant Message in review mode");
+                            Vec::new()
+                        }
+                        _ => map_response_item_to_event_messages(
+                            &item,
+                            sess.show_raw_agent_reasoning(),
+                        ),
+                    };
+                    for msg in msgs {
+                        let event = Event {
+                            id: sub_id.to_string(),
+                            msg,
+                        };
+                        sess.send_event(event).await;
+                    }
+                }
+                ResponseItem::FunctionCallOutput { .. }
+                | ResponseItem::CustomToolCallOutput { .. } => {
+                    debug!("unexpected tool output from stream");
+                }
+                _ => {}
+            }
+
+            Ok(None)
+        }
+        Err(FunctionCallError::RespondToModel(msg)) => {
+            if msg == "LocalShellCall without call_id or id" {
+                turn_context
                     .client
                     .get_otel_event_manager()
-                    .log_tool_result(name.as_str(), call_id.as_str(), arguments.as_str(), || {
-                        handle_function_call(
-                            sess,
-                            turn_context,
-                            turn_diff_tracker,
-                            sub_id.to_string(),
-                            name.to_owned(),
-                            arguments.to_owned(),
-                            call_id.clone(),
-                        )
-                    })
-                    .await;
-
-                let output = match result {
-                    Ok(content) => FunctionCallOutputPayload {
-                        content,
-                        success: Some(true),
-                    },
-                    Err(FunctionCallError::RespondToModel(msg)) => FunctionCallOutputPayload {
-                        content: msg,
-                        success: Some(false),
-                    },
-                };
-                Some(ResponseInputItem::FunctionCallOutput { call_id, output })
-            }
-        }
-        ResponseItem::LocalShellCall {
-            id,
-            call_id,
-            status: _,
-            action,
-        } => {
-            let name = "local_shell";
-            let LocalShellAction::Exec(action) = action;
-            tracing::info!("LocalShellCall: {action:?}");
-            let params = ShellToolCallParams {
-                command: action.command,
-                workdir: action.working_directory,
-                timeout_ms: action.timeout_ms,
-                with_escalated_permissions: None,
-                justification: None,
-            };
-            let effective_call_id = match (call_id, id) {
-                (Some(call_id), _) => call_id,
-                (None, Some(id)) => id,
-                (None, None) => {
-                    let error_message = "LocalShellCall without call_id or id";
-
-                    turn_context
-                        .client
-                        .get_otel_event_manager()
-                        .log_tool_failed(name, error_message);
-
-                    error!(error_message);
-                    return Ok(Some(ResponseInputItem::FunctionCallOutput {
-                        call_id: "".to_string(),
-                        output: FunctionCallOutputPayload {
-                            content: error_message.to_string(),
-                            success: None,
-                        },
-                    }));
-                }
-            };
-
-            let exec_params = to_exec_params(params, turn_context);
-            {
-                let result = turn_context
-                    .client
-                    .get_otel_event_manager()
-                    .log_tool_result(
-                        name,
-                        effective_call_id.as_str(),
-                        exec_params.command.join(" ").as_str(),
-                        || {
-                            handle_container_exec_with_params(
-                                name,
-                                exec_params,
-                                sess,
-                                turn_context,
-                                turn_diff_tracker,
-                                sub_id.to_string(),
-                                effective_call_id.clone(),
-                            )
-                        },
-                    )
-                    .await;
-
-                let output = match result {
-                    Ok(content) => FunctionCallOutputPayload {
-                        content,
-                        success: Some(true),
-                    },
-                    Err(FunctionCallError::RespondToModel(msg)) => FunctionCallOutputPayload {
-                        content: msg,
-                        success: Some(false),
-                    },
-                };
-                Some(ResponseInputItem::FunctionCallOutput {
-                    call_id: effective_call_id,
-                    output,
-                })
-            }
-        }
-        ResponseItem::CustomToolCall {
-            id: _,
-            call_id,
-            name,
-            input,
-            status: _,
-        } => {
-            let result = turn_context
-                .client
-                .get_otel_event_manager()
-                .log_tool_result(name.as_str(), call_id.as_str(), input.as_str(), || {
-                    handle_custom_tool_call(
-                        sess,
-                        turn_context,
-                        turn_diff_tracker,
-                        sub_id.to_string(),
-                        name.to_owned(),
-                        input.to_owned(),
-                        call_id.clone(),
-                    )
-                })
-                .await;
-
-            let output = match result {
-                Ok(content) => content,
-                Err(FunctionCallError::RespondToModel(msg)) => msg,
-            };
-            Some(ResponseInputItem::CustomToolCallOutput { call_id, output })
-        }
-        ResponseItem::FunctionCallOutput { .. } => {
-            debug!("unexpected FunctionCallOutput from stream");
-            None
-        }
-        ResponseItem::CustomToolCallOutput { .. } => {
-            debug!("unexpected CustomToolCallOutput from stream");
-            None
-        }
-        ResponseItem::Message { .. }
-        | ResponseItem::Reasoning { .. }
-        | ResponseItem::WebSearchCall { .. } => {
-            // In review child threads, suppress assistant message events but
-            // keep reasoning/web search.
-            let msgs = match &item {
-                ResponseItem::Message { .. } if turn_context.is_review_mode => {
-                    trace!("suppressing assistant Message in review mode");
-                    Vec::new()
-                }
-                _ => map_response_item_to_event_messages(&item, sess.show_raw_agent_reasoning()),
-            };
-            for msg in msgs {
-                let event = Event {
-                    id: sub_id.to_string(),
-                    msg,
-                };
-                sess.send_event(event).await;
-            }
-            None
-        }
-        ResponseItem::Other => None,
-    };
-    Ok(output)
-}
-
-async fn handle_unified_exec_tool_call(
-    sess: &Session,
-    session_id: Option<String>,
-    arguments: Vec<String>,
-    timeout_ms: Option<u64>,
-) -> Result<String, FunctionCallError> {
-    let parsed_session_id = if let Some(session_id) = session_id {
-        match session_id.parse::<i32>() {
-            Ok(parsed) => Some(parsed),
-            Err(output) => {
-                return Err(FunctionCallError::RespondToModel(format!(
-                    "invalid session_id: {session_id} due to error {output:?}"
-                )));
-            }
-        }
-    } else {
-        None
-    };
-
-    let request = crate::unified_exec::UnifiedExecRequest {
-        session_id: parsed_session_id,
-        input_chunks: &arguments,
-        timeout_ms,
-    };
-
-    let value = sess
-        .services
-        .unified_exec_manager
-        .handle_request(request)
-        .await
-        .map_err(|err| {
-            FunctionCallError::RespondToModel(format!("unified exec failed: {err:?}"))
-        })?;
-
-    #[derive(Serialize)]
-    struct SerializedUnifiedExecResult {
-        session_id: Option<String>,
-        output: String,
-    }
-
-    serde_json::to_string(&SerializedUnifiedExecResult {
-        session_id: value.session_id.map(|id| id.to_string()),
-        output: value.output,
-    })
-    .map_err(|err| {
-        FunctionCallError::RespondToModel(format!(
-            "failed to serialize unified exec output: {err:?}"
-        ))
-    })
-}
-
-async fn handle_function_call(
-    sess: &Session,
-    turn_context: &TurnContext,
-    turn_diff_tracker: &mut TurnDiffTracker,
-    sub_id: String,
-    name: String,
-    arguments: String,
-    call_id: String,
-) -> Result<String, FunctionCallError> {
-    match name.as_str() {
-        "container.exec" | "shell" => {
-            let params = parse_container_exec_arguments(arguments, turn_context, &call_id)?;
-            handle_container_exec_with_params(
-                name.as_str(),
-                params,
-                sess,
-                turn_context,
-                turn_diff_tracker,
-                sub_id,
-                call_id,
-            )
-            .await
-        }
-        "unified_exec" => {
-            #[derive(Deserialize)]
-            struct UnifiedExecArgs {
-                input: Vec<String>,
-                #[serde(default)]
-                session_id: Option<String>,
-                #[serde(default)]
-                timeout_ms: Option<u64>,
+                    .log_tool_failed("local_shell", &msg);
+                error!(msg);
             }
 
-            let args: UnifiedExecArgs = serde_json::from_str(&arguments).map_err(|err| {
-                FunctionCallError::RespondToModel(format!(
-                    "failed to parse function arguments: {err:?}"
-                ))
-            })?;
-
-            handle_unified_exec_tool_call(sess, args.session_id, args.input, args.timeout_ms).await
-        }
-        "view_image" => {
-            #[derive(serde::Deserialize)]
-            struct SeeImageArgs {
-                path: String,
-            }
-            let args: SeeImageArgs = serde_json::from_str(&arguments).map_err(|e| {
-                FunctionCallError::RespondToModel(format!(
-                    "failed to parse function arguments: {e:?}"
-                ))
-            })?;
-            let abs = turn_context.resolve_path(Some(args.path));
-            sess.inject_input(vec![InputItem::LocalImage { path: abs }])
-                .await
-                .map_err(|_| {
-                    FunctionCallError::RespondToModel(
-                        "unable to attach image (no active task)".to_string(),
-                    )
-                })?;
-
-            Ok("attached local image path".to_string())
-        }
-        "apply_patch" => {
-            let args: ApplyPatchToolArgs = serde_json::from_str(&arguments).map_err(|e| {
-                FunctionCallError::RespondToModel(format!(
-                    "failed to parse function arguments: {e:?}"
-                ))
-            })?;
-            let exec_params = ExecParams {
-                command: vec!["apply_patch".to_string(), args.input.clone()],
-                cwd: turn_context.cwd.clone(),
-                timeout_ms: None,
-                env: HashMap::new(),
-                with_escalated_permissions: None,
-                justification: None,
-            };
-            handle_container_exec_with_params(
-                name.as_str(),
-                exec_params,
-                sess,
-                turn_context,
-                turn_diff_tracker,
-                sub_id,
-                call_id,
-            )
-            .await
-        }
-        "update_plan" => handle_update_plan(sess, arguments, sub_id, call_id).await,
-        EXEC_COMMAND_TOOL_NAME => {
-            // TODO(mbolin): Sandbox check.
-            let exec_params: ExecCommandParams = serde_json::from_str(&arguments).map_err(|e| {
-                FunctionCallError::RespondToModel(format!(
-                    "failed to parse function arguments: {e:?}"
-                ))
-            })?;
-            let result = sess
-                .services
-                .session_manager
-                .handle_exec_command_request(exec_params)
-                .await;
-            match result {
-                Ok(output) => Ok(output.to_text_output()),
-                Err(err) => Err(FunctionCallError::RespondToModel(err)),
-            }
-        }
-        WRITE_STDIN_TOOL_NAME => {
-            let write_stdin_params =
-                serde_json::from_str::<WriteStdinParams>(&arguments).map_err(|e| {
-                    FunctionCallError::RespondToModel(format!(
-                        "failed to parse function arguments: {e:?}"
-                    ))
-                })?;
-
-            let result = sess
-                .services
-                .session_manager
-                .handle_write_stdin_request(write_stdin_params)
-                .await
-                .map_err(FunctionCallError::RespondToModel)?;
-
-            Ok(result.to_text_output())
-        }
-        _ => Err(FunctionCallError::RespondToModel(format!(
-            "unsupported call: {name}"
-        ))),
-    }
-}
-
-async fn handle_custom_tool_call(
-    sess: &Session,
-    turn_context: &TurnContext,
-    turn_diff_tracker: &mut TurnDiffTracker,
-    sub_id: String,
-    name: String,
-    input: String,
-    call_id: String,
-) -> Result<String, FunctionCallError> {
-    info!("CustomToolCall: {name} {input}");
-    match name.as_str() {
-        "apply_patch" => {
-            let exec_params = ExecParams {
-                command: vec!["apply_patch".to_string(), input.clone()],
-                cwd: turn_context.cwd.clone(),
-                timeout_ms: None,
-                env: HashMap::new(),
-                with_escalated_permissions: None,
-                justification: None,
-            };
-
-            handle_container_exec_with_params(
-                name.as_str(),
-                exec_params,
-                sess,
-                turn_context,
-                turn_diff_tracker,
-                sub_id,
-                call_id,
-            )
-            .await
-        }
-        _ => {
-            debug!("unexpected CustomToolCall from stream");
-            Err(FunctionCallError::RespondToModel(format!(
-                "unsupported custom tool call: {name}"
-            )))
+            Ok(Some(ResponseInputItem::FunctionCallOutput {
+                call_id: String::new(),
+                output: FunctionCallOutputPayload {
+                    content: msg,
+                    success: None,
+                },
+            }))
         }
     }
 }
 
-fn to_exec_params(params: ShellToolCallParams, turn_context: &TurnContext) -> ExecParams {
-    ExecParams {
-        command: params.command,
-        cwd: turn_context.resolve_path(params.workdir.clone()),
-        timeout_ms: params.timeout_ms,
-        env: create_env(&turn_context.shell_environment_policy),
-        with_escalated_permissions: params.with_escalated_permissions,
-        justification: params.justification,
-    }
-}
-
-fn parse_container_exec_arguments(
-    arguments: String,
-    turn_context: &TurnContext,
-    _call_id: &str,
-) -> Result<ExecParams, FunctionCallError> {
-    serde_json::from_str::<ShellToolCallParams>(&arguments)
-        .map(|p| to_exec_params(p, turn_context))
-        .map_err(|e| {
-            FunctionCallError::RespondToModel(format!("failed to parse function arguments: {e:?}"))
-        })
-}
-
-async fn handle_container_exec_with_params(
+pub(crate) async fn handle_container_exec_with_params(
     tool_name: &str,
     params: ExecParams,
     sess: &Session,

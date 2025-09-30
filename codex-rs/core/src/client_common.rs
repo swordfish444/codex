@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::model_family::ModelFamily;
-use crate::openai_tools::OpenAiTool;
+use crate::openai_tools::ToolSpec;
 use crate::protocol::RateLimitSnapshot;
 use crate::protocol::TokenUsage;
 use codex_apply_patch::APPLY_PATCH_TOOL_INSTRUCTIONS;
@@ -29,7 +29,7 @@ pub struct Prompt {
 
     /// Tools available to the model, including additional tools sourced from
     /// external MCP servers.
-    pub(crate) tools: Vec<OpenAiTool>,
+    pub(crate) tools: Vec<ToolSpec>,
 
     /// Optional override for the built-in BASE_INSTRUCTIONS.
     pub base_instructions_override: Option<String>,
@@ -49,8 +49,8 @@ impl Prompt {
         // AND
         // - there is no apply_patch tool present
         let is_apply_patch_tool_present = self.tools.iter().any(|tool| match tool {
-            OpenAiTool::Function(f) => f.name == "apply_patch",
-            OpenAiTool::Freeform(f) => f.name == "apply_patch",
+            ToolSpec::Function(f) => f.name == "apply_patch",
+            ToolSpec::Freeform(f) => f.name == "apply_patch",
             _ => false,
         });
         if self.base_instructions_override.is_none()

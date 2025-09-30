@@ -4,8 +4,8 @@ use std::sync::LazyLock;
 use crate::codex::Session;
 use crate::function_tool::FunctionCallError;
 use crate::openai_tools::JsonSchema;
-use crate::openai_tools::OpenAiTool;
 use crate::openai_tools::ResponsesApiTool;
+use crate::openai_tools::ToolSpec;
 use crate::protocol::Event;
 use crate::protocol::EventMsg;
 
@@ -17,7 +17,7 @@ pub use codex_protocol::plan_tool::UpdatePlanArgs;
 
 // Types for the TODO tool arguments matching codex-vscode/todo-mcp/src/main.rs
 
-pub(crate) static PLAN_TOOL: LazyLock<OpenAiTool> = LazyLock::new(|| {
+pub(crate) static PLAN_TOOL: LazyLock<ToolSpec> = LazyLock::new(|| {
     let mut plan_item_props = BTreeMap::new();
     plan_item_props.insert("step".to_string(), JsonSchema::String { description: None });
     plan_item_props.insert(
@@ -43,7 +43,7 @@ pub(crate) static PLAN_TOOL: LazyLock<OpenAiTool> = LazyLock::new(|| {
     );
     properties.insert("plan".to_string(), plan_items_schema);
 
-    OpenAiTool::Function(ResponsesApiTool {
+    ToolSpec::Function(ResponsesApiTool {
         name: "update_plan".to_string(),
         description: r#"Updates the task plan.
 Provide an optional explanation and a list of plan items, each with a step and status.
