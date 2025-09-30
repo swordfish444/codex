@@ -30,6 +30,7 @@ fn main() -> anyhow::Result<()> {
         // Merge root-level overrides into inner CLI struct so downstream logic remains unchanged.
         let mut inner = top_cli.inner;
         inner
+            .shared
             .config_overrides
             .raw_overrides
             .splice(0..0, top_cli.config_overrides.raw_overrides);

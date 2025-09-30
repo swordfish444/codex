@@ -36,6 +36,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
 use crate::cli::Command as ExecCommand;
+use crate::cli::SharedExecArgs;
 use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
 use codex_core::default_client::set_default_originator;
@@ -46,8 +47,17 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         tracing::warn!(?err, "Failed to set codex exec originator override {err:?}");
     }
 
-    let Cli {
-        command,
+    let Cli { command, shared } = cli;
+
+    let shared = command
+        .as_ref()
+        .map(|cmd| match cmd {
+            ExecCommand::Resume(args) => args.shared.clone(),
+        })
+        .unwrap_or(shared);
+
+    println!("shared: {shared:?}");
+    let SharedExecArgs {
         images,
         model: model_cli_arg,
         oss,
@@ -61,19 +71,11 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         json: json_mode,
         experimental_json,
         sandbox_mode: sandbox_mode_cli_arg,
-        prompt,
         output_schema: output_schema_path,
         include_plan_tool,
         config_overrides,
-    } = cli;
-
-    // Determine the prompt source (parent or subcommand) and read from stdin if needed.
-    let prompt_arg = match &command {
-        // Allow prompt before the subcommand by falling back to the parent-level prompt
-        // when the Resume subcommand did not provide its own prompt.
-        Some(ExecCommand::Resume(args)) => args.prompt.clone().or(prompt),
-        None => prompt,
-    };
+        prompt: prompt_arg,
+    } = shared;
 
     let prompt = match prompt_arg {
         Some(p) if p != "-" => p,

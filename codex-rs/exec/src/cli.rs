@@ -1,3 +1,4 @@
+use clap::Args;
 use clap::Parser;
 use clap::ValueEnum;
 use codex_common::CliConfigOverrides;
@@ -10,6 +11,33 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
+    #[clap(flatten)]
+    pub shared: SharedExecArgs,
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub enum Command {
+    /// Resume a previous session by id or pick the most recent with --last.
+    Resume(ResumeArgs),
+}
+
+#[derive(Parser, Debug)]
+pub struct ResumeArgs {
+    /// Conversation/session id (UUID). When provided, resumes this session.
+    /// If omitted, use --last to pick the most recent recorded session.
+    #[arg(value_name = "SESSION_ID")]
+    pub session_id: Option<String>,
+
+    /// Resume the most recent recorded session (newest) without specifying an id.
+    #[arg(long = "last", default_value_t = false, conflicts_with = "session_id")]
+    pub last: bool,
+
+    #[clap(flatten)]
+    pub shared: SharedExecArgs,
+}
+
+#[derive(Debug, Clone, Default, Args)]
+pub struct SharedExecArgs {
     /// Optional image(s) to attach to the initial prompt.
     #[arg(long = "image", short = 'i', value_name = "FILE", value_delimiter = ',', num_args = 1..)]
     pub images: Vec<PathBuf>,
@@ -56,9 +84,6 @@ pub struct Cli {
     #[arg(long = "output-schema", value_name = "FILE")]
     pub output_schema: Option<PathBuf>,
 
-    #[clap(skip)]
-    pub config_overrides: CliConfigOverrides,
-
     /// Specifies color settings for use in the output.
     #[arg(long = "color", value_enum, default_value_t = Color::Auto)]
     pub color: Color,
@@ -86,30 +111,11 @@ pub struct Cli {
     #[arg(long = "output-last-message")]
     pub last_message_file: Option<PathBuf>,
 
+    #[clap(skip)]
+    pub config_overrides: CliConfigOverrides,
+
     /// Initial instructions for the agent. If not provided as an argument (or
     /// if `-` is used), instructions are read from stdin.
-    #[arg(value_name = "PROMPT")]
-    pub prompt: Option<String>,
-}
-
-#[derive(Debug, clap::Subcommand)]
-pub enum Command {
-    /// Resume a previous session by id or pick the most recent with --last.
-    Resume(ResumeArgs),
-}
-
-#[derive(Parser, Debug)]
-pub struct ResumeArgs {
-    /// Conversation/session id (UUID). When provided, resumes this session.
-    /// If omitted, use --last to pick the most recent recorded session.
-    #[arg(value_name = "SESSION_ID")]
-    pub session_id: Option<String>,
-
-    /// Resume the most recent recorded session (newest) without specifying an id.
-    #[arg(long = "last", default_value_t = false, conflicts_with = "session_id")]
-    pub last: bool,
-
-    /// Prompt to send after resuming the session. If `-` is used, read from stdin.
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
 }
