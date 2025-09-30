@@ -1,21 +1,16 @@
-use crate::CODEX_APPLY_PATCH_ARG1;
 use crate::apply_patch::ApplyPatchExec;
 use crate::codex::Session;
-use crate::exec::ExecParams;
 use crate::exec::SandboxType;
-use crate::executor::errors::ExecError;
 use crate::executor::ExecutionMode;
 use crate::executor::ExecutionRequest;
 use crate::executor::ExecutorConfig;
-use crate::function_tool::FunctionCallError;
+use crate::executor::errors::ExecError;
 use crate::safety::SafetyCheck;
 use crate::safety::assess_command_safety;
 use crate::safety::assess_patch_safety;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ReviewDecision;
-use std::collections::HashMap;
 use std::collections::HashSet;
-use std::env;
 
 /// Sandbox placement options selected for an execution run, including whether
 /// to escalate after failures and whether approvals should persist.
@@ -169,6 +164,7 @@ mod tests {
     use super::*;
     use crate::codex::make_session_and_context;
     use crate::exec::ExecParams;
+    use crate::function_tool::FunctionCallError;
     use crate::protocol::SandboxPolicy;
     use codex_apply_patch::ApplyPatchAction;
     use pretty_assertions::assert_eq;

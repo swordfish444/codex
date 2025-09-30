@@ -64,7 +64,6 @@ use crate::exec_command::WRITE_STDIN_TOOL_NAME;
 use crate::exec_command::WriteStdinParams;
 use crate::exec_env::create_env;
 use crate::executor::ExecutionMode;
-use crate::executor::ExecutionRequest;
 use crate::executor::Executor;
 use crate::executor::ExecutorConfig;
 use crate::executor::normalize_exec_result;

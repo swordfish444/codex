@@ -9,7 +9,7 @@ pub(crate) use runner::Executor;
 pub(crate) use runner::ExecutorConfig;
 pub(crate) use runner::normalize_exec_result;
 
-pub mod linkers {
+pub(crate) mod linkers {
     use crate::codex::ExecCommandContext;
     use crate::exec::ExecParams;
     use crate::exec::StdoutStream;
@@ -17,8 +17,8 @@ pub mod linkers {
     use crate::executor::runner::ExecutionRequest;
 
     pub struct PreparedExec {
-        pub context: ExecCommandContext,
-        pub request: ExecutionRequest,
+        pub(crate) context: ExecCommandContext,
+        pub(crate) request: ExecutionRequest,
     }
 
     impl PreparedExec {
