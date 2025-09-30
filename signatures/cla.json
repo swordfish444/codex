@@ -3679,6 +3679,14 @@
       "created_at": "2025-09-30T15:28:56Z",
       "repoId": 965415649,
       "pullRequestNo": 4502
+    },
+    {
+      "name": "kasugamirai",
+      "id": 36308167,
+      "comment_id": 3353074310,
+      "created_at": "2025-09-30T17:04:32Z",
+      "repoId": 965415649,
+      "pullRequestNo": 4507
     }
   ]
 }
