@@ -6,6 +6,7 @@ use std::time::Duration;
 use super::backends::ExecutionMode;
 use super::backends::backend_for_mode;
 use super::cache::ApprovalCache;
+use crate::codex::ExecCommandContext;
 use crate::codex::Session;
 use crate::error::CodexErr;
 use crate::error::SandboxErr;
@@ -23,6 +24,7 @@ use crate::protocol::AskForApproval;
 use crate::protocol::ReviewDecision;
 use crate::protocol::SandboxPolicy;
 use crate::shell;
+use codex_otel::otel_event_manager::ToolDecisionSource;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ExecutorConfig {
@@ -77,8 +79,7 @@ impl Executor {
         mut request: ExecutionRequest,
         session: &Session,
         approval_policy: AskForApproval,
-        sub_id: &str,
-        call_id: &str,
+        context: &ExecCommandContext,
     ) -> Result<ExecToolCallOutput, ExecError> {
         if matches!(request.mode, ExecutionMode::Shell) {
             request.params =
@@ -110,8 +111,9 @@ impl Executor {
             self.approval_cache.snapshot(),
             &config,
             session,
-            sub_id,
-            call_id,
+            &context.sub_id,
+            &context.call_id,
+            &context.otel_event_manager,
         )
         .await?;
         if sandbox_decision.record_session_approval {
@@ -140,8 +142,7 @@ impl Executor {
                         &request,
                         &config,
                         session,
-                        sub_id,
-                        call_id,
+                        context,
                         stdout_stream.clone(),
                         error,
                     )
@@ -161,37 +162,44 @@ impl Executor {
 
     /// Fallback path invoked when a sandboxed run is denied so the user can
     /// approve rerunning without isolation.
-    #[allow(clippy::too_many_arguments)]
     async fn retry_without_sandbox(
         &self,
         request: &ExecutionRequest,
         config: &ExecutorConfig,
         session: &Session,
-        sub_id: &str,
-        call_id: &str,
+        context: &ExecCommandContext,
         stdout_stream: Option<StdoutStream>,
         sandbox_error: SandboxErr,
     ) -> Result<ExecToolCallOutput, ExecError> {
         session
-            .notify_background_event(sub_id, format!("Execution failed: {sandbox_error}"))
+            .notify_background_event(
+                &context.sub_id,
+                format!("Execution failed: {sandbox_error}"),
+            )
             .await;
         let decision = session
             .request_command_approval(
-                sub_id.to_string(),
-                call_id.to_string(),
+                context.sub_id.to_string(),
+                context.call_id.to_string(),
                 request.approval_command.clone(),
                 request.params.cwd.clone(),
                 Some("command failed; retry without sandbox?".to_string()),
             )
             .await;
 
+        context.otel_event_manager.tool_decision(
+            &context.tool_name,
+            &context.call_id,
+            decision,
+            ToolDecisionSource::User,
+        );
         match decision {
             ReviewDecision::Approved | ReviewDecision::ApprovedForSession => {
                 if matches!(decision, ReviewDecision::ApprovedForSession) {
                     self.approval_cache.insert(request.approval_command.clone());
                 }
                 session
-                    .notify_background_event(sub_id, "retrying command without sandbox")
+                    .notify_background_event(&context.sub_id, "retrying command without sandbox")
                     .await;
 
                 let retry_output = self

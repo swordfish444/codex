@@ -8,6 +8,8 @@ use crate::executor::errors::ExecError;
 use crate::safety::SafetyCheck;
 use crate::safety::assess_command_safety;
 use crate::safety::assess_patch_safety;
+use codex_otel::otel_event_manager::OtelEventManager;
+use codex_otel::otel_event_manager::ToolDecisionSource;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ReviewDecision;
 use std::collections::HashSet;
@@ -50,6 +52,7 @@ fn should_escalate_on_failure(approval: AskForApproval, sandbox: SandboxType) ->
 
 /// Determines how a command should be sandboxed, prompting the user when
 /// policy requires explicit approval.
+#[warn(clippy::too_many_arguments)]
 pub async fn select_sandbox(
     request: &ExecutionRequest,
     approval_policy: AskForApproval,
@@ -58,6 +61,7 @@ pub async fn select_sandbox(
     session: &Session,
     sub_id: &str,
     call_id: &str,
+    otel_event_manager: &OtelEventManager,
 ) -> Result<SandboxDecision, ExecError> {
     match &request.mode {
         ExecutionMode::Shell => {
@@ -69,6 +73,7 @@ pub async fn select_sandbox(
                 session,
                 sub_id,
                 call_id,
+                otel_event_manager,
             )
             .await
         }
@@ -78,6 +83,7 @@ pub async fn select_sandbox(
     }
 }
 
+#[warn(clippy::too_many_arguments)]
 async fn select_shell_sandbox(
     request: &ExecutionRequest,
     approval_policy: AskForApproval,
@@ -86,6 +92,7 @@ async fn select_shell_sandbox(
     session: &Session,
     sub_id: &str,
     call_id: &str,
+    otel_event_manager: &OtelEventManager,
 ) -> Result<SandboxDecision, ExecError> {
     let command_for_safety = if request.approval_command.is_empty() {
         request.params.command.clone()
@@ -113,6 +120,12 @@ async fn select_shell_sandbox(
             if user_explicitly_approved {
                 decision.record_session_approval = true;
             }
+            let (decision_for_event, source) = if user_explicitly_approved {
+                (ReviewDecision::ApprovedForSession, ToolDecisionSource::User)
+            } else {
+                (ReviewDecision::Approved, ToolDecisionSource::Config)
+            };
+            otel_event_manager.tool_decision("local_shell", call_id, decision_for_event, source);
             Ok(decision)
         }
         SafetyCheck::AskUser => {
@@ -126,6 +139,12 @@ async fn select_shell_sandbox(
                 )
                 .await;
 
+            otel_event_manager.tool_decision(
+                "local_shell",
+                call_id,
+                decision,
+                ToolDecisionSource::User,
+            );
             match decision {
                 ReviewDecision::Approved => Ok(SandboxDecision::user_override(false)),
                 ReviewDecision::ApprovedForSession => Ok(SandboxDecision::user_override(true)),
@@ -180,7 +199,7 @@ mod tests {
 
     #[tokio::test]
     async fn select_apply_patch_user_override_when_explicit() {
-        let (session, _ctx) = make_session_and_context();
+        let (session, ctx) = make_session_and_context();
         let tmp = tempfile::tempdir().expect("tmp");
         let p = tmp.path().join("a.txt");
         let action = ApplyPatchAction::new_add_for_test(&p, "hello".to_string());
@@ -203,6 +222,7 @@ mod tests {
             stdout_stream: None,
             use_shell_profile: false,
         };
+        let otel_event_manager = ctx.client.get_otel_event_manager();
         let decision = select_sandbox(
             &request,
             AskForApproval::OnRequest,
@@ -211,6 +231,7 @@ mod tests {
             &session,
             "sub",
             "call",
+            &otel_event_manager,
         )
         .await
         .expect("ok");
@@ -221,7 +242,7 @@ mod tests {
 
     #[tokio::test]
     async fn select_apply_patch_autoapprove_in_danger() {
-        let (session, _ctx) = make_session_and_context();
+        let (session, ctx) = make_session_and_context();
         let tmp = tempfile::tempdir().expect("tmp");
         let p = tmp.path().join("a.txt");
         let action = ApplyPatchAction::new_add_for_test(&p, "hello".to_string());
@@ -244,6 +265,7 @@ mod tests {
             stdout_stream: None,
             use_shell_profile: false,
         };
+        let otel_event_manager = ctx.client.get_otel_event_manager();
         let decision = select_sandbox(
             &request,
             AskForApproval::OnRequest,
@@ -252,6 +274,7 @@ mod tests {
             &session,
             "sub",
             "call",
+            &otel_event_manager,
         )
         .await
         .expect("ok");
@@ -263,7 +286,7 @@ mod tests {
 
     #[tokio::test]
     async fn select_apply_patch_requires_approval_on_unless_trusted() {
-        let (session, _ctx) = make_session_and_context();
+        let (session, ctx) = make_session_and_context();
         let tempdir = tempfile::tempdir().expect("tmpdir");
         let p = tempdir.path().join("a.txt");
         let action = ApplyPatchAction::new_add_for_test(&p, "hello".to_string());
@@ -286,6 +309,7 @@ mod tests {
             stdout_stream: None,
             use_shell_profile: false,
         };
+        let otel_event_manager = ctx.client.get_otel_event_manager();
         let result = select_sandbox(
             &request,
             AskForApproval::UnlessTrusted,
@@ -294,6 +318,7 @@ mod tests {
             &session,
             "sub",
             "call",
+            &otel_event_manager,
         )
         .await;
         match result {
@@ -307,7 +332,7 @@ mod tests {
 
     #[tokio::test]
     async fn select_shell_autoapprove_in_danger_mode() {
-        let (session, _ctx) = make_session_and_context();
+        let (session, ctx) = make_session_and_context();
         let cfg = ExecutorConfig::new(SandboxPolicy::DangerFullAccess, std::env::temp_dir(), None);
         let request = ExecutionRequest {
             params: ExecParams {
@@ -323,6 +348,7 @@ mod tests {
             stdout_stream: None,
             use_shell_profile: false,
         };
+        let otel_event_manager = ctx.client.get_otel_event_manager();
         let decision = select_sandbox(
             &request,
             AskForApproval::OnRequest,
@@ -331,6 +357,7 @@ mod tests {
             &session,
             "sub",
             "call",
+            &otel_event_manager,
         )
         .await
         .expect("ok");
@@ -341,7 +368,7 @@ mod tests {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[tokio::test]
     async fn select_shell_escalates_on_failure_with_platform_sandbox() {
-        let (session, _ctx) = make_session_and_context();
+        let (session, ctx) = make_session_and_context();
         let cfg = ExecutorConfig::new(SandboxPolicy::ReadOnly, std::env::temp_dir(), None);
         let request = ExecutionRequest {
             params: ExecParams {
@@ -358,6 +385,7 @@ mod tests {
             stdout_stream: None,
             use_shell_profile: false,
         };
+        let otel_event_manager = ctx.client.get_otel_event_manager();
         let decision = select_sandbox(
             &request,
             AskForApproval::OnFailure,
@@ -366,6 +394,7 @@ mod tests {
             &session,
             "sub",
             "call",
+            &otel_event_manager,
         )
         .await
         .expect("ok");

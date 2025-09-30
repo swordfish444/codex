@@ -1,7 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -125,7 +124,6 @@ use crate::user_instructions::UserInstructions;
 use crate::user_notification::UserNotification;
 use crate::util::backoff;
 use codex_otel::otel_event_manager::OtelEventManager;
-use codex_otel::otel_event_manager::ToolDecisionSource;
 use codex_protocol::config_types::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::custom_prompts::CustomPrompt;
@@ -833,6 +831,7 @@ impl Session {
             command_for_display,
             cwd,
             apply_patch,
+            ..
         } = exec_command_context;
         let msg = match apply_patch {
             Some(ApplyPatchCommandContext {
@@ -946,7 +945,7 @@ impl Session {
         let result = self
             .services
             .executor
-            .run(request, self, approval_policy, &sub_id, &call_id)
+            .run(request, self, approval_policy, &context)
             .await;
 
         let normalized = normalize_exec_result(&result);
@@ -1079,6 +1078,8 @@ pub(crate) struct ExecCommandContext {
     pub(crate) command_for_display: Vec<String>,
     pub(crate) cwd: PathBuf,
     pub(crate) apply_patch: Option<ApplyPatchCommandContext>,
+    pub(crate) tool_name: String,
+    pub(crate) otel_event_manager: OtelEventManager,
 }
 
 #[derive(Clone, Debug)]
@@ -2662,6 +2663,8 @@ async fn handle_container_exec_with_params(
                 changes: convert_apply_patch_to_protocol(action),
             },
         ),
+        tool_name: tool_name.to_string(),
+        otel_event_manager,
     };
 
     let mode = match apply_patch_exec {
