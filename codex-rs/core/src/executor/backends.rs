@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 use std::env;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::apply_patch::ApplyPatchExec;
 use crate::CODEX_APPLY_PATCH_ARG1;
+use crate::apply_patch::ApplyPatchExec;
 use crate::exec::ExecParams;
-use crate::exec::ExecToolCallOutput;
 use crate::function_tool::FunctionCallError;
 
 pub(crate) enum ExecutionMode {
@@ -27,29 +25,14 @@ pub(crate) trait ExecutionBackend: Send + Sync {
     ) -> Result<ExecParams, FunctionCallError>;
 }
 
-pub(crate) struct BackendStore {
-    shell: Arc<dyn ExecutionBackend>,
-    apply_patch: Arc<dyn ExecutionBackend>,
-}
+static SHELL_BACKEND: ShellBackend = ShellBackend;
+static APPLY_PATCH_BACKEND: ApplyPatchBackend = ApplyPatchBackend;
 
-impl BackendStore {
-    pub(crate) fn new() -> Self {
-        Self {
-            shell: Arc::new(ShellBackend),
-            apply_patch: Arc::new(ApplyPatchBackend),
-        }
+pub(crate) fn backend_for_mode(mode: &ExecutionMode) -> &'static dyn ExecutionBackend {
+    match mode {
+        ExecutionMode::Shell => &SHELL_BACKEND,
+        ExecutionMode::ApplyPatch(_) => &APPLY_PATCH_BACKEND,
     }
-
-    pub(crate) fn for_mode(&self, mode: &ExecutionMode) -> Arc<dyn ExecutionBackend> {
-        match mode {
-            ExecutionMode::Shell => self.shell.clone(),
-            ExecutionMode::ApplyPatch(_) => self.apply_patch.clone(),
-        }
-    }
-}
-
-pub(crate) fn default_backends() -> BackendStore {
-    BackendStore::new()
 }
 
 struct ShellBackend;
@@ -101,7 +84,7 @@ impl ExecutionBackend for ApplyPatchBackend {
                     with_escalated_permissions: params.with_escalated_permissions,
                     justification: params.justification,
                 })
-            },
+            }
             ExecutionMode::Shell => Err(FunctionCallError::RespondToModel(
                 "apply_patch backend invoked without patch context".to_string(),
             )),

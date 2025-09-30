@@ -114,7 +114,7 @@ pub(crate) fn convert_apply_patch_to_protocol(
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-    
+
     use tempfile::tempdir;
 
     #[test]

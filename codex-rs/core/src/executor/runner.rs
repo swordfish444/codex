@@ -5,10 +5,8 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-use super::backends::BackendStore;
-use super::backends::ExecutionBackend;
 use super::backends::ExecutionMode;
-use super::backends::default_backends;
+use super::backends::backend_for_mode;
 use super::cache::ApprovalCache;
 use crate::codex::Session;
 use crate::error::CodexErr;
@@ -64,7 +62,6 @@ impl ExecError {
 /// Coordinates sandbox selection, backend-specific preparation, and command
 /// execution for tool calls requested by the model.
 pub(crate) struct Executor {
-    backends: BackendStore,
     approval_cache: ApprovalCache,
     config: Arc<RwLock<ExecutorConfig>>,
 }
@@ -72,7 +69,6 @@ pub(crate) struct Executor {
 impl Executor {
     pub(crate) fn new(config: ExecutorConfig) -> Self {
         Self {
-            backends: default_backends(),
             approval_cache: ApprovalCache::default(),
             config: Arc::new(RwLock::new(config)),
         }
@@ -80,11 +76,7 @@ impl Executor {
 
     /// Updates the sandbox policy and working directory used for future
     /// executions without recreating the executor.
-    pub(crate) fn update_environment(
-        &self,
-        sandbox_policy: SandboxPolicy,
-        sandbox_cwd: PathBuf,
-    ) {
+    pub(crate) fn update_environment(&self, sandbox_policy: SandboxPolicy, sandbox_cwd: PathBuf) {
         if let Ok(mut cfg) = self.config.write() {
             cfg.sandbox_policy = sandbox_policy;
             cfg.sandbox_cwd = sandbox_cwd;
@@ -103,7 +95,7 @@ impl Executor {
         call_id: &str,
     ) -> Result<ExecToolCallOutput, ExecError> {
         // Step 1: Normalise parameters via the selected backend.
-        let backend = self.backends.for_mode(&request.mode);
+        let backend = backend_for_mode(&request.mode);
         request.params = backend
             .prepare(request.params, &request.mode)
             .map_err(ExecError::from)?;
@@ -148,10 +140,8 @@ impl Executor {
             }
             Err(CodexErr::Sandbox(error @ SandboxErr::Denied { .. })) => {
                 return if sandbox_decision.escalate_on_failure {
-                    self.retry_without_sandbox(
-                        &*backend, &request, &config, session, sub_id, call_id, error,
-                    )
-                    .await
+                    self.retry_without_sandbox(&request, &config, session, sub_id, call_id, error)
+                        .await
                 } else {
                     Err(ExecError::rejection(format!(
                         "failed in sandbox {:?} with execution error: {error:?}",
@@ -170,7 +160,6 @@ impl Executor {
     #[allow(clippy::too_many_arguments)]
     async fn retry_without_sandbox(
         &self,
-        backend: &dyn ExecutionBackend,
         request: &ExecutionRequest,
         config: &ExecutorConfig,
         session: &Session,

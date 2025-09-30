@@ -2616,7 +2616,7 @@ async fn handle_container_exec_with_params(
         stdout_stream,
     };
 
-    sess.executor.update_environment( // todo this should not be needed ? Not sure what it means
+    sess.executor.update_environment(
         turn_context.sandbox_policy.clone(),
         turn_context.cwd.clone(),
     );
