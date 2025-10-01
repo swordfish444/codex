@@ -72,16 +72,12 @@ async fn retries_on_early_close() {
         // ModelClient will return an error if the environment variable for the
         // provider is not set.
         env_key: Some("PATH".into()),
-        env_key_instructions: None,
         wire_api: WireApi::Responses,
-        query_params: None,
-        http_headers: None,
-        env_http_headers: None,
         // exercise retry path: first attempt yields incomplete stream, so allow 1 retry
         request_max_retries: Some(0),
         stream_max_retries: Some(1),
         stream_idle_timeout_ms: Some(2000),
-        requires_openai_auth: false,
+        ..Default::default()
     };
 
     let TestCodex { codex, .. } = test_codex()

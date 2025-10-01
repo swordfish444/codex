@@ -65,15 +65,11 @@ async fn continue_after_stream_error() {
         name: "mock-openai".into(),
         base_url: Some(format!("{}/v1", server.uri())),
         env_key: Some("PATH".into()),
-        env_key_instructions: None,
         wire_api: WireApi::Responses,
-        query_params: None,
-        http_headers: None,
-        env_http_headers: None,
         request_max_retries: Some(1),
         stream_max_retries: Some(1),
         stream_idle_timeout_ms: Some(2_000),
-        requires_openai_auth: false,
+        ..Default::default()
     };
 
     let TestCodex { codex, .. } = test_codex()

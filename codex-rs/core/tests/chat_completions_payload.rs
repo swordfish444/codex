@@ -48,16 +48,12 @@ async fn run_request(input: Vec<ResponseItem>) -> Value {
     let provider = ModelProviderInfo {
         name: "mock".into(),
         base_url: Some(format!("{}/v1", server.uri())),
-        env_key: None,
         env_key_instructions: None,
         wire_api: WireApi::Chat,
-        query_params: None,
-        http_headers: None,
-        env_http_headers: None,
         request_max_retries: Some(0),
         stream_max_retries: Some(0),
         stream_idle_timeout_ms: Some(5_000),
-        requires_openai_auth: false,
+        ..Default::default()
     };
 
     let codex_home = match TempDir::new() {

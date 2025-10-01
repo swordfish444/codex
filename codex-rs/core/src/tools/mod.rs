@@ -1,4 +1,5 @@
 pub mod context;
+pub mod executor;
 pub(crate) mod handlers;
 pub mod registry;
 pub mod router;

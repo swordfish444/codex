@@ -41,6 +41,9 @@ pub struct ModelFamily {
 
     // Instructions to use for querying the model
     pub base_instructions: String,
+
+    // todo check if all those configs are necessary...
+    pub supports_parallel_read_only_tools: bool,
 }
 
 macro_rules! model_family {
@@ -57,6 +60,7 @@ macro_rules! model_family {
             uses_local_shell_tool: false,
             apply_patch_tool_type: None,
             base_instructions: BASE_INSTRUCTIONS.to_string(),
+            supports_parallel_read_only_tools: false,
         };
         // apply overrides
         $(
@@ -105,12 +109,14 @@ pub fn find_family_for_model(slug: &str) -> Option<ModelFamily> {
             supports_reasoning_summaries: true,
             reasoning_summary_format: ReasoningSummaryFormat::Experimental,
             base_instructions: GPT_5_CODEX_INSTRUCTIONS.to_string(),
+            supports_parallel_read_only_tools: true,
         )
     } else if slug.starts_with("gpt-5") {
         model_family!(
             slug, "gpt-5",
             supports_reasoning_summaries: true,
             needs_special_apply_patch_instructions: true,
+            supports_parallel_read_only_tools: true,
         )
     } else {
         None
@@ -127,5 +133,6 @@ pub fn derive_default_model_family(model: &str) -> ModelFamily {
         uses_local_shell_tool: false,
         apply_patch_tool_type: None,
         base_instructions: BASE_INSTRUCTIONS.to_string(),
+        supports_parallel_read_only_tools: false,
     }
 }

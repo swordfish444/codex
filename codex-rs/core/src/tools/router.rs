@@ -5,6 +5,7 @@ use crate::codex::TurnContext;
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::registry::ToolCapabilities;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::spec::ToolSpec;
 use crate::tools::spec::ToolsConfig;
@@ -20,8 +21,10 @@ pub struct ToolCall {
     pub tool_name: String,
     pub call_id: String,
     pub payload: ToolPayload,
+    pub capabilities: ToolCapabilities,
 }
 
+#[derive(Clone)]
 pub struct Router {
     registry: ToolRegistry,
     specs: Vec<ToolSpec>,
@@ -41,7 +44,12 @@ impl Router {
         &self.specs
     }
 
+    pub fn has_read_only_tools(&self) -> bool {
+        self.registry.has_read_only_tools()
+    }
+
     pub fn build_tool_call(
+        &self,
         session: &Session,
         item: ResponseItem,
     ) -> Result<Option<ToolCall>, FunctionCallError> {
@@ -53,7 +61,7 @@ impl Router {
                 ..
             } => {
                 if let Some((server, tool)) = session.parse_mcp_tool_name(&name) {
-                    Ok(Some(ToolCall {
+                    Ok(Some(self.attach_capabilities(ToolCall {
                         tool_name: name,
                         call_id,
                         payload: ToolPayload::Mcp {
@@ -61,18 +69,20 @@ impl Router {
                             tool,
                             raw_arguments: arguments,
                         },
-                    }))
+                        capabilities: ToolCapabilities::mutating(),
+                    })))
                 } else {
                     let payload = if name == "unified_exec" {
                         ToolPayload::UnifiedExec { arguments }
                     } else {
                         ToolPayload::Function { arguments }
                     };
-                    Ok(Some(ToolCall {
+                    Ok(Some(self.attach_capabilities(ToolCall {
                         tool_name: name,
                         call_id,
                         payload,
-                    }))
+                        capabilities: ToolCapabilities::mutating(),
+                    })))
                 }
             }
             ResponseItem::CustomToolCall {
@@ -80,11 +90,12 @@ impl Router {
                 input,
                 call_id,
                 ..
-            } => Ok(Some(ToolCall {
+            } => Ok(Some(self.attach_capabilities(ToolCall {
                 tool_name: name,
                 call_id,
                 payload: ToolPayload::Custom { input },
-            })),
+                capabilities: ToolCapabilities::mutating(),
+            }))),
             ResponseItem::LocalShellCall {
                 id,
                 call_id,
@@ -106,16 +117,24 @@ impl Router {
                             with_escalated_permissions: None,
                             justification: None,
                         };
-                        Ok(Some(ToolCall {
+                        Ok(Some(self.attach_capabilities(ToolCall {
                             tool_name: "local_shell".to_string(),
                             call_id,
                             payload: ToolPayload::LocalShell { params },
-                        }))
+                            capabilities: ToolCapabilities::mutating(),
+                        })))
                     }
                 }
             }
             _ => Ok(None),
         }
+    }
+
+    fn attach_capabilities(&self, mut call: ToolCall) -> ToolCall {
+        if let Some(capabilities) = self.registry.capabilities(call.tool_name.as_str()) {
+            call.capabilities = capabilities;
+        }
+        call
     }
 
     pub async fn dispatch_tool_call(
@@ -131,6 +150,7 @@ impl Router {
             tool_name,
             call_id,
             payload,
+            ..
         } = call;
 
         let invocation = ToolInvocation {

@@ -14,6 +14,7 @@ use codex_core::ResponseEvent;
 use codex_core::ResponseItem;
 use codex_core::WireApi;
 use codex_core::built_in_model_providers;
+use codex_core::model_family::find_family_for_model;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
@@ -25,6 +26,7 @@ use core_test_support::load_default_config_for_test;
 use core_test_support::load_sse_fixture_with_id;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
+use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
 use futures::StreamExt;
@@ -646,16 +648,11 @@ async fn azure_responses_request_includes_store_and_reasoning_ids() {
     let provider = ModelProviderInfo {
         name: "azure".into(),
         base_url: Some(format!("{}/openai", server.uri())),
-        env_key: None,
-        env_key_instructions: None,
         wire_api: WireApi::Responses,
-        query_params: None,
-        http_headers: None,
-        env_http_headers: None,
         request_max_retries: Some(0),
         stream_max_retries: Some(0),
         stream_idle_timeout_ms: Some(5_000),
-        requires_openai_auth: false,
+        ..Default::default()
     };
 
     let codex_home = TempDir::new().unwrap();
@@ -1035,17 +1032,12 @@ async fn azure_overrides_assign_properties_used_for_responses_url() {
             "api-version".to_string(),
             "2025-04-01-preview".to_string(),
         )])),
-        env_key_instructions: None,
         wire_api: WireApi::Responses,
         http_headers: Some(std::collections::HashMap::from([(
             "Custom-Header".to_string(),
             "Value".to_string(),
         )])),
-        env_http_headers: None,
-        request_max_retries: None,
-        stream_max_retries: None,
-        stream_idle_timeout_ms: None,
-        requires_openai_auth: false,
+        ..Default::default()
     };
 
     // Init session
@@ -1112,17 +1104,12 @@ async fn env_var_overrides_loaded_auth() {
             "api-version".to_string(),
             "2025-04-01-preview".to_string(),
         )])),
-        env_key_instructions: None,
         wire_api: WireApi::Responses,
         http_headers: Some(std::collections::HashMap::from([(
             "Custom-Header".to_string(),
             "Value".to_string(),
         )])),
-        env_http_headers: None,
-        request_max_retries: None,
-        stream_max_retries: None,
-        stream_idle_timeout_ms: None,
-        requires_openai_auth: false,
+        ..Default::default()
     };
 
     // Init session
@@ -1288,5 +1275,55 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
         serde_json::Value::Array(actual_tail.to_vec()),
         r3_tail_expected,
         "request 3 tail mismatch",
+    );
+}
+
+#[tokio::test]
+async fn parallel_tool_calls_enabled_when_supported() {
+    let server = MockServer::start().await;
+
+    let template = ResponseTemplate::new(200)
+        .insert_header("content-type", "text/event-stream")
+        .set_body_raw(sse_completed("resp_parallel"), "text/event-stream");
+
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(template)
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut provider = built_in_model_providers()["openai"].clone();
+    provider.base_url = Some(format!("{}/v1", server.uri()));
+    provider.supports_parallel_tool_calls = true;
+
+    let provider_clone = provider.clone();
+    let TestCodex { codex, .. } = test_codex()
+        .with_config(move |config| {
+            config.model = "gpt-5".to_string();
+            config.model_family = find_family_for_model("gpt-5").expect("model family");
+            config.enable_parallel_read_only_tools = true;
+            config.model_provider = provider_clone.clone();
+            config.model_provider_id = "openai".to_string();
+        })
+        .build(&server)
+        .await
+        .expect("build codex");
+
+    codex
+        .submit(Op::UserInput {
+            items: vec![InputItem::Text {
+                text: "hello".into(),
+            }],
+        })
+        .await
+        .unwrap();
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+    let request = &server.received_requests().await.expect("requests")[0];
+    let request_body = request.body_json::<serde_json::Value>().unwrap();
+    assert_eq!(
+        request_body.get("parallel_tool_calls"),
+        Some(&serde_json::Value::Bool(true))
     );
 }

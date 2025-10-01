@@ -118,6 +118,12 @@ impl ModelClient {
         })
     }
 
+    pub fn supports_parallel_read_only_tools(&self) -> bool {
+        self.config.enable_parallel_read_only_tools
+            && self.config.model_family.supports_parallel_read_only_tools
+            && self.provider.supports_parallel_tool_calls
+    }
+
     /// Dispatches to either the Responses or Chat implementation depending on
     /// the provider config.  Public callers always invoke `stream()` – the
     /// specialised helpers are private to avoid accidental misuse.
@@ -226,7 +232,8 @@ impl ModelClient {
             input: &input_with_instructions,
             tools: &tools_json,
             tool_choice: "auto",
-            parallel_tool_calls: false,
+            parallel_tool_calls: prompt.allow_parallel_read_only_tools
+                && self.supports_parallel_read_only_tools(),
             reasoning,
             store: azure_workaround,
             stream: true,
@@ -1038,15 +1045,11 @@ mod tests {
             name: "test".to_string(),
             base_url: Some("https://test.com".to_string()),
             env_key: Some("TEST_API_KEY".to_string()),
-            env_key_instructions: None,
             wire_api: WireApi::Responses,
-            query_params: None,
-            http_headers: None,
-            env_http_headers: None,
             request_max_retries: Some(0),
             stream_max_retries: Some(0),
             stream_idle_timeout_ms: Some(1000),
-            requires_openai_auth: false,
+            ..Default::default()
         };
 
         let otel_event_manager = otel_event_manager();
@@ -1101,15 +1104,11 @@ mod tests {
             name: "test".to_string(),
             base_url: Some("https://test.com".to_string()),
             env_key: Some("TEST_API_KEY".to_string()),
-            env_key_instructions: None,
             wire_api: WireApi::Responses,
-            query_params: None,
-            http_headers: None,
-            env_http_headers: None,
             request_max_retries: Some(0),
             stream_max_retries: Some(0),
             stream_idle_timeout_ms: Some(1000),
-            requires_openai_auth: false,
+            ..Default::default()
         };
 
         let otel_event_manager = otel_event_manager();
@@ -1137,15 +1136,11 @@ mod tests {
             name: "test".to_string(),
             base_url: Some("https://test.com".to_string()),
             env_key: Some("TEST_API_KEY".to_string()),
-            env_key_instructions: None,
             wire_api: WireApi::Responses,
-            query_params: None,
-            http_headers: None,
-            env_http_headers: None,
             request_max_retries: Some(0),
             stream_max_retries: Some(0),
             stream_idle_timeout_ms: Some(1000),
-            requires_openai_auth: false,
+            ..Default::default()
         };
 
         let otel_event_manager = otel_event_manager();
@@ -1244,15 +1239,11 @@ mod tests {
                 name: "test".to_string(),
                 base_url: Some("https://test.com".to_string()),
                 env_key: Some("TEST_API_KEY".to_string()),
-                env_key_instructions: None,
                 wire_api: WireApi::Responses,
-                query_params: None,
-                http_headers: None,
-                env_http_headers: None,
                 request_max_retries: Some(0),
                 stream_max_retries: Some(0),
                 stream_idle_timeout_ms: Some(1000),
-                requires_openai_auth: false,
+                ..Default::default()
             };
 
             let otel_event_manager = otel_event_manager();

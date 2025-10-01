@@ -99,6 +99,8 @@ use crate::tasks::CompactTask;
 use crate::tasks::RegularTask;
 use crate::tasks::ReviewTask;
 use crate::tools::Router;
+use crate::tools::executor::ProcessedResponseItem;
+use crate::tools::executor::ToolCallExecutor;
 use crate::tools::format_exec_output_str;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::unified_exec::UnifiedExecSessionManager;
@@ -438,6 +440,7 @@ impl Session {
                 use_streamable_shell_tool: config.use_experimental_streamable_shell_tool,
                 include_view_image_tool: config.include_view_image_tool,
                 experimental_unified_exec_tool: config.use_experimental_unified_exec_tool,
+                enable_parallel_read_only: config.enable_parallel_read_only_tools,
             }),
             user_instructions,
             base_instructions,
@@ -1076,7 +1079,7 @@ impl Session {
         &self.services.user_shell
     }
 
-    fn show_raw_agent_reasoning(&self) -> bool {
+    pub(crate) fn show_raw_agent_reasoning(&self) -> bool {
         self.services.show_raw_agent_reasoning
     }
 }
@@ -1166,6 +1169,7 @@ async fn submission_loop(
                     use_streamable_shell_tool: config.use_experimental_streamable_shell_tool,
                     include_view_image_tool: config.include_view_image_tool,
                     experimental_unified_exec_tool: config.use_experimental_unified_exec_tool,
+                    enable_parallel_read_only: config.enable_parallel_read_only_tools,
                 });
 
                 let new_turn_context = TurnContext {
@@ -1270,6 +1274,7 @@ async fn submission_loop(
                             include_view_image_tool: config.include_view_image_tool,
                             experimental_unified_exec_tool: config
                                 .use_experimental_unified_exec_tool,
+                            enable_parallel_read_only: config.enable_parallel_read_only_tools,
                         }),
                         user_instructions: turn_context.user_instructions.clone(),
                         base_instructions: turn_context.base_instructions.clone(),
@@ -1501,6 +1506,7 @@ async fn spawn_review_thread(
         use_streamable_shell_tool: false,
         include_view_image_tool: false,
         experimental_unified_exec_tool: config.use_experimental_unified_exec_tool,
+        enable_parallel_read_only: config.enable_parallel_read_only_tools,
     });
 
     let base_instructions = REVIEW_PROMPT.to_string();
@@ -1669,8 +1675,8 @@ pub(crate) async fn run_task(
             })
             .collect();
         match run_turn(
-            &sess,
-            turn_context.as_ref(),
+            sess.clone(),
+            turn_context.clone(),
             &mut turn_diff_tracker,
             sub_id.clone(),
             turn_input,
@@ -1894,28 +1900,40 @@ fn parse_review_output_event(text: &str) -> ReviewOutputEvent {
 }
 
 async fn run_turn(
-    sess: &Session,
-    turn_context: &TurnContext,
+    sess: Arc<Session>,
+    turn_context: Arc<TurnContext>,
     turn_diff_tracker: &mut TurnDiffTracker,
     sub_id: String,
     input: Vec<ResponseItem>,
 ) -> CodexResult<TurnRunResult> {
     let mcp_tools = sess.services.mcp_connection_manager.list_all_tools();
-    let router = Router::from_config(&turn_context.tools_config, Some(mcp_tools));
+    let router = Arc::new(Router::from_config(
+        &turn_context.tools_config,
+        Some(mcp_tools),
+    ));
+
+    let template_executor =
+        ToolCallExecutor::new(router.clone(), sess.clone(), turn_context.clone());
+    let allow_parallel_read_only = template_executor.allow_parallel_read_only();
+    let tool_specs = template_executor.specs().to_vec();
+    drop(template_executor);
 
     let prompt = Prompt {
         input,
-        tools: router.specs().to_vec(),
+        tools: tool_specs,
         base_instructions_override: turn_context.base_instructions.clone(),
         output_schema: turn_context.final_output_json_schema.clone(),
+        allow_parallel_read_only_tools: allow_parallel_read_only,
     };
 
     let mut retries = 0;
     loop {
+        let tool_executor =
+            ToolCallExecutor::new(router.clone(), sess.clone(), turn_context.clone());
         match try_run_turn(
-            &router,
-            sess,
-            turn_context,
+            tool_executor,
+            sess.clone(),
+            turn_context.clone(),
             turn_diff_tracker,
             &sub_id,
             &prompt,
@@ -1966,31 +1984,22 @@ async fn run_turn(
     }
 }
 
-/// When the model is prompted, it returns a stream of events. Some of these
-/// events map to a `ResponseItem`. A `ResponseItem` may need to be
-/// "handled" such that it produces a `ResponseInputItem` that needs to be
-/// sent back to the model on the next turn.
-#[derive(Debug)]
-struct ProcessedResponseItem {
-    item: ResponseItem,
-    response: Option<ResponseInputItem>,
-}
-
 #[derive(Debug)]
 struct TurnRunResult {
     processed_items: Vec<ProcessedResponseItem>,
     total_token_usage: Option<TokenUsage>,
 }
-
 async fn try_run_turn(
-    router: &crate::tools::Router,
-    sess: &Session,
-    turn_context: &TurnContext,
+    mut tool_executor: ToolCallExecutor,
+    sess: Arc<Session>,
+    turn_context: Arc<TurnContext>,
     turn_diff_tracker: &mut TurnDiffTracker,
     sub_id: &str,
     prompt: &Prompt,
 ) -> CodexResult<TurnRunResult> {
-    // call_ids that are part of this response.
+    let sess_ref = sess.as_ref();
+    let turn_context_ref = turn_context.as_ref();
+
     let completed_call_ids = prompt
         .input
         .iter()
@@ -2005,9 +2014,6 @@ async fn try_run_turn(
         })
         .collect::<Vec<_>>();
 
-    // call_ids that were pending but are not part of this response.
-    // This usually happens because the user interrupted the model before we responded to one of its tool calls
-    // and then the user sent a follow-up message.
     let missing_calls = {
         prompt
             .input
@@ -2046,22 +2052,20 @@ async fn try_run_turn(
     };
 
     let rollout_item = RolloutItem::TurnContext(TurnContextItem {
-        cwd: turn_context.cwd.clone(),
-        approval_policy: turn_context.approval_policy,
-        sandbox_policy: turn_context.sandbox_policy.clone(),
-        model: turn_context.client.get_model(),
-        effort: turn_context.client.get_reasoning_effort(),
-        summary: turn_context.client.get_reasoning_summary(),
+        cwd: turn_context_ref.cwd.clone(),
+        approval_policy: turn_context_ref.approval_policy,
+        sandbox_policy: turn_context_ref.sandbox_policy.clone(),
+        model: turn_context_ref.client.get_model(),
+        effort: turn_context_ref.client.get_reasoning_effort(),
+        summary: turn_context_ref.client.get_reasoning_summary(),
     });
-    sess.persist_rollout_items(&[rollout_item]).await;
-    let mut stream = turn_context.client.clone().stream(&prompt).await?;
+    sess_ref.persist_rollout_items(&[rollout_item]).await;
 
-    let mut output = Vec::new();
+    let mut stream = turn_context_ref.client.clone().stream(&prompt).await?;
 
     loop {
-        // Poll the next item from the model stream. We must inspect *both* Ok and Err
-        // cases so that transient stream failures (e.g., dropped SSE connection before
-        // `response.completed`) bubble up and trigger the caller's retry logic.
+        tool_executor.drain_ready();
+
         let event = stream.next().await;
         let Some(event) = event else {
             // Channel closed without yielding a final Completed event or explicit error.
@@ -2084,19 +2088,12 @@ async fn try_run_turn(
         match event {
             ResponseEvent::Created => {}
             ResponseEvent::OutputItemDone(item) => {
-                let response = handle_response_item(
-                    router,
-                    sess,
-                    turn_context,
-                    turn_diff_tracker,
-                    sub_id,
-                    item.clone(),
-                )
-                .await?;
-                output.push(ProcessedResponseItem { item, response });
+                tool_executor
+                    .handle_output_item(item, turn_diff_tracker, sub_id)
+                    .await?;
             }
             ResponseEvent::WebSearchCallBegin { call_id } => {
-                let _ = sess
+                let _ = sess_ref
                     .tx_event
                     .send(Event {
                         id: sub_id.to_string(),
@@ -2105,15 +2102,16 @@ async fn try_run_turn(
                     .await;
             }
             ResponseEvent::RateLimits(snapshot) => {
-                // Update internal state with latest rate limits, but defer sending until
-                // token usage is available to avoid duplicate TokenCount events.
-                sess.update_rate_limits(sub_id, snapshot).await;
+                sess_ref.update_rate_limits(sub_id, snapshot).await;
             }
             ResponseEvent::Completed {
                 response_id: _,
                 token_usage,
             } => {
-                sess.update_token_usage_info(sub_id, turn_context, token_usage.as_ref())
+                tool_executor.flush().await;
+
+                sess_ref
+                    .update_token_usage_info(sub_id, turn_context_ref, token_usage.as_ref())
                     .await;
 
                 let unified_diff = turn_diff_tracker.get_unified_diff();
@@ -2123,11 +2121,11 @@ async fn try_run_turn(
                         id: sub_id.to_string(),
                         msg,
                     };
-                    sess.send_event(event).await;
+                    sess_ref.send_event(event).await;
                 }
 
                 let result = TurnRunResult {
-                    processed_items: output,
+                    processed_items: tool_executor.take_processed_items(),
                     total_token_usage: token_usage.clone(),
                 };
 
@@ -2141,7 +2139,7 @@ async fn try_run_turn(
                         id: sub_id.to_string(),
                         msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }),
                     };
-                    sess.send_event(event).await;
+                    sess_ref.send_event(event).await;
                 } else {
                     trace!("suppressing OutputTextDelta in review mode");
                 }
@@ -2151,97 +2149,26 @@ async fn try_run_turn(
                     id: sub_id.to_string(),
                     msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }),
                 };
-                sess.send_event(event).await;
+                sess_ref.send_event(event).await;
             }
             ResponseEvent::ReasoningSummaryPartAdded => {
                 let event = Event {
                     id: sub_id.to_string(),
                     msg: EventMsg::AgentReasoningSectionBreak(AgentReasoningSectionBreakEvent {}),
                 };
-                sess.send_event(event).await;
+                sess_ref.send_event(event).await;
             }
             ResponseEvent::ReasoningContentDelta(delta) => {
-                if sess.show_raw_agent_reasoning() {
+                if sess_ref.show_raw_agent_reasoning() {
                     let event = Event {
                         id: sub_id.to_string(),
                         msg: EventMsg::AgentReasoningRawContentDelta(
                             AgentReasoningRawContentDeltaEvent { delta },
                         ),
                     };
-                    sess.send_event(event).await;
+                    sess_ref.send_event(event).await;
                 }
             }
-        }
-    }
-}
-
-async fn handle_response_item(
-    router: &crate::tools::Router,
-    sess: &Session,
-    turn_context: &TurnContext,
-    turn_diff_tracker: &mut TurnDiffTracker,
-    sub_id: &str,
-    item: ResponseItem,
-) -> CodexResult<Option<ResponseInputItem>> {
-    debug!(?item, "Output item");
-
-    match Router::build_tool_call(sess, item.clone()) {
-        Ok(Some(call)) => {
-            let payload_preview = call.payload.log_payload().into_owned();
-            tracing::info!("ToolCall: {} {}", call.tool_name, payload_preview);
-            let response = router
-                .dispatch_tool_call(sess, turn_context, turn_diff_tracker, sub_id, call)
-                .await;
-            Ok(Some(response))
-        }
-        Ok(None) => {
-            match &item {
-                ResponseItem::Message { .. }
-                | ResponseItem::Reasoning { .. }
-                | ResponseItem::WebSearchCall { .. } => {
-                    let msgs = match &item {
-                        ResponseItem::Message { .. } if turn_context.is_review_mode => {
-                            trace!("suppressing assistant Message in review mode");
-                            Vec::new()
-                        }
-                        _ => map_response_item_to_event_messages(
-                            &item,
-                            sess.show_raw_agent_reasoning(),
-                        ),
-                    };
-                    for msg in msgs {
-                        let event = Event {
-                            id: sub_id.to_string(),
-                            msg,
-                        };
-                        sess.send_event(event).await;
-                    }
-                }
-                ResponseItem::FunctionCallOutput { .. }
-                | ResponseItem::CustomToolCallOutput { .. } => {
-                    debug!("unexpected tool output from stream");
-                }
-                _ => {}
-            }
-
-            Ok(None)
-        }
-        Err(FunctionCallError::RespondToModel(msg)) => {
-            if msg == "LocalShellCall without call_id or id" {
-                turn_context
-                    .client
-                    .get_otel_event_manager()
-                    .log_tool_failed("local_shell", &msg);
-                error!(msg);
-            }
-
-            Ok(Some(ResponseInputItem::FunctionCallOutput {
-                call_id: String::new(),
-                output: FunctionCallOutputPayload {
-                    content: msg,
-                    success: None,
-                },
-            }))
         }
     }
 }
@@ -2658,6 +2585,7 @@ mod tests {
             use_streamable_shell_tool: config.use_experimental_streamable_shell_tool,
             include_view_image_tool: config.include_view_image_tool,
             experimental_unified_exec_tool: config.use_experimental_unified_exec_tool,
+            enable_parallel_read_only: config.enable_parallel_read_only_tools,
         });
         let turn_context = TurnContext {
             client,
@@ -2731,6 +2659,7 @@ mod tests {
             use_streamable_shell_tool: config.use_experimental_streamable_shell_tool,
             include_view_image_tool: config.include_view_image_tool,
             experimental_unified_exec_tool: config.use_experimental_unified_exec_tool,
+            enable_parallel_read_only: config.enable_parallel_read_only_tools,
         });
         let turn_context = Arc::new(TurnContext {
             client,

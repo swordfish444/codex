@@ -1,3 +1,4 @@
+use crate::tools::registry::ToolCapabilities;
 use crate::tools::registry::ToolRegistryBuilder;
 use serde::Deserialize;
 use serde::Serialize;
@@ -69,6 +70,7 @@ pub(crate) struct ToolsConfig {
     pub web_search_request: bool,
     pub include_view_image_tool: bool,
     pub experimental_unified_exec_tool: bool,
+    pub enable_parallel_read_only: bool,
 }
 
 pub(crate) struct ToolsConfigParams<'a> {
@@ -79,6 +81,7 @@ pub(crate) struct ToolsConfigParams<'a> {
     pub(crate) use_streamable_shell_tool: bool,
     pub(crate) include_view_image_tool: bool,
     pub(crate) experimental_unified_exec_tool: bool,
+    pub(crate) enable_parallel_read_only: bool,
 }
 
 impl ToolsConfig {
@@ -91,6 +94,7 @@ impl ToolsConfig {
             use_streamable_shell_tool,
             include_view_image_tool,
             experimental_unified_exec_tool,
+            enable_parallel_read_only,
         } = params;
         let shell_type = if *use_streamable_shell_tool {
             ConfigShellToolType::Streamable
@@ -119,6 +123,7 @@ impl ToolsConfig {
             web_search_request: *include_web_search_request,
             include_view_image_tool: *include_view_image_tool,
             experimental_unified_exec_tool: *experimental_unified_exec_tool,
+            enable_parallel_read_only: *enable_parallel_read_only,
         }
     }
 }
@@ -589,7 +594,7 @@ pub(crate) fn build_specs(
     }
 
     specs.push(create_read_file_tool());
-    builder.register_handler("read_file", read_file_handler);
+    builder.register_read_only_handler("read_file", read_file_handler);
 
     if config.web_search_request {
         specs.push(ToolSpec::WebSearch {});
@@ -597,7 +602,7 @@ pub(crate) fn build_specs(
 
     if config.include_view_image_tool {
         specs.push(create_view_image_tool());
-        builder.register_handler("view_image", view_image_handler);
+        builder.register_read_only_handler("view_image", view_image_handler);
     }
 
     if let Some(mcp_tools) = mcp_tools {
@@ -605,10 +610,20 @@ pub(crate) fn build_specs(
         entries.sort_by(|a, b| a.0.cmp(&b.0));
 
         for (name, tool) in entries.into_iter() {
+            let capabilities = if tool
+                .annotations
+                .as_ref()
+                .and_then(|ann| ann.read_only_hint)
+                .unwrap_or(false)
+            {
+                ToolCapabilities::read_only()
+            } else {
+                ToolCapabilities::mutating()
+            };
             match mcp_tool_to_openai_tool(name.clone(), tool.clone()) {
                 Ok(converted_tool) => {
                     specs.push(ToolSpec::Function(converted_tool));
-                    builder.register_handler(name, mcp_handler.clone());
+                    builder.register_with_capabilities(name, mcp_handler.clone(), capabilities);
                 }
                 Err(e) => {
                     tracing::error!("Failed to convert {name:?} MCP tool to OpenAI tool: {e:?}");
@@ -664,6 +679,7 @@ mod tests {
             use_streamable_shell_tool: false,
             include_view_image_tool: true,
             experimental_unified_exec_tool: true,
+            enable_parallel_read_only: false,
         });
         let tools = build_specs(&config, Some(HashMap::new())).0;
 
@@ -690,6 +706,7 @@ mod tests {
             use_streamable_shell_tool: false,
             include_view_image_tool: true,
             experimental_unified_exec_tool: true,
+            enable_parallel_read_only: false,
         });
         let tools = build_specs(&config, Some(HashMap::new())).0;
 
@@ -716,6 +733,7 @@ mod tests {
             use_streamable_shell_tool: false,
             include_view_image_tool: true,
             experimental_unified_exec_tool: true,
+            enable_parallel_read_only: false,
         });
         let tools = build_specs(
             &config,
@@ -822,6 +840,7 @@ mod tests {
             use_streamable_shell_tool: false,
             include_view_image_tool: true,
             experimental_unified_exec_tool: true,
+            enable_parallel_read_only: false,
         });
 
         // Intentionally construct a map with keys that would sort alphabetically.
@@ -899,6 +918,7 @@ mod tests {
             use_streamable_shell_tool: false,
             include_view_image_tool: true,
             experimental_unified_exec_tool: true,
+            enable_parallel_read_only: false,
         });
 
         let tools = build_specs(
@@ -967,6 +987,7 @@ mod tests {
             use_streamable_shell_tool: false,
             include_view_image_tool: true,
             experimental_unified_exec_tool: true,
+            enable_parallel_read_only: false,
         });
 
         let tools = build_specs(
@@ -1030,6 +1051,7 @@ mod tests {
             use_streamable_shell_tool: false,
             include_view_image_tool: true,
             experimental_unified_exec_tool: true,
+            enable_parallel_read_only: false,
         });
 
         let tools = build_specs(
@@ -1096,6 +1118,7 @@ mod tests {
             use_streamable_shell_tool: false,
             include_view_image_tool: true,
             experimental_unified_exec_tool: true,
+            enable_parallel_read_only: false,
         });
 
         let tools = build_specs(

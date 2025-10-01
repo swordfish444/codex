@@ -18,6 +18,27 @@ pub enum ToolKind {
     Mcp,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ToolCapabilities {
+    pub read_only: bool,
+}
+
+impl ToolCapabilities {
+    pub const fn mutating() -> Self {
+        Self { read_only: false }
+    }
+
+    pub const fn read_only() -> Self {
+        Self { read_only: true }
+    }
+}
+
+#[derive(Clone)]
+struct ToolEntry {
+    handler: Arc<dyn ToolHandler>,
+    capabilities: ToolCapabilities,
+}
+
 #[async_trait]
 pub trait ToolHandler: Send + Sync {
     fn kind(&self) -> ToolKind;
@@ -36,17 +57,20 @@ pub trait ToolHandler: Send + Sync {
     -> Result<ToolOutput, FunctionCallError>;
 }
 
+#[derive(Clone)]
 pub struct ToolRegistry {
-    handlers: HashMap<String, Arc<dyn ToolHandler>>,
+    handlers: HashMap<String, ToolEntry>,
 }
 
 impl ToolRegistry {
-    pub fn new(handlers: HashMap<String, Arc<dyn ToolHandler>>) -> Self {
-        Self { handlers }
+    pub fn capabilities(&self, name: &str) -> Option<ToolCapabilities> {
+        self.handlers.get(name).map(|entry| entry.capabilities)
     }
 
-    pub fn handler(&self, name: &str) -> Option<Arc<dyn ToolHandler>> {
-        self.handlers.get(name).map(Arc::clone)
+    pub fn has_read_only_tools(&self) -> bool {
+        self.handlers
+            .values()
+            .any(|entry| entry.capabilities.read_only)
     }
 
     // TODO(jif) for dynamic tools.
@@ -67,8 +91,8 @@ impl ToolRegistry {
         let payload_for_response = invocation.payload.clone();
         let log_payload = payload_for_response.log_payload().into_owned();
 
-        let handler = match self.handler(tool_name.as_ref()) {
-            Some(handler) => handler,
+        let entry = match self.handlers.get(tool_name.as_str()) {
+            Some(entry) => entry,
             None => {
                 let message =
                     unsupported_tool_call_message(&invocation.payload, tool_name.as_ref());
@@ -83,6 +107,8 @@ impl ToolRegistry {
                 return Err(FunctionCallError::RespondToModel(message));
             }
         };
+
+        let handler = Arc::clone(&entry.handler);
 
         if !handler.matches_kind(&invocation.payload) {
             let message = format!("tool {tool_name} invoked with incompatible payload");
@@ -137,7 +163,7 @@ impl ToolRegistry {
 }
 
 pub struct ToolRegistryBuilder {
-    handlers: HashMap<String, Arc<dyn ToolHandler>>,
+    handlers: HashMap<String, ToolEntry>,
 }
 
 impl ToolRegistryBuilder {
@@ -148,10 +174,33 @@ impl ToolRegistryBuilder {
     }
 
     pub fn register_handler(&mut self, name: impl Into<String>, handler: Arc<dyn ToolHandler>) {
+        self.register_with_capabilities(name, handler, ToolCapabilities::mutating());
+    }
+
+    pub fn register_read_only_handler(
+        &mut self,
+        name: impl Into<String>,
+        handler: Arc<dyn ToolHandler>,
+    ) {
+        self.register_with_capabilities(name, handler, ToolCapabilities::read_only());
+    }
+
+    pub fn register_with_capabilities(
+        &mut self,
+        name: impl Into<String>,
+        handler: Arc<dyn ToolHandler>,
+        capabilities: ToolCapabilities,
+    ) {
         let name = name.into();
         if self
             .handlers
-            .insert(name.clone(), handler.clone())
+            .insert(
+                name.clone(),
+                ToolEntry {
+                    handler: handler.clone(),
+                    capabilities,
+                },
+            )
             .is_some()
         {
             warn!("overwriting handler for tool {name}");
@@ -177,7 +226,9 @@ impl ToolRegistryBuilder {
     // }
 
     pub fn build(self) -> ToolRegistry {
-        ToolRegistry::new(self.handlers)
+        ToolRegistry {
+            handlers: self.handlers,
+        }
     }
 }
 

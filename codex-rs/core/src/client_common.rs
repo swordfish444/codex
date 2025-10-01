@@ -36,6 +36,9 @@ pub struct Prompt {
 
     /// Optional the output schema for the model's response.
     pub output_schema: Option<Value>,
+
+    /// Allow parallel tool calls for read-only tools.
+    pub allow_parallel_read_only_tools: bool,
 }
 
 impl Prompt {
@@ -367,5 +370,42 @@ mod tests {
 
         let v = serde_json::to_value(&req).expect("json");
         assert!(v.get("text").is_none());
+    }
+
+    #[test]
+    fn serializes_parallel_tool_calls_flag() {
+        let input: Vec<ResponseItem> = vec![];
+        let tools: Vec<serde_json::Value> = vec![];
+
+        let req_true = ResponsesApiRequest {
+            model: "gpt-5",
+            instructions: "i",
+            input: &input,
+            tools: &tools,
+            tool_choice: "auto",
+            parallel_tool_calls: true,
+            reasoning: None,
+            store: false,
+            stream: true,
+            include: vec![],
+            prompt_cache_key: None,
+            text: None,
+        };
+
+        let v_true = serde_json::to_value(&req_true).expect("json");
+        assert_eq!(
+            v_true.get("parallel_tool_calls"),
+            Some(&serde_json::Value::Bool(true))
+        );
+
+        let req_false = ResponsesApiRequest {
+            parallel_tool_calls: false,
+            ..req_true
+        };
+        let v_false = serde_json::to_value(&req_false).expect("json");
+        assert_eq!(
+            v_false.get("parallel_tool_calls"),
+            Some(&serde_json::Value::Bool(false))
+        );
     }
 }
