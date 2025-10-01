@@ -15,6 +15,9 @@ use async_channel::Receiver;
 use async_channel::Sender;
 use codex_apply_patch::ApplyPatchAction;
 use codex_protocol::mcp_protocol::ConversationId;
+use codex_apply_patch::MaybeApplyPatchVerified;
+use codex_apply_patch::maybe_parse_apply_patch_verified;
+use codex_protocol::ConversationId;
 use codex_protocol::protocol::ConversationPathResponseEvent;
 use codex_protocol::protocol::ExitedReviewModeEvent;
 use codex_protocol::protocol::ReviewRequest;
@@ -35,6 +38,9 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::ModelProviderInfo;
+use crate::apply_patch;
+use crate::apply_patch::ApplyPatchExec;
+use crate::apply_patch::InternalApplyPatchInvocation;
 use crate::apply_patch::convert_apply_patch_to_protocol;
 use crate::client::ModelClient;
 use crate::client_common::Prompt;
@@ -45,12 +51,22 @@ use crate::conversation_history::ConversationHistory;
 use crate::environment_context::EnvironmentContext;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
+use crate::error::SandboxErr;
+use crate::exec::ExecParams;
 use crate::exec::ExecToolCallOutput;
 #[cfg(test)]
+use crate::exec::StdoutStream;
+#[cfg(test)]
 use crate::exec::StreamOutput;
+use crate::exec_command::EXEC_COMMAND_TOOL_NAME;
 use crate::exec_command::ExecCommandParams;
 use crate::exec_command::ExecSessionManager;
 use crate::exec_command::WriteStdinParams;
+use crate::executor::Executor;
+use crate::executor::ExecutorConfig;
+use crate::executor::normalize_exec_result;
+use crate::exec_env::create_env;
+use crate::executor::ExecutionMode;
 use crate::executor::Executor;
 use crate::executor::ExecutorConfig;
 use crate::executor::normalize_exec_result;
@@ -1285,8 +1301,19 @@ async fn submission_loop(
                     let previous_env_context = EnvironmentContext::from(turn_context.as_ref());
                     let new_env_context = EnvironmentContext::from(&fresh_turn_context);
                     if !new_env_context.equals_except_shell(&previous_env_context) {
-                        sess.record_conversation_items(&[ResponseItem::from(new_env_context)])
+                        let env_response_item = ResponseItem::from(new_env_context);
+                        sess.record_conversation_items(std::slice::from_ref(&env_response_item))
                             .await;
+                        for msg in map_response_item_to_event_messages(
+                            &env_response_item,
+                            sess.show_raw_agent_reasoning(),
+                        ) {
+                            let event = Event {
+                                id: sub.id.clone(),
+                                msg,
+                            };
+                            sess.send_event(event).await;
+                        }
                     }
 
                     // Install the new persistent context for subsequent tasks/turns.
@@ -2348,6 +2375,8 @@ use crate::executor::errors::ExecError;
 use crate::executor::linkers::PreparedExec;
 use crate::tools::context::ApplyPatchCommandContext;
 use crate::tools::context::ExecCommandContext;
+use crate::executor::errors::ExecError;
+use crate::executor::linkers::PreparedExec;
 #[cfg(test)]
 pub(crate) use tests::make_session_and_context;
 
@@ -2363,6 +2392,7 @@ mod tests {
     use crate::state::TaskKind;
     use crate::tasks::SessionTask;
     use crate::tasks::SessionTaskContext;
+    use codex_app_server_protocol::AuthMode;
     use crate::tools::MODEL_FORMAT_HEAD_LINES;
     use crate::tools::MODEL_FORMAT_MAX_BYTES;
     use crate::tools::MODEL_FORMAT_MAX_LINES;
