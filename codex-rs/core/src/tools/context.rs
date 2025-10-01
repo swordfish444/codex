@@ -74,19 +74,75 @@ impl ToolOutput {
         }
     }
 
-    pub fn into_response(self, call_id: &str) -> ResponseInputItem {
+    pub fn into_response(self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
         match self {
-            ToolOutput::Function { content, success } => ResponseInputItem::FunctionCallOutput {
-                call_id: call_id.to_string(),
-                output: FunctionCallOutputPayload {
-                    content,
-                    success: Some(success),
-                },
-            },
+            ToolOutput::Function { content, success } => {
+                if matches!(payload, ToolPayload::Custom { .. }) {
+                    ResponseInputItem::CustomToolCallOutput {
+                        call_id: call_id.to_string(),
+                        output: content,
+                    }
+                } else {
+                    ResponseInputItem::FunctionCallOutput {
+                        call_id: call_id.to_string(),
+                        output: FunctionCallOutputPayload {
+                            content,
+                            success: Some(success),
+                        },
+                    }
+                }
+            }
             ToolOutput::Mcp { result } => ResponseInputItem::McpToolCallOutput {
                 call_id: call_id.to_string(),
                 result,
             },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn custom_tool_calls_should_roundtrip_as_custom_outputs() {
+        let payload = ToolPayload::Custom {
+            input: "patch".to_string(),
+        };
+        let response = ToolOutput::Function {
+            content: "patched".to_string(),
+            success: true,
+        }
+        .into_response("call-42", &payload);
+
+        match response {
+            ResponseInputItem::CustomToolCallOutput { call_id, output } => {
+                assert_eq!(call_id, "call-42");
+                assert_eq!(output, "patched");
+            }
+            other => panic!("expected CustomToolCallOutput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn function_payloads_remain_function_outputs() {
+        let payload = ToolPayload::Function {
+            arguments: "{}".to_string(),
+        };
+        let response = ToolOutput::Function {
+            content: "ok".to_string(),
+            success: true,
+        }
+        .into_response("fn-1", &payload);
+
+        match response {
+            ResponseInputItem::FunctionCallOutput { call_id, output } => {
+                assert_eq!(call_id, "fn-1");
+                assert_eq!(output.content, "ok");
+                assert_eq!(output.success, Some(true));
+            }
+            other => panic!("expected FunctionCallOutput, got {other:?}"),
         }
     }
 }
