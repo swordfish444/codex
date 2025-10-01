@@ -65,7 +65,7 @@ impl ToolHandler for ExecStreamHandler {
 
         Ok(ToolOutput::Function {
             content,
-            success: true,
+            success: Some(true),
         })
     }
 }

@@ -91,7 +91,7 @@ impl ToolHandler for ReadFileHandler {
         let collected = read_file_slice(&path, offset, limit).await?;
         Ok(ToolOutput::Function {
             content: collected.join("\n"),
-            success: true,
+            success: Some(true),
         })
     }
 }

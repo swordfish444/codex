@@ -41,7 +41,7 @@ impl ToolHandler for PlanHandler {
 
         Ok(ToolOutput::Function {
             content,
-            success: true,
+            success: Some(true),
         })
     }
 }

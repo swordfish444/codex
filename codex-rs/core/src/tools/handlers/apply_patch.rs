@@ -79,7 +79,7 @@ impl ToolHandler for ApplyPatchHandler {
 
         Ok(ToolOutput::Function {
             content,
-            success: true,
+            success: Some(true),
         })
     }
 }

@@ -366,10 +366,10 @@ impl OtelEventManager {
         call_id: &str,
         arguments: &str,
         f: F,
-    ) -> Result<String, E>
+    ) -> Result<(String, bool), E>
     where
         F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<String, E>>,
+        Fut: Future<Output = Result<(String, bool), E>>,
         E: Display,
     {
         let start = Instant::now();
@@ -377,9 +377,11 @@ impl OtelEventManager {
         let duration = start.elapsed();
 
         let (output, success) = match &result {
-            Ok(content) => (content, true),
-            Err(error) => (&error.to_string(), false),
+            Ok((preview, success)) => (preview.clone(), *success),
+            Err(error) => (error.to_string(), false),
         };
+
+        let success_str = if success { "true" } else { "false" };
 
         tracing::event!(
             tracing::Level::INFO,
@@ -396,7 +398,7 @@ impl OtelEventManager {
             call_id = %call_id,
             arguments = %arguments,
             duration_ms = %duration.as_millis(),
-            success = %success,
+            success = %success_str,
             output = %output,
         );
 

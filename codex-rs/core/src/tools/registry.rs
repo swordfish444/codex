@@ -108,11 +108,12 @@ impl ToolRegistry {
                     match handler.handle(invocation).await {
                         Ok(output) => {
                             let preview = output.log_preview();
+                            let success = output.success_for_logging();
                             let mut guard = output_cell
                                 .lock()
                                 .unwrap_or_else(std::sync::PoisonError::into_inner);
                             *guard = Some(output);
-                            Ok(preview)
+                            Ok((preview, success))
                         }
                         Err(err) => Err(err),
                     }

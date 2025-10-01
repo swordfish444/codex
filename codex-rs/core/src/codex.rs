@@ -51,7 +51,9 @@ use crate::exec::StreamOutput;
 use crate::exec_command::ExecCommandParams;
 use crate::exec_command::ExecSessionManager;
 use crate::exec_command::WriteStdinParams;
-use crate::executor::{normalize_exec_result, Executor, ExecutorConfig};
+use crate::executor::Executor;
+use crate::executor::ExecutorConfig;
+use crate::executor::normalize_exec_result;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::model_family::find_family_for_model;
 use crate::openai_model_info::get_model_info;
@@ -2353,10 +2355,10 @@ pub(crate) async fn exit_review_mode(
         .await;
 }
 
-use crate::tools::context::ApplyPatchCommandContext;
-use crate::tools::context::ExecCommandContext;
 use crate::executor::errors::ExecError;
 use crate::executor::linkers::PreparedExec;
+use crate::tools::context::ApplyPatchCommandContext;
+use crate::tools::context::ExecCommandContext;
 #[cfg(test)]
 pub(crate) use tests::make_session_and_context;
 
@@ -2372,12 +2374,12 @@ mod tests {
     use crate::state::TaskKind;
     use crate::tasks::SessionTask;
     use crate::tasks::SessionTaskContext;
-    use codex_app_server_protocol::AuthMode;
     use crate::tools::MODEL_FORMAT_HEAD_LINES;
     use crate::tools::MODEL_FORMAT_MAX_BYTES;
     use crate::tools::MODEL_FORMAT_MAX_LINES;
     use crate::tools::MODEL_FORMAT_TAIL_LINES;
     use crate::tools::handle_container_exec_with_params;
+    use codex_app_server_protocol::AuthMode;
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::ResponseItem;
 

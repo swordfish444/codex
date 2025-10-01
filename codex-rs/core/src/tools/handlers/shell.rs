@@ -75,7 +75,7 @@ impl ToolHandler for ShellHandler {
                 .await?;
                 Ok(ToolOutput::Function {
                     content,
-                    success: true,
+                    success: Some(true),
                 })
             }
             ToolPayload::LocalShell { params } => {
@@ -92,7 +92,7 @@ impl ToolHandler for ShellHandler {
                 .await?;
                 Ok(ToolOutput::Function {
                     content,
-                    success: true,
+                    success: Some(true),
                 })
             }
             _ => Err(FunctionCallError::RespondToModel(format!(

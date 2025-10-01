@@ -59,7 +59,7 @@ impl ToolPayload {
 pub enum ToolOutput {
     Function {
         content: String,
-        success: bool,
+        success: Option<bool>,
     },
     Mcp {
         result: Result<CallToolResult, String>,
@@ -74,6 +74,13 @@ impl ToolOutput {
         }
     }
 
+    pub fn success_for_logging(&self) -> bool {
+        match self {
+            ToolOutput::Function { success, .. } => success.unwrap_or(true),
+            ToolOutput::Mcp { result } => result.is_ok(),
+        }
+    }
+
     pub fn into_response(self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
         match self {
             ToolOutput::Function { content, success } => {
@@ -85,10 +92,7 @@ impl ToolOutput {
                 } else {
                     ResponseInputItem::FunctionCallOutput {
                         call_id: call_id.to_string(),
-                        output: FunctionCallOutputPayload {
-                            content,
-                            success: Some(success),
-                        },
+                        output: FunctionCallOutputPayload { content, success },
                     }
                 }
             }
@@ -112,7 +116,7 @@ mod tests {
         };
         let response = ToolOutput::Function {
             content: "patched".to_string(),
-            success: true,
+            success: Some(true),
         }
         .into_response("call-42", &payload);
 
@@ -132,7 +136,7 @@ mod tests {
         };
         let response = ToolOutput::Function {
             content: "ok".to_string(),
-            success: true,
+            success: Some(true),
         }
         .into_response("fn-1", &payload);
 

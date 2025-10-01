@@ -60,11 +60,8 @@ impl ToolHandler for McpHandler {
                 Ok(ToolOutput::Mcp { result })
             }
             codex_protocol::models::ResponseInputItem::FunctionCallOutput { output, .. } => {
-                let success = output.success.unwrap_or(false);
-                Ok(ToolOutput::Function {
-                    content: output.content,
-                    success,
-                })
+                let codex_protocol::models::FunctionCallOutputPayload { content, success } = output;
+                Ok(ToolOutput::Function { content, success })
             }
             _ => Err(FunctionCallError::RespondToModel(
                 "mcp handler received unexpected response variant".to_string(),

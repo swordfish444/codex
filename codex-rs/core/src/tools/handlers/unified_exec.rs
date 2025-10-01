@@ -106,7 +106,7 @@ impl ToolHandler for UnifiedExecHandler {
 
         Ok(ToolOutput::Function {
             content,
-            success: true,
+            success: Some(true),
         })
     }
 }
