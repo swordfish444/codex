@@ -45,6 +45,8 @@ use toml_edit::Table as TomlTable;
 const OPENAI_DEFAULT_MODEL: &str = "gpt-5-codex";
 const OPENAI_DEFAULT_REVIEW_MODEL: &str = "gpt-5-codex";
 pub const GPT_5_CODEX_MEDIUM_MODEL: &str = "gpt-5-codex";
+/// Sentinel value signalling auto-compaction should be fully disabled.
+pub const AUTO_COMPACT_DISABLED: i64 = -1;
 
 /// Maximum number of bytes of the documentation that will be embedded. Larger
 /// files are *silently truncated* to this size so we do not take up too much of

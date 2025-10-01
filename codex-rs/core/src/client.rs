@@ -113,9 +113,12 @@ impl ModelClient {
     }
 
     pub fn get_auto_compact_token_limit(&self) -> Option<i64> {
-        self.config.model_auto_compact_token_limit.or_else(|| {
-            get_model_info(&self.config.model_family).and_then(|info| info.auto_compact_token_limit)
-        })
+        match self.config.model_auto_compact_token_limit {
+            Some(limit) if limit <= crate::config::AUTO_COMPACT_DISABLED => None,
+            Some(limit) => Some(limit),
+            None => get_model_info(&self.config.model_family)
+                .and_then(|info| info.auto_compact_token_limit),
+        }
     }
 
     /// Dispatches to either the Responses or Chat implementation depending on
@@ -912,7 +915,11 @@ fn try_parse_retry_after(err: &Error) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::built_in_model_providers;
+    use crate::config::ConfigOverrides;
+    use crate::config::ConfigToml;
     use serde_json::json;
+    use tempfile::TempDir;
     use tokio::sync::mpsc;
     use tokio_test::io::Builder as IoBuilder;
     use tokio_util::io::ReaderStream;
@@ -996,6 +1003,31 @@ mod tests {
             false,
             "test".to_string(),
         )
+    }
+
+    #[test]
+    fn auto_compaction_disabled_when_limit_sentinel() {
+        let codex_home = TempDir::new().expect("tempdir");
+        let mut config = Config::load_from_base_config_with_overrides(
+            ConfigToml::default(),
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )
+        .expect("load default config");
+        config.model_auto_compact_token_limit = Some(crate::config::AUTO_COMPACT_DISABLED);
+
+        let provider = built_in_model_providers()["openai"].clone();
+        let client = ModelClient::new(
+            Arc::new(config),
+            None,
+            otel_event_manager(),
+            provider,
+            None,
+            ReasoningSummaryConfig::default(),
+            ConversationId::new(),
+        );
+
+        assert!(client.get_auto_compact_token_limit().is_none());
     }
 
     // ────────────────────────────
