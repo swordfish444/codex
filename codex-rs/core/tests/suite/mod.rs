@@ -21,5 +21,6 @@ mod rollout_list_find;
 mod seatbelt;
 mod stream_error_allows_next_turn;
 mod stream_no_completed;
+mod tool_harness;
 mod user_notification;
 mod view_image;
