@@ -5,6 +5,21 @@ use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_chat_completions_server;
 use app_test_support::create_shell_sse_response;
 use app_test_support::to_response;
+use codex_app_server_protocol::AddConversationListenerParams;
+use codex_app_server_protocol::AddConversationSubscriptionResponse;
+use codex_app_server_protocol::ExecCommandApprovalParams;
+use codex_app_server_protocol::JSONRPCNotification;
+use codex_app_server_protocol::JSONRPCResponse;
+use codex_app_server_protocol::NewConversationParams;
+use codex_app_server_protocol::NewConversationResponse;
+use codex_app_server_protocol::RemoveConversationListenerParams;
+use codex_app_server_protocol::RemoveConversationSubscriptionResponse;
+use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::SendUserMessageParams;
+use codex_app_server_protocol::SendUserMessageResponse;
+use codex_app_server_protocol::SendUserTurnParams;
+use codex_app_server_protocol::SendUserTurnResponse;
+use codex_app_server_protocol::ServerRequest;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol_config_types::ReasoningEffort;
@@ -119,7 +134,7 @@ async fn test_codex_jsonrpc_conversation_flow() {
     let send_user_id = mcp
         .send_send_user_message_request(SendUserMessageParams {
             conversation_id,
-            items: vec![codex_protocol::mcp_protocol::InputItem::Text {
+            items: vec![codex_app_server_protocol::InputItem::Text {
                 text: "text".to_string(),
             }],
         })
@@ -269,7 +284,7 @@ async fn test_send_user_turn_changes_approval_policy_behavior() {
     let send_user_id = mcp
         .send_send_user_message_request(SendUserMessageParams {
             conversation_id,
-            items: vec![codex_protocol::mcp_protocol::InputItem::Text {
+            items: vec![codex_app_server_protocol::InputItem::Text {
                 text: "run python".to_string(),
             }],
         })
@@ -294,11 +309,28 @@ async fn test_send_user_turn_changes_approval_policy_behavior() {
     .await
     .expect("waiting for exec approval request timeout")
     .expect("exec approval request");
-    assert_eq!(request.method, EXEC_COMMAND_APPROVAL_METHOD);
+    let ServerRequest::ExecCommandApproval { request_id, params } = request else {
+        panic!("expected ExecCommandApproval request, got: {request:?}");
+    };
+
+    assert_eq!(
+        ExecCommandApprovalParams {
+            conversation_id,
+            call_id: "call1".to_string(),
+            command: vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                "print(42)".to_string(),
+            ],
+            cwd: working_directory.clone(),
+            reason: None,
+        },
+        params
+    );
 
     // Approve so the first turn can complete
     mcp.send_response(
-        request.id,
+        request_id,
         serde_json::json!({ "decision": codex_core::protocol::ReviewDecision::Approved }),
     )
     .await
@@ -317,7 +349,7 @@ async fn test_send_user_turn_changes_approval_policy_behavior() {
     let send_turn_id = mcp
         .send_send_user_turn_request(SendUserTurnParams {
             conversation_id,
-            items: vec![codex_protocol::mcp_protocol::InputItem::Text {
+            items: vec![codex_app_server_protocol::InputItem::Text {
                 text: "run python again".to_string(),
             }],
             cwd: working_directory.clone(),
