@@ -17,23 +17,15 @@ use crate::tools::registry::ToolKind;
 
 pub struct ReadFileHandler;
 
-const MAX_LINE_LENGTH: usize = 2000;
+const MAX_LINE_LENGTH: usize = 200;
 
 #[derive(Deserialize)]
 struct ReadFileArgs {
     file_path: String,
-    #[serde(default = "default_offset")]
+    #[serde(default = "1")]
     offset: usize,
-    #[serde(default = "default_limit")]
+    #[serde(default = "2000")]
     limit: usize,
-}
-
-fn default_offset() -> usize {
-    1
-}
-
-fn default_limit() -> usize {
-    2000
 }
 
 #[async_trait]
