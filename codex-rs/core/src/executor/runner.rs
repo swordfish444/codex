@@ -131,19 +131,19 @@ impl Executor {
             .await;
 
         // Step 5: Handle sandbox outcomes, optionally escalating to an unsandboxed retry.
-        let raw_output = match first_attempt {
-            Ok(output) => output,
+        match first_attempt {
+            Ok(output) => Ok(output),
             Err(CodexErr::Sandbox(SandboxErr::Timeout { output })) => {
-                return Err(CodexErr::Sandbox(SandboxErr::Timeout { output }).into());
+                Err(CodexErr::Sandbox(SandboxErr::Timeout { output }).into())
             }
-            Err(CodexErr::Sandbox(error @ SandboxErr::Denied { .. })) => {
-                return if sandbox_decision.escalate_on_failure {
+            Err(CodexErr::Sandbox(error)) => {
+                if sandbox_decision.escalate_on_failure {
                     self.retry_without_sandbox(
                         &request,
                         &config,
                         session,
                         context,
-                        stdout_stream.clone(),
+                        stdout_stream,
                         error,
                     )
                     .await
@@ -152,12 +152,10 @@ impl Executor {
                         "failed in sandbox {:?} with execution error: {error:?}",
                         sandbox_decision.initial_sandbox
                     )))
-                };
+                }
             }
-            Err(err) => return Err(err.into()),
-        };
-
-        Ok(raw_output)
+            Err(err) => Err(err.into()),
+        }
     }
 
     /// Fallback path invoked when a sandboxed run is denied so the user can

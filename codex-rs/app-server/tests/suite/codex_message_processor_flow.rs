@@ -5,7 +5,7 @@ use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_chat_completions_server;
 use app_test_support::create_shell_sse_response;
 use app_test_support::to_response;
-use codex_app_server_protocol::AddConversationListenerParams;
+use codex_app_server_protocol::{AddConversationListenerParams, InputItem};
 use codex_app_server_protocol::AddConversationSubscriptionResponse;
 use codex_app_server_protocol::ExecCommandApprovalParams;
 use codex_app_server_protocol::JSONRPCNotification;
@@ -26,23 +26,9 @@ use codex_core::protocol_config_types::ReasoningEffort;
 use codex_core::protocol_config_types::ReasoningSummary;
 use codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_protocol::config_types::SandboxMode;
-use codex_protocol::mcp_protocol::AddConversationListenerParams;
-use codex_protocol::mcp_protocol::AddConversationSubscriptionResponse;
-use codex_protocol::mcp_protocol::EXEC_COMMAND_APPROVAL_METHOD;
-use codex_protocol::mcp_protocol::NewConversationParams;
-use codex_protocol::mcp_protocol::NewConversationResponse;
-use codex_protocol::mcp_protocol::RemoveConversationListenerParams;
-use codex_protocol::mcp_protocol::RemoveConversationSubscriptionResponse;
-use codex_protocol::mcp_protocol::SendUserMessageParams;
-use codex_protocol::mcp_protocol::SendUserMessageResponse;
-use codex_protocol::mcp_protocol::SendUserTurnParams;
-use codex_protocol::mcp_protocol::SendUserTurnResponse;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InputMessageKind;
-use mcp_types::JSONRPCNotification;
-use mcp_types::JSONRPCResponse;
-use mcp_types::RequestId;
 use pretty_assertions::assert_eq;
 use std::env;
 use tempfile::TempDir;
@@ -482,7 +468,7 @@ async fn test_send_user_turn_updates_sandbox_and_cwd_between_turns() {
     let first_turn_id = mcp
         .send_send_user_turn_request(SendUserTurnParams {
             conversation_id,
-            items: vec![codex_protocol::mcp_protocol::InputItem::Text {
+            items: vec![InputItem::Text {
                 text: "first turn".to_string(),
             }],
             cwd: first_cwd.clone(),
@@ -517,7 +503,7 @@ async fn test_send_user_turn_updates_sandbox_and_cwd_between_turns() {
     let second_turn_id = mcp
         .send_send_user_turn_request(SendUserTurnParams {
             conversation_id,
-            items: vec![codex_protocol::mcp_protocol::InputItem::Text {
+            items: vec![InputItem::Text {
                 text: "second turn".to_string(),
             }],
             cwd: second_cwd.clone(),
