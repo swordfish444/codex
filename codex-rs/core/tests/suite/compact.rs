@@ -3,6 +3,7 @@ use codex_core::ConversationManager;
 use codex_core::ModelProviderInfo;
 use codex_core::NewConversation;
 use codex_core::built_in_model_providers;
+use codex_core::config::AUTO_COMPACT_DISABLED;
 use codex_core::protocol::ErrorEvent;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::InputItem;
@@ -826,5 +827,63 @@ async fn auto_compact_allows_multiple_attempts_when_interleaved_with_other_turn_
     assert!(
         request_bodies[4].contains("You have exceeded the maximum number of tokens"),
         "second auto compact request should include the summarization prompt"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_compact_respects_disabled_flag() {
+    skip_if_no_network!();
+
+    let server = start_mock_server().await;
+
+    let sse_body = sse(vec![
+        ev_assistant_message("m1", FIRST_REPLY),
+        ev_completed_with_tokens("r1", 500_000),
+    ]);
+
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(sse_response(sse_body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let model_provider = ModelProviderInfo {
+        base_url: Some(format!("{}/v1", server.uri())),
+        ..built_in_model_providers()["openai"].clone()
+    };
+
+    let home = TempDir::new().unwrap();
+    let mut config = load_default_config_for_test(&home);
+    config.model_provider = model_provider;
+    config.model_auto_compact_token_limit = Some(AUTO_COMPACT_DISABLED);
+    let conversation_manager = ConversationManager::with_auth(CodexAuth::from_api_key("dummy"));
+    let codex = conversation_manager
+        .new_conversation(config)
+        .await
+        .unwrap()
+        .conversation;
+
+    codex
+        .submit(Op::UserInput {
+            items: vec![InputItem::Text {
+                text: FIRST_AUTO_MSG.into(),
+            }],
+        })
+        .await
+        .unwrap();
+
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        requests.len(),
+        1,
+        "disable flag should avoid additional summarization requests"
+    );
+    let body = std::str::from_utf8(&requests[0].body).unwrap();
+    assert!(
+        !body.contains("You have exceeded the maximum number of tokens"),
+        "auto compaction should remain disabled even when usage is high"
     );
 }
