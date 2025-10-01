@@ -19,12 +19,20 @@ pub struct ReadFileHandler;
 
 const MAX_LINE_LENGTH: usize = 200;
 
+fn default_offset() -> usize {
+    1
+}
+
+fn default_limit() -> usize {
+    2000
+}
+
 #[derive(Deserialize)]
 struct ReadFileArgs {
     file_path: String,
-    #[serde(default = "1")]
+    #[serde(default = "default_offset")]
     offset: usize,
-    #[serde(default = "2000")]
+    #[serde(default = "default_limit")]
     limit: usize,
 }
 
