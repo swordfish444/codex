@@ -59,3 +59,4 @@ uuid = { workspace = true }
 walkdir = { workspace = true }
 wiremock = { workspace = true }
 mcp-types = { workspace = true }
+codex-app-server-protocol = { workspace = true }

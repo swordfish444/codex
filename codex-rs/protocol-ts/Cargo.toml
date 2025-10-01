@@ -17,5 +17,6 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
+codex-app-server-protocol = { workspace = true }
 codex-protocol = { workspace = true }
 ts-rs = { workspace = true }
