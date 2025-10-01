@@ -32,9 +32,8 @@ impl ToolHandler for McpHandler {
             ToolPayload::Mcp {
                 server,
                 tool,
-                arguments,
                 raw_arguments,
-            } => (server, tool, arguments, raw_arguments),
+            } => (server, tool, raw_arguments),
             _ => {
                 return Err(FunctionCallError::RespondToModel(
                     "mcp handler received unsupported payload".to_string(),
@@ -42,7 +41,7 @@ impl ToolHandler for McpHandler {
             }
         };
 
-        let (server, tool, _arguments, raw_arguments) = payload;
+        let (server, tool, raw_arguments) = payload;
         let arguments_str = raw_arguments;
 
         let response = handle_mcp_tool_call(

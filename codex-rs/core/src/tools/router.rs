@@ -53,22 +53,12 @@ impl Router {
                 ..
             } => {
                 if let Some((server, tool)) = session.parse_mcp_tool_name(&name) {
-                    let parsed_arguments = if arguments.trim().is_empty() {
-                        None
-                    } else {
-                        Some(serde_json::from_str(&arguments).map_err(|err| {
-                            FunctionCallError::RespondToModel(format!(
-                                "failed to parse tool call arguments: {err}"
-                            ))
-                        })?)
-                    };
                     Ok(Some(ToolCall {
                         tool_name: name,
                         call_id,
                         payload: ToolPayload::Mcp {
                             server,
                             tool,
-                            arguments: parsed_arguments,
                             raw_arguments: arguments,
                         },
                     }))

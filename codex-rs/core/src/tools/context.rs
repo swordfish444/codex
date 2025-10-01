@@ -38,7 +38,6 @@ pub enum ToolPayload {
     Mcp {
         server: String,
         tool: String,
-        arguments: Option<serde_json::Value>,
         raw_arguments: String,
     },
 }
