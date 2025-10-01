@@ -1405,4 +1405,32 @@ mod tests {
         let plan_json = serde_json::to_string(&resp.error.plan_type).expect("serialize plan_type");
         assert_eq!(plan_json, "\"vip\"");
     }
+
+    #[tokio::test]
+    async fn refresh_on_plan_mismatch_retries_when_plan_differs() {
+        use crate::token_data::KnownPlan;
+        use crate::token_data::PlanType;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let mut auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
+        if let Some(auth_json) = auth.auth_dot_json.lock().unwrap().as_mut()
+            && let Some(tokens) = auth_json.tokens.as_mut()
+        {
+            tokens.id_token.chatgpt_plan_type = Some(PlanType::Known(KnownPlan::Plus));
+            tokens.id_token.raw_jwt = "dummy".to_string();
+        }
+
+        let manager = Arc::new(AuthManager::new(PathBuf::new()));
+
+        let should_retry = ModelClient::refresh_on_plan_mismatch(
+            &Some(manager),
+            &Some(auth),
+            Some(PlanType::Known(KnownPlan::Team)),
+            "usage_limit_reached",
+        )
+        .await;
+
+        assert!(should_retry);
+    }
 }
