@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use codex_protocol::models::ResponseInputItem;
@@ -61,19 +62,40 @@ impl ToolRegistry {
         invocation: ToolInvocation<'a>,
     ) -> Result<ResponseInputItem, FunctionCallError> {
         let tool_name = invocation.tool_name.clone();
-        let handler = self.handler(tool_name.as_ref()).ok_or_else(|| {
-            FunctionCallError::RespondToModel(format!("unsupported call: {tool_name}"))
-        })?;
-
-        if !handler.matches_kind(&invocation.payload) {
-            return Err(FunctionCallError::RespondToModel(format!(
-                "tool {tool_name} invoked with incompatible payload"
-            )));
-        }
-
         let call_id_owned = invocation.call_id.clone();
         let otel = invocation.turn.client.get_otel_event_manager();
         let log_payload = invocation.payload.log_payload().into_owned();
+
+        let handler = match self.handler(tool_name.as_ref()) {
+            Some(handler) => handler,
+            None => {
+                let message =
+                    unsupported_tool_call_message(&invocation.payload, tool_name.as_ref());
+                otel.tool_result(
+                    tool_name.as_ref(),
+                    &call_id_owned,
+                    &log_payload,
+                    Duration::ZERO,
+                    false,
+                    &message,
+                );
+                return Err(FunctionCallError::RespondToModel(message));
+            }
+        };
+
+        if !handler.matches_kind(&invocation.payload) {
+            let message = format!("tool {tool_name} invoked with incompatible payload");
+            otel.tool_result(
+                tool_name.as_ref(),
+                &call_id_owned,
+                &log_payload,
+                Duration::ZERO,
+                false,
+                &message,
+            );
+            return Err(FunctionCallError::RespondToModel(message));
+        }
+
         let output_cell = std::sync::Mutex::new(None);
 
         let result = otel
@@ -154,5 +176,12 @@ impl ToolRegistryBuilder {
 
     pub fn build(self) -> ToolRegistry {
         ToolRegistry::new(self.handlers)
+    }
+}
+
+fn unsupported_tool_call_message(payload: &ToolPayload, tool_name: &str) -> String {
+    match payload {
+        ToolPayload::Custom { .. } => format!("unsupported custom tool call: {tool_name}"),
+        _ => format!("unsupported call: {tool_name}"),
     }
 }
