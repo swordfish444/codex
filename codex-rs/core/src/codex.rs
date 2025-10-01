@@ -1912,18 +1912,13 @@ async fn run_turn(
         Some(mcp_tools),
     ));
 
-    let template_executor =
-        ToolCallExecutor::new(router.clone(), sess.clone(), turn_context.clone());
-    let allow_parallel_read_only = template_executor.allow_parallel_read_only();
-    let tool_specs = template_executor.specs().to_vec();
-    drop(template_executor);
+    let tool_specs = router.specs().to_vec();
 
     let prompt = Prompt {
         input,
         tools: tool_specs,
         base_instructions_override: turn_context.base_instructions.clone(),
         output_schema: turn_context.final_output_json_schema.clone(),
-        allow_parallel_read_only_tools: allow_parallel_read_only,
     };
 
     let mut retries = 0;

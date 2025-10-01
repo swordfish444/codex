@@ -1754,7 +1754,7 @@ model_verbosity = "high"
             let mut model_provider_map = built_in_model_providers();
             model_provider_map.insert(
                 "openai-chat-completions".to_string(),
-                openai_chat_completions_provider.clone(),
+                openai_chat_completions_provider,
             );
             model_provider_map
         };

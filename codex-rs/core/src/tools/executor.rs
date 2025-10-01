@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
@@ -19,7 +18,6 @@ use crate::protocol::Event;
 use crate::tools::context::ToolPayload;
 use crate::tools::router::Router;
 use crate::tools::router::ToolCall;
-use crate::tools::spec::ToolSpec;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseInputItem;
@@ -36,20 +34,18 @@ pub(crate) struct ToolCallExecutor {
     session: Arc<Session>,
     turn_context: Arc<TurnContext>,
     allow_parallel_read_only: bool,
-    read_only_tasks: JoinSet<(usize, Result<ResponseInputItem, String>)>,
-    read_only_meta: HashMap<usize, (String, ToolPayload, String)>,
+    read_only_tasks: JoinSet<(usize, ResponseInputItem)>,
     processed_items: Vec<ProcessedResponseItem>,
 }
 
 impl ToolCallExecutor {
     pub(crate) fn new(
         router: Arc<Router>,
-        session: Arc<Session>, // todo why
-        turn_context: Arc<TurnContext>, // todo why
+        session: Arc<Session>,
+        turn_context: Arc<TurnContext>,
     ) -> Self {
-        let allow_parallel_read_only = router.has_read_only_tools()
-            && turn_context.tools_config.enable_parallel_read_only
-            && turn_context.client.supports_parallel_read_only_tools();
+        let allow_parallel_read_only =
+            router.has_read_only_tools() && turn_context.tools_config.enable_parallel_read_only;
 
         Self {
             router,
@@ -57,24 +53,14 @@ impl ToolCallExecutor {
             turn_context,
             allow_parallel_read_only,
             read_only_tasks: JoinSet::new(),
-            read_only_meta: HashMap::new(),
             processed_items: Vec::new(),
         }
-    }
-
-    pub(crate) fn specs(&self) -> &[ToolSpec] {
-        self.router.specs()
-    }
-
-    pub(crate) fn allow_parallel_read_only(&self) -> bool {
-        self.allow_parallel_read_only
     }
 
     pub(crate) fn drain_ready(&mut self) {
         while let Some(res) = self.read_only_tasks.try_join_next() {
             match res {
-                Ok((idx, Ok(response))) => self.assign_parallel_success(idx, response),
-                Ok((idx, Err(err))) => self.assign_parallel_failure(idx, err),
+                Ok((idx, response)) => self.assign_result(idx, response),
                 Err(join_err) => {
                     warn!(
                         ?join_err,
@@ -88,8 +74,7 @@ impl ToolCallExecutor {
     pub(crate) async fn flush(&mut self) {
         while let Some(res) = self.read_only_tasks.join_next().await {
             match res {
-                Ok((idx, Ok(response))) => self.assign_parallel_success(idx, response),
-                Ok((idx, Err(err))) => self.assign_parallel_failure(idx, err),
+                Ok((idx, response)) => self.assign_result(idx, response),
                 Err(join_err) => {
                     warn!(
                         ?join_err,
@@ -172,18 +157,20 @@ impl ToolCallExecutor {
         Ok(())
     }
 
+    fn assign_result(&mut self, idx: usize, response: ResponseInputItem) {
+        if let Some(slot) = self.processed_items.get_mut(idx) {
+            slot.response = Some(response);
+        } else {
+            warn!(idx, "parallel tool completion missing output slot");
+        }
+    }
+
     pub(crate) fn take_processed_items(mut self) -> Vec<ProcessedResponseItem> {
         self.drain_ready();
         self.processed_items
     }
 
     fn schedule_parallel_task(&mut self, idx: usize, call: ToolCall, sub_id: &str) {
-        let payload_clone = call.payload.clone();
-        self.read_only_meta.insert(
-            idx,
-            (call.call_id.clone(), payload_clone, call.tool_name.clone()),
-        );
-
         let router_for_task = self.router.clone();
         let session_for_task = self.session.clone();
         let turn_context_for_task = self.turn_context.clone();
@@ -191,6 +178,9 @@ impl ToolCallExecutor {
 
         self.read_only_tasks.spawn(async move {
             let mut tracker = TurnDiffTracker::new();
+            let payload_for_fallback = call.payload.clone();
+            let call_id_for_fallback = call.call_id.clone();
+            let tool_name_for_msg = call.tool_name.clone();
             let fut = async {
                 router_for_task
                     .dispatch_tool_call(
@@ -203,12 +193,16 @@ impl ToolCallExecutor {
                     .await
             };
 
-            let result = AssertUnwindSafe(fut)
-                .catch_unwind()
-                .await
-                .map_err(Self::panic_to_message);
+            let response = match AssertUnwindSafe(fut).catch_unwind().await {
+                Ok(resp) => resp,
+                Err(panic) => {
+                    let msg = Self::panic_to_message(panic);
+                    let message = format!("{tool_name_for_msg} failed: {msg}");
+                    Self::fallback_response(call_id_for_fallback, payload_for_fallback, message)
+                }
+            };
 
-            (idx, result)
+            (idx, response)
         });
     }
 
@@ -246,40 +240,6 @@ impl ToolCallExecutor {
         }
 
         Ok(())
-    }
-
-    fn assign_parallel_success(&mut self, idx: usize, response: ResponseInputItem) {
-        self.read_only_meta.remove(&idx);
-        if let Some(slot) = self.processed_items.get_mut(idx) {
-            slot.response = Some(response);
-        } else {
-            warn!(idx, "parallel tool completion missing output slot");
-        }
-    }
-
-    fn assign_parallel_failure(&mut self, idx: usize, reason: String) {
-        let (call_id, payload, tool_name) = self.read_only_meta.remove(&idx).unwrap_or_else(|| {
-            (
-                String::new(),
-                ToolPayload::Function {
-                    arguments: String::new(),
-                },
-                String::from("unknown"),
-            )
-        });
-
-        let message = if tool_name == "unknown" {
-            reason
-        } else {
-            format!("{tool_name} failed: {reason}")
-        };
-
-        let response = Self::fallback_response(call_id, payload, message);
-        if let Some(slot) = self.processed_items.get_mut(idx) {
-            slot.response = Some(response);
-        } else {
-            warn!(idx, "parallel tool failure missing output slot");
-        }
     }
 
     fn fallback_response(

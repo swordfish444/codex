@@ -1279,7 +1279,7 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
 }
 
 #[tokio::test]
-async fn parallel_tool_calls_enabled_when_supported() {
+async fn parallel_tool_calls_field_not_sent() {
     let server = MockServer::start().await;
 
     let template = ResponseTemplate::new(200)
@@ -1295,7 +1295,7 @@ async fn parallel_tool_calls_enabled_when_supported() {
 
     let mut provider = built_in_model_providers()["openai"].clone();
     provider.base_url = Some(format!("{}/v1", server.uri()));
-    provider.supports_parallel_tool_calls = true;
+    provider.supports_parallel_tool_calls = true; // no longer affects payload
 
     let provider_clone = provider.clone();
     let TestCodex { codex, .. } = test_codex()
@@ -1303,7 +1303,7 @@ async fn parallel_tool_calls_enabled_when_supported() {
             config.model = "gpt-5".to_string();
             config.model_family = find_family_for_model("gpt-5").expect("model family");
             config.enable_parallel_read_only_tools = true;
-            config.model_provider = provider_clone.clone();
+            config.model_provider = provider_clone;
             config.model_provider_id = "openai".to_string();
         })
         .build(&server)
@@ -1322,8 +1322,6 @@ async fn parallel_tool_calls_enabled_when_supported() {
 
     let request = &server.received_requests().await.expect("requests")[0];
     let request_body = request.body_json::<serde_json::Value>().unwrap();
-    assert_eq!(
-        request_body.get("parallel_tool_calls"),
-        Some(&serde_json::Value::Bool(true))
-    );
+    // Field removed: executor handles scheduling internally
+    assert!(request_body.get("parallel_tool_calls").is_none());
 }

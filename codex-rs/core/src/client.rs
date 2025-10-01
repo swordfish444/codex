@@ -118,11 +118,7 @@ impl ModelClient {
         })
     }
 
-    pub fn supports_parallel_read_only_tools(&self) -> bool {
-        self.config.enable_parallel_read_only_tools
-            && self.config.model_family.supports_parallel_read_only_tools
-            && self.provider.supports_parallel_tool_calls
-    }
+    // Parallel read-only scheduling is controlled internally; no provider hint needed.
 
     /// Dispatches to either the Responses or Chat implementation depending on
     /// the provider config.  Public callers always invoke `stream()` – the
@@ -232,8 +228,6 @@ impl ModelClient {
             input: &input_with_instructions,
             tools: &tools_json,
             tool_choice: "auto",
-            parallel_tool_calls: prompt.allow_parallel_read_only_tools
-                && self.supports_parallel_read_only_tools(),
             reasoning,
             store: azure_workaround,
             stream: true,
