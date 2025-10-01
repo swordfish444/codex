@@ -432,6 +432,9 @@ fn merge_resume_cli_flags(interactive: &mut TuiCli, resume_cli: TuiCli) {
     if resume_cli.web_search {
         interactive.web_search = true;
     }
+    if resume_cli.disable_auto_compaction {
+        interactive.disable_auto_compaction = true;
+    }
     if !resume_cli.images.is_empty() {
         interactive.images = resume_cli.images;
     }
@@ -567,6 +570,7 @@ mod tests {
                 "--oss",
                 "--full-auto",
                 "--search",
+                "--disable-auto-compaction",
                 "--sandbox",
                 "workspace-write",
                 "--ask-for-approval",
@@ -609,6 +613,18 @@ mod tests {
             .iter()
             .any(|p| p == std::path::Path::new("/tmp/b.png"));
         assert!(has_a && has_b);
+        assert!(interactive.disable_auto_compaction);
+        assert!(!interactive.resume_picker);
+        assert!(!interactive.resume_last);
+        assert_eq!(interactive.resume_session_id.as_deref(), Some("sid"));
+    }
+
+    #[test]
+    fn resume_disable_auto_compaction_flag_merges() {
+        let interactive =
+            finalize_from_args(["codex", "resume", "sid", "--disable-auto-compaction"].as_ref());
+
+        assert!(interactive.disable_auto_compaction);
         assert!(!interactive.resume_picker);
         assert!(!interactive.resume_last);
         assert_eq!(interactive.resume_session_id.as_deref(), Some("sid"));

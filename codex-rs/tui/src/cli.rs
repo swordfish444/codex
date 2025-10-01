@@ -72,6 +72,10 @@ pub struct Cli {
     #[arg(long = "search", default_value_t = false)]
     pub web_search: bool,
 
+    /// Disable automatic conversation history compaction triggered near the model token limit.
+    #[arg(long = "disable-auto-compaction", default_value_t = false)]
+    pub disable_auto_compaction: bool,
+
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 }
