@@ -911,23 +911,6 @@ impl ChatComposer {
                         return (InputResult::None, true);
                     }
                 }
-                // If we have pending placeholder pastes, submit immediately to expand them.
-                if !self.pending_pastes.is_empty() {
-                    let mut text = self.textarea.text().to_string();
-                    self.textarea.set_text("");
-                    for (placeholder, actual) in &self.pending_pastes {
-                        if text.contains(placeholder) {
-                            text = text.replace(placeholder, actual);
-                        }
-                    }
-                    self.pending_pastes.clear();
-                    if text.is_empty() {
-                        return (InputResult::None, true);
-                    }
-                    self.history.record_local_submission(&text);
-                    return (InputResult::Submitted(text), true);
-                }
-
                 // During a paste-like burst, treat Enter as a newline instead of submit.
                 let now = Instant::now();
                 if self
@@ -943,31 +926,33 @@ impl ChatComposer {
                 let original_input = text.clone();
                 self.textarea.set_text("");
 
-                // Replace all pending pastes in the text
-                for (placeholder, actual) in &self.pending_pastes {
-                    if text.contains(placeholder) {
-                        text = text.replace(placeholder, actual);
-                    }
-                }
-                self.pending_pastes.clear();
+                // Attempt token-aware prompt expansion that also resolves any
+                // placeholder pastes; otherwise fall back to raw string replacement.
+                let pending_pastes = self.pending_pastes.clone();
 
                 // If there is neither text nor attachments, suppress submission entirely.
                 let has_attachments = !self.attached_images.is_empty();
                 text = text.trim().to_string();
-                let expanded_prompt = match expand_custom_prompt(&text, &self.custom_prompts) {
-                    Ok(expanded) => expanded,
-                    Err(err) => {
-                        self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-                            history_cell::new_error_event(err.user_message()),
-                        )));
-                        self.textarea.set_text(&original_input);
-                        self.textarea.set_cursor(original_input.len());
-                        return (InputResult::None, true);
-                    }
-                };
+                let expanded_prompt =
+                    match expand_custom_prompt(&text, &self.custom_prompts, &pending_pastes) {
+                        Ok(expanded) => expanded,
+                        Err(err) => {
+                            self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_error_event(err.user_message()),
+                            )));
+                            self.textarea.set_text(&original_input);
+                            self.textarea.set_cursor(original_input.len());
+                            return (InputResult::None, true);
+                        }
+                    };
                 if let Some(expanded) = expanded_prompt {
                     text = expanded;
+                } else {
+                    for (placeholder, actual) in &pending_pastes {
+                        text = text.replace(placeholder, actual);
+                    }
                 }
+                self.pending_pastes.clear();
                 if text.is_empty() && !has_attachments {
                     return (InputResult::None, true);
                 }
@@ -2802,6 +2787,58 @@ mod tests {
             result
         );
         assert!(composer.textarea.is_empty());
+    }
+
+    #[test]
+    fn custom_prompt_large_paste_argument_expands_before_submit() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        composer.set_custom_prompts(vec![CustomPrompt {
+            name: "echo".to_string(),
+            path: "/tmp/echo.md".to_string().into(),
+            content: "Echo back: $1".to_string(),
+            description: None,
+            argument_hint: None,
+        }]);
+
+        type_chars_humanlike(
+            &mut composer,
+            &[
+                '/', 'p', 'r', 'o', 'm', 'p', 't', 's', ':', 'e', 'c', 'h', 'o', ' ', '"',
+            ],
+        );
+
+        let mut large = String::new();
+        while large.chars().count() <= LARGE_PASTE_CHAR_THRESHOLD + 5 {
+            large.push_str("Segment with \"double\" quotes and 'single' ticks. ");
+        }
+        let count = large.chars().count();
+        let placeholder = format!("[Pasted Content {count} chars]");
+        assert!(composer.handle_paste(large.clone()));
+        assert!(composer.textarea.text().contains(&placeholder));
+        assert_eq!(composer.pending_pastes.len(), 1);
+        type_chars_humanlike(&mut composer, &['"']);
+
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert_eq!(
+            InputResult::Submitted(format!("Echo back: {large}")),
+            result
+        );
+        assert!(composer.pending_pastes.is_empty());
     }
 
     #[test]

@@ -106,17 +106,17 @@ pub fn prompt_argument_names(content: &str) -> Vec<String> {
     names
 }
 
-/// Parses the `key=value` pairs that follow a custom prompt name.
-///
-/// The input is split using shlex rules, so quoted values are supported
-/// (for example `USER="Alice Smith"`). The function returns a map of parsed
-/// arguments, or an error if a token is missing `=` or if the key is empty.
-pub fn parse_prompt_inputs(rest: &str) -> Result<HashMap<String, String>, PromptArgsError> {
+/// Parses `key=value` pairs using shlex. If `pastes` are provided, any value
+/// token that exactly equals a paste placeholder is replaced with its original
+/// pasted content.
+fn parse_prompt_inputs(
+    rest: &str,
+    pastes: &[(String, String)],
+) -> Result<HashMap<String, String>, PromptArgsError> {
     let mut map = HashMap::new();
     if rest.trim().is_empty() {
         return Ok(map);
     }
-
     for token in Shlex::new(rest) {
         let Some((key, value)) = token.split_once('=') else {
             return Err(PromptArgsError::MissingAssignment { token });
@@ -124,9 +124,38 @@ pub fn parse_prompt_inputs(rest: &str) -> Result<HashMap<String, String>, Prompt
         if key.is_empty() {
             return Err(PromptArgsError::MissingKey { token });
         }
-        map.insert(key.to_string(), value.to_string());
+        let replaced = if let Some((_, actual)) = pastes.iter().find(|(ph, _)| ph == value) {
+            actual.clone()
+        } else {
+            value.to_string()
+        };
+        map.insert(key.to_string(), replaced);
     }
     Ok(map)
+}
+
+/// Replace paste placeholders in `rest` with synthetic, space-free tokens and
+/// return both the rewritten string and the mapping from token -> original
+/// pasted content.
+fn tokenize_pastes(rest: &str, pastes: &[(String, String)]) -> (String, Vec<(String, String)>) {
+    let mut rest_rewritten = rest.to_string();
+    let mut tokenized: Vec<(String, String)> = Vec::with_capacity(pastes.len());
+    for (i, (placeholder, actual)) in pastes.iter().enumerate() {
+        let token = format!("__codex_paste_{i}__");
+        // `replace` is a no-op if `placeholder` is absent; no need to pre-check.
+        rest_rewritten = rest_rewritten.replace(placeholder, &token);
+        tokenized.push((token, actual.clone()));
+    }
+    (rest_rewritten, tokenized)
+}
+
+/// Given a token (possibly a synthetic paste token), return the original
+/// pasted content if it matches; otherwise return the token unchanged.
+fn resolve_paste_tokens(tok: &str, tokenized_pastes: &[(String, String)]) -> String {
+    if let Some((_, actual)) = tokenized_pastes.iter().find(|(t, _)| t == tok) {
+        return actual.clone();
+    }
+    tok.to_string()
 }
 
 /// Expands a message of the form `/prompts:name [value] [value] …` using a matching saved prompt.
@@ -134,9 +163,10 @@ pub fn parse_prompt_inputs(rest: &str) -> Result<HashMap<String, String>, Prompt
 /// If the text does not start with `/prompts:`, or if no prompt named `name` exists,
 /// the function returns `Ok(None)`. On success it returns
 /// `Ok(Some(expanded))`; otherwise it returns a descriptive error.
-pub fn expand_custom_prompt(
+pub(crate) fn expand_custom_prompt(
     text: &str,
     custom_prompts: &[CustomPrompt],
+    pastes: &[(String, String)],
 ) -> Result<Option<String>, PromptExpansionError> {
     let Some((name, rest)) = parse_slash_name(text) else {
         return Ok(None);
@@ -151,12 +181,20 @@ pub fn expand_custom_prompt(
         Some(prompt) => prompt,
         None => return Ok(None),
     };
+
+    // Protect paste placeholders from shlex splitting by rewriting them to
+    // unique, space-free tokens, then map those tokens back to the original
+    // content during parsing.
+    let (rest_rewritten, tokenized_pastes) = tokenize_pastes(rest, pastes);
+
     // If there are named placeholders, expect key=value inputs.
     let required = prompt_argument_names(&prompt.content);
     if !required.is_empty() {
-        let inputs = parse_prompt_inputs(rest).map_err(|error| PromptExpansionError::Args {
-            command: format!("/{name}"),
-            error,
+        let inputs = parse_prompt_inputs(&rest_rewritten, &tokenized_pastes).map_err(|error| {
+            PromptExpansionError::Args {
+                command: format!("/{name}"),
+                error,
+            }
         })?;
         let missing: Vec<String> = required
             .into_iter()
@@ -186,8 +224,11 @@ pub fn expand_custom_prompt(
         return Ok(Some(replaced.into_owned()));
     }
 
-    // Otherwise, treat it as numeric/positional placeholder prompt (or none).
-    let pos_args: Vec<String> = Shlex::new(rest).collect();
+    // Otherwise positional placeholders: tokenize args and replace any
+    // placeholder-matching token before expansion.
+    let pos_args: Vec<String> = Shlex::new(&rest_rewritten)
+        .map(|t| resolve_paste_tokens(&t, &tokenized_pastes))
+        .collect();
     let expanded = expand_numeric_placeholders(&prompt.content, &pos_args);
     Ok(Some(expanded))
 }
@@ -324,8 +365,8 @@ mod tests {
             argument_hint: None,
         }];
 
-        let out =
-            expand_custom_prompt("/prompts:my-prompt USER=Alice BRANCH=main", &prompts).unwrap();
+        let out = expand_custom_prompt("/prompts:my-prompt USER=Alice BRANCH=main", &prompts, &[])
+            .unwrap();
         assert_eq!(out, Some("Review Alice changes on main".to_string()));
     }
 
@@ -342,6 +383,7 @@ mod tests {
         let out = expand_custom_prompt(
             "/prompts:my-prompt USER=\"Alice Smith\" BRANCH=dev-main",
             &prompts,
+            &[],
         )
         .unwrap();
         assert_eq!(out, Some("Pair Alice Smith with dev-main".to_string()));
@@ -356,7 +398,7 @@ mod tests {
             description: None,
             argument_hint: None,
         }];
-        let err = expand_custom_prompt("/prompts:my-prompt USER=Alice stray", &prompts)
+        let err = expand_custom_prompt("/prompts:my-prompt USER=Alice stray", &prompts, &[])
             .unwrap_err()
             .user_message();
         assert!(err.contains("expected key=value"));
@@ -371,7 +413,7 @@ mod tests {
             description: None,
             argument_hint: None,
         }];
-        let err = expand_custom_prompt("/prompts:my-prompt USER=Alice", &prompts)
+        let err = expand_custom_prompt("/prompts:my-prompt USER=Alice", &prompts, &[])
             .unwrap_err()
             .user_message();
         assert!(err.to_lowercase().contains("missing required args"));
@@ -400,7 +442,7 @@ mod tests {
             argument_hint: None,
         }];
 
-        let out = expand_custom_prompt("/prompts:my-prompt", &prompts).unwrap();
+        let out = expand_custom_prompt("/prompts:my-prompt", &prompts, &[]).unwrap();
         assert_eq!(out, Some("literal $$USER".to_string()));
     }
 }
