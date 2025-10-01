@@ -13,6 +13,7 @@ mod json_result;
 mod live_cli;
 mod model_overrides;
 mod otel;
+mod pending_followups;
 mod prompt_caching;
 mod review;
 mod rmcp_client;

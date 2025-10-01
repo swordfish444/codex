@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1624,17 +1625,18 @@ pub(crate) async fn run_task(
     // many turns, from the perspective of the user, it is a single turn.
     let mut turn_diff_tracker = TurnDiffTracker::new();
     let mut auto_compact_recently_attempted = false;
+    let mut queued_pending_input: VecDeque<Vec<ResponseItem>> = VecDeque::new();
 
     loop {
-        // Note that pending_input would be something like a message the user
-        // submitted through the UI while the model was running. Though the UI
-        // may support this, the model might not.
-        let pending_input = sess
-            .get_pending_input()
-            .await
-            .into_iter()
-            .map(ResponseItem::from)
-            .collect::<Vec<ResponseItem>>();
+        // Note that pending input corresponds to follow-up messages a user
+        // submitted while the current turn was still running. Gather any new
+        // submissions so we can process them one batch at a time.
+        let pending_input = queued_pending_input.pop_front().unwrap_or_default();
+        info!(
+            pending_count = pending_input.len(),
+            queued_batches = queued_pending_input.len(),
+            "processing pending input batch"
+        );
 
         // Construct the input that we will send to the model.
         //
@@ -1831,7 +1833,27 @@ pub(crate) async fn run_task(
                             input_messages: turn_input_messages,
                             last_assistant_message: last_agent_message.clone(),
                         });
-                    break;
+                    let mut trailing_batches = sess
+                        .get_pending_input()
+                        .await
+                        .into_iter()
+                        .map(|item| vec![ResponseItem::from(item)])
+                        .collect::<Vec<Vec<ResponseItem>>>();
+
+                    if !trailing_batches.is_empty() {
+                        let new_batches = trailing_batches.len();
+                        queued_pending_input.extend(trailing_batches.drain(..));
+                        info!(
+                            queued_batches = queued_pending_input.len(),
+                            new_batches, "queued follow-up input for current task"
+                        );
+                    }
+
+                    if queued_pending_input.is_empty() {
+                        break;
+                    }
+
+                    continue;
                 }
                 continue;
             }
