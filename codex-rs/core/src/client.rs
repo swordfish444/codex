@@ -383,6 +383,25 @@ impl ModelClient {
                     let body = res.json::<ErrorResponse>().await.ok();
                     if let Some(ErrorResponse { error }) = body {
                         if error.r#type.as_deref() == Some("usage_limit_reached") {
+                            let context = "usage_limit_reached";
+                            if Self::refresh_on_plan_mismatch(
+                                auth_manager,
+                                &auth,
+                                error.plan_type.clone(),
+                                context,
+                            )
+                            .await
+                            {
+                                return Err(StreamAttemptError::RetryableTransportError(
+                                    CodexErr::Stream(
+                                        format!(
+                                            "plan mismatch detected during {context}; retrying"
+                                        ),
+                                        None,
+                                    ),
+                                ));
+                            }
+
                             // Prefer the plan_type provided in the error message if present
                             // because it's more up to date than the one encoded in the auth
                             // token.
@@ -397,6 +416,24 @@ impl ModelClient {
                             });
                             return Err(StreamAttemptError::Fatal(codex_err));
                         } else if error.r#type.as_deref() == Some("usage_not_included") {
+                            let context = "usage_not_included";
+                            if Self::refresh_on_plan_mismatch(
+                                auth_manager,
+                                &auth,
+                                error.plan_type.clone(),
+                                context,
+                            )
+                            .await
+                            {
+                                return Err(StreamAttemptError::RetryableTransportError(
+                                    CodexErr::Stream(
+                                        format!(
+                                            "plan mismatch detected during {context}; retrying"
+                                        ),
+                                        None,
+                                    ),
+                                ));
+                            }
                             return Err(StreamAttemptError::Fatal(CodexErr::UsageNotIncluded));
                         }
                     }
@@ -409,6 +446,48 @@ impl ModelClient {
             }
             Err(e) => Err(StreamAttemptError::RetryableTransportError(e.into())),
         }
+    }
+
+    async fn refresh_on_plan_mismatch(
+        auth_manager: &Option<Arc<AuthManager>>,
+        auth: &Option<CodexAuth>,
+        server_plan_type: Option<PlanType>,
+        log_context: &str,
+    ) -> bool {
+        let Some(server_plan) = server_plan_type else {
+            return false;
+        };
+
+        let jwt_plan = auth.as_ref().and_then(CodexAuth::get_plan_type);
+
+        if jwt_plan == Some(server_plan.clone()) {
+            return false;
+        }
+
+        if let Some(manager) = auth_manager.as_ref() {
+            match manager.refresh_token().await {
+                Ok(_) => {
+                    warn!(
+                        context = log_context,
+                        ?server_plan,
+                        previous_plan = ?jwt_plan,
+                        "plan mismatch detected; refreshed token and will retry"
+                    );
+                    return true;
+                }
+                Err(err) => {
+                    warn!(
+                        context = log_context,
+                        ?server_plan,
+                        previous_plan = ?jwt_plan,
+                        error = ?err,
+                        "failed to refresh token after plan mismatch"
+                    );
+                }
+            }
+        }
+
+        false
     }
 
     pub fn get_provider(&self) -> ModelProviderInfo {
