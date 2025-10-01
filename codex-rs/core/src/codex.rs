@@ -14,7 +14,6 @@ use crate::user_notification::UserNotifier;
 use async_channel::Receiver;
 use async_channel::Sender;
 use codex_apply_patch::ApplyPatchAction;
-use codex_protocol::mcp_protocol::ConversationId;
 use codex_apply_patch::MaybeApplyPatchVerified;
 use codex_apply_patch::maybe_parse_apply_patch_verified;
 use codex_protocol::ConversationId;
@@ -62,14 +61,8 @@ use crate::exec_command::EXEC_COMMAND_TOOL_NAME;
 use crate::exec_command::ExecCommandParams;
 use crate::exec_command::ExecSessionManager;
 use crate::exec_command::WriteStdinParams;
-use crate::executor::Executor;
-use crate::executor::ExecutorConfig;
-use crate::executor::normalize_exec_result;
 use crate::exec_env::create_env;
-use crate::executor::ExecutionMode;
-use crate::executor::Executor;
-use crate::executor::ExecutorConfig;
-use crate::executor::normalize_exec_result;
+use crate::executor::{normalize_exec_result, ExecutionMode, Executor, ExecutorConfig};
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::model_family::find_family_for_model;
 use crate::openai_model_info::get_model_info;
@@ -2371,8 +2364,6 @@ pub(crate) async fn exit_review_mode(
         .await;
 }
 
-use crate::executor::errors::ExecError;
-use crate::executor::linkers::PreparedExec;
 use crate::tools::context::ApplyPatchCommandContext;
 use crate::tools::context::ExecCommandContext;
 use crate::executor::errors::ExecError;
