@@ -42,7 +42,7 @@ pub struct ModelFamily {
     // Instructions to use for querying the model
     pub base_instructions: String,
 
-    // todo check if all those configs are necessary...
+    /// If the model supports parallel tool calls for read-only tools.
     pub supports_parallel_read_only_tools: bool,
 }
 

@@ -516,7 +516,7 @@ pub struct Tools {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub view_image: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub parallel_read_only: Option<bool>, // todo check this
+    pub parallel_read_only: Option<bool>,
 }
 
 /// MCP representation of a [`codex_core::config_types::SandboxWorkspaceWrite`].
