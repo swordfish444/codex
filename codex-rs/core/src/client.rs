@@ -1413,7 +1413,7 @@ mod tests {
         use std::path::PathBuf;
         use std::sync::Arc;
 
-        let mut auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
+        let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
         if let Some(auth_json) = auth.auth_dot_json.lock().unwrap().as_mut()
             && let Some(tokens) = auth_json.tokens.as_mut()
         {
