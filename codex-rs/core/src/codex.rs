@@ -14,8 +14,6 @@ use crate::user_notification::UserNotifier;
 use async_channel::Receiver;
 use async_channel::Sender;
 use codex_apply_patch::ApplyPatchAction;
-use codex_apply_patch::MaybeApplyPatchVerified;
-use codex_apply_patch::maybe_parse_apply_patch_verified;
 use codex_protocol::ConversationId;
 use codex_protocol::protocol::ConversationPathResponseEvent;
 use codex_protocol::protocol::ExitedReviewModeEvent;
@@ -37,9 +35,6 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::ModelProviderInfo;
-use crate::apply_patch;
-use crate::apply_patch::ApplyPatchExec;
-use crate::apply_patch::InternalApplyPatchInvocation;
 use crate::apply_patch::convert_apply_patch_to_protocol;
 use crate::client::ModelClient;
 use crate::client_common::Prompt;
@@ -50,19 +45,13 @@ use crate::conversation_history::ConversationHistory;
 use crate::environment_context::EnvironmentContext;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
-use crate::error::SandboxErr;
-use crate::exec::ExecParams;
 use crate::exec::ExecToolCallOutput;
 #[cfg(test)]
-use crate::exec::StdoutStream;
-#[cfg(test)]
 use crate::exec::StreamOutput;
-use crate::exec_command::EXEC_COMMAND_TOOL_NAME;
 use crate::exec_command::ExecCommandParams;
 use crate::exec_command::ExecSessionManager;
 use crate::exec_command::WriteStdinParams;
-use crate::exec_env::create_env;
-use crate::executor::{normalize_exec_result, ExecutionMode, Executor, ExecutorConfig};
+use crate::executor::{normalize_exec_result, Executor, ExecutorConfig};
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::model_family::find_family_for_model;
 use crate::openai_model_info::get_model_info;
@@ -2389,7 +2378,6 @@ mod tests {
     use crate::tools::MODEL_FORMAT_MAX_LINES;
     use crate::tools::MODEL_FORMAT_TAIL_LINES;
     use crate::tools::handle_container_exec_with_params;
-    use codex_protocol::mcp_protocol::AuthMode;
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::ResponseItem;
 
