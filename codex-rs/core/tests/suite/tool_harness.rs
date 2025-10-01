@@ -323,7 +323,7 @@ async fn update_plan_tool_rejects_malformed_payload() -> anyhow::Result<()> {
         .get("output")
         .and_then(|value| value.as_object())
         .and_then(|obj| obj.get("success"))
-        .and_then(|value| value.as_bool())
+        .and_then(serde_json::Value::as_bool)
     {
         assert!(
             !success_flag,
