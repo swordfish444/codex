@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde::Deserialize;
+use tokio::fs;
 
 use crate::function_tool::FunctionCallError;
 use crate::protocol::InputItem;
@@ -47,6 +48,20 @@ impl ToolHandler for ViewImageHandler {
         })?;
 
         let abs_path = turn.resolve_path(Some(args.path));
+
+        let metadata = fs::metadata(&abs_path).await.map_err(|error| {
+            FunctionCallError::RespondToModel(format!(
+                "unable to locate image at `{}`: {error}",
+                abs_path.display()
+            ))
+        })?;
+
+        if !metadata.is_file() {
+            return Err(FunctionCallError::RespondToModel(format!(
+                "image path `{}` is not a file",
+                abs_path.display()
+            )));
+        }
         session
             .inject_input(vec![InputItem::LocalImage { path: abs_path }])
             .await

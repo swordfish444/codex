@@ -31,7 +31,7 @@ pub use router::Router;
 use serde::Serialize;
 use tracing::trace;
 
-// Model-formatting limits: clients get full streams; oonly content sent to the model is truncated.
+// Model-formatting limits: clients get full streams; only content sent to the model is truncated.
 pub(crate) const MODEL_FORMAT_MAX_BYTES: usize = 10 * 1024; // 10 KiB
 pub(crate) const MODEL_FORMAT_MAX_LINES: usize = 256; // lines
 pub(crate) const MODEL_FORMAT_HEAD_LINES: usize = MODEL_FORMAT_MAX_LINES / 2;
