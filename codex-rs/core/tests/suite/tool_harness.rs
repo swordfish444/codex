@@ -464,3 +464,105 @@ async fn apply_patch_tool_executes_and_emits_patch_events() -> anyhow::Result<()
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_patch_reports_parse_diagnostics() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+
+    let mut builder = test_codex().with_config(|config| {
+        config.include_apply_patch_tool = true;
+    });
+    let TestCodex {
+        codex,
+        cwd,
+        session_configured,
+        ..
+    } = builder.build(&server).await?;
+
+    let call_id = "apply-patch-parse-error";
+    let patch_content = r"*** Begin Patch
+*** Update File: broken.txt
+*** End Patch";
+
+    let first_response = sse(vec![
+        serde_json::json!({
+            "type": "response.created",
+            "response": {"id": "resp-1"}
+        }),
+        ev_apply_patch_function_call(call_id, patch_content),
+        ev_completed("resp-1"),
+    ]);
+    responses::mount_sse_once_match(&server, any(), first_response).await;
+
+    let second_response = sse(vec![
+        ev_assistant_message("msg-1", "failed"),
+        ev_completed("resp-2"),
+    ]);
+    responses::mount_sse_once_match(&server, any(), second_response).await;
+
+    let session_model = session_configured.model.clone();
+
+    codex
+        .submit(Op::UserTurn {
+            items: vec![InputItem::Text {
+                text: "please apply a patch".into(),
+            }],
+            final_output_json_schema: None,
+            cwd: cwd.path().to_path_buf(),
+            approval_policy: AskForApproval::Never,
+            sandbox_policy: SandboxPolicy::DangerFullAccess,
+            model: session_model,
+            effort: None,
+            summary: ReasoningSummary::Auto,
+        })
+        .await?;
+
+    loop {
+        let event = codex.next_event().await.expect("event");
+        if matches!(event.msg, EventMsg::TaskComplete(_)) {
+            break;
+        }
+    }
+
+    let requests = server.received_requests().await.expect("recorded requests");
+    assert!(!requests.is_empty(), "expected at least one POST request");
+
+    let request_bodies = requests
+        .iter()
+        .map(|req| req.body_json::<Value>().expect("request json"))
+        .collect::<Vec<_>>();
+
+    let body_with_tool_output = find_request_with_function_call_output(&request_bodies)
+        .expect("function_call_output item not found in requests");
+    let output_item = function_call_output(body_with_tool_output).expect("tool output item");
+    assert_eq!(
+        output_item.get("call_id").and_then(Value::as_str),
+        Some(call_id)
+    );
+    let output_text = extract_output_text(output_item).expect("output text present");
+
+    assert!(
+        output_text.contains("apply_patch verification failed"),
+        "expected apply_patch verification failure message, got {output_text:?}"
+    );
+    assert!(
+        output_text.contains("invalid hunk"),
+        "expected parse diagnostics in output text, got {output_text:?}"
+    );
+
+    if let Some(success_flag) = output_item
+        .get("output")
+        .and_then(|value| value.as_object())
+        .and_then(|obj| obj.get("success"))
+        .and_then(serde_json::Value::as_bool)
+    {
+        assert!(
+            !success_flag,
+            "expected tool output to mark success=false for parse failures"
+        );
+    }
+
+    Ok(())
+}

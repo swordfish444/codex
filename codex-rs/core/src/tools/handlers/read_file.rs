@@ -17,7 +17,7 @@ use crate::tools::registry::ToolKind;
 
 pub struct ReadFileHandler;
 
-const MAX_LINE_LENGTH: usize = 200;
+const MAX_LINE_LENGTH: usize = 500;
 
 fn default_offset() -> usize {
     1
@@ -105,15 +105,28 @@ async fn read_file_slice(
         .await
         .map_err(|err| FunctionCallError::RespondToModel(format!("failed to read file: {err}")))?;
 
-    let mut reader = BufReader::new(file).lines();
+    let mut reader = BufReader::new(file);
     let mut collected = Vec::new();
     let mut seen = 0usize;
+    let mut buffer = Vec::new();
 
-    while let Some(line) = reader
-        .next_line()
-        .await
-        .map_err(|err| FunctionCallError::RespondToModel(format!("failed to read file: {err}")))?
-    {
+    loop {
+        buffer.clear();
+        let bytes_read = reader.read_until(b'\n', &mut buffer).await.map_err(|err| {
+            FunctionCallError::RespondToModel(format!("failed to read file: {err}"))
+        })?;
+
+        if bytes_read == 0 {
+            break;
+        }
+
+        if buffer.last() == Some(&b'\n') {
+            buffer.pop();
+            if buffer.last() == Some(&b'\r') {
+                buffer.pop();
+            }
+        }
+
         seen += 1;
 
         if seen < offset {
@@ -124,12 +137,7 @@ async fn read_file_slice(
             break;
         }
 
-        let formatted = if line.len() > MAX_LINE_LENGTH {
-            take_bytes_at_char_boundary(&line, MAX_LINE_LENGTH).to_string()
-        } else {
-            line
-        };
-
+        let formatted = format_line(&buffer);
         collected.push(format!("L{seen}: {formatted}"));
 
         if collected.len() == limit {
@@ -144,6 +152,15 @@ async fn read_file_slice(
     }
 
     Ok(collected)
+}
+
+fn format_line(bytes: &[u8]) -> String {
+    let decoded = String::from_utf8_lossy(bytes);
+    if decoded.len() > MAX_LINE_LENGTH {
+        take_bytes_at_char_boundary(&decoded, MAX_LINE_LENGTH).to_string()
+    } else {
+        decoded.into_owned()
+    }
 }
 
 #[cfg(test)]
@@ -178,5 +195,18 @@ mod tests {
             err,
             FunctionCallError::RespondToModel("offset exceeds file length".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn reads_non_utf8_lines() {
+        let mut temp = NamedTempFile::new().expect("create temp file");
+        use std::io::Write as _;
+        temp.as_file_mut().write_all(b"\xff\xfe\nplain\n").unwrap();
+
+        let lines = read_file_slice(temp.path(), 1, 2)
+            .await
+            .expect("read slice");
+        let expected_first = format!("L1: {}{}", '\u{FFFD}', '\u{FFFD}');
+        assert_eq!(lines, vec![expected_first, "L2: plain".to_string()]);
     }
 }

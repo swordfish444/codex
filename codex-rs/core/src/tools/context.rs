@@ -1,11 +1,15 @@
 use crate::codex::Session;
 use crate::codex::TurnContext;
+use crate::tools::TELEMETRY_PREVIEW_MAX_BYTES;
+use crate::tools::TELEMETRY_PREVIEW_MAX_LINES;
+use crate::tools::TELEMETRY_PREVIEW_TRUNCATION_NOTICE;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_otel::otel_event_manager::OtelEventManager;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ShellToolCallParams;
 use codex_protocol::protocol::FileChange;
+use codex_utils_string::take_bytes_at_char_boundary;
 use mcp_types::CallToolResult;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -68,7 +72,7 @@ pub enum ToolOutput {
 impl ToolOutput {
     pub fn log_preview(&self) -> String {
         match self {
-            ToolOutput::Function { content, .. } => content.clone(),
+            ToolOutput::Function { content, .. } => telemetry_preview(content),
             ToolOutput::Mcp { result } => format!("{result:?}"),
         }
     }
@@ -101,6 +105,46 @@ impl ToolOutput {
             },
         }
     }
+}
+
+fn telemetry_preview(content: &str) -> String {
+    let truncated_slice = take_bytes_at_char_boundary(content, TELEMETRY_PREVIEW_MAX_BYTES);
+    let truncated_by_bytes = truncated_slice.len() < content.len();
+
+    let mut preview = String::new();
+    let mut lines_iter = truncated_slice.lines();
+    for idx in 0..TELEMETRY_PREVIEW_MAX_LINES {
+        match lines_iter.next() {
+            Some(line) => {
+                if idx > 0 {
+                    preview.push('\n');
+                }
+                preview.push_str(line);
+            }
+            None => break,
+        }
+    }
+    let truncated_by_lines = lines_iter.next().is_some();
+
+    if !truncated_by_bytes && !truncated_by_lines {
+        return content.to_string();
+    }
+
+    if preview.len() < truncated_slice.len()
+        && truncated_slice
+            .as_bytes()
+            .get(preview.len())
+            .is_some_and(|byte| *byte == b'\n')
+    {
+        preview.push('\n');
+    }
+
+    if !preview.is_empty() && !preview.ends_with('\n') {
+        preview.push('\n');
+    }
+    preview.push_str(TELEMETRY_PREVIEW_TRUNCATION_NOTICE);
+
+    preview
 }
 
 #[cfg(test)]
@@ -147,6 +191,38 @@ mod tests {
             }
             other => panic!("expected FunctionCallOutput, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn telemetry_preview_returns_original_within_limits() {
+        let content = "short output";
+        assert_eq!(telemetry_preview(content), content);
+    }
+
+    #[test]
+    fn telemetry_preview_truncates_by_bytes() {
+        let content = "x".repeat(TELEMETRY_PREVIEW_MAX_BYTES + 8);
+        let preview = telemetry_preview(&content);
+
+        assert!(preview.contains(TELEMETRY_PREVIEW_TRUNCATION_NOTICE));
+        assert!(
+            preview.len()
+                <= TELEMETRY_PREVIEW_MAX_BYTES + TELEMETRY_PREVIEW_TRUNCATION_NOTICE.len() + 1
+        );
+    }
+
+    #[test]
+    fn telemetry_preview_truncates_by_lines() {
+        let content = (0..(TELEMETRY_PREVIEW_MAX_LINES + 5))
+            .map(|idx| format!("line {idx}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let preview = telemetry_preview(&content);
+        let lines: Vec<&str> = preview.lines().collect();
+
+        assert!(lines.len() <= TELEMETRY_PREVIEW_MAX_LINES + 1);
+        assert_eq!(lines.last(), Some(&TELEMETRY_PREVIEW_TRUNCATION_NOTICE));
     }
 }
 
