@@ -1079,7 +1079,7 @@ impl Config {
                 .chatgpt_base_url
                 .or(cfg.chatgpt_base_url)
                 .unwrap_or("https://chatgpt.com/backend-api/".to_string()),
-            include_plan_tool: include_plan_tool.unwrap_or(false),
+            include_plan_tool: include_plan_tool.unwrap_or(true),
             include_apply_patch_tool: include_apply_patch_tool.unwrap_or(false),
             tools_web_search_request,
             use_experimental_streamable_shell_tool: cfg
