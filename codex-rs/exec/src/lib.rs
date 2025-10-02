@@ -1,5 +1,6 @@
 mod cli;
 mod event_processor;
+pub mod event_processor_noop;
 mod event_processor_with_human_output;
 pub mod event_processor_with_jsonl_output;
 pub mod exec_events;
@@ -36,6 +37,8 @@ use tracing_subscriber::prelude::*;
 use crate::cli::Command as ExecCommand;
 use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
+use crate::event_processor::handle_last_message;
+use crate::event_processor_noop::EventProcessorNoop;
 use codex_core::default_client::set_default_originator;
 use codex_core::find_conversation_path_by_id_str;
 
@@ -210,13 +213,17 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     }
 
     let mut event_processor: Box<dyn EventProcessor> = match json_mode {
-        true => Box::new(EventProcessorWithJsonOutput::new(last_message_file.clone())),
+        true => Box::new(EventProcessorWithJsonOutput::default()),
         _ => Box::new(EventProcessorWithHumanOutput::create_with_ansi(
             stdout_with_ansi,
             &config,
-            last_message_file.clone(),
         )),
     };
+
+    // Output the last message to stdout
+    if let Some(None) = last_message_file {
+        event_processor = Box::new(EventProcessorNoop {});
+    }
 
     if oss {
         codex_ollama::ensure_oss_ready(&config)
@@ -352,9 +359,13 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     // Track whether a fatal error was reported by the server so we can
     // exit with a non-zero status for automation-friendly signaling.
     let mut error_seen = false;
+    let mut last_message = None;
     while let Some(event) = rx.recv().await {
         if matches!(event.msg, EventMsg::Error(_)) {
             error_seen = true;
+        }
+        if let EventMsg::TaskComplete(TaskCompleteEvent { last_agent_message }) = &event.msg {
+            last_message = last_agent_message.clone();
         }
         let shutdown: CodexStatus = event_processor.process_event(event);
         match shutdown {
@@ -370,6 +381,8 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     if error_seen {
         std::process::exit(1);
     }
+
+    handle_last_message(last_message, last_message_file);
 
     Ok(())
 }

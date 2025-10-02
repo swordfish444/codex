@@ -21,7 +21,6 @@ use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::PatchApplyEndEvent;
 use codex_core::protocol::SessionConfiguredEvent;
 use codex_core::protocol::StreamErrorEvent;
-use codex_core::protocol::TaskCompleteEvent;
 use codex_core::protocol::TurnAbortReason;
 use codex_core::protocol::TurnDiffEvent;
 use codex_core::protocol::WebSearchBeginEvent;
@@ -32,12 +31,10 @@ use owo_colors::Style;
 use shlex::try_join;
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
-use crate::event_processor::handle_last_message;
 use codex_common::create_config_summary_entries;
 
 /// This should be configurable. When used in CI, users may not want to impose
@@ -65,15 +62,10 @@ pub(crate) struct EventProcessorWithHumanOutput {
     answer_started: bool,
     reasoning_started: bool,
     raw_reasoning_started: bool,
-    last_message_path: Option<PathBuf>,
 }
 
 impl EventProcessorWithHumanOutput {
-    pub(crate) fn create_with_ansi(
-        with_ansi: bool,
-        config: &Config,
-        last_message_path: Option<PathBuf>,
-    ) -> Self {
+    pub(crate) fn create_with_ansi(with_ansi: bool, config: &Config) -> Self {
         let call_id_to_command = HashMap::new();
         let call_id_to_patch = HashMap::new();
 
@@ -93,7 +85,6 @@ impl EventProcessorWithHumanOutput {
                 answer_started: false,
                 reasoning_started: false,
                 raw_reasoning_started: false,
-                last_message_path,
             }
         } else {
             Self {
@@ -111,7 +102,6 @@ impl EventProcessorWithHumanOutput {
                 answer_started: false,
                 reasoning_started: false,
                 raw_reasoning_started: false,
-                last_message_path,
             }
         }
     }
@@ -183,12 +173,6 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             }
             EventMsg::TaskStarted(_) => {
                 // Ignore.
-            }
-            EventMsg::TaskComplete(TaskCompleteEvent { last_agent_message }) => {
-                if let Some(output_file) = self.last_message_path.as_deref() {
-                    handle_last_message(last_agent_message.as_deref(), output_file);
-                }
-                return CodexStatus::InitiateShutdown;
             }
             EventMsg::TokenCount(ev) => {
                 if let Some(usage_info) = ev.info {
@@ -592,6 +576,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 }
             },
             EventMsg::ShutdownComplete => return CodexStatus::Shutdown,
+            EventMsg::TaskComplete(_) => return CodexStatus::InitiateShutdown,
             EventMsg::ConversationPath(_) => {}
             EventMsg::UserMessage(_) => {}
             EventMsg::EnteredReviewMode(_) => {}

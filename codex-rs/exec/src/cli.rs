@@ -72,8 +72,8 @@ pub struct Cli {
     pub include_plan_tool: bool,
 
     /// Specifies file where the last message from the agent should be written.
-    #[arg(long = "output-last-message")]
-    pub last_message_file: Option<PathBuf>,
+    #[arg(long = "output-last-message", num_args(0..=1))]
+    pub last_message_file: Option<Option<PathBuf>>,
 
     /// Initial instructions for the agent. If not provided as an argument (or
     /// if `-` is used), instructions are read from stdin.

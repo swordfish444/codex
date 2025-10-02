@@ -1,10 +1,8 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 
 use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
-use crate::event_processor::handle_last_message;
 use crate::exec_events::AssistantMessageItem;
 use crate::exec_events::CommandExecutionItem;
 use crate::exec_events::CommandExecutionStatus;
@@ -45,14 +43,12 @@ use codex_core::protocol::McpToolCallEndEvent;
 use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::PatchApplyEndEvent;
 use codex_core::protocol::SessionConfiguredEvent;
-use codex_core::protocol::TaskCompleteEvent;
 use codex_core::protocol::TaskStartedEvent;
 use codex_core::protocol::WebSearchEndEvent;
 use tracing::error;
 use tracing::warn;
 
 pub struct EventProcessorWithJsonOutput {
-    last_message_path: Option<PathBuf>,
     next_event_id: AtomicU64,
     // Tracks running commands by call_id, including the associated item id.
     running_commands: HashMap<String, RunningCommand>,
@@ -84,19 +80,6 @@ struct RunningMcpToolCall {
 }
 
 impl EventProcessorWithJsonOutput {
-    pub fn new(last_message_path: Option<PathBuf>) -> Self {
-        Self {
-            last_message_path,
-            next_event_id: AtomicU64::new(0),
-            running_commands: HashMap::new(),
-            running_patch_applies: HashMap::new(),
-            running_todo_list: None,
-            last_total_token_usage: None,
-            running_mcp_tool_calls: HashMap::new(),
-            last_critical_error: None,
-        }
-    }
-
     pub fn collect_thread_events(&mut self, event: &Event) -> Vec<ThreadEvent> {
         match &event.msg {
             EventMsg::SessionConfigured(ev) => self.handle_session_configured(ev),
@@ -420,6 +403,20 @@ impl EventProcessorWithJsonOutput {
     }
 }
 
+impl Default for EventProcessorWithJsonOutput {
+    fn default() -> Self {
+        Self {
+            next_event_id: AtomicU64::new(0),
+            running_commands: HashMap::new(),
+            running_patch_applies: HashMap::new(),
+            running_todo_list: None,
+            last_total_token_usage: None,
+            running_mcp_tool_calls: HashMap::new(),
+            last_critical_error: None,
+        }
+    }
+}
+
 impl EventProcessor for EventProcessorWithJsonOutput {
     fn print_config_summary(&mut self, _: &Config, _: &str, ev: &SessionConfiguredEvent) {
         self.process_event(Event {
@@ -443,10 +440,7 @@ impl EventProcessor for EventProcessorWithJsonOutput {
 
         let Event { msg, .. } = event;
 
-        if let EventMsg::TaskComplete(TaskCompleteEvent { last_agent_message }) = msg {
-            if let Some(output_file) = self.last_message_path.as_deref() {
-                handle_last_message(last_agent_message.as_deref(), output_file);
-            }
+        if matches!(msg, EventMsg::TaskComplete(_)) {
             CodexStatus::InitiateShutdown
         } else {
             CodexStatus::Running

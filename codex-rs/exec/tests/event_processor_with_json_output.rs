@@ -51,7 +51,7 @@ fn event(id: &str, msg: EventMsg) -> Event {
 
 #[test]
 fn session_configured_produces_thread_started_event() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
     let session_id =
         codex_protocol::ConversationId::from_string("67e55044-10b1-426f-9247-bb680e5fe0c8")
             .unwrap();
@@ -79,7 +79,7 @@ fn session_configured_produces_thread_started_event() {
 
 #[test]
 fn task_started_produces_turn_started_event() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
     let out = ep.collect_thread_events(&event(
         "t1",
         EventMsg::TaskStarted(codex_core::protocol::TaskStartedEvent {
@@ -92,7 +92,7 @@ fn task_started_produces_turn_started_event() {
 
 #[test]
 fn web_search_end_emits_item_completed() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
     let query = "rust async await".to_string();
     let out = ep.collect_thread_events(&event(
         "w1",
@@ -119,7 +119,7 @@ fn plan_update_emits_todo_list_started_updated_and_completed() {
     use codex_core::plan_tool::StepStatus;
     use codex_core::plan_tool::UpdatePlanArgs;
 
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
 
     // First plan update => item.started (todo_list)
     let first = event(
@@ -236,7 +236,7 @@ fn plan_update_emits_todo_list_started_updated_and_completed() {
 
 #[test]
 fn mcp_tool_call_begin_and_end_emit_item_events() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
     let invocation = McpInvocation {
         server: "server_a".to_string(),
         tool: "tool_x".to_string(),
@@ -296,7 +296,7 @@ fn mcp_tool_call_begin_and_end_emit_item_events() {
 
 #[test]
 fn mcp_tool_call_failure_sets_failed_status() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
     let invocation = McpInvocation {
         server: "server_b".to_string(),
         tool: "tool_y".to_string(),
@@ -343,7 +343,7 @@ fn plan_update_after_complete_starts_new_todo_list_with_new_id() {
     use codex_core::plan_tool::StepStatus;
     use codex_core::plan_tool::UpdatePlanArgs;
 
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
 
     // First turn: start + complete
     let start = event(
@@ -388,7 +388,7 @@ fn plan_update_after_complete_starts_new_todo_list_with_new_id() {
 
 #[test]
 fn agent_reasoning_produces_item_completed_reasoning() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
     let ev = event(
         "e1",
         EventMsg::AgentReasoning(AgentReasoningEvent {
@@ -411,7 +411,7 @@ fn agent_reasoning_produces_item_completed_reasoning() {
 
 #[test]
 fn agent_message_produces_item_completed_assistant_message() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
     let ev = event(
         "e1",
         EventMsg::AgentMessage(AgentMessageEvent {
@@ -434,7 +434,7 @@ fn agent_message_produces_item_completed_assistant_message() {
 
 #[test]
 fn error_event_produces_error() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
     let out = ep.collect_thread_events(&event(
         "e1",
         EventMsg::Error(codex_core::protocol::ErrorEvent {
@@ -451,7 +451,7 @@ fn error_event_produces_error() {
 
 #[test]
 fn stream_error_event_produces_error() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
     let out = ep.collect_thread_events(&event(
         "e1",
         EventMsg::StreamError(codex_core::protocol::StreamErrorEvent {
@@ -468,7 +468,7 @@ fn stream_error_event_produces_error() {
 
 #[test]
 fn error_followed_by_task_complete_produces_turn_failed() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
 
     let error_event = event(
         "e1",
@@ -501,7 +501,7 @@ fn error_followed_by_task_complete_produces_turn_failed() {
 
 #[test]
 fn exec_command_end_success_produces_completed_command_item() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
 
     // Begin -> no output
     let begin = event(
@@ -561,7 +561,7 @@ fn exec_command_end_success_produces_completed_command_item() {
 
 #[test]
 fn exec_command_end_failure_produces_failed_command_item() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
 
     // Begin -> no output
     let begin = event(
@@ -620,7 +620,7 @@ fn exec_command_end_failure_produces_failed_command_item() {
 
 #[test]
 fn exec_command_end_without_begin_is_ignored() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
 
     // End event arrives without a prior Begin; should produce no thread events.
     let end_only = event(
@@ -641,7 +641,7 @@ fn exec_command_end_without_begin_is_ignored() {
 
 #[test]
 fn patch_apply_success_produces_item_completed_patchapply() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
 
     // Prepare a patch with multiple kinds of changes
     let mut changes = std::collections::HashMap::new();
@@ -723,7 +723,7 @@ fn patch_apply_success_produces_item_completed_patchapply() {
 
 #[test]
 fn patch_apply_failure_produces_item_completed_patchapply_failed() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
 
     let mut changes = std::collections::HashMap::new();
     changes.insert(
@@ -777,7 +777,7 @@ fn patch_apply_failure_produces_item_completed_patchapply_failed() {
 
 #[test]
 fn task_complete_produces_turn_completed_with_usage() {
-    let mut ep = EventProcessorWithJsonOutput::new(None);
+    let mut ep = EventProcessorWithJsonOutput::default();
 
     // First, feed a TokenCount event with known totals.
     let usage = codex_core::protocol::TokenUsage {
