@@ -13,6 +13,7 @@ mod json_result;
 mod live_cli;
 mod model_overrides;
 mod otel;
+mod parallel_read_only;
 mod prompt_caching;
 mod read_file;
 mod review;
