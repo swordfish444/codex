@@ -586,6 +586,8 @@ impl ChatWidget {
 
     fn on_background_event(&mut self, message: String) {
         debug!("BackgroundEvent: {message}");
+        self.add_to_history(history_cell::new_background_event(message));
+        self.request_redraw();
     }
 
     fn on_stream_error(&mut self, message: String) {

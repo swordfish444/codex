@@ -247,6 +247,30 @@ impl HistoryCell for PlainHistoryCell {
 }
 
 #[derive(Debug)]
+pub(crate) struct BackgroundEventCell {
+    message: String,
+}
+
+impl BackgroundEventCell {
+    pub(crate) fn new(message: String) -> Self {
+        Self { message }
+    }
+}
+
+impl HistoryCell for BackgroundEventCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let wrap_width = width.max(2) as usize;
+        let message_line = Line::from(self.message.as_str()).style(Style::default().dim());
+        word_wrap_lines(
+            &[message_line],
+            RtOptions::new(wrap_width)
+                .initial_indent(Line::from("• ".dim()))
+                .subsequent_indent(Line::from("  ")),
+        )
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct TranscriptOnlyHistoryCell {
     lines: Vec<Line<'static>>,
 }
@@ -931,6 +955,10 @@ pub(crate) fn new_error_event(message: String) -> PlainHistoryCell {
 pub(crate) fn new_stream_error_event(message: String) -> PlainHistoryCell {
     let lines: Vec<Line<'static>> = vec![vec![padded_emoji("⚠️").into(), message.dim()].into()];
     PlainHistoryCell { lines }
+}
+
+pub(crate) fn new_background_event(message: String) -> BackgroundEventCell {
+    BackgroundEventCell::new(message)
 }
 
 /// Render a user‑friendly plan update styled like a checkbox todo list.
