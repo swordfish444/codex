@@ -126,7 +126,7 @@ impl Router {
         sub_id: &str,
         call: ToolCall,
     ) -> ResponseInputItem {
-        let payload_clone = call.payload.clone();
+        let payload_outputs_custom = matches!(call.payload, ToolPayload::Custom { .. });
         let ToolCall {
             tool_name,
             call_id,
@@ -145,28 +145,29 @@ impl Router {
 
         match self.registry.dispatch(invocation).await {
             Ok(response) => response,
-            Err(err) => Self::failure_response(call_id, payload_clone, err),
+            Err(err) => Self::failure_response(call_id, payload_outputs_custom, err),
         }
     }
 
     fn failure_response(
         call_id: String,
-        payload: ToolPayload,
+        payload_outputs_custom: bool,
         err: FunctionCallError,
     ) -> ResponseInputItem {
         let message = err.to_string();
-        match payload {
-            ToolPayload::Custom { .. } => ResponseInputItem::CustomToolCallOutput {
+        if payload_outputs_custom {
+            ResponseInputItem::CustomToolCallOutput {
                 call_id,
                 output: message,
-            },
-            _ => ResponseInputItem::FunctionCallOutput {
+            }
+        } else {
+            ResponseInputItem::FunctionCallOutput {
                 call_id,
                 output: codex_protocol::models::FunctionCallOutputPayload {
                     content: message,
                     success: Some(false),
                 },
-            },
+            }
         }
     }
 }

@@ -14,6 +14,7 @@ use eventsource_stream::EventStreamError as StreamError;
 use reqwest::Error;
 use reqwest::Response;
 use serde::Serialize;
+use std::borrow::Cow;
 use std::fmt::Display;
 use std::time::Duration;
 use std::time::Instant;
@@ -377,8 +378,8 @@ impl OtelEventManager {
         let duration = start.elapsed();
 
         let (output, success) = match &result {
-            Ok((preview, success)) => (preview.clone(), *success),
-            Err(error) => (error.to_string(), false),
+            Ok((preview, success)) => (Cow::Borrowed(preview.as_str()), *success),
+            Err(error) => (Cow::Owned(error.to_string()), false),
         };
 
         let success_str = if success { "true" } else { "false" };
@@ -399,6 +400,7 @@ impl OtelEventManager {
             arguments = %arguments,
             duration_ms = %duration.as_millis(),
             success = %success_str,
+            // `output` is truncated by the tool layer before reaching telemetry.
             output = %output,
         );
 

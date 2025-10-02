@@ -38,6 +38,12 @@ pub(crate) const MODEL_FORMAT_HEAD_LINES: usize = MODEL_FORMAT_MAX_LINES / 2;
 pub(crate) const MODEL_FORMAT_TAIL_LINES: usize = MODEL_FORMAT_MAX_LINES - MODEL_FORMAT_HEAD_LINES; // 128
 pub(crate) const MODEL_FORMAT_HEAD_BYTES: usize = MODEL_FORMAT_MAX_BYTES / 2;
 
+// Telemetry preview limits: keep log events smaller than model budgets.
+pub(crate) const TELEMETRY_PREVIEW_MAX_BYTES: usize = 2 * 1024; // 2 KiB
+pub(crate) const TELEMETRY_PREVIEW_MAX_LINES: usize = 64; // lines
+pub(crate) const TELEMETRY_PREVIEW_TRUNCATION_NOTICE: &str =
+    "[... telemetry preview truncated ...]";
+
 pub(crate) async fn handle_container_exec_with_params(
     tool_name: &str,
     params: ExecParams,
@@ -73,7 +79,7 @@ pub(crate) async fn handle_container_exec_with_params(
             // could not resolve it into a patch that would apply
             // cleanly. Return to model for resample.
             return Err(FunctionCallError::RespondToModel(format!(
-                "error: {parse_error:#?}"
+                "apply_patch verification failed: {parse_error}"
             )));
         }
         MaybeApplyPatchVerified::ShellParseError(error) => {
@@ -218,22 +224,26 @@ pub fn format_exec_output_str(exec_output: &ExecToolCallOutput) -> String {
         return s.to_string();
     }
 
-    let lines: Vec<&str> = s.lines().collect();
-    let head_take = MODEL_FORMAT_HEAD_LINES.min(lines.len());
-    let tail_take = MODEL_FORMAT_TAIL_LINES.min(lines.len().saturating_sub(head_take));
-    let omitted = lines.len().saturating_sub(head_take + tail_take);
+    let segments: Vec<&str> = s.split_inclusive('\n').collect();
+    let head_take = MODEL_FORMAT_HEAD_LINES.min(segments.len());
+    let tail_take = MODEL_FORMAT_TAIL_LINES.min(segments.len().saturating_sub(head_take));
+    let omitted = segments.len().saturating_sub(head_take + tail_take);
 
-    // Join head and tail blocks (lines() strips newlines; reinsert them)
-    let head_block = lines
+    let head_slice_end: usize = segments
         .iter()
         .take(head_take)
-        .cloned()
-        .collect::<Vec<_>>()
-        .join("\n");
-    let tail_block = if tail_take > 0 {
-        lines[lines.len() - tail_take..].join("\n")
+        .map(|segment| segment.len())
+        .sum();
+    let tail_slice_start: usize = if tail_take == 0 {
+        s.len()
     } else {
-        String::new()
+        s.len()
+            - segments
+                .iter()
+                .rev()
+                .take(tail_take)
+                .map(|segment| segment.len())
+                .sum::<usize>()
     };
     let marker = format!("\n[... omitted {omitted} of {total_lines} lines ...]\n\n");
 
@@ -249,19 +259,20 @@ pub fn format_exec_output_str(exec_output: &ExecToolCallOutput) -> String {
         head_budget = MODEL_FORMAT_MAX_BYTES.saturating_sub(marker.len());
     }
 
-    // Enforce line-count cap by trimming head/tail lines
-    let head_lines_text = head_block;
-    let tail_lines_text = tail_block;
-    // Build final string respecting byte budgets
-    let head_part = take_bytes_at_char_boundary(&head_lines_text, head_budget);
+    let head_slice = &s[..head_slice_end];
+    let head_part = take_bytes_at_char_boundary(head_slice, head_budget);
     let mut result = String::with_capacity(MODEL_FORMAT_MAX_BYTES.min(s.len()));
 
     result.push_str(head_part);
     result.push_str(&marker);
 
     let remaining = MODEL_FORMAT_MAX_BYTES.saturating_sub(result.len());
-    let tail_budget_final = remaining;
-    let tail_part = take_last_bytes_at_char_boundary(&tail_lines_text, tail_budget_final);
+    if remaining == 0 {
+        return result;
+    }
+
+    let tail_slice = &s[tail_slice_start..];
+    let tail_part = take_last_bytes_at_char_boundary(tail_slice, remaining);
     result.push_str(tail_part);
 
     result

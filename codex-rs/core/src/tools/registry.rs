@@ -26,7 +26,6 @@ pub trait ToolHandler: Send + Sync {
         matches!(
             (self.kind(), payload),
             (ToolKind::Function, ToolPayload::Function { .. })
-                | (ToolKind::Function, ToolPayload::UnifiedExec { .. })
                 | (ToolKind::UnifiedExec, ToolPayload::UnifiedExec { .. })
                 | (ToolKind::Mcp, ToolPayload::Mcp { .. })
         )
@@ -65,7 +64,7 @@ impl ToolRegistry {
         let call_id_owned = invocation.call_id.clone();
         let otel = invocation.turn.client.get_otel_event_manager();
         let payload_for_response = invocation.payload.clone();
-        let log_payload = payload_for_response.log_payload().into_owned();
+        let log_payload = payload_for_response.log_payload();
 
         let handler = match self.handler(tool_name.as_ref()) {
             Some(handler) => handler,
@@ -75,7 +74,7 @@ impl ToolRegistry {
                 otel.tool_result(
                     tool_name.as_ref(),
                     &call_id_owned,
-                    &log_payload,
+                    log_payload.as_ref(),
                     Duration::ZERO,
                     false,
                     &message,
@@ -89,7 +88,7 @@ impl ToolRegistry {
             otel.tool_result(
                 tool_name.as_ref(),
                 &call_id_owned,
-                &log_payload,
+                log_payload.as_ref(),
                 Duration::ZERO,
                 false,
                 &message,
@@ -97,35 +96,36 @@ impl ToolRegistry {
             return Err(FunctionCallError::RespondToModel(message));
         }
 
-        let output_cell = std::sync::Mutex::new(None);
+        let output_cell = tokio::sync::Mutex::new(None);
 
         let result = otel
-            .log_tool_result(tool_name.as_ref(), &call_id_owned, &log_payload, || {
-                let handler = handler.clone();
-                let output_cell = &output_cell;
-                let invocation = invocation;
-                async move {
-                    match handler.handle(invocation).await {
-                        Ok(output) => {
-                            let preview = output.log_preview();
-                            let success = output.success_for_logging();
-                            let mut guard = output_cell
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            *guard = Some(output);
-                            Ok((preview, success))
+            .log_tool_result(
+                tool_name.as_ref(),
+                &call_id_owned,
+                log_payload.as_ref(),
+                || {
+                    let handler = handler.clone();
+                    let output_cell = &output_cell;
+                    let invocation = invocation;
+                    async move {
+                        match handler.handle(invocation).await {
+                            Ok(output) => {
+                                let preview = output.log_preview();
+                                let success = output.success_for_logging();
+                                let mut guard = output_cell.lock().await;
+                                *guard = Some(output);
+                                Ok((preview, success))
+                            }
+                            Err(err) => Err(err),
                         }
-                        Err(err) => Err(err),
                     }
-                }
-            })
+                },
+            )
             .await;
 
         match result {
             Ok(_) => {
-                let mut guard = output_cell
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let mut guard = output_cell.lock().await;
                 let output = guard.take().ok_or_else(|| {
                     FunctionCallError::RespondToModel("tool produced no output".to_string())
                 })?;
