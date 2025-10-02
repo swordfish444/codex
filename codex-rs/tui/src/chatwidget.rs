@@ -1100,6 +1100,10 @@ impl ChatWidget {
                 self.app_event_tx.send(AppEvent::ExitRequest);
             }
             SlashCommand::Undo => {
+                self.add_info_message(
+                    "Restoring workspace to the last Codex snapshot...".to_string(),
+                    Some("This may take a few seconds.".to_string()),
+                );
                 // Delegate undo to core which manages the snapshot ring.
                 self.submit_op(Op::UndoLastSnapshot);
             }
