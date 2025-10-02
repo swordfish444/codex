@@ -163,11 +163,7 @@ async fn read_only_tools_execute_before_apply_patch() -> anyhow::Result<()> {
 
     // Ensure the two read-only tools started within 200ms of each other so that
     // they can be considered parallel.
-    let delta = if elapsed_one > elapsed_two {
-        elapsed_one - elapsed_two
-    } else {
-        elapsed_two - elapsed_one
-    };
+    let delta = elapsed_one.abs_diff(elapsed_two);
     assert!(
         delta < Duration::from_millis(200),
         "expected read-only tools to start in parallel (delta {delta:?})"
@@ -257,11 +253,10 @@ async fn read_only_tools_execute_before_apply_patch() -> anyhow::Result<()> {
             .expect("request json");
         if let Some(items) = body.get("input").and_then(|v| v.as_array()) {
             for item in items {
-                if item.get("type").and_then(|v| v.as_str()) == Some("function_call_output") {
-                    if let Some(call_id) = item.get("call_id").and_then(|v| v.as_str()) {
+                if item.get("type").and_then(|v| v.as_str()) == Some("function_call_output")
+                    && let Some(call_id) = item.get("call_id").and_then(|v| v.as_str()) {
                         seen_outputs.insert(call_id.to_string());
                     }
-                }
             }
         }
     }
@@ -300,6 +295,6 @@ async fn wait_for_writer(
         .write(true)
         .open(&path)
         .await
-        .with_context(|| format!("open fifo {:?} for writing", path))?;
+        .with_context(|| format!("open fifo {path:?} for writing"))?;
     Ok((file, origin.elapsed()))
 }
