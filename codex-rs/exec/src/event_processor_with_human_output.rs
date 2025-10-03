@@ -536,6 +536,19 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 format_with_separators(usage_info.total_token_usage.blended_total())
             );
         }
+
+        // If the user has not piped the final message to a file, they will see
+        // it twice: once written to stderr as part of the normal event
+        // processing, and once here on stdout. We print the token summary above
+        // to help break up the output visually in that case.
+        #[allow(clippy::print_stdout)]
+        if let Some(mut message) = self.final_message.take() {
+            if !message.ends_with('\n') {
+                message.push('\n');
+            }
+
+            print!("{message}");
+        }
     }
 }
 
