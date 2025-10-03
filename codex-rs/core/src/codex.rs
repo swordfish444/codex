@@ -1926,9 +1926,14 @@ async fn run_turn(
         Some(mcp_tools),
     ));
 
+    let model_supports_parallel = turn_context
+        .client
+        .get_model_family()
+        .supports_parallel_tool_calls;
     let prompt = Prompt {
         input,
         tools: router.specs().to_vec(),
+        parallel_tool_calls: model_supports_parallel,
         base_instructions_override: turn_context.base_instructions.clone(),
         output_schema: turn_context.final_output_json_schema.clone(),
     };

@@ -31,6 +31,9 @@ pub struct Prompt {
     /// external MCP servers.
     pub(crate) tools: Vec<ToolSpec>,
 
+    /// Whether parallel tool calls are permitted for this prompt.
+    pub(crate) parallel_tool_calls: bool,
+
     /// Optional override for the built-in BASE_INSTRUCTIONS.
     pub base_instructions_override: Option<String>,
 
@@ -65,6 +68,10 @@ impl Prompt {
 
     pub(crate) fn get_formatted_input(&self) -> Vec<ResponseItem> {
         self.input.clone()
+    }
+
+    pub(crate) fn allow_parallel_tool_calls(&self) -> bool {
+        self.parallel_tool_calls
     }
 }
 
