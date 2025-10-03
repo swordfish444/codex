@@ -19,6 +19,7 @@ use codex_protocol::protocol::ConversationPathResponseEvent;
 use codex_protocol::protocol::ExitedReviewModeEvent;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::RolloutItem;
+use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::TaskStartedEvent;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnContextItem;
@@ -98,9 +99,7 @@ use crate::state::SessionServices;
 use crate::tasks::CompactTask;
 use crate::tasks::RegularTask;
 use crate::tasks::ReviewTask;
-use crate::tools::Router;
-use crate::tools::executor::ProcessedResponseItem;
-use crate::tools::executor::ToolCallExecutor;
+use crate::tools::ToolRouter;
 use crate::tools::format_exec_output_str;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::unified_exec::UnifiedExecSessionManager;
@@ -146,6 +145,7 @@ impl Codex {
         config: Config,
         auth_manager: Arc<AuthManager>,
         conversation_history: InitialHistory,
+        session_source: SessionSource,
     ) -> CodexResult<CodexSpawnOk> {
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
@@ -174,6 +174,7 @@ impl Codex {
             auth_manager.clone(),
             tx_event.clone(),
             conversation_history,
+            session_source,
         )
         .await
         .map_err(|e| {
@@ -308,6 +309,7 @@ impl Session {
         auth_manager: Arc<AuthManager>,
         tx_event: Sender<Event>,
         initial_history: InitialHistory,
+        session_source: SessionSource,
     ) -> anyhow::Result<(Arc<Self>, TurnContext)> {
         let ConfigureSession {
             provider,
@@ -331,7 +333,11 @@ impl Session {
                 let conversation_id = ConversationId::default();
                 (
                     conversation_id,
-                    RolloutRecorderParams::new(conversation_id, user_instructions.clone()),
+                    RolloutRecorderParams::new(
+                        conversation_id,
+                        user_instructions.clone(),
+                        session_source,
+                    ),
                 )
             }
             InitialHistory::Resumed(resumed_history) => (
@@ -499,6 +505,10 @@ impl Session {
         }
 
         Ok((sess, turn_context))
+    }
+
+    pub(crate) fn get_tx_event(&self) -> Sender<Event> {
+        self.tx_event.clone()
     }
 
     fn next_internal_sub_id(&self) -> String {
@@ -1907,16 +1917,11 @@ async fn run_turn(
     input: Vec<ResponseItem>,
 ) -> CodexResult<TurnRunResult> {
     let mcp_tools = sess.services.mcp_connection_manager.list_all_tools();
-    let router = Arc::new(Router::from_config(
-        &turn_context.tools_config,
-        Some(mcp_tools),
-    ));
-
-    let tool_specs = router.specs().to_vec();
+    let router = ToolRouter::from_config(&turn_context.tools_config, Some(mcp_tools));
 
     let prompt = Prompt {
         input,
-        tools: tool_specs,
+        tools: router.specs().to_vec(),
         base_instructions_override: turn_context.base_instructions.clone(),
         output_schema: turn_context.final_output_json_schema.clone(),
     };
@@ -1938,6 +1943,7 @@ async fn run_turn(
             Ok(output) => return Ok(output),
             Err(CodexErr::Interrupted) => return Err(CodexErr::Interrupted),
             Err(CodexErr::EnvVar(var)) => return Err(CodexErr::EnvVar(var)),
+            Err(e @ CodexErr::Fatal(_)) => return Err(e),
             Err(CodexErr::UsageLimitReached(e)) => {
                 let rate_limits = e.rate_limits.clone();
                 if let Some(rate_limits) = rate_limits {
@@ -2301,6 +2307,13 @@ mod tests {
     use crate::tools::MODEL_FORMAT_MAX_LINES;
     use crate::tools::MODEL_FORMAT_TAIL_LINES;
     use crate::tools::handle_container_exec_with_params;
+    use crate::tools::MODEL_FORMAT_HEAD_LINES;
+    use crate::tools::MODEL_FORMAT_MAX_BYTES;
+    use crate::tools::MODEL_FORMAT_MAX_LINES;
+    use crate::tools::MODEL_FORMAT_TAIL_LINES;
+    use crate::tools::ToolRouter;
+    use crate::tools::handle_container_exec_with_params;
+    use crate::turn_diff_tracker::TurnDiffTracker;
     use codex_app_server_protocol::AuthMode;
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::ResponseItem;
@@ -2792,6 +2805,43 @@ mod tests {
             found,
             "synthetic review interruption not recorded in history"
         );
+    }
+
+    #[tokio::test]
+    async fn fatal_tool_error_stops_turn_and_reports_error() {
+        let (session, turn_context, _rx) = make_session_and_context_with_rx();
+        let session_ref = session.as_ref();
+        let turn_context_ref = turn_context.as_ref();
+        let router = ToolRouter::from_config(
+            &turn_context_ref.tools_config,
+            Some(session_ref.services.mcp_connection_manager.list_all_tools()),
+        );
+        let mut tracker = TurnDiffTracker::new();
+        let item = ResponseItem::CustomToolCall {
+            id: None,
+            status: None,
+            call_id: "call-1".to_string(),
+            name: "shell".to_string(),
+            input: "{}".to_string(),
+        };
+
+        let err = handle_response_item(
+            &router,
+            session_ref,
+            turn_context_ref,
+            &mut tracker,
+            "sub-id",
+            item,
+        )
+        .await
+        .expect_err("expected fatal error");
+
+        match err {
+            CodexErr::Fatal(message) => {
+                assert_eq!(message, "tool shell invoked with incompatible payload");
+            }
+            other => panic!("expected CodexErr::Fatal, got {other:?}"),
+        }
     }
 
     fn sample_rollout(

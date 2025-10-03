@@ -1,3 +1,10 @@
+use crate::client_common::tools::ResponsesApiTool;
+use crate::client_common::tools::ToolSpec;
+use crate::model_family::ModelFamily;
+use crate::tools::handlers::PLAN_TOOL;
+use crate::tools::handlers::apply_patch::ApplyPatchToolType;
+use crate::tools::handlers::apply_patch::create_apply_patch_freeform_tool;
+use crate::tools::handlers::apply_patch::create_apply_patch_json_tool;
 use crate::tools::registry::ToolCapabilities;
 use crate::tools::registry::ToolRegistryBuilder;
 use serde::Deserialize;
@@ -160,8 +167,28 @@ pub(crate) enum JsonSchema {
             rename = "additionalProperties",
             skip_serializing_if = "Option::is_none"
         )]
-        additional_properties: Option<bool>,
+        additional_properties: Option<AdditionalProperties>,
     },
+}
+
+/// Whether additional properties are allowed, and if so, any required schema
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub(crate) enum AdditionalProperties {
+    Boolean(bool),
+    Schema(Box<JsonSchema>),
+}
+
+impl From<bool> for AdditionalProperties {
+    fn from(b: bool) -> Self {
+        Self::Boolean(b)
+    }
+}
+
+impl From<JsonSchema> for AdditionalProperties {
+    fn from(s: JsonSchema) -> Self {
+        Self::Schema(Box::new(s))
+    }
 }
 
 fn create_unified_exec_tool() -> ToolSpec {
@@ -206,7 +233,7 @@ fn create_unified_exec_tool() -> ToolSpec {
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["input".to_string()]),
-            additional_properties: Some(false),
+            additional_properties: Some(false.into()),
         },
     })
 }
@@ -253,7 +280,7 @@ fn create_shell_tool() -> ToolSpec {
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["command".to_string()]),
-            additional_properties: Some(false),
+            additional_properties: Some(false.into()),
         },
     })
 }
@@ -277,7 +304,7 @@ fn create_view_image_tool() -> ToolSpec {
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["path".to_string()]),
-            additional_properties: Some(false),
+            additional_properties: Some(false.into()),
         },
     })
 }
@@ -314,7 +341,7 @@ fn create_read_file_tool() -> ToolSpec {
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["file_path".to_string()]),
-            additional_properties: Some(false),
+            additional_properties: Some(false.into()),
         },
     })
 }
@@ -516,11 +543,11 @@ fn sanitize_json_schema(value: &mut JsonValue) {
     }
 }
 
-/// Builds the tool specs along with the registry builder containing matching handlers.
+/// Builds the tool registry builder while collecting tool specs for later serialization.
 pub(crate) fn build_specs(
     config: &ToolsConfig,
     mcp_tools: Option<HashMap<String, mcp_types::Tool>>,
-) -> (Vec<ToolSpec>, ToolRegistryBuilder) {
+) -> ToolRegistryBuilder {
     use crate::exec_command::EXEC_COMMAND_TOOL_NAME;
     use crate::exec_command::WRITE_STDIN_TOOL_NAME;
     use crate::exec_command::create_exec_command_tool_for_responses_api;
@@ -548,21 +575,21 @@ pub(crate) fn build_specs(
     let mcp_handler = Arc::new(McpHandler);
 
     if config.experimental_unified_exec_tool {
-        specs.push(create_unified_exec_tool());
+        builder.push_spec(create_unified_exec_tool());
         builder.register_handler("unified_exec", unified_exec_handler);
     } else {
         match &config.shell_type {
             ConfigShellToolType::Default => {
-                specs.push(create_shell_tool());
+                builder.push_spec(create_shell_tool());
             }
             ConfigShellToolType::Local => {
-                specs.push(ToolSpec::LocalShell {});
+                builder.push_spec(ToolSpec::LocalShell {});
             }
             ConfigShellToolType::Streamable => {
-                specs.push(ToolSpec::Function(
+                builder.push_spec(ToolSpec::Function(
                     create_exec_command_tool_for_responses_api(),
                 ));
-                specs.push(ToolSpec::Function(
+                builder.push_spec(ToolSpec::Function(
                     create_write_stdin_tool_for_responses_api(),
                 ));
                 builder.register_handler(EXEC_COMMAND_TOOL_NAME, exec_stream_handler.clone());
@@ -577,31 +604,31 @@ pub(crate) fn build_specs(
     builder.register_handler("local_shell", shell_handler);
 
     if config.plan_tool {
-        specs.push(PLAN_TOOL.clone());
+        builder.push_spec(PLAN_TOOL.clone());
         builder.register_handler("update_plan", plan_handler);
     }
 
     if let Some(apply_patch_tool_type) = &config.apply_patch_tool_type {
         match apply_patch_tool_type {
             ApplyPatchToolType::Freeform => {
-                specs.push(create_apply_patch_freeform_tool());
+                builder.push_spec(create_apply_patch_freeform_tool());
             }
             ApplyPatchToolType::Function => {
-                specs.push(create_apply_patch_json_tool());
+                builder.push_spec(create_apply_patch_json_tool());
             }
         }
         builder.register_handler("apply_patch", apply_patch_handler);
     }
 
-    specs.push(create_read_file_tool());
+    builder.push_spec(create_read_file_tool());
     builder.register_read_only_handler("read_file", read_file_handler);
 
     if config.web_search_request {
-        specs.push(ToolSpec::WebSearch {});
+        builder.push_spec(ToolSpec::WebSearch {});
     }
 
     if config.include_view_image_tool {
-        specs.push(create_view_image_tool());
+        builder.push_spec(create_view_image_tool());
         builder.register_read_only_handler("view_image", view_image_handler);
     }
 
@@ -622,8 +649,8 @@ pub(crate) fn build_specs(
             };
             match mcp_tool_to_openai_tool(name.clone(), tool.clone()) {
                 Ok(converted_tool) => {
-                    specs.push(ToolSpec::Function(converted_tool));
-                    builder.register_with_capabilities(name, mcp_handler.clone(), capabilities);
+                    builder.push_spec(ToolSpec::Function(converted_tool));
+                    builder.register_with_capabilities(name, mcp_handler.clone());
                 }
                 Err(e) => {
                     tracing::error!("Failed to convert {name:?} MCP tool to OpenAI tool: {e:?}");
@@ -632,11 +659,12 @@ pub(crate) fn build_specs(
         }
     }
 
-    (specs, builder)
+    builder
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::client_common::tools::FreeformTool;
     use crate::model_family::find_family_for_model;
     use mcp_types::ToolInputSchema;
     use pretty_assertions::assert_eq;
@@ -681,7 +709,7 @@ mod tests {
             experimental_unified_exec_tool: true,
             enable_parallel_read_only: false,
         });
-        let tools = build_specs(&config, Some(HashMap::new())).0;
+        let (tools, _) = build_specs(&config, Some(HashMap::new())).build();
 
         assert_eq_tool_names(
             &tools,
@@ -708,7 +736,7 @@ mod tests {
             experimental_unified_exec_tool: true,
             enable_parallel_read_only: false,
         });
-        let tools = build_specs(&config, Some(HashMap::new())).0;
+        let (tools, _) = build_specs(&config, Some(HashMap::new())).build();
 
         assert_eq_tool_names(
             &tools,
@@ -735,7 +763,7 @@ mod tests {
             experimental_unified_exec_tool: true,
             enable_parallel_read_only: false,
         });
-        let tools = build_specs(
+        let (tools, _) = build_specs(
             &config,
             Some(HashMap::from([(
                 "test_server/do_something_cool".to_string(),
@@ -772,7 +800,7 @@ mod tests {
                 },
             )])),
         )
-        .0;
+        .build();
 
         assert_eq_tool_names(
             &tools,
@@ -816,7 +844,7 @@ mod tests {
                                     "string_property".to_string(),
                                     "number_property".to_string(),
                                 ]),
-                                additional_properties: Some(false),
+                                additional_properties: Some(false.into()),
                             },
                         ),
                     ]),
@@ -892,7 +920,7 @@ mod tests {
             ),
         ]);
 
-        let tools = build_specs(&config, Some(tools_map)).0;
+        let (tools, _) = build_specs(&config, Some(tools_map)).build();
         // Expect unified_exec first, followed by MCP tools sorted by fully-qualified name.
         assert_eq_tool_names(
             &tools,
@@ -921,7 +949,7 @@ mod tests {
             enable_parallel_read_only: false,
         });
 
-        let tools = build_specs(
+        let (tools, _) = build_specs(
             &config,
             Some(HashMap::from([(
                 "dash/search".to_string(),
@@ -943,7 +971,7 @@ mod tests {
                 },
             )])),
         )
-        .0;
+        .build();
 
         assert_eq_tool_names(
             &tools,
@@ -990,7 +1018,7 @@ mod tests {
             enable_parallel_read_only: false,
         });
 
-        let tools = build_specs(
+        let (tools, _) = build_specs(
             &config,
             Some(HashMap::from([(
                 "dash/paginate".to_string(),
@@ -1010,7 +1038,7 @@ mod tests {
                 },
             )])),
         )
-        .0;
+        .build();
 
         assert_eq_tool_names(
             &tools,
@@ -1054,7 +1082,7 @@ mod tests {
             enable_parallel_read_only: false,
         });
 
-        let tools = build_specs(
+        let (tools, _) = build_specs(
             &config,
             Some(HashMap::from([(
                 "dash/tags".to_string(),
@@ -1074,7 +1102,7 @@ mod tests {
                 },
             )])),
         )
-        .0;
+        .build();
 
         assert_eq_tool_names(
             &tools,
@@ -1121,7 +1149,7 @@ mod tests {
             enable_parallel_read_only: false,
         });
 
-        let tools = build_specs(
+        let (tools, _) = build_specs(
             &config,
             Some(HashMap::from([(
                 "dash/value".to_string(),
@@ -1141,7 +1169,7 @@ mod tests {
                 },
             )])),
         )
-        .0;
+        .build();
 
         assert_eq_tool_names(
             &tools,
@@ -1184,5 +1212,130 @@ mod tests {
 
         let expected = "Runs a shell command and returns its output.";
         assert_eq!(description, expected);
+    }
+
+    #[test]
+    fn test_get_openai_tools_mcp_tools_with_additional_properties_schema() {
+        let model_family = find_family_for_model("o3").expect("o3 should be a valid model family");
+        let config = ToolsConfig::new(&ToolsConfigParams {
+            model_family: &model_family,
+            include_plan_tool: false,
+            include_apply_patch_tool: false,
+            include_web_search_request: true,
+            use_streamable_shell_tool: false,
+            include_view_image_tool: true,
+            experimental_unified_exec_tool: true,
+        });
+        let (tools, _) = build_specs(
+            &config,
+            Some(HashMap::from([(
+                "test_server/do_something_cool".to_string(),
+                mcp_types::Tool {
+                    name: "do_something_cool".to_string(),
+                    input_schema: ToolInputSchema {
+                        properties: Some(serde_json::json!({
+                            "string_argument": {
+                                "type": "string",
+                            },
+                            "number_argument": {
+                                "type": "number",
+                            },
+                            "object_argument": {
+                                "type": "object",
+                                "properties": {
+                                    "string_property": { "type": "string" },
+                                    "number_property": { "type": "number" },
+                                },
+                                "required": [
+                                    "string_property",
+                                    "number_property",
+                                ],
+                                "additionalProperties": {
+                                    "type": "object",
+                                    "properties": {
+                                        "addtl_prop": { "type": "string" },
+                                    },
+                                    "required": [
+                                        "addtl_prop",
+                                    ],
+                                    "additionalProperties": false,
+                                },
+                            },
+                        })),
+                        required: None,
+                        r#type: "object".to_string(),
+                    },
+                    output_schema: None,
+                    title: None,
+                    annotations: None,
+                    description: Some("Do something cool".to_string()),
+                },
+            )])),
+        )
+        .build();
+
+        assert_eq_tool_names(
+            &tools,
+            &[
+                "unified_exec",
+                "read_file",
+                "web_search",
+                "view_image",
+                "test_server/do_something_cool",
+            ],
+        );
+
+        assert_eq!(
+            tools[4],
+            ToolSpec::Function(ResponsesApiTool {
+                name: "test_server/do_something_cool".to_string(),
+                parameters: JsonSchema::Object {
+                    properties: BTreeMap::from([
+                        (
+                            "string_argument".to_string(),
+                            JsonSchema::String { description: None }
+                        ),
+                        (
+                            "number_argument".to_string(),
+                            JsonSchema::Number { description: None }
+                        ),
+                        (
+                            "object_argument".to_string(),
+                            JsonSchema::Object {
+                                properties: BTreeMap::from([
+                                    (
+                                        "string_property".to_string(),
+                                        JsonSchema::String { description: None }
+                                    ),
+                                    (
+                                        "number_property".to_string(),
+                                        JsonSchema::Number { description: None }
+                                    ),
+                                ]),
+                                required: Some(vec![
+                                    "string_property".to_string(),
+                                    "number_property".to_string(),
+                                ]),
+                                additional_properties: Some(
+                                    JsonSchema::Object {
+                                        properties: BTreeMap::from([(
+                                            "addtl_prop".to_string(),
+                                            JsonSchema::String { description: None }
+                                        ),]),
+                                        required: Some(vec!["addtl_prop".to_string(),]),
+                                        additional_properties: Some(false.into()),
+                                    }
+                                    .into()
+                                ),
+                            },
+                        ),
+                    ]),
+                    required: None,
+                    additional_properties: None,
+                },
+                description: "Do something cool".to_string(),
+                strict: false,
+            })
+        );
     }
 }

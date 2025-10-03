@@ -28,7 +28,7 @@ use codex_apply_patch::maybe_parse_apply_patch_verified;
 use codex_protocol::protocol::AskForApproval;
 use codex_utils_string::take_bytes_at_char_boundary;
 use codex_utils_string::take_last_bytes_at_char_boundary;
-pub use router::Router;
+pub use router::ToolRouter;
 use serde::Serialize;
 use tracing::trace;
 
@@ -45,6 +45,7 @@ pub(crate) const TELEMETRY_PREVIEW_MAX_LINES: usize = 64; // lines
 pub(crate) const TELEMETRY_PREVIEW_TRUNCATION_NOTICE: &str =
     "[... telemetry preview truncated ...]";
 
+// TODO(jif) break this down
 pub(crate) async fn handle_container_exec_with_params(
     tool_name: &str,
     params: ExecParams,
@@ -132,7 +133,7 @@ pub(crate) async fn handle_container_exec_with_params(
         Some(StdoutStream {
             sub_id: sub_id.clone(),
             call_id: call_id.clone(),
-            tx_event: sess.tx_event.clone(),
+            tx_event: sess.get_tx_event(),
         }),
         turn_context.shell_environment_policy.use_profile,
     );

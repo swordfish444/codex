@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use codex_protocol::models::ResponseInputItem;
 use tracing::warn;
 
+use crate::client_common::tools::ToolSpec;
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
@@ -58,10 +59,18 @@ pub trait ToolHandler: Send + Sync {
 
 #[derive(Clone)]
 pub struct ToolRegistry {
-    handlers: HashMap<String, ToolEntry>,
+    handlers: HashMap<String, Arc<dyn ToolHandler>>,
 }
 
 impl ToolRegistry {
+    pub fn new(handlers: HashMap<String, Arc<dyn ToolHandler>>) -> Self {
+        Self { handlers }
+    }
+
+    pub fn handler(&self, name: &str) -> Option<Arc<dyn ToolHandler>> {
+        self.handlers.get(name).map(Arc::clone)
+    }
+
     pub fn capabilities(&self, name: &str) -> Option<ToolCapabilities> {
         self.handlers.get(name).map(|entry| entry.capabilities)
     }
@@ -90,8 +99,8 @@ impl ToolRegistry {
         let payload_for_response = invocation.payload.clone();
         let log_payload = payload_for_response.log_payload();
 
-        let entry = match self.handlers.get(tool_name.as_str()) {
-            Some(entry) => entry,
+        let handler = match self.handler(tool_name.as_ref()) {
+            Some(handler) => handler,
             None => {
                 let message =
                     unsupported_tool_call_message(&invocation.payload, tool_name.as_ref());
@@ -119,7 +128,7 @@ impl ToolRegistry {
                 false,
                 &message,
             );
-            return Err(FunctionCallError::RespondToModel(message));
+            return Err(FunctionCallError::Fatal(message));
         }
 
         let output_cell = tokio::sync::Mutex::new(None);
@@ -153,7 +162,7 @@ impl ToolRegistry {
             Ok(_) => {
                 let mut guard = output_cell.lock().await;
                 let output = guard.take().ok_or_else(|| {
-                    FunctionCallError::RespondToModel("tool produced no output".to_string())
+                    FunctionCallError::Fatal("tool produced no output".to_string())
                 })?;
                 Ok(output.into_response(&call_id_owned, &payload_for_response))
             }
@@ -163,14 +172,20 @@ impl ToolRegistry {
 }
 
 pub struct ToolRegistryBuilder {
-    handlers: HashMap<String, ToolEntry>,
+    handlers: HashMap<String, Arc<dyn ToolHandler>>,
+    specs: Vec<ToolSpec>,
 }
 
 impl ToolRegistryBuilder {
     pub fn new() -> Self {
         Self {
             handlers: HashMap::new(),
+            specs: Vec::new(),
         }
+    }
+
+    pub fn push_spec(&mut self, spec: ToolSpec) {
+        self.specs.push(spec);
     }
 
     pub fn register_handler(&mut self, name: impl Into<String>, handler: Arc<dyn ToolHandler>) {
@@ -194,13 +209,7 @@ impl ToolRegistryBuilder {
         let name = name.into();
         if self
             .handlers
-            .insert(
-                name.clone(),
-                ToolEntry {
-                    handler: handler.clone(),
-                    capabilities,
-                },
-            )
+            .insert(name.clone(), handler.clone())
             .is_some()
         {
             warn!("overwriting handler for tool {name}");
@@ -225,10 +234,9 @@ impl ToolRegistryBuilder {
     //     }
     // }
 
-    pub fn build(self) -> ToolRegistry {
-        ToolRegistry {
-            handlers: self.handlers,
-        }
+    pub fn build(self) -> (Vec<ToolSpec>, ToolRegistry) {
+        let registry = ToolRegistry::new(self.handlers);
+        (self.specs, registry)
     }
 }
 
