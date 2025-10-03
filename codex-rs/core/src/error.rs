@@ -83,7 +83,7 @@ pub enum CodexErr {
     UsageLimitReached(UsageLimitReachedError),
 
     #[error(
-        "To use Codex with your ChatGPT plan, upgrade to Plus: https://openai.com/chatgpt/pricing."
+        "To use Codex with your ChatGPT plan, [upgrade to Plus](https://openai.com/chatgpt/pricing)."
     )]
     UsageNotIncluded,
 
@@ -189,7 +189,7 @@ impl std::fmt::Display for UsageLimitReachedError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let message = match self.plan_type.as_ref() {
             Some(PlanType::Known(KnownPlan::Plus)) => format!(
-                "You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing){}",
+                "You've hit your usage limit. [Upgrade to Pro](https://openai.com/chatgpt/pricing){}",
                 retry_suffix_after_or(self.resets_in_seconds)
             ),
             Some(PlanType::Known(KnownPlan::Team)) | Some(PlanType::Known(KnownPlan::Business)) => {
@@ -199,7 +199,7 @@ impl std::fmt::Display for UsageLimitReachedError {
                 )
             }
             Some(PlanType::Known(KnownPlan::Free)) => {
-                "You've hit your usage limit. Upgrade to Plus to continue using Codex (https://openai.com/chatgpt/pricing)."
+                "You've hit your usage limit. [Upgrade to Plus](https://openai.com/chatgpt/pricing) to continue using Codex."
                     .to_string()
             }
             Some(PlanType::Known(KnownPlan::Pro))
@@ -336,7 +336,7 @@ mod tests {
         };
         assert_eq!(
             err.to_string(),
-            "You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again later."
+            "You've hit your usage limit. [Upgrade to Pro](https://openai.com/chatgpt/pricing) or try again later."
         );
     }
 
@@ -349,7 +349,7 @@ mod tests {
         };
         assert_eq!(
             err.to_string(),
-            "You've hit your usage limit. Upgrade to Plus to continue using Codex (https://openai.com/chatgpt/pricing)."
+            "You've hit your usage limit. [Upgrade to Plus](https://openai.com/chatgpt/pricing) to continue using Codex."
         );
     }
 
@@ -427,7 +427,7 @@ mod tests {
         };
         assert_eq!(
             err.to_string(),
-            "You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again in 3 hours 32 minutes."
+            "You've hit your usage limit. [Upgrade to Pro](https://openai.com/chatgpt/pricing) or try again in 3 hours 32 minutes."
         );
     }
 
