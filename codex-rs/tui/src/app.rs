@@ -431,7 +431,7 @@ impl App {
 
     fn handle_apply_approval_preset(&mut self, preset: ApprovalPreset) -> Result<()> {
         let approval = preset.approval;
-        let sandbox = preset.sandbox.clone();
+        let sandbox = preset.sandbox;
 
         match sandbox.clone() {
             SandboxPolicy::DangerFullAccess => match self.config.admin.decision_for_danger() {
@@ -543,14 +543,13 @@ impl App {
         let pending_widget = self.chat_widget.take_pending_danger();
         let _ = self.chat_widget.config_mut().admin.take_pending_danger();
 
-        if let Some(pending) = pending_config.or(pending_widget) {
-            if let Some(audit) = self.config.admin.audit.as_ref() {
+        if let Some(pending) = pending_config.or(pending_widget)
+            && let Some(audit) = self.config.admin.audit.as_ref() {
                 log_admin_event(
                     audit,
                     build_danger_audit_payload(&pending, DangerAuditAction::Cancelled, None),
                 );
             }
-        }
 
         let approval_label = self.config.approval_policy.to_string();
         let sandbox_label = Self::sandbox_policy_label(&self.config.sandbox_policy);

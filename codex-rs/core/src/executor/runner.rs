@@ -229,8 +229,8 @@ impl Executor {
         config: &ExecutorConfig,
         stdout_stream: Option<StdoutStream>,
     ) -> Result<ExecToolCallOutput, CodexErr> {
-        if let Some(admin_audit) = config.admin_audit.as_ref() {
-            if admin_audit.should_log(AdminAuditEventKind::Command) {
+        if let Some(admin_audit) = config.admin_audit.as_ref()
+            && admin_audit.should_log(AdminAuditEventKind::Command) {
                 let payload = build_command_audit_payload(
                     &params,
                     sandbox,
@@ -239,7 +239,6 @@ impl Executor {
                 );
                 log_admin_event(admin_audit, payload);
             }
-        }
         process_exec_tool_call(
             params,
             sandbox,
