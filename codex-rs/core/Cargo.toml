@@ -32,6 +32,7 @@ dunce = { workspace = true }
 env-flags = { workspace = true }
 eventsource-stream = { workspace = true }
 futures = { workspace = true }
+gethostname = "0.4"
 indexmap = { workspace = true }
 libc = { workspace = true }
 mcp-types = { workspace = true }

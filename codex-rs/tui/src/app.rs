@@ -547,7 +547,7 @@ impl App {
             if let Some(audit) = self.config.admin.audit.as_ref() {
                 log_admin_event(
                     audit,
-                    build_danger_audit_payload(&pending, DangerAuditAction::Denied, None),
+                    build_danger_audit_payload(&pending, DangerAuditAction::Cancelled, None),
                 );
             }
         }

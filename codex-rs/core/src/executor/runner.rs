@@ -9,8 +9,8 @@ use super::cache::ApprovalCache;
 use crate::admin_controls::AdminAuditConfig;
 use crate::admin_controls::build_command_audit_payload;
 use crate::admin_controls::log_admin_event;
-use crate::config_types::AdminAuditEventKind;
 use crate::codex::Session;
+use crate::config_types::AdminAuditEventKind;
 use crate::error::CodexErr;
 use crate::error::SandboxErr;
 use crate::error::get_error_message_ui;
@@ -231,7 +231,12 @@ impl Executor {
     ) -> Result<ExecToolCallOutput, CodexErr> {
         if let Some(admin_audit) = config.admin_audit.as_ref() {
             if admin_audit.should_log(AdminAuditEventKind::Command) {
-                let payload = build_command_audit_payload(&params, sandbox, &config.sandbox_policy);
+                let payload = build_command_audit_payload(
+                    &params,
+                    sandbox,
+                    &config.sandbox_policy,
+                    &config.sandbox_cwd,
+                );
                 log_admin_event(admin_audit, payload);
             }
         }

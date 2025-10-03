@@ -7,7 +7,10 @@ use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPolicy;
 use chrono::DateTime;
 use chrono::Utc;
+use gethostname::gethostname;
 use serde::Serialize;
+use serde::ser::SerializeMap;
+use serde::ser::Serializer;
 use std::collections::HashSet;
 use std::fs;
 use std::fs::OpenOptions;
@@ -71,27 +74,34 @@ pub enum DangerDecision {
 pub enum DangerAuditAction {
     Requested,
     Approved,
+    Cancelled,
     Denied,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Clone)]
 pub enum AdminAuditPayload {
-    Danger {
-        action: DangerAuditAction,
-        justification: Option<String>,
-        requested_by: DangerRequestSource,
-        sandbox: String,
-        approval_policy: AskForApproval,
-    },
-    Command {
-        command: Vec<String>,
-        cwd: String,
-        sandbox: String,
-        sandbox_policy: String,
-        escalated: bool,
-        justification: Option<String>,
-    },
+    Danger(DangerAuditDetails),
+    Command(CommandAuditDetails),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DangerAuditDetails {
+    pub action: DangerAuditAction,
+    pub justification: Option<String>,
+    pub requested_by: DangerRequestSource,
+    pub sandbox: String,
+    pub approval_policy: AskForApproval,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CommandAuditDetails {
+    pub command: Vec<String>,
+    pub command_cwd: String,
+    pub cli_cwd: String,
+    pub sandbox: String,
+    pub sandbox_policy: String,
+    pub escalated: bool,
+    pub justification: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -204,9 +214,27 @@ impl AdminAuditConfig {
 impl AdminAuditPayload {
     pub fn kind(&self) -> AdminAuditEventKind {
         match self {
-            AdminAuditPayload::Danger { .. } => AdminAuditEventKind::Danger,
-            AdminAuditPayload::Command { .. } => AdminAuditEventKind::Command,
+            AdminAuditPayload::Danger(_) => AdminAuditEventKind::Danger,
+            AdminAuditPayload::Command(_) => AdminAuditEventKind::Command,
         }
+    }
+}
+
+impl Serialize for AdminAuditPayload {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(1))?;
+        match self {
+            AdminAuditPayload::Danger(details) => {
+                map.serialize_entry("audit_danger", details)?;
+            }
+            AdminAuditPayload::Command(details) => {
+                map.serialize_entry("audit_command", details)?;
+            }
+        }
+        map.end()
     }
 }
 
@@ -303,7 +331,11 @@ fn current_username() -> String {
 }
 
 fn current_hostname() -> String {
-    env_var("HOSTNAME")
+    gethostname()
+        .into_string()
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| env_var("HOSTNAME"))
         .or_else(|| env_var("COMPUTERNAME"))
         .unwrap_or_else(|| "unknown".to_string())
 }
@@ -333,27 +365,28 @@ pub fn build_danger_audit_payload(
     action: DangerAuditAction,
     justification: Option<String>,
 ) -> AdminAuditPayload {
-    AdminAuditPayload::Danger {
+    AdminAuditPayload::Danger(DangerAuditDetails {
         action,
         justification,
         requested_by: pending.source,
         sandbox: sandbox_label(&pending.requested_sandbox).to_string(),
         approval_policy: pending.requested_approval,
-    }
+    })
 }
 
 pub fn build_command_audit_payload(
     params: &ExecParams,
     sandbox_type: SandboxType,
     sandbox_policy: &SandboxPolicy,
+    cli_cwd: &Path,
 ) -> AdminAuditPayload {
-    let cwd = params.cwd.display().to_string();
-    AdminAuditPayload::Command {
+    AdminAuditPayload::Command(CommandAuditDetails {
         command: params.command.clone(),
-        cwd,
+        command_cwd: params.cwd.display().to_string(),
+        cli_cwd: cli_cwd.display().to_string(),
         sandbox: sandbox_type_label(sandbox_type).to_string(),
         sandbox_policy: sandbox_label(sandbox_policy).to_string(),
         escalated: params.with_escalated_permissions.unwrap_or(false),
         justification: params.justification.clone(),
-    }
+    })
 }

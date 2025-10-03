@@ -1043,6 +1043,7 @@ dependencies = [
  "escargot",
  "eventsource-stream",
  "futures",
+ "gethostname",
  "indexmap 2.10.0",
  "landlock",
  "libc",
