@@ -62,7 +62,7 @@ impl ToolCallRuntime {
                 self.serial_mode = true;
             }
             if self.serial_mode && !self.pending_calls.is_empty() {
-                self.resolve_pending(output).await?;
+                self.resolve_pending(output.as_mut_slice()).await?;
             }
             self.dispatch_serial(call).await.map(Some)
         }
@@ -76,7 +76,7 @@ impl ToolCallRuntime {
 
     pub(crate) async fn resolve_pending(
         &mut self,
-        output: &mut Vec<ProcessedResponseItem>,
+        output: &mut [ProcessedResponseItem],
     ) -> Result<(), CodexErr> {
         while let Some(PendingToolCall { index, handle }) = self.pending_calls.pop() {
             match handle.await {

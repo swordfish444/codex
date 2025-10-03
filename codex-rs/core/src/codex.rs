@@ -2212,7 +2212,7 @@ async fn try_run_turn(
                 sess.update_token_usage_info(sub_id, turn_context.as_ref(), token_usage.as_ref())
                     .await;
 
-                tool_runtime.resolve_pending(&mut output).await?;
+                tool_runtime.resolve_pending(output.as_mut_slice()).await?;
 
                 let unified_diff = {
                     let mut tracker = turn_diff_tracker.lock().await;

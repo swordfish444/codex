@@ -41,11 +41,11 @@ impl ToolRouter {
         let parallel_safe_tools = specs
             .iter()
             .filter(|config| config.supports_parallel_tool_calls)
-            .filter_map(|config| match &config.spec {
-                ToolSpec::Function(tool) => Some(tool.name.clone()),
-                ToolSpec::Freeform(tool) => Some(tool.name.clone()),
-                ToolSpec::LocalShell {} => Some("local_shell".to_string()),
-                ToolSpec::WebSearch {} => Some("web_search".to_string()),
+            .map(|config| match &config.spec {
+                ToolSpec::Function(tool) => tool.name.clone(),
+                ToolSpec::Freeform(tool) => tool.name.clone(),
+                ToolSpec::LocalShell {} => "local_shell".to_string(),
+                ToolSpec::WebSearch {} => "web_search".to_string(),
             })
             .collect();
 

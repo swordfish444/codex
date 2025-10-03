@@ -7,6 +7,7 @@ use serde::Deserialize;
 use tokio::fs::File;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
+use tokio::time::sleep;
 
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
@@ -18,6 +19,11 @@ use crate::tools::registry::ToolKind;
 pub struct ReadFileHandler;
 
 const MAX_LINE_LENGTH: usize = 500;
+
+#[path = "read_file_test_support.rs"]
+mod test_support;
+
+use test_support::test_delay_for_path;
 
 fn default_offset() -> usize {
     1
@@ -83,6 +89,10 @@ impl ToolHandler for ReadFileHandler {
             return Err(FunctionCallError::RespondToModel(
                 "file_path must be an absolute path".to_string(),
             ));
+        }
+
+        if let Some(delay) = test_delay_for_path(&path) {
+            sleep(delay).await;
         }
 
         let collected = read_file_slice(&path, offset, limit).await?;
