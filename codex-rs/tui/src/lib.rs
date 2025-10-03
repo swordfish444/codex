@@ -4,6 +4,8 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 #![deny(clippy::disallowed_methods)]
 use app::App;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use codex_core::AuthManager;
 use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_core::CodexAuth;
@@ -393,7 +395,21 @@ async fn run_ratatui_app(
         }
     }
 
-    let Cli { prompt, images, .. } = cli;
+    let Cli {
+        prompt,
+        base64: prompt_is_base64,
+        images,
+        ..
+    } = cli;
+
+    let prompt = if prompt_is_base64 {
+        match prompt {
+            Some(value) => Some(decode_base64_prompt(&value)?),
+            None => None,
+        }
+    } else {
+        prompt
+    };
 
     let app_result = App::run(
         &mut tui,
@@ -411,6 +427,25 @@ async fn run_ratatui_app(
     session_log::log_session_end();
     // ignore error when collecting usage – report underlying error instead
     app_result
+}
+
+fn decode_base64_prompt(encoded: &str) -> std::io::Result<String> {
+    let sanitized: String = encoded
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect();
+    let decoded = STANDARD.decode(sanitized.as_bytes()).map_err(|err| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Failed to decode base64 prompt: {err}"),
+        )
+    })?;
+    String::from_utf8(decoded).map_err(|err| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Base64 prompt was not valid UTF-8: {err}"),
+        )
+    })
 }
 
 #[expect(
@@ -531,6 +566,17 @@ mod tests {
     use super::*;
     use clap::Parser;
     use std::sync::Once;
+
+    #[test]
+    fn decode_base64_prompt_success() {
+        let encoded = "SGVsbG8gV09STEQh";
+        assert_eq!(decode_base64_prompt(encoded).unwrap(), "Hello WORLD!");
+    }
+
+    #[test]
+    fn decode_base64_prompt_failure() {
+        assert!(decode_base64_prompt("not-base64").is_err());
+    }
 
     fn enable_debug_high_env() {
         static DEBUG_HIGH_ONCE: Once = Once::new();

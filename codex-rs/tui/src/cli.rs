@@ -9,6 +9,10 @@ pub struct Cli {
     /// Optional user prompt to start the session.
     pub prompt: Option<String>,
 
+    /// Treat the prompt argument as base64-encoded text and decode it before use.
+    #[arg(long = "base64", default_value_t = false)]
+    pub base64: bool,
+
     /// Optional image(s) to attach to the initial prompt.
     #[arg(long = "image", short = 'i', value_name = "FILE", value_delimiter = ',', num_args = 1..)]
     pub images: Vec<PathBuf>,

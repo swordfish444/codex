@@ -16,6 +16,7 @@ workspace = true
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 chrono = "0.4.40"
 clap = { version = "4", features = ["derive"] }
 codex-arg0 = { path = "../arg0" }

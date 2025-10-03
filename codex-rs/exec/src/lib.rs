@@ -3,6 +3,8 @@ mod event_processor;
 mod event_processor_with_human_output;
 mod event_processor_with_json_output;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use std::io::IsTerminal;
 use std::io::Read;
 use std::path::PathBuf;
@@ -47,6 +49,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         last_message_file,
         json: json_mode,
         sandbox_mode: sandbox_mode_cli_arg,
+        base64: prompt_is_base64,
         prompt,
         config_overrides,
     } = cli;
@@ -84,6 +87,18 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
             }
             buffer
         }
+    };
+
+    let prompt = if prompt_is_base64 {
+        match decode_base64_prompt(&prompt) {
+            Ok(decoded) => decoded,
+            Err(err) => {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        prompt
     };
 
     let (stdout_with_ansi, stderr_with_ansi) = match color {
@@ -277,4 +292,31 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     }
 
     Ok(())
+}
+
+fn decode_base64_prompt(encoded: &str) -> Result<String, String> {
+    let sanitized: String = encoded
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect();
+    let decoded = STANDARD
+        .decode(sanitized.as_bytes())
+        .map_err(|err| format!("Failed to decode base64 prompt: {err}"))?;
+    String::from_utf8(decoded).map_err(|err| format!("Base64 prompt was not valid UTF-8: {err}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_base64_prompt;
+
+    #[test]
+    fn decode_base64_prompt_success() {
+        let encoded = "U29tZSBiYXNlNjQgdGV4dA==";
+        assert_eq!(decode_base64_prompt(encoded).unwrap(), "Some base64 text");
+    }
+
+    #[test]
+    fn decode_base64_prompt_failure() {
+        assert!(decode_base64_prompt("not-base64").is_err());
+    }
 }
