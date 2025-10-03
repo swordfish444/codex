@@ -3,12 +3,6 @@ use crate::client_common::tools::ToolSpec;
 use crate::codex::Session;
 use crate::function_tool::FunctionCallError;
 use crate::openai_tools::JsonSchema;
-<<<<<<<< HEAD:codex-rs/core/src/plan_tool.rs
-use crate::openai_tools::ResponsesApiTool;
-use crate::openai_tools::ToolSpec;
-use crate::protocol::Event;
-use crate::protocol::EventMsg;
-========
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -20,17 +14,10 @@ use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
->>>>>>>> origin/main:codex-rs/core/src/tools/handlers/plan.rs
 
 pub struct PlanHandler;
 
-<<<<<<<< HEAD:codex-rs/core/src/plan_tool.rs
-// Types for the TODO tool arguments matching codex-vscode/todo-mcp/src/main.rs
-
-pub(crate) static PLAN_TOOL: LazyLock<ToolSpec> = LazyLock::new(|| {
-========
 pub static PLAN_TOOL: LazyLock<ToolSpec> = LazyLock::new(|| {
->>>>>>>> origin/main:codex-rs/core/src/tools/handlers/plan.rs
     let mut plan_item_props = BTreeMap::new();
     plan_item_props.insert("step".to_string(), JsonSchema::String { description: None });
     plan_item_props.insert(

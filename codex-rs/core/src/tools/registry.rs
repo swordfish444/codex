@@ -59,16 +59,12 @@ pub trait ToolHandler: Send + Sync {
 
 #[derive(Clone)]
 pub struct ToolRegistry {
-    handlers: HashMap<String, Arc<dyn ToolHandler>>,
+    handlers: HashMap<String, ToolEntry>,
 }
 
 impl ToolRegistry {
-    pub fn new(handlers: HashMap<String, Arc<dyn ToolHandler>>) -> Self {
+    fn new(handlers: HashMap<String, ToolEntry>) -> Self {
         Self { handlers }
-    }
-
-    pub fn handler(&self, name: &str) -> Option<Arc<dyn ToolHandler>> {
-        self.handlers.get(name).map(Arc::clone)
     }
 
     pub fn capabilities(&self, name: &str) -> Option<ToolCapabilities> {
@@ -99,8 +95,8 @@ impl ToolRegistry {
         let payload_for_response = invocation.payload.clone();
         let log_payload = payload_for_response.log_payload();
 
-        let handler = match self.handler(tool_name.as_ref()) {
-            Some(handler) => handler,
+        let entry = match self.handlers.get(tool_name.as_str()) {
+            Some(entry) => entry,
             None => {
                 let message =
                     unsupported_tool_call_message(&invocation.payload, tool_name.as_ref());
@@ -162,7 +158,7 @@ impl ToolRegistry {
             Ok(_) => {
                 let mut guard = output_cell.lock().await;
                 let output = guard.take().ok_or_else(|| {
-                    FunctionCallError::Fatal("tool produced no output".to_string())
+                    FunctionCallError::RespondToModel("tool produced no output".to_string())
                 })?;
                 Ok(output.into_response(&call_id_owned, &payload_for_response))
             }
@@ -172,7 +168,7 @@ impl ToolRegistry {
 }
 
 pub struct ToolRegistryBuilder {
-    handlers: HashMap<String, Arc<dyn ToolHandler>>,
+    handlers: HashMap<String, ToolEntry>,
     specs: Vec<ToolSpec>,
 }
 
@@ -209,7 +205,13 @@ impl ToolRegistryBuilder {
         let name = name.into();
         if self
             .handlers
-            .insert(name.clone(), handler.clone())
+            .insert(
+                name.clone(),
+                ToolEntry {
+                    handler: handler.clone(),
+                    capabilities,
+                },
+            )
             .is_some()
         {
             warn!("overwriting handler for tool {name}");

@@ -254,9 +254,10 @@ async fn read_only_tools_execute_before_apply_patch() -> anyhow::Result<()> {
         if let Some(items) = body.get("input").and_then(|v| v.as_array()) {
             for item in items {
                 if item.get("type").and_then(|v| v.as_str()) == Some("function_call_output")
-                    && let Some(call_id) = item.get("call_id").and_then(|v| v.as_str()) {
-                        seen_outputs.insert(call_id.to_string());
-                    }
+                    && let Some(call_id) = item.get("call_id").and_then(|v| v.as_str())
+                {
+                    seen_outputs.insert(call_id.to_string());
+                }
             }
         }
     }

@@ -11,12 +11,13 @@ use tracing::warn;
 
 use crate::codex::Session;
 use crate::codex::TurnContext;
+use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
 use crate::event_mapping::map_response_item_to_event_messages;
 use crate::function_tool::FunctionCallError;
 use crate::protocol::Event;
 use crate::tools::context::ToolPayload;
-use crate::tools::router::Router;
+use crate::tools::router::ToolRouter;
 use crate::tools::router::ToolCall;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_protocol::models::FunctionCallOutputPayload;
@@ -30,17 +31,17 @@ pub(crate) struct ProcessedResponseItem {
 }
 
 pub(crate) struct ToolCallExecutor {
-    router: Arc<Router>,
+    router: Arc<ToolRouter>,
     session: Arc<Session>,
     turn_context: Arc<TurnContext>,
     allow_parallel_read_only: bool,
-    read_only_tasks: JoinSet<(usize, ResponseInputItem)>,
+    read_only_tasks: JoinSet<(usize, Result<ResponseInputItem, FunctionCallError>)>,
     processed_items: Vec<ProcessedResponseItem>,
 }
 
 impl ToolCallExecutor {
     pub(crate) fn new(
-        router: Arc<Router>,
+        router: Arc<ToolRouter>,
         session: Arc<Session>,
         turn_context: Arc<TurnContext>,
     ) -> Self {
@@ -57,10 +58,10 @@ impl ToolCallExecutor {
         }
     }
 
-    pub(crate) fn drain_ready(&mut self) {
+    pub(crate) fn drain_ready(&mut self) -> CodexResult<()> {
         while let Some(res) = self.read_only_tasks.try_join_next() {
             match res {
-                Ok((idx, response)) => self.assign_result(idx, response),
+                Ok((idx, response)) => self.assign_result(idx, response)?,
                 Err(join_err) => {
                     warn!(
                         ?join_err,
@@ -69,12 +70,13 @@ impl ToolCallExecutor {
                 }
             }
         }
+        Ok(())
     }
 
-    pub(crate) async fn flush(&mut self) {
+    pub(crate) async fn flush(&mut self) -> CodexResult<()> {
         while let Some(res) = self.read_only_tasks.join_next().await {
             match res {
-                Ok((idx, response)) => self.assign_result(idx, response),
+                Ok((idx, response)) => self.assign_result(idx, response)?,
                 Err(join_err) => {
                     warn!(
                         ?join_err,
@@ -83,6 +85,7 @@ impl ToolCallExecutor {
                 }
             }
         }
+        Ok(())
     }
 
     pub(crate) async fn handle_output_item(
@@ -108,7 +111,7 @@ impl ToolCallExecutor {
                 if self.allow_parallel_read_only && call.capabilities.read_only {
                     self.schedule_parallel_task(idx, call, sub_id);
                 } else {
-                    self.flush().await;
+                    self.flush().await?;
                     let response = self
                         .router
                         .dispatch_tool_call(
@@ -118,7 +121,8 @@ impl ToolCallExecutor {
                             sub_id,
                             call,
                         )
-                        .await;
+                        .await
+                        .map_err(Self::map_dispatch_error)?;
                     if let Some(slot) = self.processed_items.get_mut(idx) {
                         slot.response = Some(response);
                     }
@@ -140,7 +144,7 @@ impl ToolCallExecutor {
                     error!(msg);
                 }
 
-                self.flush().await;
+                self.flush().await?;
                 self.processed_items.push(ProcessedResponseItem {
                     item,
                     response: Some(ResponseInputItem::FunctionCallOutput {
@@ -152,22 +156,56 @@ impl ToolCallExecutor {
                     }),
                 });
             }
+            Err(FunctionCallError::MissingLocalShellCallId) => {
+                let msg = "LocalShellCall without call_id or id";
+                self.turn_context
+                    .client
+                    .get_otel_event_manager()
+                    .log_tool_failed("local_shell", msg);
+                error!(msg);
+
+                self.flush().await?;
+                self.processed_items.push(ProcessedResponseItem {
+                    item,
+                    response: Some(ResponseInputItem::FunctionCallOutput {
+                        call_id: String::new(),
+                        output: FunctionCallOutputPayload {
+                            content: msg.to_string(),
+                            success: None,
+                        },
+                    }),
+                });
+            }
+            Err(err) => {
+                self.flush().await?;
+                return Err(Self::map_dispatch_error(err));
+            }
         }
 
         Ok(())
     }
 
-    fn assign_result(&mut self, idx: usize, response: ResponseInputItem) {
-        if let Some(slot) = self.processed_items.get_mut(idx) {
-            slot.response = Some(response);
-        } else {
-            warn!(idx, "parallel tool completion missing output slot");
+    fn assign_result(
+        &mut self,
+        idx: usize,
+        response: Result<ResponseInputItem, FunctionCallError>,
+    ) -> CodexResult<()> {
+        match response {
+            Ok(response) => {
+                if let Some(slot) = self.processed_items.get_mut(idx) {
+                    slot.response = Some(response);
+                } else {
+                    warn!(idx, "parallel tool completion missing output slot");
+                }
+                Ok(())
+            }
+            Err(err) => Err(Self::map_dispatch_error(err)),
         }
     }
 
-    pub(crate) fn take_processed_items(mut self) -> Vec<ProcessedResponseItem> {
-        self.drain_ready();
-        self.processed_items
+    pub(crate) fn take_processed_items(mut self) -> CodexResult<Vec<ProcessedResponseItem>> {
+        self.drain_ready()?;
+        Ok(self.processed_items)
     }
 
     fn schedule_parallel_task(&mut self, idx: usize, call: ToolCall, sub_id: &str) {
@@ -198,7 +236,11 @@ impl ToolCallExecutor {
                 Err(panic) => {
                     let msg = Self::panic_to_message(panic);
                     let message = format!("{tool_name_for_msg} failed: {msg}");
-                    Self::fallback_response(call_id_for_fallback, payload_for_fallback, message)
+                    Ok(Self::fallback_response(
+                        call_id_for_fallback,
+                        payload_for_fallback,
+                        message,
+                    ))
                 }
             };
 
@@ -269,6 +311,13 @@ impl ToolCallExecutor {
             s.clone()
         } else {
             "panic without message".to_string()
+        }
+    }
+
+    fn map_dispatch_error(err: FunctionCallError) -> CodexErr {
+        match err {
+            FunctionCallError::Fatal(message) => CodexErr::Fatal(message),
+            _ => CodexErr::Fatal(err.to_string()),
         }
     }
 }

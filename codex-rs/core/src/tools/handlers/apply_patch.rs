@@ -19,15 +19,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde::Serialize;
 
-<<<<<<<< HEAD:codex-rs/core/src/tool_apply_patch.rs
-use crate::openai_tools::FreeformTool;
-use crate::openai_tools::FreeformToolFormat;
-use crate::openai_tools::JsonSchema;
-use crate::openai_tools::ResponsesApiTool;
-use crate::openai_tools::ToolSpec;
-========
 pub struct ApplyPatchHandler;
->>>>>>>> origin/main:codex-rs/core/src/tools/handlers/apply_patch.rs
 
 const APPLY_PATCH_LARK_GRAMMAR: &str = include_str!("tool_apply_patch.lark");
 

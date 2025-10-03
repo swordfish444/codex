@@ -14,54 +14,6 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-use crate::model_family::ModelFamily;
-use crate::plan_tool::PLAN_TOOL;
-use crate::tool_apply_patch::ApplyPatchToolType;
-use crate::tool_apply_patch::create_apply_patch_freeform_tool;
-use crate::tool_apply_patch::create_apply_patch_json_tool;
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct ResponsesApiTool {
-    pub(crate) name: String,
-    pub(crate) description: String,
-    /// TODO: Validation. When strict is set to true, the JSON schema,
-    /// `required` and `additional_properties` must be present. All fields in
-    /// `properties` must be present in `required`.
-    pub(crate) strict: bool,
-    pub(crate) parameters: JsonSchema,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct FreeformTool {
-    pub(crate) name: String,
-    pub(crate) description: String,
-    pub(crate) format: FreeformToolFormat,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct FreeformToolFormat {
-    pub(crate) r#type: String,
-    pub(crate) syntax: String,
-    pub(crate) definition: String,
-}
-
-/// When serialized as JSON, this produces a valid "Tool" in the OpenAI
-/// Responses API.
-#[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(tag = "type")]
-pub(crate) enum ToolSpec {
-    #[serde(rename = "function")]
-    Function(ResponsesApiTool),
-    #[serde(rename = "local_shell")]
-    LocalShell {},
-    // TODO: Understand why we get an error on web_search although the API docs say it's supported.
-    // https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses#:~:text=%7B%20type%3A%20%22web_search%22%20%7D%2C
-    #[serde(rename = "web_search")]
-    WebSearch {},
-    #[serde(rename = "custom")]
-    Freeform(FreeformTool),
-}
-
 #[derive(Debug, Clone)]
 pub enum ConfigShellToolType {
     Default,
@@ -562,7 +514,6 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::ViewImageHandler;
     use std::sync::Arc;
 
-    let mut specs: Vec<ToolSpec> = Vec::new();
     let mut builder = ToolRegistryBuilder::new();
 
     let shell_handler = Arc::new(ShellHandler);
@@ -647,10 +598,11 @@ pub(crate) fn build_specs(
             } else {
                 ToolCapabilities::mutating()
             };
+
             match mcp_tool_to_openai_tool(name.clone(), tool.clone()) {
                 Ok(converted_tool) => {
                     builder.push_spec(ToolSpec::Function(converted_tool));
-                    builder.register_with_capabilities(name, mcp_handler.clone());
+                    builder.register_with_capabilities(name, mcp_handler.clone(), capabilities);
                 }
                 Err(e) => {
                     tracing::error!("Failed to convert {name:?} MCP tool to OpenAI tool: {e:?}");
@@ -1225,6 +1177,7 @@ mod tests {
             use_streamable_shell_tool: false,
             include_view_image_tool: true,
             experimental_unified_exec_tool: true,
+            enable_parallel_read_only: false,
         });
         let (tools, _) = build_specs(
             &config,

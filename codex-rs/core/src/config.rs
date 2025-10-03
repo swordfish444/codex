@@ -1692,6 +1692,7 @@ model = "gpt-5-codex"
         codex_home: TempDir,
         cfg: ConfigToml,
         openai_provider: ModelProviderInfo,
+        model_provider_map: HashMap<String, ModelProviderInfo>,
     }
 
     impl PrecedenceTestFixture {
@@ -1788,6 +1789,7 @@ model_verbosity = "high"
             codex_home: codex_home_temp_dir,
             cfg,
             openai_provider,
+            model_provider_map,
         })
     }
 
@@ -1818,7 +1820,7 @@ model_verbosity = "high"
             fixture.codex_home(),
         )?;
         assert_eq!(
-            Config { // todo
+            Config {
                 model: "o3".to_string(),
                 review_model: OPENAI_DEFAULT_REVIEW_MODEL.to_string(),
                 model_family: find_family_for_model("o3").expect("known model slug"),

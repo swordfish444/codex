@@ -1,7 +1,6 @@
 use crate::client_common::tools::ToolSpec;
 use crate::error::Result;
 use crate::model_family::ModelFamily;
-use crate::openai_tools::ToolSpec;
 use crate::protocol::RateLimitSnapshot;
 use crate::protocol::TokenUsage;
 use codex_apply_patch::APPLY_PATCH_TOOL_INSTRUCTIONS;

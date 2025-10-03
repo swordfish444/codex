@@ -101,6 +101,8 @@ use crate::tasks::RegularTask;
 use crate::tasks::ReviewTask;
 use crate::tools::ToolRouter;
 use crate::tools::format_exec_output_str;
+use crate::tools::executor::ProcessedResponseItem;
+use crate::tools::executor::ToolCallExecutor;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::unified_exec::UnifiedExecSessionManager;
 use crate::user_instructions::UserInstructions;
@@ -1917,7 +1919,10 @@ async fn run_turn(
     input: Vec<ResponseItem>,
 ) -> CodexResult<TurnRunResult> {
     let mcp_tools = sess.services.mcp_connection_manager.list_all_tools();
-    let router = ToolRouter::from_config(&turn_context.tools_config, Some(mcp_tools));
+    let router = Arc::new(ToolRouter::from_config(
+        &turn_context.tools_config,
+        Some(mcp_tools),
+    ));
 
     let prompt = Prompt {
         input,
@@ -2065,7 +2070,7 @@ async fn try_run_turn(
     let mut stream = turn_context_ref.client.clone().stream(&prompt).await?;
 
     loop {
-        tool_executor.drain_ready();
+        tool_executor.drain_ready()?;
 
         let event = stream.next().await;
         let Some(event) = event else {
@@ -2109,7 +2114,7 @@ async fn try_run_turn(
                 response_id: _,
                 token_usage,
             } => {
-                tool_executor.flush().await;
+                tool_executor.flush().await?;
 
                 sess_ref
                     .update_token_usage_info(sub_id, turn_context_ref, token_usage.as_ref())
@@ -2126,7 +2131,7 @@ async fn try_run_turn(
                 }
 
                 let result = TurnRunResult {
-                    processed_items: tool_executor.take_processed_items(),
+                    processed_items: tool_executor.take_processed_items()?,
                     total_token_usage: token_usage.clone(),
                 };
 
@@ -2302,11 +2307,6 @@ mod tests {
     use crate::state::TaskKind;
     use crate::tasks::SessionTask;
     use crate::tasks::SessionTaskContext;
-    use crate::tools::MODEL_FORMAT_HEAD_LINES;
-    use crate::tools::MODEL_FORMAT_MAX_BYTES;
-    use crate::tools::MODEL_FORMAT_MAX_LINES;
-    use crate::tools::MODEL_FORMAT_TAIL_LINES;
-    use crate::tools::handle_container_exec_with_params;
     use crate::tools::MODEL_FORMAT_HEAD_LINES;
     use crate::tools::MODEL_FORMAT_MAX_BYTES;
     use crate::tools::MODEL_FORMAT_MAX_LINES;
@@ -2841,6 +2841,86 @@ mod tests {
                 assert_eq!(message, "tool shell invoked with incompatible payload");
             }
             other => panic!("expected CodexErr::Fatal, got {other:?}"),
+        }
+    }
+
+    async fn handle_response_item(
+        router: &ToolRouter,
+        sess: &Session,
+        turn_context: &TurnContext,
+        turn_diff_tracker: &mut TurnDiffTracker,
+        sub_id: &str,
+        item: ResponseItem,
+    ) -> CodexResult<Option<ResponseInputItem>> {
+        debug!(?item, "Output item");
+
+        match router.build_tool_call(sess, item.clone()) {
+            Ok(Some(call)) => {
+                let payload_preview = call.payload.log_payload().into_owned();
+                info!("ToolCall: {} {}", call.tool_name, payload_preview);
+                match router
+                    .dispatch_tool_call(sess, turn_context, turn_diff_tracker, sub_id, call)
+                    .await
+                {
+                    Ok(response) => Ok(Some(response)),
+                    Err(err) => Err(match err {
+                        FunctionCallError::Fatal(message) => CodexErr::Fatal(message),
+                        other => CodexErr::Fatal(other.to_string()),
+                    }),
+                }
+            }
+            Ok(None) => {
+                match &item {
+                    ResponseItem::Message { .. }
+                    | ResponseItem::Reasoning { .. }
+                    | ResponseItem::WebSearchCall { .. } => {
+                        let msgs = match &item {
+                            ResponseItem::Message { .. } if turn_context.is_review_mode => {
+                                trace!("suppressing assistant Message in review mode");
+                                Vec::new()
+                            }
+                            _ => map_response_item_to_event_messages(
+                                &item,
+                                sess.show_raw_agent_reasoning(),
+                            ),
+                        };
+                        for msg in msgs {
+                            let event = Event {
+                                id: sub_id.to_string(),
+                                msg,
+                            };
+                            sess.send_event(event).await;
+                        }
+                    }
+                    ResponseItem::FunctionCallOutput { .. }
+                    | ResponseItem::CustomToolCallOutput { .. } => {
+                        debug!("unexpected tool output from stream");
+                    }
+                    _ => {}
+                }
+
+                Ok(None)
+            }
+            Err(FunctionCallError::MissingLocalShellCallId) => {
+                let msg = "LocalShellCall without call_id or id";
+                turn_context
+                    .client
+                    .get_otel_event_manager()
+                    .log_tool_failed("local_shell", msg);
+                error!(msg);
+
+                Ok(Some(ResponseInputItem::FunctionCallOutput {
+                    call_id: String::new(),
+                    output: FunctionCallOutputPayload {
+                        content: msg.to_string(),
+                        success: None,
+                    },
+                }))
+            }
+            Err(err) => Err(match err {
+                FunctionCallError::Fatal(message) => CodexErr::Fatal(message),
+                other => CodexErr::Fatal(other.to_string()),
+            }),
         }
     }
 
