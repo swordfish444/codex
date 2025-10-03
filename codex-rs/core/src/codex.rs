@@ -49,6 +49,7 @@ use crate::apply_patch::CODEX_APPLY_PATCH_ARG1;
 use crate::apply_patch::InternalApplyPatchInvocation;
 use crate::apply_patch::convert_apply_patch_to_protocol;
 use crate::client::ModelClient;
+use crate::client::fetch_usage_rate_limits;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::config::Config;
@@ -397,9 +398,33 @@ impl Session {
         let default_shell_fut = shell::default_user_shell();
         let history_meta_fut = crate::message_history::history_metadata(&config);
 
+        let usage_auth = auth_manager.clone();
+        let usage_base_url = config.chatgpt_base_url.clone();
+        let rate_limits_fut =
+            async move { fetch_usage_rate_limits(usage_auth, usage_base_url).await };
+
         // Join all independent futures.
-        let (rollout_recorder, mcp_res, default_shell, (history_log_id, history_entry_count)) =
-            tokio::join!(rollout_fut, mcp_fut, default_shell_fut, history_meta_fut);
+        let (
+            rollout_recorder,
+            mcp_res,
+            default_shell,
+            (history_log_id, history_entry_count),
+            initial_rate_limits_result,
+        ) = tokio::join!(
+            rollout_fut,
+            mcp_fut,
+            default_shell_fut,
+            history_meta_fut,
+            rate_limits_fut,
+        );
+
+        let initial_rate_limits = match initial_rate_limits_result {
+            Ok(rate_limits) => rate_limits,
+            Err(err) => {
+                warn!("failed to fetch rate limit status: {err:#}");
+                None
+            }
+        };
 
         let rollout_recorder = rollout_recorder.map_err(|e| {
             error!("failed to initialize rollout recorder: {e:#}");
@@ -530,6 +555,10 @@ impl Session {
         .chain(post_session_configured_error_events.into_iter());
         for event in events {
             sess.send_event(event).await;
+        }
+
+        if let Some(snapshot) = initial_rate_limits {
+            sess.update_rate_limits(INITIAL_SUBMIT_ID, snapshot).await;
         }
 
         Ok((sess, turn_context))

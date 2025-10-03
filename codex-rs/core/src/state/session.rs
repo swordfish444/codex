@@ -66,7 +66,15 @@ impl SessionState {
         );
     }
 
-    pub(crate) fn set_rate_limits(&mut self, snapshot: RateLimitSnapshot) {
+    pub(crate) fn set_rate_limits(&mut self, mut snapshot: RateLimitSnapshot) {
+        if let Some(prev) = self.latest_rate_limits.as_ref() {
+            if snapshot.allowed.is_none() {
+                snapshot.allowed = prev.allowed;
+            }
+            if snapshot.limit_reached.is_none() {
+                snapshot.limit_reached = prev.limit_reached;
+            }
+        }
         self.latest_rate_limits = Some(snapshot);
     }
 

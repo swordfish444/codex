@@ -592,7 +592,12 @@ fn parse_rate_limit_snapshot(headers: &HeaderMap) -> Option<RateLimitSnapshot> {
         "x-codex-secondary-reset-after-seconds",
     );
 
-    Some(RateLimitSnapshot { primary, secondary })
+    Some(RateLimitSnapshot {
+        primary,
+        secondary,
+        allowed: None,
+        limit_reached: None,
+    })
 }
 
 fn parse_rate_limit_window(
@@ -632,6 +637,112 @@ fn parse_header_u64(headers: &HeaderMap, name: &str) -> Option<u64> {
 
 fn parse_header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name)?.to_str().ok()
+}
+
+#[derive(Debug, Deserialize)]
+struct UsageStatusPayload {
+    rate_limit: Option<UsageStatusDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UsageStatusDetails {
+    allowed: bool,
+    limit_reached: bool,
+    #[serde(default)]
+    primary_window: Option<UsageWindowSnapshot>,
+    #[serde(default)]
+    secondary_window: Option<UsageWindowSnapshot>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UsageWindowSnapshot {
+    used_percent: f64,
+    limit_window_seconds: u64,
+    reset_after_seconds: u64,
+}
+
+pub async fn fetch_usage_rate_limits(
+    auth_manager: Arc<AuthManager>,
+    chatgpt_base_url: String,
+) -> Result<Option<RateLimitSnapshot>> {
+    let Some(auth) = auth_manager.auth() else {
+        return Ok(None);
+    };
+
+    if auth.mode != AuthMode::ChatGPT {
+        return Ok(None);
+    }
+
+    let token = match auth.get_token().await {
+        Ok(token) => token,
+        Err(err) => {
+            warn!("failed to load ChatGPT token for usage request: {err}");
+            return Ok(None);
+        }
+    };
+
+    let account_id = auth.get_account_id();
+
+    let base = chatgpt_base_url.trim_end_matches('/');
+    let url = format!("{base}/codex/usage");
+    let client = create_client();
+
+    let mut request = client
+        .get(url)
+        .bearer_auth(token)
+        .header(reqwest::header::CONTENT_TYPE, "application/json");
+
+    if let Some(account_id) = account_id {
+        request = request.header("chatgpt-account-id", account_id);
+    }
+
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(err) => {
+            warn!("failed to request usage status: {err:#}");
+            return Ok(None);
+        }
+    };
+
+    if !response.status().is_success() {
+        debug!(status = ?response.status(), "usage status request did not succeed");
+        return Ok(None);
+    }
+
+    let payload: UsageStatusPayload = match response.json().await {
+        Ok(payload) => payload,
+        Err(err) => {
+            warn!("failed to parse usage status response: {err:#}");
+            return Ok(None);
+        }
+    };
+
+    Ok(convert_usage_payload(payload))
+}
+
+fn convert_usage_payload(payload: UsageStatusPayload) -> Option<RateLimitSnapshot> {
+    let details = payload.rate_limit?;
+
+    Some(RateLimitSnapshot {
+        primary: details.primary_window.map(convert_usage_window),
+        secondary: details.secondary_window.map(convert_usage_window),
+        allowed: Some(details.allowed),
+        limit_reached: Some(details.limit_reached),
+    })
+}
+
+fn convert_usage_window(window: UsageWindowSnapshot) -> RateLimitWindow {
+    let window_minutes = if window.limit_window_seconds == 0 {
+        None
+    } else {
+        Some(window.limit_window_seconds / 60)
+    };
+
+    RateLimitWindow {
+        used_percent: window.used_percent,
+        window_minutes,
+        resets_in_seconds: Some(window.reset_after_seconds),
+    }
 }
 
 async fn process_sse<S>(

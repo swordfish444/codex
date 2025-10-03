@@ -96,6 +96,8 @@ fn status_snapshot_includes_reasoning_details() {
             window_minutes: Some(10080),
             resets_in_seconds: Some(1_200),
         }),
+        allowed: None,
+        limit_reached: None,
     };
     let captured_at = chrono::Local
         .with_ymd_and_hms(2024, 1, 2, 3, 4, 5)
@@ -137,6 +139,8 @@ fn status_snapshot_includes_monthly_limit() {
             resets_in_seconds: Some(86_400),
         }),
         secondary: None,
+        allowed: None,
+        limit_reached: None,
     };
     let captured_at = chrono::Local
         .with_ymd_and_hms(2024, 5, 6, 7, 8, 9)
@@ -204,6 +208,8 @@ fn status_snapshot_truncates_in_narrow_terminal() {
             resets_in_seconds: Some(600),
         }),
         secondary: None,
+        allowed: None,
+        limit_reached: None,
     };
     let captured_at = chrono::Local
         .with_ymd_and_hms(2024, 1, 2, 3, 4, 5)
@@ -267,6 +273,8 @@ fn status_snapshot_shows_empty_limits_message() {
     let snapshot = RateLimitSnapshot {
         primary: None,
         secondary: None,
+        allowed: None,
+        limit_reached: None,
     };
     let captured_at = chrono::Local
         .with_ymd_and_hms(2024, 6, 7, 8, 9, 10)

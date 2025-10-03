@@ -602,6 +602,10 @@ pub struct TokenCountEvent {
 pub struct RateLimitSnapshot {
     pub primary: Option<RateLimitWindow>,
     pub secondary: Option<RateLimitWindow>,
+    #[serde(default)]
+    pub allowed: Option<bool>,
+    #[serde(default)]
+    pub limit_reached: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
