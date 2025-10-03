@@ -566,7 +566,7 @@ pub(crate) fn build_specs(
         builder.register_handler("apply_patch", apply_patch_handler);
     }
 
-    builder.push_spec(create_read_file_tool());
+    builder.push_spec_with_parallel_support(create_read_file_tool(), true);
     builder.register_handler("read_file", read_file_handler);
 
     if config.web_search_request {
@@ -574,7 +574,7 @@ pub(crate) fn build_specs(
     }
 
     if config.include_view_image_tool {
-        builder.push_spec(create_view_image_tool());
+        builder.push_spec_with_parallel_support(create_view_image_tool(), true);
         builder.register_handler("view_image", view_image_handler);
     }
 
@@ -602,20 +602,25 @@ pub(crate) fn build_specs(
 mod tests {
     use crate::client_common::tools::FreeformTool;
     use crate::model_family::find_family_for_model;
+    use crate::tools::registry::ConfiguredToolSpec;
     use mcp_types::ToolInputSchema;
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    fn assert_eq_tool_names(tools: &[ToolSpec], expected_names: &[&str]) {
+    fn tool_name(tool: &ToolSpec) -> &str {
+        match tool {
+            ToolSpec::Function(ResponsesApiTool { name, .. }) => name,
+            ToolSpec::LocalShell {} => "local_shell",
+            ToolSpec::WebSearch {} => "web_search",
+            ToolSpec::Freeform(FreeformTool { name, .. }) => name,
+        }
+    }
+
+    fn assert_eq_tool_names(tools: &[ConfiguredToolSpec], expected_names: &[&str]) {
         let tool_names = tools
             .iter()
-            .map(|tool| match tool {
-                ToolSpec::Function(ResponsesApiTool { name, .. }) => name,
-                ToolSpec::LocalShell {} => "local_shell",
-                ToolSpec::WebSearch {} => "web_search",
-                ToolSpec::Freeform(FreeformTool { name, .. }) => name,
-            })
+            .map(|tool| tool_name(&tool.spec))
             .collect::<Vec<_>>();
 
         assert_eq!(
@@ -629,6 +634,16 @@ mod tests {
                 "tool_name mismatch, {name:?}, {expected_name:?}"
             );
         }
+    }
+
+    fn find_tool<'a>(
+        tools: &'a [ConfiguredToolSpec],
+        expected_name: &str,
+    ) -> &'a ConfiguredToolSpec {
+        tools
+            .iter()
+            .find(|tool| tool_name(&tool.spec) == expected_name)
+            .unwrap_or_else(|| panic!("expected tool {expected_name}"))
     }
 
     #[test]
@@ -682,6 +697,25 @@ mod tests {
                 "view_image",
             ],
         );
+    }
+
+    #[test]
+    fn test_parallel_support_flags() {
+        let model_family = find_family_for_model("codex-mini-latest")
+            .expect("codex-mini-latest should be a valid model family");
+        let config = ToolsConfig::new(&ToolsConfigParams {
+            model_family: &model_family,
+            include_plan_tool: false,
+            include_apply_patch_tool: false,
+            include_web_search_request: false,
+            use_streamable_shell_tool: false,
+            include_view_image_tool: false,
+            experimental_unified_exec_tool: true,
+        });
+        let (tools, _) = build_specs(&config, None).build();
+
+        assert!(!find_tool(&tools, "unified_exec").supports_parallel_tool_calls);
+        assert!(find_tool(&tools, "read_file").supports_parallel_tool_calls);
     }
 
     #[test]
@@ -747,7 +781,7 @@ mod tests {
         );
 
         assert_eq!(
-            tools[4],
+            tools[4].spec,
             ToolSpec::Function(ResponsesApiTool {
                 name: "test_server/do_something_cool".to_string(),
                 parameters: JsonSchema::Object {
@@ -916,7 +950,7 @@ mod tests {
         );
 
         assert_eq!(
-            tools[4],
+            tools[4].spec,
             ToolSpec::Function(ResponsesApiTool {
                 name: "dash/search".to_string(),
                 parameters: JsonSchema::Object {
@@ -981,7 +1015,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            tools[4],
+            tools[4].spec,
             ToolSpec::Function(ResponsesApiTool {
                 name: "dash/paginate".to_string(),
                 parameters: JsonSchema::Object {
@@ -1044,7 +1078,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            tools[4],
+            tools[4].spec,
             ToolSpec::Function(ResponsesApiTool {
                 name: "dash/tags".to_string(),
                 parameters: JsonSchema::Object {
@@ -1110,7 +1144,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            tools[4],
+            tools[4].spec,
             ToolSpec::Function(ResponsesApiTool {
                 name: "dash/value".to_string(),
                 parameters: JsonSchema::Object {
@@ -1214,7 +1248,7 @@ mod tests {
         );
 
         assert_eq!(
-            tools[4],
+            tools[4].spec,
             ToolSpec::Function(ResponsesApiTool {
                 name: "test_server/do_something_cool".to_string(),
                 parameters: JsonSchema::Object {

@@ -8,6 +8,7 @@ use crate::function_tool::FunctionCallError;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::registry::ConfiguredToolSpec;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::spec::ToolsConfig;
 use crate::tools::spec::build_specs;
@@ -25,7 +26,7 @@ pub struct ToolCall {
 
 pub struct ToolRouter {
     registry: ToolRegistry,
-    specs: Vec<ToolSpec>,
+    specs: Vec<ConfiguredToolSpec>,
 }
 
 impl ToolRouter {
@@ -38,8 +39,17 @@ impl ToolRouter {
         Self { registry, specs }
     }
 
-    pub fn specs(&self) -> &[ToolSpec] {
-        &self.specs
+    pub fn specs(&self) -> Vec<ToolSpec> {
+        self.specs
+            .iter()
+            .map(|config| config.spec.clone())
+            .collect()
+    }
+
+    pub fn supports_parallel_tool_calls(&self) -> bool {
+        self.specs
+            .iter()
+            .all(|config| config.supports_parallel_tool_calls)
     }
 
     pub fn build_tool_call(

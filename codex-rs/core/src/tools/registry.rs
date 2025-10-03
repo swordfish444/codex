@@ -136,9 +136,24 @@ impl ToolRegistry {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ConfiguredToolSpec {
+    pub spec: ToolSpec,
+    pub supports_parallel_tool_calls: bool,
+}
+
+impl ConfiguredToolSpec {
+    pub fn new(spec: ToolSpec, supports_parallel_tool_calls: bool) -> Self {
+        Self {
+            spec,
+            supports_parallel_tool_calls,
+        }
+    }
+}
+
 pub struct ToolRegistryBuilder {
     handlers: HashMap<String, Arc<dyn ToolHandler>>,
-    specs: Vec<ToolSpec>,
+    specs: Vec<ConfiguredToolSpec>,
 }
 
 impl ToolRegistryBuilder {
@@ -150,7 +165,16 @@ impl ToolRegistryBuilder {
     }
 
     pub fn push_spec(&mut self, spec: ToolSpec) {
-        self.specs.push(spec);
+        self.push_spec_with_parallel_support(spec, false);
+    }
+
+    pub fn push_spec_with_parallel_support(
+        &mut self,
+        spec: ToolSpec,
+        supports_parallel_tool_calls: bool,
+    ) {
+        self.specs
+            .push(ConfiguredToolSpec::new(spec, supports_parallel_tool_calls));
     }
 
     pub fn register_handler(&mut self, name: impl Into<String>, handler: Arc<dyn ToolHandler>) {
@@ -182,7 +206,7 @@ impl ToolRegistryBuilder {
     //     }
     // }
 
-    pub fn build(self) -> (Vec<ToolSpec>, ToolRegistry) {
+    pub fn build(self) -> (Vec<ConfiguredToolSpec>, ToolRegistry) {
         let registry = ToolRegistry::new(self.handlers);
         (self.specs, registry)
     }
