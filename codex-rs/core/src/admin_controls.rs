@@ -163,8 +163,8 @@ impl AdminControls {
     }
 
     pub fn peek_pending_danger(&self) -> Option<&DangerPending> {
-        self.pending.iter().find_map(|action| match action {
-            PendingAdminAction::Danger(pending) => Some(pending),
+        self.pending.iter().next().map(|action| match action {
+            PendingAdminAction::Danger(pending) => pending,
         })
     }
 }
