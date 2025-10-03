@@ -200,14 +200,17 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
 
     if config.admin.has_pending_danger() {
         if let Some(audit) = config.admin.audit.as_ref()
-            && let Some(pending) = config.admin.pending.iter().find_map(|action| match action {
-                PendingAdminAction::Danger(pending) => Some(pending),
-            }) {
-                log_admin_event(
-                    audit,
-                    build_danger_audit_payload(pending, DangerAuditAction::Denied, None),
-                );
-            }
+            && let Some(PendingAdminAction::Danger(pending)) = config
+                .admin
+                .pending
+                .iter()
+                .find(|action| matches!(action, PendingAdminAction::Danger(_)))
+        {
+            log_admin_event(
+                audit,
+                build_danger_audit_payload(pending, DangerAuditAction::Denied, None),
+            );
+        }
         bail!(
             "danger-full-access requires interactive justification; rerun in the interactive TUI"
         );

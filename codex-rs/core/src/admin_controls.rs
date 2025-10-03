@@ -258,9 +258,10 @@ pub fn log_admin_event(config: &AdminAuditConfig, payload: AdminAuditPayload) {
     let record = AdminAuditRecord::new(payload);
 
     if let Some(path) = &config.log_file
-        && let Err(err) = append_record_to_file(path, &record) {
-            warn!(path = %path.display(), ?err, "failed to write admin audit event");
-        }
+        && let Err(err) = append_record_to_file(path, &record)
+    {
+        warn!(path = %path.display(), ?err, "failed to write admin audit event");
+    }
 
     if let Some(endpoint) = &config.log_endpoint {
         send_record_to_endpoint(endpoint, record);
@@ -273,8 +274,7 @@ fn append_record_to_file(path: &Path, record: &AdminAuditRecord) -> io::Result<(
     }
 
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    let line =
-        serde_json::to_string(record).map_err(io::Error::other)?;
+    let line = serde_json::to_string(record).map_err(io::Error::other)?;
     file.write_all(line.as_bytes())?;
     file.write_all(b"\n")?;
     Ok(())
