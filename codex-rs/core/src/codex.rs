@@ -29,7 +29,6 @@ use serde_json;
 use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
@@ -103,6 +102,7 @@ use crate::tasks::ReviewTask;
 use crate::tools::ToolRouter;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::format_exec_output_str;
+use crate::tools::parallel::ToolCallRuntime;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::unified_exec::UnifiedExecSessionManager;
 use crate::user_instructions::UserInstructions;
@@ -1930,7 +1930,7 @@ async fn run_turn(
         .client
         .get_model_family()
         .supports_parallel_tool_calls;
-    let parallel_tool_calls = model_supports_parallel && router.supports_parallel_tool_calls();
+    let parallel_tool_calls = model_supports_parallel;
     let prompt = Prompt {
         input,
         tools: router.specs(),
@@ -2001,9 +2001,9 @@ async fn run_turn(
 /// "handled" such that it produces a `ResponseInputItem` that needs to be
 /// sent back to the model on the next turn.
 #[derive(Debug)]
-struct ProcessedResponseItem {
-    item: ResponseItem,
-    response: Option<ResponseInputItem>,
+pub(crate) struct ProcessedResponseItem {
+    pub(crate) item: ResponseItem,
+    pub(crate) response: Option<ResponseInputItem>,
 }
 
 #[derive(Debug)]
@@ -2087,11 +2087,13 @@ async fn try_run_turn(
     let mut stream = turn_context.client.clone().stream(&prompt).await?;
 
     let mut output = Vec::new();
-    struct PendingToolCall {
-        index: usize,
-        handle: JoinHandle<Result<ResponseInputItem, FunctionCallError>>,
-    }
-    let mut pending_calls: Vec<PendingToolCall> = Vec::new();
+    let mut tool_runtime = ToolCallRuntime::new(
+        Arc::clone(&router),
+        Arc::clone(&sess),
+        Arc::clone(&turn_context),
+        Arc::clone(&turn_diff_tracker),
+        sub_id.to_string(),
+    );
 
     loop {
         // Poll the next item from the model stream. We must inspect *both* Ok and Err
@@ -2101,9 +2103,7 @@ async fn try_run_turn(
         let event = match event {
             Some(event) => event,
             None => {
-                while let Some(pending) = pending_calls.pop() {
-                    pending.handle.abort();
-                }
+                tool_runtime.abort_all();
                 return Err(CodexErr::Stream(
                     "stream closed before response.completed".into(),
                     None,
@@ -2114,9 +2114,7 @@ async fn try_run_turn(
         let event = match event {
             Ok(ev) => ev,
             Err(e) => {
-                while let Some(pending) = pending_calls.pop() {
-                    pending.handle.abort();
-                }
+                tool_runtime.abort_all();
                 // Propagate the underlying stream error to the caller (run_turn), which
                 // will apply the configured `stream_max_retries` policy.
                 return Err(e);
@@ -2131,21 +2129,19 @@ async fn try_run_turn(
                         let payload_preview = call.payload.log_payload().into_owned();
                         tracing::info!("ToolCall: {} {}", call.tool_name, payload_preview);
                         let index = output.len();
-                        let router = Arc::clone(&router);
-                        let sess = Arc::clone(&sess);
-                        let turn = Arc::clone(&turn_context);
-                        let tracker = Arc::clone(&turn_diff_tracker);
-                        let sub_id_owned = sub_id.to_string();
-                        let handle = tokio::spawn(async move {
-                            router
-                                .dispatch_tool_call(sess, turn, tracker, sub_id_owned, call)
-                                .await
-                        });
-                        pending_calls.push(PendingToolCall { index, handle });
-                        output.push(ProcessedResponseItem {
-                            item,
-                            response: None,
-                        });
+                        match tool_runtime
+                            .handle_tool_call(call, index, &mut output)
+                            .await?
+                        {
+                            Some(response) => output.push(ProcessedResponseItem {
+                                item,
+                                response: Some(response),
+                            }),
+                            None => output.push(ProcessedResponseItem {
+                                item,
+                                response: None,
+                            }),
+                        }
                     }
                     Ok(None) => {
                         let response = handle_non_tool_response_item(
@@ -2216,35 +2212,7 @@ async fn try_run_turn(
                 sess.update_token_usage_info(sub_id, turn_context.as_ref(), token_usage.as_ref())
                     .await;
 
-                while let Some(PendingToolCall { index, handle }) = pending_calls.pop() {
-                    match handle.await {
-                        Ok(Ok(response)) => {
-                            if let Some(slot) = output.get_mut(index) {
-                                slot.response = Some(response);
-                            }
-                        }
-                        Ok(Err(FunctionCallError::Fatal(message))) => {
-                            for pending in pending_calls.drain(..) {
-                                pending.handle.abort();
-                            }
-                            return Err(CodexErr::Fatal(message));
-                        }
-                        Ok(Err(other)) => {
-                            for pending in pending_calls.drain(..) {
-                                pending.handle.abort();
-                            }
-                            return Err(CodexErr::Fatal(other.to_string()));
-                        }
-                        Err(join_err) => {
-                            for pending in pending_calls.drain(..) {
-                                pending.handle.abort();
-                            }
-                            return Err(CodexErr::Fatal(format!(
-                                "tool task failed to join: {join_err}"
-                            )));
-                        }
-                    }
-                }
+                tool_runtime.resolve_pending(&mut output).await?;
 
                 let unified_diff = {
                     let mut tracker = turn_diff_tracker.lock().await;

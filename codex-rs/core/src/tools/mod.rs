@@ -1,5 +1,6 @@
 pub mod context;
 pub(crate) mod handlers;
+pub mod parallel;
 pub mod registry;
 pub mod router;
 pub mod spec;

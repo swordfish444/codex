@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::client_common::tools::ToolSpec;
@@ -27,6 +28,7 @@ pub struct ToolCall {
 pub struct ToolRouter {
     registry: ToolRegistry,
     specs: Vec<ConfiguredToolSpec>,
+    parallel_safe_tools: HashSet<String>,
 }
 
 impl ToolRouter {
@@ -36,7 +38,22 @@ impl ToolRouter {
     ) -> Self {
         let builder = build_specs(config, mcp_tools);
         let (specs, registry) = builder.build();
-        Self { registry, specs }
+        let parallel_safe_tools = specs
+            .iter()
+            .filter(|config| config.supports_parallel_tool_calls)
+            .filter_map(|config| match &config.spec {
+                ToolSpec::Function(tool) => Some(tool.name.clone()),
+                ToolSpec::Freeform(tool) => Some(tool.name.clone()),
+                ToolSpec::LocalShell {} => Some("local_shell".to_string()),
+                ToolSpec::WebSearch {} => Some("web_search".to_string()),
+            })
+            .collect();
+
+        Self {
+            registry,
+            specs,
+            parallel_safe_tools,
+        }
     }
 
     pub fn specs(&self) -> Vec<ToolSpec> {
@@ -46,10 +63,8 @@ impl ToolRouter {
             .collect()
     }
 
-    pub fn supports_parallel_tool_calls(&self) -> bool {
-        self.specs
-            .iter()
-            .all(|config| config.supports_parallel_tool_calls)
+    pub fn tool_supports_parallel(&self, tool_name: &str) -> bool {
+        self.parallel_safe_tools.contains(tool_name)
     }
 
     pub fn build_tool_call(
