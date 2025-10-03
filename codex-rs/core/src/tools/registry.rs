@@ -32,8 +32,7 @@ pub trait ToolHandler: Send + Sync {
         )
     }
 
-    async fn handle(&self, invocation: ToolInvocation<'_>)
-    -> Result<ToolOutput, FunctionCallError>;
+    async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError>;
 }
 
 pub struct ToolRegistry {
@@ -57,9 +56,9 @@ impl ToolRegistry {
     //     }
     // }
 
-    pub async fn dispatch<'a>(
+    pub async fn dispatch(
         &self,
-        invocation: ToolInvocation<'a>,
+        invocation: ToolInvocation,
     ) -> Result<ResponseInputItem, FunctionCallError> {
         let tool_name = invocation.tool_name.clone();
         let call_id_owned = invocation.call_id.clone();

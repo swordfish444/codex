@@ -1,15 +1,16 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::client_common::tools::ToolSpec;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::function_tool::FunctionCallError;
+use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::spec::ToolsConfig;
 use crate::tools::spec::build_specs;
-use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_protocol::models::LocalShellAction;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
@@ -118,10 +119,10 @@ impl ToolRouter {
 
     pub async fn dispatch_tool_call(
         &self,
-        session: &Session,
-        turn: &TurnContext,
-        tracker: &mut TurnDiffTracker,
-        sub_id: &str,
+        session: Arc<Session>,
+        turn: Arc<TurnContext>,
+        tracker: SharedTurnDiffTracker,
+        sub_id: String,
         call: ToolCall,
     ) -> Result<ResponseInputItem, FunctionCallError> {
         let ToolCall {

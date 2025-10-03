@@ -29,6 +29,7 @@ use serde_json;
 use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
@@ -100,6 +101,7 @@ use crate::tasks::CompactTask;
 use crate::tasks::RegularTask;
 use crate::tasks::ReviewTask;
 use crate::tools::ToolRouter;
+use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::format_exec_output_str;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::unified_exec::UnifiedExecSessionManager;
@@ -807,7 +809,7 @@ impl Session {
 
     async fn on_exec_command_begin(
         &self,
-        turn_diff_tracker: &mut TurnDiffTracker,
+        turn_diff_tracker: SharedTurnDiffTracker,
         exec_command_context: ExecCommandContext,
     ) {
         let ExecCommandContext {
@@ -823,7 +825,10 @@ impl Session {
                 user_explicitly_approved_this_action,
                 changes,
             }) => {
-                turn_diff_tracker.on_patch_begin(&changes);
+                {
+                    let mut tracker = turn_diff_tracker.lock().await;
+                    tracker.on_patch_begin(&changes);
+                }
 
                 EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
                     call_id,
@@ -850,7 +855,7 @@ impl Session {
 
     async fn on_exec_command_end(
         &self,
-        turn_diff_tracker: &mut TurnDiffTracker,
+        turn_diff_tracker: SharedTurnDiffTracker,
         sub_id: &str,
         call_id: &str,
         output: &ExecToolCallOutput,
@@ -898,7 +903,10 @@ impl Session {
         // If this is an apply_patch, after we emit the end patch, emit a second event
         // with the full turn diff if there is one.
         if is_apply_patch {
-            let unified_diff = turn_diff_tracker.get_unified_diff();
+            let unified_diff = {
+                let mut tracker = turn_diff_tracker.lock().await;
+                tracker.get_unified_diff()
+            };
             if let Ok(Some(unified_diff)) = unified_diff {
                 let msg = EventMsg::TurnDiff(TurnDiffEvent { unified_diff });
                 let event = Event {
@@ -915,7 +923,7 @@ impl Session {
     /// Returns the output of the exec tool call.
     pub(crate) async fn run_exec_with_events(
         &self,
-        turn_diff_tracker: &mut TurnDiffTracker,
+        turn_diff_tracker: SharedTurnDiffTracker,
         prepared: PreparedExec,
         approval_policy: AskForApproval,
     ) -> Result<ExecToolCallOutput, ExecError> {
@@ -924,7 +932,7 @@ impl Session {
         let sub_id = context.sub_id.clone();
         let call_id = context.call_id.clone();
 
-        self.on_exec_command_begin(turn_diff_tracker, context.clone())
+        self.on_exec_command_begin(turn_diff_tracker.clone(), context.clone())
             .await;
 
         let result = self
@@ -1633,7 +1641,7 @@ pub(crate) async fn run_task(
     let mut last_agent_message: Option<String> = None;
     // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
     // many turns, from the perspective of the user, it is a single turn.
-    let mut turn_diff_tracker = TurnDiffTracker::new();
+    let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
     let mut auto_compact_recently_attempted = false;
 
     loop {
@@ -1681,9 +1689,9 @@ pub(crate) async fn run_task(
             })
             .collect();
         match run_turn(
-            &sess,
-            turn_context.as_ref(),
-            &mut turn_diff_tracker,
+            Arc::clone(&sess),
+            Arc::clone(&turn_context),
+            Arc::clone(&turn_diff_tracker),
             sub_id.clone(),
             turn_input,
         )
@@ -1906,14 +1914,17 @@ fn parse_review_output_event(text: &str) -> ReviewOutputEvent {
 }
 
 async fn run_turn(
-    sess: &Session,
-    turn_context: &TurnContext,
-    turn_diff_tracker: &mut TurnDiffTracker,
+    sess: Arc<Session>,
+    turn_context: Arc<TurnContext>,
+    turn_diff_tracker: SharedTurnDiffTracker,
     sub_id: String,
     input: Vec<ResponseItem>,
 ) -> CodexResult<TurnRunResult> {
     let mcp_tools = sess.services.mcp_connection_manager.list_all_tools();
-    let router = ToolRouter::from_config(&turn_context.tools_config, Some(mcp_tools));
+    let router = Arc::new(ToolRouter::from_config(
+        &turn_context.tools_config,
+        Some(mcp_tools),
+    ));
 
     let prompt = Prompt {
         input,
@@ -1925,10 +1936,10 @@ async fn run_turn(
     let mut retries = 0;
     loop {
         match try_run_turn(
-            &router,
-            sess,
-            turn_context,
-            turn_diff_tracker,
+            Arc::clone(&router),
+            Arc::clone(&sess),
+            Arc::clone(&turn_context),
+            Arc::clone(&turn_diff_tracker),
             &sub_id,
             &prompt,
         )
@@ -1996,10 +2007,10 @@ struct TurnRunResult {
 }
 
 async fn try_run_turn(
-    router: &crate::tools::ToolRouter,
-    sess: &Session,
-    turn_context: &TurnContext,
-    turn_diff_tracker: &mut TurnDiffTracker,
+    router: Arc<ToolRouter>,
+    sess: Arc<Session>,
+    turn_context: Arc<TurnContext>,
+    turn_diff_tracker: SharedTurnDiffTracker,
     sub_id: &str,
     prompt: &Prompt,
 ) -> CodexResult<TurnRunResult> {
@@ -2070,24 +2081,36 @@ async fn try_run_turn(
     let mut stream = turn_context.client.clone().stream(&prompt).await?;
 
     let mut output = Vec::new();
+    struct PendingToolCall {
+        index: usize,
+        handle: JoinHandle<Result<ResponseInputItem, FunctionCallError>>,
+    }
+    let mut pending_calls: Vec<PendingToolCall> = Vec::new();
 
     loop {
         // Poll the next item from the model stream. We must inspect *both* Ok and Err
         // cases so that transient stream failures (e.g., dropped SSE connection before
         // `response.completed`) bubble up and trigger the caller's retry logic.
         let event = stream.next().await;
-        let Some(event) = event else {
-            // Channel closed without yielding a final Completed event or explicit error.
-            // Treat as a disconnected stream so the caller can retry.
-            return Err(CodexErr::Stream(
-                "stream closed before response.completed".into(),
-                None,
-            ));
+        let event = match event {
+            Some(event) => event,
+            None => {
+                while let Some(pending) = pending_calls.pop() {
+                    pending.handle.abort();
+                }
+                return Err(CodexErr::Stream(
+                    "stream closed before response.completed".into(),
+                    None,
+                ));
+            }
         };
 
         let event = match event {
             Ok(ev) => ev,
             Err(e) => {
+                while let Some(pending) = pending_calls.pop() {
+                    pending.handle.abort();
+                }
                 // Propagate the underlying stream error to the caller (run_turn), which
                 // will apply the configured `stream_max_retries` policy.
                 return Err(e);
@@ -2097,16 +2120,74 @@ async fn try_run_turn(
         match event {
             ResponseEvent::Created => {}
             ResponseEvent::OutputItemDone(item) => {
-                let response = handle_response_item(
-                    router,
-                    sess,
-                    turn_context,
-                    turn_diff_tracker,
-                    sub_id,
-                    item.clone(),
-                )
-                .await?;
-                output.push(ProcessedResponseItem { item, response });
+                match ToolRouter::build_tool_call(sess.as_ref(), item.clone()) {
+                    Ok(Some(call)) => {
+                        let payload_preview = call.payload.log_payload().into_owned();
+                        tracing::info!("ToolCall: {} {}", call.tool_name, payload_preview);
+                        let index = output.len();
+                        let router = Arc::clone(&router);
+                        let sess = Arc::clone(&sess);
+                        let turn = Arc::clone(&turn_context);
+                        let tracker = Arc::clone(&turn_diff_tracker);
+                        let sub_id_owned = sub_id.to_string();
+                        let handle = tokio::spawn(async move {
+                            router
+                                .dispatch_tool_call(sess, turn, tracker, sub_id_owned, call)
+                                .await
+                        });
+                        pending_calls.push(PendingToolCall { index, handle });
+                        output.push(ProcessedResponseItem {
+                            item,
+                            response: None,
+                        });
+                    }
+                    Ok(None) => {
+                        let response = handle_non_tool_response_item(
+                            Arc::clone(&sess),
+                            Arc::clone(&turn_context),
+                            sub_id,
+                            item.clone(),
+                        )
+                        .await?;
+                        output.push(ProcessedResponseItem { item, response });
+                    }
+                    Err(FunctionCallError::MissingLocalShellCallId) => {
+                        let msg = "LocalShellCall without call_id or id";
+                        turn_context
+                            .client
+                            .get_otel_event_manager()
+                            .log_tool_failed("local_shell", msg);
+                        error!(msg);
+
+                        let response = ResponseInputItem::FunctionCallOutput {
+                            call_id: String::new(),
+                            output: FunctionCallOutputPayload {
+                                content: msg.to_string(),
+                                success: None,
+                            },
+                        };
+                        output.push(ProcessedResponseItem {
+                            item,
+                            response: Some(response),
+                        });
+                    }
+                    Err(FunctionCallError::RespondToModel(message)) => {
+                        let response = ResponseInputItem::FunctionCallOutput {
+                            call_id: String::new(),
+                            output: FunctionCallOutputPayload {
+                                content: message,
+                                success: None,
+                            },
+                        };
+                        output.push(ProcessedResponseItem {
+                            item,
+                            response: Some(response),
+                        });
+                    }
+                    Err(FunctionCallError::Fatal(message)) => {
+                        return Err(CodexErr::Fatal(message));
+                    }
+                }
             }
             ResponseEvent::WebSearchCallBegin { call_id } => {
                 let _ = sess
@@ -2126,10 +2207,43 @@ async fn try_run_turn(
                 response_id: _,
                 token_usage,
             } => {
-                sess.update_token_usage_info(sub_id, turn_context, token_usage.as_ref())
+                sess.update_token_usage_info(sub_id, turn_context.as_ref(), token_usage.as_ref())
                     .await;
 
-                let unified_diff = turn_diff_tracker.get_unified_diff();
+                while let Some(PendingToolCall { index, handle }) = pending_calls.pop() {
+                    match handle.await {
+                        Ok(Ok(response)) => {
+                            if let Some(slot) = output.get_mut(index) {
+                                slot.response = Some(response);
+                            }
+                        }
+                        Ok(Err(FunctionCallError::Fatal(message))) => {
+                            for pending in pending_calls.drain(..) {
+                                pending.handle.abort();
+                            }
+                            return Err(CodexErr::Fatal(message));
+                        }
+                        Ok(Err(other)) => {
+                            for pending in pending_calls.drain(..) {
+                                pending.handle.abort();
+                            }
+                            return Err(CodexErr::Fatal(other.to_string()));
+                        }
+                        Err(join_err) => {
+                            for pending in pending_calls.drain(..) {
+                                pending.handle.abort();
+                            }
+                            return Err(CodexErr::Fatal(format!(
+                                "tool task failed to join: {join_err}"
+                            )));
+                        }
+                    }
+                }
+
+                let unified_diff = {
+                    let mut tracker = turn_diff_tracker.lock().await;
+                    tracker.get_unified_diff()
+                };
                 if let Ok(Some(unified_diff)) = unified_diff {
                     let msg = EventMsg::TurnDiff(TurnDiffEvent { unified_diff });
                     let event = Event {
@@ -2188,88 +2302,40 @@ async fn try_run_turn(
     }
 }
 
-async fn handle_response_item(
-    router: &crate::tools::ToolRouter,
-    sess: &Session,
-    turn_context: &TurnContext,
-    turn_diff_tracker: &mut TurnDiffTracker,
+async fn handle_non_tool_response_item(
+    sess: Arc<Session>,
+    turn_context: Arc<TurnContext>,
     sub_id: &str,
     item: ResponseItem,
 ) -> CodexResult<Option<ResponseInputItem>> {
     debug!(?item, "Output item");
 
-    match ToolRouter::build_tool_call(sess, item.clone()) {
-        Ok(Some(call)) => {
-            let payload_preview = call.payload.log_payload().into_owned();
-            tracing::info!("ToolCall: {} {}", call.tool_name, payload_preview);
-            match router
-                .dispatch_tool_call(sess, turn_context, turn_diff_tracker, sub_id, call)
-                .await
-            {
-                Ok(response) => Ok(Some(response)),
-                Err(FunctionCallError::Fatal(message)) => Err(CodexErr::Fatal(message)),
-                Err(other) => unreachable!("non-fatal tool error returned: {other:?}"),
+    match &item {
+        ResponseItem::Message { .. }
+        | ResponseItem::Reasoning { .. }
+        | ResponseItem::WebSearchCall { .. } => {
+            let msgs = match &item {
+                ResponseItem::Message { .. } if turn_context.is_review_mode => {
+                    trace!("suppressing assistant Message in review mode");
+                    Vec::new()
+                }
+                _ => map_response_item_to_event_messages(&item, sess.show_raw_agent_reasoning()),
+            };
+            for msg in msgs {
+                let event = Event {
+                    id: sub_id.to_string(),
+                    msg,
+                };
+                sess.send_event(event).await;
             }
         }
-        Ok(None) => {
-            match &item {
-                ResponseItem::Message { .. }
-                | ResponseItem::Reasoning { .. }
-                | ResponseItem::WebSearchCall { .. } => {
-                    let msgs = match &item {
-                        ResponseItem::Message { .. } if turn_context.is_review_mode => {
-                            trace!("suppressing assistant Message in review mode");
-                            Vec::new()
-                        }
-                        _ => map_response_item_to_event_messages(
-                            &item,
-                            sess.show_raw_agent_reasoning(),
-                        ),
-                    };
-                    for msg in msgs {
-                        let event = Event {
-                            id: sub_id.to_string(),
-                            msg,
-                        };
-                        sess.send_event(event).await;
-                    }
-                }
-                ResponseItem::FunctionCallOutput { .. }
-                | ResponseItem::CustomToolCallOutput { .. } => {
-                    debug!("unexpected tool output from stream");
-                }
-                _ => {}
-            }
-
-            Ok(None)
+        ResponseItem::FunctionCallOutput { .. } | ResponseItem::CustomToolCallOutput { .. } => {
+            debug!("unexpected tool output from stream");
         }
-        Err(FunctionCallError::MissingLocalShellCallId) => {
-            let msg = "LocalShellCall without call_id or id";
-            turn_context
-                .client
-                .get_otel_event_manager()
-                .log_tool_failed("local_shell", msg);
-            error!(msg);
-
-            Ok(Some(ResponseInputItem::FunctionCallOutput {
-                call_id: String::new(),
-                output: FunctionCallOutputPayload {
-                    content: msg.to_string(),
-                    success: None,
-                },
-            }))
-        }
-        Err(FunctionCallError::RespondToModel(msg)) => {
-            Ok(Some(ResponseInputItem::FunctionCallOutput {
-                call_id: String::new(),
-                output: FunctionCallOutputPayload {
-                    content: msg,
-                    success: None,
-                },
-            }))
-        }
-        Err(FunctionCallError::Fatal(message)) => Err(CodexErr::Fatal(message)),
+        _ => {}
     }
+
+    Ok(None)
 }
 
 pub(super) fn get_last_assistant_message_from_turn(responses: &[ResponseItem]) -> Option<String> {
@@ -2901,13 +2967,10 @@ mod tests {
     #[tokio::test]
     async fn fatal_tool_error_stops_turn_and_reports_error() {
         let (session, turn_context, _rx) = make_session_and_context_with_rx();
-        let session_ref = session.as_ref();
-        let turn_context_ref = turn_context.as_ref();
         let router = ToolRouter::from_config(
-            &turn_context_ref.tools_config,
-            Some(session_ref.services.mcp_connection_manager.list_all_tools()),
+            &turn_context.tools_config,
+            Some(session.services.mcp_connection_manager.list_all_tools()),
         );
-        let mut tracker = TurnDiffTracker::new();
         let item = ResponseItem::CustomToolCall {
             id: None,
             status: None,
@@ -2916,22 +2979,26 @@ mod tests {
             input: "{}".to_string(),
         };
 
-        let err = handle_response_item(
-            &router,
-            session_ref,
-            turn_context_ref,
-            &mut tracker,
-            "sub-id",
-            item,
-        )
-        .await
-        .expect_err("expected fatal error");
+        let call = ToolRouter::build_tool_call(session.as_ref(), item.clone())
+            .expect("build tool call")
+            .expect("tool call present");
+        let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+        let err = router
+            .dispatch_tool_call(
+                Arc::clone(&session),
+                Arc::clone(&turn_context),
+                tracker,
+                "sub-id".to_string(),
+                call,
+            )
+            .await
+            .expect_err("expected fatal error");
 
         match err {
-            CodexErr::Fatal(message) => {
+            FunctionCallError::Fatal(message) => {
                 assert_eq!(message, "tool shell invoked with incompatible payload");
             }
-            other => panic!("expected CodexErr::Fatal, got {other:?}"),
+            other => panic!("expected FunctionCallError::Fatal, got {other:?}"),
         }
     }
 
@@ -3045,9 +3112,11 @@ mod tests {
         use crate::turn_diff_tracker::TurnDiffTracker;
         use std::collections::HashMap;
 
-        let (session, mut turn_context) = make_session_and_context();
+        let (session, mut turn_context_raw) = make_session_and_context();
         // Ensure policy is NOT OnRequest so the early rejection path triggers
-        turn_context.approval_policy = AskForApproval::OnFailure;
+        turn_context_raw.approval_policy = AskForApproval::OnFailure;
+        let session = Arc::new(session);
+        let mut turn_context = Arc::new(turn_context_raw);
 
         let params = ExecParams {
             command: if cfg!(windows) {
@@ -3075,7 +3144,7 @@ mod tests {
             ..params.clone()
         };
 
-        let mut turn_diff_tracker = TurnDiffTracker::new();
+        let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
 
         let tool_name = "shell";
         let sub_id = "test-sub".to_string();
@@ -3084,9 +3153,9 @@ mod tests {
         let resp = handle_container_exec_with_params(
             tool_name,
             params,
-            &session,
-            &turn_context,
-            &mut turn_diff_tracker,
+            Arc::clone(&session),
+            Arc::clone(&turn_context),
+            Arc::clone(&turn_diff_tracker),
             sub_id,
             call_id,
         )
@@ -3105,14 +3174,16 @@ mod tests {
 
         // Now retry the same command WITHOUT escalated permissions; should succeed.
         // Force DangerFullAccess to avoid platform sandbox dependencies in tests.
-        turn_context.sandbox_policy = SandboxPolicy::DangerFullAccess;
+        Arc::get_mut(&mut turn_context)
+            .expect("unique turn context Arc")
+            .sandbox_policy = SandboxPolicy::DangerFullAccess;
 
         let resp2 = handle_container_exec_with_params(
             tool_name,
             params2,
-            &session,
-            &turn_context,
-            &mut turn_diff_tracker,
+            Arc::clone(&session),
+            Arc::clone(&turn_context),
+            Arc::clone(&turn_diff_tracker),
             "test-sub".to_string(),
             "test-call-2".to_string(),
         )
