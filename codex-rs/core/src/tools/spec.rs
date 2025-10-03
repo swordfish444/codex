@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn test_parallel_support_flags() {
-        let model_family = find_family_for_model("codex-mini-latest")
+        let model_family = find_family_for_model("gpt-5-codex")
             .expect("codex-mini-latest should be a valid model family");
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
