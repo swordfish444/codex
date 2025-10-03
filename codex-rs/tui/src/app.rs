@@ -13,11 +13,22 @@ use crate::resume_picker::ResumeSelection;
 use crate::tui;
 use crate::tui::TuiEvent;
 use codex_ansi_escape::ansi_escape_line;
+use codex_common::approval_presets::ApprovalPreset;
 use codex_core::AuthManager;
 use codex_core::ConversationManager;
+use codex_core::admin_controls::DangerAuditAction;
+use codex_core::admin_controls::DangerDecision;
+use codex_core::admin_controls::DangerPending;
+use codex_core::admin_controls::DangerRequestSource;
+use codex_core::admin_controls::PendingAdminAction;
+use codex_core::admin_controls::build_danger_audit_payload;
+use codex_core::admin_controls::log_admin_event;
 use codex_core::config::Config;
 use codex_core::config::persist_model_selection;
 use codex_core::model_family::find_family_for_model;
+use codex_core::protocol::AskForApproval;
+use codex_core::protocol::Op;
+use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::SessionSource;
 use codex_core::protocol::TokenUsage;
 use codex_core::protocol_config_types::ReasoningEffort as ReasoningEffortConfig;
@@ -153,6 +164,8 @@ impl App {
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             backtrack: BacktrackState::default(),
         };
+
+        app.process_pending_admin_controls();
 
         let tui_events = tui.event_stream();
         tokio::pin!(tui_events);
@@ -366,11 +379,14 @@ impl App {
                     }
                 }
             }
-            AppEvent::UpdateAskForApprovalPolicy(policy) => {
-                self.chat_widget.set_approval_policy(policy);
+            AppEvent::ApplyApprovalPreset(preset) => {
+                self.handle_apply_approval_preset(preset)?;
             }
-            AppEvent::UpdateSandboxPolicy(policy) => {
-                self.chat_widget.set_sandbox_policy(policy);
+            AppEvent::DangerJustificationSubmitted { justification } => {
+                self.handle_danger_justification_submission(justification)?;
+            }
+            AppEvent::DangerJustificationCancelled => {
+                self.handle_danger_justification_cancelled()?;
             }
             AppEvent::OpenReviewBranchPicker(cwd) => {
                 self.chat_widget.show_review_branch_picker(&cwd).await;
@@ -411,6 +427,172 @@ impl App {
     fn on_update_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {
         self.chat_widget.set_reasoning_effort(effort);
         self.config.model_reasoning_effort = effort;
+    }
+
+    fn handle_apply_approval_preset(&mut self, preset: ApprovalPreset) -> Result<()> {
+        let approval = preset.approval;
+        let sandbox = preset.sandbox.clone();
+
+        match sandbox.clone() {
+            SandboxPolicy::DangerFullAccess => match self.config.admin.decision_for_danger() {
+                DangerDecision::Allowed => {
+                    if let Some(audit) = self.config.admin.audit.as_ref() {
+                        let pending = DangerPending {
+                            source: DangerRequestSource::Approvals,
+                            requested_sandbox: SandboxPolicy::DangerFullAccess,
+                            requested_approval: approval,
+                        };
+                        log_admin_event(
+                            audit,
+                            build_danger_audit_payload(&pending, DangerAuditAction::Approved, None),
+                        );
+                    }
+                    self.apply_sandbox_and_approval(approval, sandbox);
+                }
+                DangerDecision::RequiresJustification => {
+                    let pending = DangerPending {
+                        source: DangerRequestSource::Approvals,
+                        requested_sandbox: SandboxPolicy::DangerFullAccess,
+                        requested_approval: approval,
+                    };
+                    if let Some(audit) = self.config.admin.audit.as_ref() {
+                        log_admin_event(
+                            audit,
+                            build_danger_audit_payload(
+                                &pending,
+                                DangerAuditAction::Requested,
+                                None,
+                            ),
+                        );
+                    }
+                    let _ = self.config.admin.take_pending_danger();
+                    let _ = self.chat_widget.config_mut().admin.take_pending_danger();
+                    self.config
+                        .admin
+                        .pending
+                        .push(PendingAdminAction::Danger(pending.clone()));
+                    self.chat_widget
+                        .config_mut()
+                        .admin
+                        .pending
+                        .push(PendingAdminAction::Danger(pending.clone()));
+                    self.chat_widget.prompt_for_danger_justification(pending);
+                }
+                DangerDecision::Denied => {
+                    if let Some(audit) = self.config.admin.audit.as_ref() {
+                        let pending = DangerPending {
+                            source: DangerRequestSource::Approvals,
+                            requested_sandbox: SandboxPolicy::DangerFullAccess,
+                            requested_approval: approval,
+                        };
+                        log_admin_event(
+                            audit,
+                            build_danger_audit_payload(&pending, DangerAuditAction::Denied, None),
+                        );
+                    }
+                    self.chat_widget.add_error_message(
+                        "Full access is disabled by your administrator.".to_string(),
+                    );
+                }
+            },
+            other => {
+                self.apply_sandbox_and_approval(approval, other);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_danger_justification_submission(&mut self, justification: String) -> Result<()> {
+        let justification = justification.trim();
+        if justification.is_empty() {
+            self.chat_widget.add_error_message(
+                "Please provide a justification before enabling full access.".to_string(),
+            );
+            return Ok(());
+        }
+
+        let Some(pending) = self.chat_widget.take_pending_danger() else {
+            return Ok(());
+        };
+
+        let _ = self.config.admin.take_pending_danger();
+        let _ = self.chat_widget.config_mut().admin.take_pending_danger();
+
+        if let Some(audit) = self.config.admin.audit.as_ref() {
+            log_admin_event(
+                audit,
+                build_danger_audit_payload(
+                    &pending,
+                    DangerAuditAction::Approved,
+                    Some(justification.to_string()),
+                ),
+            );
+        }
+
+        self.apply_sandbox_and_approval(pending.requested_approval, pending.requested_sandbox);
+        self.chat_widget.add_info_message(
+            "Full access enabled.".to_string(),
+            Some("Justification has been logged.".to_string()),
+        );
+        Ok(())
+    }
+
+    fn handle_danger_justification_cancelled(&mut self) -> Result<()> {
+        let pending_config = self.config.admin.take_pending_danger();
+        let pending_widget = self.chat_widget.take_pending_danger();
+        let _ = self.chat_widget.config_mut().admin.take_pending_danger();
+
+        if let Some(pending) = pending_config.or(pending_widget) {
+            if let Some(audit) = self.config.admin.audit.as_ref() {
+                log_admin_event(
+                    audit,
+                    build_danger_audit_payload(&pending, DangerAuditAction::Denied, None),
+                );
+            }
+        }
+
+        let approval_label = self.config.approval_policy.to_string();
+        let sandbox_label = Self::sandbox_policy_label(&self.config.sandbox_policy);
+
+        self.chat_widget.add_info_message(
+            format!(
+                "Full access remains disabled. Current approval policy `{approval_label}`, sandbox `{sandbox_label}`."
+            ),
+            None,
+        );
+
+        Ok(())
+    }
+
+    fn apply_sandbox_and_approval(&mut self, approval: AskForApproval, sandbox: SandboxPolicy) {
+        self.chat_widget.submit_op(Op::OverrideTurnContext {
+            cwd: None,
+            approval_policy: Some(approval),
+            sandbox_policy: Some(sandbox.clone()),
+            model: None,
+            effort: None,
+            summary: None,
+        });
+        self.chat_widget.set_approval_policy(approval);
+        self.chat_widget.set_sandbox_policy(sandbox.clone());
+        self.config.approval_policy = approval;
+        self.config.sandbox_policy = sandbox;
+    }
+
+    fn process_pending_admin_controls(&mut self) {
+        while let Some(pending) = self.config.admin.take_pending_danger() {
+            let _ = self.chat_widget.config_mut().admin.take_pending_danger();
+            self.chat_widget.prompt_for_danger_justification(pending);
+        }
+    }
+
+    fn sandbox_policy_label(policy: &SandboxPolicy) -> &'static str {
+        match policy {
+            SandboxPolicy::DangerFullAccess => "danger-full-access",
+            SandboxPolicy::ReadOnly => "read-only",
+            SandboxPolicy::WorkspaceWrite { .. } => "workspace-write",
+        }
     }
 
     async fn handle_key_event(&mut self, tui: &mut tui::Tui, key_event: KeyEvent) {

@@ -563,3 +563,34 @@ mod tests {
         .expect_err("should reject bearer token for stdio transport");
     }
 }
+
+#[derive(Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct AdminConfigToml {
+    #[serde(default)]
+    pub disallow_danger_full_access: Option<bool>,
+
+    #[serde(default)]
+    pub allow_danger_with_reason: Option<bool>,
+
+    #[serde(default)]
+    pub audit: Option<AdminAuditToml>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct AdminAuditToml {
+    #[serde(default)]
+    pub log_file: Option<String>,
+
+    #[serde(default)]
+    pub log_endpoint: Option<String>,
+
+    #[serde(default)]
+    pub log_events: Vec<AdminAuditEventKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AdminAuditEventKind {
+    Danger,
+    Command,
+}

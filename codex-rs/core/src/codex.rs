@@ -468,6 +468,7 @@ impl Session {
                 turn_context.sandbox_policy.clone(),
                 turn_context.cwd.clone(),
                 config.codex_linux_sandbox_exe.clone(),
+                config.admin.audit.clone(),
             )),
         };
 
@@ -2711,6 +2712,7 @@ mod tests {
                 turn_context.sandbox_policy.clone(),
                 turn_context.cwd.clone(),
                 None,
+                config.admin.audit.clone(),
             )),
         };
         let session = Session {
@@ -2784,6 +2786,7 @@ mod tests {
                 config.sandbox_policy.clone(),
                 config.cwd.clone(),
                 None,
+                config.admin.audit.clone(),
             )),
         };
         let session = Arc::new(Session {

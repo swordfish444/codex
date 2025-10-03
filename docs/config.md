@@ -796,3 +796,32 @@ notifications = [ "agent-turn-complete", "approval-requested" ]
 | `responses_originator_header_internal_override`  | string                                                            | Override `originator` header value.                                                                                        |
 | `projects.<path>.trust_level`                    | string                                                            | Mark project/worktree as trusted (only `"trusted"` is recognized).                                                         |
 | `tools.web_search`                               | boolean                                                           | Enable web search tool (alias: `web_search_request`) (default: false).                                                     |
+
+## Admin controls
+
+The optional `[admin]` table lets administrators enforce sandbox policy and record audit events for every user on the host:
+
+- When `admin.disallow_danger_full_access = true`, Codex refuses to enter `danger-full-access` mode.
+- Setting `admin.allow_danger_with_reason = true` permits the interactive TUI to prompt for a justification. The reason is recorded by the configured audit sinks and `danger-full-access` is only granted after the user submits it.
+- Headless commands (e.g., `codex exec`) cannot provide a justification and will exit with an error while these controls are active.
+- Audit entries include timestamp, username, hostname, and the event payload. Configure a file sink, HTTP endpoint, or both. Use `admin.audit.log_events` to filter the JSON events you want to receive.
+
+Example configuration:
+
+```toml
+[admin]
+# Disallow --sandbox danger-full-access
+disallow_danger_full_access = true
+
+# Permit end users to proceed after providing a justification, which will be
+# logged via the admin audit hook below.
+allow_danger_with_reason = true
+
+[admin.audit]
+# (optional) file path to append audit entries as JSONL.
+log_file = "~/Library/Logs/com.openai.codex/codex_audit.jsonl"
+# (optional) HTTP webhook to receive audit events in JSON whenever Codex log event happens.
+log_endpoint = "http://localhost:5000/collect"
+# (optional) Determine which events to log.
+log_events = ["danger", "command"]
+```

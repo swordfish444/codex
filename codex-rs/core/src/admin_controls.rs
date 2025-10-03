@@ -1,0 +1,359 @@
+use crate::config_types::AdminAuditEventKind;
+use crate::config_types::AdminAuditToml;
+use crate::config_types::AdminConfigToml;
+use crate::exec::ExecParams;
+use crate::exec::SandboxType;
+use crate::protocol::AskForApproval;
+use crate::protocol::SandboxPolicy;
+use chrono::DateTime;
+use chrono::Utc;
+use serde::Serialize;
+use std::collections::HashSet;
+use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::io::{self};
+use std::path::Path;
+use std::path::PathBuf;
+use tokio::runtime::Handle;
+use tracing::warn;
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AdminControls {
+    pub danger: DangerControls,
+    pub audit: Option<AdminAuditConfig>,
+    pub pending: Vec<PendingAdminAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DangerControls {
+    pub disallow_full_access: bool,
+    pub allow_with_reason: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdminAuditConfig {
+    pub log_file: Option<PathBuf>,
+    pub log_endpoint: Option<String>,
+    pub log_events: HashSet<AdminAuditEventKind>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PendingAdminAction {
+    Danger(DangerPending),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DangerPending {
+    pub source: DangerRequestSource,
+    pub requested_sandbox: SandboxPolicy,
+    pub requested_approval: AskForApproval,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DangerRequestSource {
+    Startup,
+    Resume,
+    Approvals,
+    ExecCli,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DangerDecision {
+    Allowed,
+    RequiresJustification,
+    Denied,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DangerAuditAction {
+    Requested,
+    Approved,
+    Denied,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AdminAuditPayload {
+    Danger {
+        action: DangerAuditAction,
+        justification: Option<String>,
+        requested_by: DangerRequestSource,
+        sandbox: String,
+        approval_policy: AskForApproval,
+    },
+    Command {
+        command: Vec<String>,
+        cwd: String,
+        sandbox: String,
+        sandbox_policy: String,
+        escalated: bool,
+        justification: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminAuditRecord {
+    timestamp: DateTime<Utc>,
+    username: String,
+    hostname: String,
+    #[serde(flatten)]
+    payload: AdminAuditPayload,
+}
+
+impl AdminControls {
+    pub fn from_toml(raw: Option<AdminConfigToml>) -> io::Result<Self> {
+        let raw = raw.unwrap_or_default();
+        let danger = DangerControls {
+            disallow_full_access: raw.disallow_danger_full_access.unwrap_or(false),
+            allow_with_reason: raw.allow_danger_with_reason.unwrap_or(false),
+        };
+        let audit = match raw.audit {
+            Some(audit_raw) => AdminAuditConfig::from_toml(audit_raw)?,
+            None => None,
+        };
+
+        Ok(Self {
+            danger,
+            audit,
+            pending: Vec::new(),
+        })
+    }
+
+    pub fn decision_for_danger(&self) -> DangerDecision {
+        if !self.danger.disallow_full_access {
+            DangerDecision::Allowed
+        } else if self.danger.allow_with_reason {
+            DangerDecision::RequiresJustification
+        } else {
+            DangerDecision::Denied
+        }
+    }
+
+    pub fn has_pending_danger(&self) -> bool {
+        self.pending
+            .iter()
+            .any(|action| matches!(action, PendingAdminAction::Danger(_)))
+    }
+
+    pub fn take_pending_danger(&mut self) -> Option<DangerPending> {
+        if let Some(index) = self
+            .pending
+            .iter()
+            .position(|action| matches!(action, PendingAdminAction::Danger(_)))
+        {
+            match self.pending.remove(index) {
+                PendingAdminAction::Danger(pending) => Some(pending),
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn peek_pending_danger(&self) -> Option<&DangerPending> {
+        self.pending.iter().find_map(|action| match action {
+            PendingAdminAction::Danger(pending) => Some(pending),
+        })
+    }
+}
+
+impl AdminAuditConfig {
+    pub fn from_toml(raw: AdminAuditToml) -> io::Result<Option<Self>> {
+        let AdminAuditToml {
+            log_file,
+            log_endpoint,
+            log_events,
+        } = raw;
+
+        let log_file = match log_file {
+            Some(path) => {
+                let trimmed = path.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(expand_path(trimmed)?)
+                }
+            }
+            None => None,
+        };
+
+        let log_endpoint = log_endpoint
+            .map(|endpoint| endpoint.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        if log_file.is_none() && log_endpoint.is_none() {
+            return Ok(None);
+        }
+
+        let log_events = log_events.into_iter().collect();
+
+        Ok(Some(Self {
+            log_file,
+            log_endpoint,
+            log_events,
+        }))
+    }
+
+    pub fn should_log(&self, kind: AdminAuditEventKind) -> bool {
+        self.log_events.is_empty() || self.log_events.contains(&kind)
+    }
+}
+
+impl AdminAuditPayload {
+    pub fn kind(&self) -> AdminAuditEventKind {
+        match self {
+            AdminAuditPayload::Danger { .. } => AdminAuditEventKind::Danger,
+            AdminAuditPayload::Command { .. } => AdminAuditEventKind::Command,
+        }
+    }
+}
+
+impl AdminAuditRecord {
+    fn new(payload: AdminAuditPayload) -> Self {
+        Self {
+            timestamp: Utc::now(),
+            username: current_username(),
+            hostname: current_hostname(),
+            payload,
+        }
+    }
+}
+
+pub fn log_admin_event(config: &AdminAuditConfig, payload: AdminAuditPayload) {
+    let kind = payload.kind();
+    if !config.should_log(kind) {
+        return;
+    }
+
+    let record = AdminAuditRecord::new(payload.clone());
+
+    if let Some(path) = &config.log_file {
+        if let Err(err) = append_record_to_file(path, &record) {
+            warn!(path = %path.display(), ?err, "failed to write admin audit event");
+        }
+    }
+
+    if let Some(endpoint) = &config.log_endpoint {
+        send_record_to_endpoint(endpoint, record);
+    }
+}
+
+fn append_record_to_file(path: &Path, record: &AdminAuditRecord) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    let line =
+        serde_json::to_string(record).map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+    file.write_all(line.as_bytes())?;
+    file.write_all(b"\n")?;
+    Ok(())
+}
+
+fn send_record_to_endpoint(endpoint: &str, record: AdminAuditRecord) {
+    match Handle::try_current() {
+        Ok(handle) => {
+            let client = reqwest::Client::new();
+            let endpoint = endpoint.to_string();
+            handle.spawn(async move {
+                if let Err(err) = client.post(endpoint).json(&record).send().await {
+                    warn!(?err, "failed to post admin audit event");
+                }
+            });
+        }
+        Err(_) => {
+            warn!("admin audit HTTP logging requested but no async runtime is available");
+        }
+    }
+}
+
+fn expand_path(raw: &str) -> io::Result<PathBuf> {
+    if raw == "~" {
+        return dirs::home_dir().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "could not resolve home directory for admin audit log file",
+            )
+        });
+    }
+
+    if let Some(rest) = raw.strip_prefix("~/") {
+        let mut home = dirs::home_dir().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "could not resolve home directory for admin audit log file",
+            )
+        })?;
+        if !rest.is_empty() {
+            home.push(rest);
+        }
+        return Ok(home);
+    }
+
+    Ok(PathBuf::from(raw))
+}
+
+fn current_username() -> String {
+    env_var("USER")
+        .or_else(|| env_var("USERNAME"))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn current_hostname() -> String {
+    env_var("HOSTNAME")
+        .or_else(|| env_var("COMPUTERNAME"))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn env_var(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|value| !value.is_empty())
+}
+
+fn sandbox_label(policy: &SandboxPolicy) -> &'static str {
+    match policy {
+        SandboxPolicy::DangerFullAccess => "danger-full-access",
+        SandboxPolicy::ReadOnly => "read-only",
+        SandboxPolicy::WorkspaceWrite { .. } => "workspace-write",
+    }
+}
+
+fn sandbox_type_label(sandbox: SandboxType) -> &'static str {
+    match sandbox {
+        SandboxType::None => "none",
+        SandboxType::MacosSeatbelt => "macos-seatbelt",
+        SandboxType::LinuxSeccomp => "linux-seccomp",
+    }
+}
+
+pub fn build_danger_audit_payload(
+    pending: &DangerPending,
+    action: DangerAuditAction,
+    justification: Option<String>,
+) -> AdminAuditPayload {
+    AdminAuditPayload::Danger {
+        action,
+        justification,
+        requested_by: pending.source,
+        sandbox: sandbox_label(&pending.requested_sandbox).to_string(),
+        approval_policy: pending.requested_approval,
+    }
+}
+
+pub fn build_command_audit_payload(
+    params: &ExecParams,
+    sandbox_type: SandboxType,
+    sandbox_policy: &SandboxPolicy,
+) -> AdminAuditPayload {
+    let cwd = params.cwd.display().to_string();
+    AdminAuditPayload::Command {
+        command: params.command.clone(),
+        cwd,
+        sandbox: sandbox_type_label(sandbox_type).to_string(),
+        sandbox_policy: sandbox_label(sandbox_policy).to_string(),
+        escalated: params.with_escalated_permissions.unwrap_or(false),
+        justification: params.justification.clone(),
+    }
+}

@@ -10,11 +10,16 @@ mod event_processor_with_human_output;
 pub mod event_processor_with_jsonl_output;
 pub mod exec_events;
 
+use anyhow::bail;
 pub use cli::Cli;
 use codex_core::AuthManager;
 use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_core::ConversationManager;
 use codex_core::NewConversation;
+use codex_core::admin_controls::DangerAuditAction;
+use codex_core::admin_controls::PendingAdminAction;
+use codex_core::admin_controls::build_danger_audit_payload;
+use codex_core::admin_controls::log_admin_event;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::git_info::get_git_repo_root;
@@ -192,6 +197,22 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     };
 
     let config = Config::load_with_cli_overrides(cli_kv_overrides, overrides).await?;
+
+    if config.admin.has_pending_danger() {
+        if let Some(audit) = config.admin.audit.as_ref() {
+            if let Some(pending) = config.admin.pending.iter().find_map(|action| match action {
+                PendingAdminAction::Danger(pending) => Some(pending),
+            }) {
+                log_admin_event(
+                    audit,
+                    build_danger_audit_payload(pending, DangerAuditAction::Denied, None),
+                );
+            }
+        }
+        bail!(
+            "danger-full-access requires interactive justification; rerun in the interactive TUI"
+        );
+    }
 
     let otel = codex_core::otel_init::build_provider(&config, env!("CARGO_PKG_VERSION"));
 

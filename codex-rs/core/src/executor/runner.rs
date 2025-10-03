@@ -6,6 +6,10 @@ use std::time::Duration;
 use super::backends::ExecutionMode;
 use super::backends::backend_for_mode;
 use super::cache::ApprovalCache;
+use crate::admin_controls::AdminAuditConfig;
+use crate::admin_controls::build_command_audit_payload;
+use crate::admin_controls::log_admin_event;
+use crate::config_types::AdminAuditEventKind;
 use crate::codex::Session;
 use crate::error::CodexErr;
 use crate::error::SandboxErr;
@@ -31,6 +35,7 @@ pub(crate) struct ExecutorConfig {
     pub(crate) sandbox_policy: SandboxPolicy,
     pub(crate) sandbox_cwd: PathBuf,
     codex_linux_sandbox_exe: Option<PathBuf>,
+    pub(crate) admin_audit: Option<AdminAuditConfig>,
 }
 
 impl ExecutorConfig {
@@ -38,11 +43,13 @@ impl ExecutorConfig {
         sandbox_policy: SandboxPolicy,
         sandbox_cwd: PathBuf,
         codex_linux_sandbox_exe: Option<PathBuf>,
+        admin_audit: Option<AdminAuditConfig>,
     ) -> Self {
         Self {
             sandbox_policy,
             sandbox_cwd,
             codex_linux_sandbox_exe,
+            admin_audit,
         }
     }
 }
@@ -222,6 +229,12 @@ impl Executor {
         config: &ExecutorConfig,
         stdout_stream: Option<StdoutStream>,
     ) -> Result<ExecToolCallOutput, CodexErr> {
+        if let Some(admin_audit) = config.admin_audit.as_ref() {
+            if admin_audit.should_log(AdminAuditEventKind::Command) {
+                let payload = build_command_audit_payload(&params, sandbox, &config.sandbox_policy);
+                log_admin_event(admin_audit, payload);
+            }
+        }
         process_exec_tool_call(
             params,
             sandbox,

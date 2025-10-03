@@ -1,8 +1,17 @@
+use crate::admin_controls::AdminControls;
+use crate::admin_controls::DangerAuditAction;
+use crate::admin_controls::DangerDecision;
+use crate::admin_controls::DangerPending;
+use crate::admin_controls::DangerRequestSource;
+use crate::admin_controls::PendingAdminAction;
+use crate::admin_controls::build_danger_audit_payload;
+use crate::admin_controls::log_admin_event;
 use crate::config_loader::LoadedConfigLayers;
 pub use crate::config_loader::load_config_as_toml;
 use crate::config_loader::load_config_layers_with_overrides;
 use crate::config_loader::merge_toml_values;
 use crate::config_profile::ConfigProfile;
+use crate::config_types::AdminConfigToml;
 use crate::config_types::DEFAULT_OTEL_ENVIRONMENT;
 use crate::config_types::History;
 use crate::config_types::McpServerConfig;
@@ -213,6 +222,9 @@ pub struct Config {
 
     /// OTEL configuration (exporter type, endpoint, headers, etc.).
     pub otel: crate::config_types::OtelConfig,
+
+    /// Administrator-controlled options and audit configuration.
+    pub admin: AdminControls,
 }
 
 impl Config {
@@ -734,6 +746,10 @@ pub struct ConfigToml {
 
     /// OTEL configuration.
     pub otel: Option<crate::config_types::OtelConfigToml>,
+
+    /// Administrator-level controls applied to all users on this host.
+    #[serde(default)]
+    pub admin: Option<AdminConfigToml>,
 }
 
 impl From<ConfigToml> for UserSavedConfig {
@@ -922,7 +938,68 @@ impl Config {
             None => ConfigProfile::default(),
         };
 
-        let sandbox_policy = cfg.derive_sandbox_policy(sandbox_mode);
+        let resolved_approval_policy = approval_policy
+            .or(config_profile.approval_policy)
+            .or(cfg.approval_policy)
+            .unwrap_or_else(AskForApproval::default);
+
+        let mut admin = AdminControls::from_toml(cfg.admin.clone())?;
+
+        let mut sandbox_policy = cfg.derive_sandbox_policy(sandbox_mode);
+
+        if matches!(sandbox_policy, SandboxPolicy::DangerFullAccess) {
+            match admin.decision_for_danger() {
+                DangerDecision::Allowed => {
+                    if let Some(audit) = admin.audit.as_ref() {
+                        let pending = DangerPending {
+                            source: DangerRequestSource::Startup,
+                            requested_sandbox: SandboxPolicy::DangerFullAccess,
+                            requested_approval: resolved_approval_policy,
+                        };
+                        log_admin_event(
+                            audit,
+                            build_danger_audit_payload(&pending, DangerAuditAction::Approved, None),
+                        );
+                    }
+                }
+                DangerDecision::RequiresJustification => {
+                    let pending = DangerPending {
+                        source: DangerRequestSource::Startup,
+                        requested_sandbox: SandboxPolicy::DangerFullAccess,
+                        requested_approval: resolved_approval_policy,
+                    };
+                    if let Some(audit) = admin.audit.as_ref() {
+                        log_admin_event(
+                            audit,
+                            build_danger_audit_payload(
+                                &pending,
+                                DangerAuditAction::Requested,
+                                None,
+                            ),
+                        );
+                    }
+                    admin.pending.push(PendingAdminAction::Danger(pending));
+                    sandbox_policy = SandboxPolicy::new_workspace_write_policy();
+                }
+                DangerDecision::Denied => {
+                    if let Some(audit) = admin.audit.as_ref() {
+                        let pending = DangerPending {
+                            source: DangerRequestSource::Startup,
+                            requested_sandbox: SandboxPolicy::DangerFullAccess,
+                            requested_approval: resolved_approval_policy,
+                        };
+                        log_admin_event(
+                            audit,
+                            build_danger_audit_payload(&pending, DangerAuditAction::Denied, None),
+                        );
+                    }
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "danger-full-access is disabled by administrator policy",
+                    ));
+                }
+            }
+        }
 
         let mut model_providers = built_in_model_providers();
         // Merge user-defined providers into the built-in list.
@@ -1031,10 +1108,7 @@ impl Config {
             model_provider_id,
             model_provider,
             cwd: resolved_cwd,
-            approval_policy: approval_policy
-                .or(config_profile.approval_policy)
-                .or(cfg.approval_policy)
-                .unwrap_or_else(AskForApproval::default),
+            approval_policy: resolved_approval_policy,
             sandbox_policy,
             shell_environment_policy,
             notify: cfg.notify,
@@ -1109,6 +1183,7 @@ impl Config {
                     exporter,
                 }
             },
+            admin,
         };
         Ok(config)
     }
@@ -1218,6 +1293,7 @@ pub fn log_dir(cfg: &Config) -> std::io::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use crate::admin_controls::AdminControls;
     use crate::config_types::HistoryPersistence;
     use crate::config_types::Notifications;
 
@@ -1885,6 +1961,7 @@ model_verbosity = "high"
                 disable_paste_burst: false,
                 tui_notifications: Default::default(),
                 otel: OtelConfig::default(),
+                admin: AdminControls::default(),
             },
             o3_profile_config
         );
@@ -1946,6 +2023,7 @@ model_verbosity = "high"
             disable_paste_burst: false,
             tui_notifications: Default::default(),
             otel: OtelConfig::default(),
+            admin: AdminControls::default(),
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -2022,6 +2100,7 @@ model_verbosity = "high"
             disable_paste_burst: false,
             tui_notifications: Default::default(),
             otel: OtelConfig::default(),
+            admin: AdminControls::default(),
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);
@@ -2084,6 +2163,7 @@ model_verbosity = "high"
             disable_paste_burst: false,
             tui_notifications: Default::default(),
             otel: OtelConfig::default(),
+            admin: AdminControls::default(),
         };
 
         assert_eq!(expected_gpt5_profile_config, gpt5_profile_config);

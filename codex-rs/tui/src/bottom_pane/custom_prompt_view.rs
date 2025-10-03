@@ -23,6 +23,8 @@ use super::textarea::TextAreaState;
 
 /// Callback invoked when the user submits a custom prompt.
 pub(crate) type PromptSubmitted = Box<dyn Fn(String) + Send + Sync>;
+/// Callback invoked when the prompt input is cancelled.
+pub(crate) type PromptCancelled = Box<dyn Fn() + Send + Sync>;
 
 /// Minimal multi-line text input view to collect custom review instructions.
 pub(crate) struct CustomPromptView {
@@ -30,6 +32,7 @@ pub(crate) struct CustomPromptView {
     placeholder: String,
     context_label: Option<String>,
     on_submit: PromptSubmitted,
+    on_cancel: Option<PromptCancelled>,
 
     // UI state
     textarea: TextArea,
@@ -43,12 +46,14 @@ impl CustomPromptView {
         placeholder: String,
         context_label: Option<String>,
         on_submit: PromptSubmitted,
+        on_cancel: Option<PromptCancelled>,
     ) -> Self {
         Self {
             title,
             placeholder,
             context_label,
             on_submit,
+            on_cancel,
             textarea: TextArea::new(),
             textarea_state: RefCell::new(TextAreaState::default()),
             complete: false,
@@ -89,6 +94,9 @@ impl BottomPaneView for CustomPromptView {
 
     fn on_ctrl_c(&mut self) -> CancellationEvent {
         self.complete = true;
+        if let Some(cancel) = self.on_cancel.as_ref() {
+            cancel();
+        }
         CancellationEvent::Handled
     }
 

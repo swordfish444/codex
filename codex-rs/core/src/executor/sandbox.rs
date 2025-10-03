@@ -207,7 +207,7 @@ mod tests {
             action,
             user_explicitly_approved_this_action: true,
         };
-        let cfg = ExecutorConfig::new(SandboxPolicy::ReadOnly, std::env::temp_dir(), None);
+        let cfg = ExecutorConfig::new(SandboxPolicy::ReadOnly, std::env::temp_dir(), None, None);
         let request = ExecutionRequest {
             params: ExecParams {
                 command: vec!["apply_patch".into()],
@@ -250,7 +250,12 @@ mod tests {
             action,
             user_explicitly_approved_this_action: false,
         };
-        let cfg = ExecutorConfig::new(SandboxPolicy::DangerFullAccess, std::env::temp_dir(), None);
+        let cfg = ExecutorConfig::new(
+            SandboxPolicy::DangerFullAccess,
+            std::env::temp_dir(),
+            None,
+            None,
+        );
         let request = ExecutionRequest {
             params: ExecParams {
                 command: vec!["apply_patch".into()],
@@ -294,7 +299,7 @@ mod tests {
             action,
             user_explicitly_approved_this_action: false,
         };
-        let cfg = ExecutorConfig::new(SandboxPolicy::ReadOnly, std::env::temp_dir(), None);
+        let cfg = ExecutorConfig::new(SandboxPolicy::ReadOnly, std::env::temp_dir(), None, None);
         let request = ExecutionRequest {
             params: ExecParams {
                 command: vec!["apply_patch".into()],
@@ -333,7 +338,12 @@ mod tests {
     #[tokio::test]
     async fn select_shell_autoapprove_in_danger_mode() {
         let (session, ctx) = make_session_and_context();
-        let cfg = ExecutorConfig::new(SandboxPolicy::DangerFullAccess, std::env::temp_dir(), None);
+        let cfg = ExecutorConfig::new(
+            SandboxPolicy::DangerFullAccess,
+            std::env::temp_dir(),
+            None,
+            None,
+        );
         let request = ExecutionRequest {
             params: ExecParams {
                 command: vec!["some-unknown".into()],
@@ -369,7 +379,7 @@ mod tests {
     #[tokio::test]
     async fn select_shell_escalates_on_failure_with_platform_sandbox() {
         let (session, ctx) = make_session_and_context();
-        let cfg = ExecutorConfig::new(SandboxPolicy::ReadOnly, std::env::temp_dir(), None);
+        let cfg = ExecutorConfig::new(SandboxPolicy::ReadOnly, std::env::temp_dir(), None, None);
         let request = ExecutionRequest {
             params: ExecParams {
                 // Unknown command => untrusted but not flagged dangerous

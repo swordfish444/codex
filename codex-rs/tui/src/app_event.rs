@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use codex_common::approval_presets::ApprovalPreset;
 use codex_common::model_presets::ModelPreset;
 use codex_core::protocol::ConversationPathResponseEvent;
 use codex_core::protocol::Event;
@@ -8,8 +9,6 @@ use codex_file_search::FileMatch;
 use crate::bottom_pane::ApprovalRequest;
 use crate::history_cell::HistoryCell;
 
-use codex_core::protocol::AskForApproval;
-use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol_config_types::ReasoningEffort;
 
 #[allow(clippy::large_enum_variant)]
@@ -67,11 +66,16 @@ pub(crate) enum AppEvent {
         presets: Vec<ModelPreset>,
     },
 
-    /// Update the current approval policy in the running app and widget.
-    UpdateAskForApprovalPolicy(AskForApproval),
+    /// Apply an approval preset chosen from the popup.
+    ApplyApprovalPreset(ApprovalPreset),
 
-    /// Update the current sandbox policy in the running app and widget.
-    UpdateSandboxPolicy(SandboxPolicy),
+    /// Submit a justification for enabling danger-full-access.
+    DangerJustificationSubmitted {
+        justification: String,
+    },
+
+    /// User cancelled the danger justification prompt without submitting a reason.
+    DangerJustificationCancelled,
 
     /// Forwarded conversation history snapshot from the current conversation.
     ConversationHistory(ConversationPathResponseEvent),

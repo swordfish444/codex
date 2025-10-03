@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use codex_core::admin_controls::DangerPending;
 use codex_core::config::Config;
 use codex_core::config_types::Notifications;
 use codex_core::git_info::current_branch_name;
@@ -260,6 +261,8 @@ pub(crate) struct ChatWidget {
     needs_final_message_separator: bool,
 
     last_rendered_width: std::cell::Cell<Option<usize>>,
+
+    pending_danger: Option<DangerPending>,
 }
 
 struct UserMessage {
@@ -285,6 +288,47 @@ fn create_initial_user_message(text: String, image_paths: Vec<PathBuf>) -> Optio
 }
 
 impl ChatWidget {
+    pub(crate) fn config_ref(&self) -> &Config {
+        &self.config
+    }
+
+    pub(crate) fn config_mut(&mut self) -> &mut Config {
+        &mut self.config
+    }
+
+    pub(crate) fn prompt_for_danger_justification(&mut self, pending: DangerPending) {
+        self.pending_danger = Some(pending);
+        self.add_info_message(
+            "Administrator justification required before enabling full access.".to_string(),
+            Some("Provide a short reason and press Enter to continue.".to_string()),
+        );
+
+        let submit_tx = self.app_event_tx.clone();
+        let cancel_tx = self.app_event_tx.clone();
+        let view = CustomPromptView::new(
+            "Administrator justification".to_string(),
+            "Type your justification and press Enter".to_string(),
+            Some("Your response will be logged for administrators.".to_string()),
+            Box::new(move |input: String| {
+                let trimmed = input.trim();
+                if trimmed.is_empty() {
+                    return;
+                }
+                submit_tx.send(AppEvent::DangerJustificationSubmitted {
+                    justification: trimmed.to_string(),
+                });
+            }),
+            Some(Box::new(move || {
+                cancel_tx.send(AppEvent::DangerJustificationCancelled);
+            })),
+        );
+        self.bottom_pane.show_view(Box::new(view));
+    }
+
+    pub(crate) fn take_pending_danger(&mut self) -> Option<DangerPending> {
+        self.pending_danger.take()
+    }
+
     fn model_description_for(slug: &str) -> Option<&'static str> {
         if slug.starts_with("gpt-5-codex") {
             Some("Optimized for coding tasks with many tools.")
@@ -938,6 +982,7 @@ impl ChatWidget {
             ghost_snapshots_disabled: true,
             needs_final_message_separator: false,
             last_rendered_width: std::cell::Cell::new(None),
+            pending_danger: None,
         }
     }
 
@@ -1001,6 +1046,7 @@ impl ChatWidget {
             ghost_snapshots_disabled: true,
             needs_final_message_separator: false,
             last_rendered_width: std::cell::Cell::new(None),
+            pending_danger: None,
         }
     }
 
@@ -1776,21 +1822,11 @@ impl ChatWidget {
         for preset in presets.into_iter() {
             let is_current =
                 current_approval == preset.approval && current_sandbox == preset.sandbox;
-            let approval = preset.approval;
-            let sandbox = preset.sandbox.clone();
             let name = preset.label.to_string();
             let description = Some(preset.description.to_string());
+            let preset_for_action = preset.clone();
             let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                tx.send(AppEvent::CodexOp(Op::OverrideTurnContext {
-                    cwd: None,
-                    approval_policy: Some(approval),
-                    sandbox_policy: Some(sandbox.clone()),
-                    model: None,
-                    effort: None,
-                    summary: None,
-                }));
-                tx.send(AppEvent::UpdateAskForApprovalPolicy(approval));
-                tx.send(AppEvent::UpdateSandboxPolicy(sandbox.clone()));
+                tx.send(AppEvent::ApplyApprovalPreset(preset_for_action.clone()));
             })];
             items.push(SelectionItem {
                 name,
@@ -2073,6 +2109,7 @@ impl ChatWidget {
                     },
                 }));
             }),
+            None,
         );
         self.bottom_pane.show_view(Box::new(view));
     }
@@ -2096,12 +2133,6 @@ impl ChatWidget {
 
     pub(crate) fn conversation_id(&self) -> Option<ConversationId> {
         self.conversation_id
-    }
-
-    /// Return a reference to the widget's current config (includes any
-    /// runtime overrides applied via TUI, e.g., model or approval policy).
-    pub(crate) fn config_ref(&self) -> &Config {
-        &self.config
     }
 
     pub(crate) fn clear_token_usage(&mut self) {
