@@ -45,6 +45,7 @@ jobs:
           GOBIN: ${{ runner.temp }}/bin
         run: |
           set -eo pipefail
+          mkdir -p "$GOBIN"
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
       - name: actionlint
         env:
