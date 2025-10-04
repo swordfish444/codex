@@ -169,7 +169,7 @@ pub(crate) async fn handle_container_exec_with_params(
     match output_result {
         Ok(output) => {
             let ExecToolCallOutput { exit_code, .. } = &output;
-            let content = format_exec_output_with_style(&output, response_format);
+            let content = format_exec_output(&output, response_format);
             if *exit_code == 0 {
                 Ok(content)
             } else {
@@ -177,11 +177,9 @@ pub(crate) async fn handle_container_exec_with_params(
             }
         }
         Err(ExecError::Function(err)) => Err(err),
-        Err(ExecError::Codex(CodexErr::Sandbox(SandboxErr::Timeout { output }))) => {
-            Err(FunctionCallError::RespondToModel(
-                format_exec_output_with_style(&output, response_format),
-            ))
-        }
+        Err(ExecError::Codex(CodexErr::Sandbox(SandboxErr::Timeout { output }))) => Err(
+            FunctionCallError::RespondToModel(format_exec_output(&output, response_format)),
+        ),
         Err(ExecError::Codex(err)) => Err(FunctionCallError::RespondToModel(
             format_unexpected_exec_error(err, response_format),
         )),
@@ -224,7 +222,7 @@ pub fn format_exec_output_apply_patch(exec_output: &ExecToolCallOutput) -> Strin
     serde_json::to_string(&payload).expect("serialize ExecOutput")
 }
 
-fn format_exec_output_with_style(
+fn format_exec_output(
     exec_output: &ExecToolCallOutput,
     response_format: ExecResponseFormat,
 ) -> String {
