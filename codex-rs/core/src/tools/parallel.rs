@@ -25,7 +25,6 @@ pub(crate) struct ToolCallRuntime {
     tracker: SharedTurnDiffTracker,
     sub_id: String,
     pending_calls: Vec<PendingToolCall>,
-    serial_mode: bool,
 }
 
 impl ToolCallRuntime {
@@ -43,7 +42,6 @@ impl ToolCallRuntime {
             tracker,
             sub_id,
             pending_calls: Vec::new(),
-            serial_mode: false,
         }
     }
 
@@ -54,16 +52,11 @@ impl ToolCallRuntime {
         output: &mut Vec<ProcessedResponseItem>,
     ) -> Result<Option<ResponseInputItem>, CodexErr> {
         let supports_parallel = self.router.tool_supports_parallel(&call.tool_name);
-        if !self.serial_mode && supports_parallel {
+        if supports_parallel {
             self.spawn_parallel(call, output_index);
             Ok(None)
         } else {
-            if !supports_parallel {
-                self.serial_mode = true;
-            }
-            if self.serial_mode && !self.pending_calls.is_empty() {
-                self.resolve_pending(output.as_mut_slice()).await?;
-            }
+            self.resolve_pending(output.as_mut_slice()).await?;
             self.dispatch_serial(call).await.map(Some)
         }
     }

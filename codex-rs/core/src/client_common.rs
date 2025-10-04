@@ -69,10 +69,6 @@ impl Prompt {
     pub(crate) fn get_formatted_input(&self) -> Vec<ResponseItem> {
         self.input.clone()
     }
-
-    pub(crate) fn allow_parallel_tool_calls(&self) -> bool {
-        self.parallel_tool_calls
-    }
 }
 
 #[derive(Debug)]
@@ -187,6 +183,17 @@ pub(crate) mod tools {
         WebSearch {},
         #[serde(rename = "custom")]
         Freeform(FreeformTool),
+    }
+
+    impl ToolSpec {
+        pub(crate) fn name(&self) -> &str {
+            match self {
+                ToolSpec::Function(tool) => tool.name.as_str(),
+                ToolSpec::LocalShell {} => "local_shell",
+                ToolSpec::WebSearch {} => "web_search",
+                ToolSpec::Freeform(tool) => tool.name.as_str(),
+            }
+        }
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
