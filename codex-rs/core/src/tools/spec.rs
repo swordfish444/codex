@@ -258,6 +258,68 @@ fn create_view_image_tool() -> ToolSpec {
     })
 }
 
+fn create_test_sync_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "sleep_before_ms".to_string(),
+        JsonSchema::Number {
+            description: Some("Optional delay in milliseconds before any other action".to_string()),
+        },
+    );
+    properties.insert(
+        "sleep_after_ms".to_string(),
+        JsonSchema::Number {
+            description: Some(
+                "Optional delay in milliseconds after completing the barrier".to_string(),
+            ),
+        },
+    );
+
+    let mut barrier_properties = BTreeMap::new();
+    barrier_properties.insert(
+        "id".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Identifier shared by concurrent calls that should rendezvous".to_string(),
+            ),
+        },
+    );
+    barrier_properties.insert(
+        "participants".to_string(),
+        JsonSchema::Number {
+            description: Some(
+                "Number of tool calls that must arrive before the barrier opens".to_string(),
+            ),
+        },
+    );
+    barrier_properties.insert(
+        "timeout_ms".to_string(),
+        JsonSchema::Number {
+            description: Some("Maximum time in milliseconds to wait at the barrier".to_string()),
+        },
+    );
+
+    properties.insert(
+        "barrier".to_string(),
+        JsonSchema::Object {
+            properties: barrier_properties,
+            required: Some(vec!["id".to_string(), "participants".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "test_sync_tool".to_string(),
+        description: "Internal synchronization helper used by Codex integration tests.".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: None,
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
 fn create_read_file_tool() -> ToolSpec {
     let mut properties = BTreeMap::new();
     properties.insert(
@@ -507,6 +569,7 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::PlanHandler;
     use crate::tools::handlers::ReadFileHandler;
     use crate::tools::handlers::ShellHandler;
+    use crate::tools::handlers::TestSyncHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
     use std::sync::Arc;
@@ -575,6 +638,16 @@ pub(crate) fn build_specs(
         let read_file_handler = Arc::new(ReadFileHandler);
         builder.push_spec_with_parallel_support(create_read_file_tool(), true);
         builder.register_handler("read_file", read_file_handler);
+    }
+
+    if config
+        .experimental_supported_tools
+        .iter()
+        .any(|tool| tool == "test_sync_tool")
+    {
+        let test_sync_handler = Arc::new(TestSyncHandler);
+        builder.push_spec_with_parallel_support(create_test_sync_tool(), true);
+        builder.register_handler("test_sync_tool", test_sync_handler);
     }
 
     if config.web_search_request {
@@ -730,6 +803,33 @@ mod tests {
 
         assert!(!find_tool(&tools, "unified_exec").supports_parallel_tool_calls);
         assert!(find_tool(&tools, "read_file").supports_parallel_tool_calls);
+    }
+
+    #[test]
+    fn test_test_model_family_includes_sync_tool() {
+        let model_family = find_family_for_model("test-gpt-5-codex")
+            .expect("test-gpt-5-codex should be a valid model family");
+        let config = ToolsConfig::new(&ToolsConfigParams {
+            model_family: &model_family,
+            include_plan_tool: false,
+            include_apply_patch_tool: false,
+            include_web_search_request: false,
+            use_streamable_shell_tool: false,
+            include_view_image_tool: false,
+            experimental_unified_exec_tool: false,
+        });
+        let (tools, _) = build_specs(&config, None).build();
+
+        assert!(
+            tools
+                .iter()
+                .any(|tool| tool_name(&tool.spec) == "test_sync_tool")
+        );
+        assert!(
+            tools
+                .iter()
+                .any(|tool| tool_name(&tool.spec) == "read_file")
+        );
     }
 
     #[test]
