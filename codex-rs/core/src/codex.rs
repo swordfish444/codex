@@ -2129,19 +2129,13 @@ async fn try_run_turn(
                         let payload_preview = call.payload.log_payload().into_owned();
                         tracing::info!("ToolCall: {} {}", call.tool_name, payload_preview);
                         let index = output.len();
-                        match tool_runtime
-                            .handle_tool_call(call, index, &mut output)
-                            .await?
-                        {
-                            Some(response) => output.push(ProcessedResponseItem {
-                                item,
-                                response: Some(response),
-                            }),
-                            None => output.push(ProcessedResponseItem {
-                                item,
-                                response: None,
-                            }),
-                        }
+                        output.push(ProcessedResponseItem {
+                            item,
+                            response: None,
+                        });
+                        tool_runtime
+                            .handle_tool_call(call, index, output.as_mut_slice())
+                            .await?;
                     }
                     Ok(None) => {
                         let response = handle_non_tool_response_item(

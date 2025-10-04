@@ -49,16 +49,21 @@ impl ToolCallRuntime {
         &mut self,
         call: ToolCall,
         output_index: usize,
-        output: &mut Vec<ProcessedResponseItem>,
-    ) -> Result<Option<ResponseInputItem>, CodexErr> {
+        output: &mut [ProcessedResponseItem],
+    ) -> Result<(), CodexErr> {
         let supports_parallel = self.router.tool_supports_parallel(&call.tool_name);
         if supports_parallel {
             self.spawn_parallel(call, output_index);
-            Ok(None)
         } else {
-            self.resolve_pending(output.as_mut_slice()).await?;
-            self.dispatch_serial(call).await.map(Some)
+            self.resolve_pending(output).await?;
+            let response = self.dispatch_serial(call).await?;
+            let slot = output.get_mut(output_index).ok_or_else(|| {
+                CodexErr::Fatal(format!("tool output index {output_index} out of bounds"))
+            })?;
+            slot.response = Some(response);
         }
+
+        Ok(())
     }
 
     pub(crate) fn abort_all(&mut self) {
