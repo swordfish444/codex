@@ -77,12 +77,20 @@ pub struct AddArgs {
     /// Name for the MCP server configuration.
     pub name: String,
 
-    /// Environment variables to set when launching the server.
-    #[arg(long, value_parser = parse_env_pair, value_name = "KEY=VALUE")]
+    /// Environment variables to set when launching a stdio server.
+    #[arg(long, value_parser = parse_env_pair, value_name = "KEY=VALUE", conflicts_with = "url")]
     pub env: Vec<(String, String)>,
 
-    /// Command to launch the MCP server.
-    #[arg(trailing_var_arg = true, num_args = 1..)]
+    /// URL for a streamable HTTP MCP server.
+    #[arg(long, value_name = "URL")]
+    pub url: Option<String>,
+
+    /// Optional bearer token for streamable HTTP servers.
+    #[arg(long, value_name = "TOKEN", requires = "url")]
+    pub bearer_token: Option<String>,
+
+    /// Command to launch a stdio MCP server.
+    #[arg(trailing_var_arg = true)]
     pub command: Vec<String>,
 }
 
@@ -140,39 +148,57 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
     // Validate any provided overrides even though they are not currently applied.
     config_overrides.parse_overrides().map_err(|e| anyhow!(e))?;
 
-    let AddArgs { name, env, command } = add_args;
+    let AddArgs {
+        name,
+        env,
+        url,
+        bearer_token,
+        command,
+    } = add_args;
 
     validate_server_name(&name)?;
-
-    let mut command_parts = command.into_iter();
-    let command_bin = command_parts
-        .next()
-        .ok_or_else(|| anyhow!("command is required"))?;
-    let command_args: Vec<String> = command_parts.collect();
-
-    let env_map = if env.is_empty() {
-        None
-    } else {
-        let mut map = HashMap::new();
-        for (key, value) in env {
-            map.insert(key, value);
-        }
-        Some(map)
-    };
 
     let codex_home = find_codex_home().context("failed to resolve CODEX_HOME")?;
     let mut servers = load_global_mcp_servers(&codex_home)
         .await
         .with_context(|| format!("failed to load MCP servers from {}", codex_home.display()))?;
 
-    let new_entry = McpServerConfig {
-        transport: McpServerTransportConfig::Stdio {
-            command: command_bin,
-            args: command_args,
-            env: env_map,
-        },
-        startup_timeout_sec: None,
-        tool_timeout_sec: None,
+    let new_entry = if let Some(url) = url {
+        if !command.is_empty() {
+            bail!("command arguments are not supported when --url is provided");
+        }
+
+        McpServerConfig {
+            transport: McpServerTransportConfig::StreamableHttp { url, bearer_token },
+            startup_timeout_sec: None,
+            tool_timeout_sec: None,
+        }
+    } else {
+        let mut command_parts = command.into_iter();
+        let command_bin = command_parts
+            .next()
+            .ok_or_else(|| anyhow!("command is required when --url is not provided"))?;
+        let command_args: Vec<String> = command_parts.collect();
+
+        let env_map = if env.is_empty() {
+            None
+        } else {
+            let mut map = HashMap::new();
+            for (key, value) in env {
+                map.insert(key, value);
+            }
+            Some(map)
+        };
+
+        McpServerConfig {
+            transport: McpServerTransportConfig::Stdio {
+                command: command_bin,
+                args: command_args,
+                env: env_map,
+            },
+            startup_timeout_sec: None,
+            tool_timeout_sec: None,
+        }
     };
 
     servers.insert(name.clone(), new_entry);

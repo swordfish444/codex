@@ -392,8 +392,11 @@ experimental_use_rmcp_client = true
 ### MCP CLI commands
 
 ```shell
-# Add a server (env can be repeated; `--` separates the launcher command)
+# Add a stdio server (env can be repeated; `--` separates the launcher command)
 codex mcp add docs -- docs-server --port 4000
+
+# Add a streamable HTTP server (requires experimental_use_rmcp_client = true)
+codex mcp add figma --url http://127.0.0.1:3845/mcp --bearer-token token
 
 # List configured servers (pretty table or JSON)
 codex mcp list

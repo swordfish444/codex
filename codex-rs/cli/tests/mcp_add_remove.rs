@@ -93,3 +93,64 @@ async fn add_with_env_preserves_key_order_and_values() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn add_streamable_http_server_updates_global_config() -> Result<()> {
+    let codex_home = TempDir::new()?;
+
+    let mut add_cmd = codex_command(codex_home.path())?;
+    add_cmd
+        .args([
+            "mcp",
+            "add",
+            "remote",
+            "--url",
+            "http://127.0.0.1:1234/mcp",
+            "--bearer-token",
+            "token-123",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Added global MCP server 'remote'."));
+
+    let servers = load_global_mcp_servers(codex_home.path()).await?;
+    assert_eq!(servers.len(), 1);
+    let remote = servers.get("remote").expect("server should exist");
+    match &remote.transport {
+        McpServerTransportConfig::StreamableHttp { url, bearer_token } => {
+            assert_eq!(url, "http://127.0.0.1:1234/mcp");
+            assert_eq!(bearer_token.as_deref(), Some("token-123"));
+        }
+        other => panic!("unexpected transport: {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn add_streamable_http_server_rejects_command_args() -> Result<()> {
+    let codex_home = TempDir::new()?;
+
+    let mut add_cmd = codex_command(codex_home.path())?;
+    add_cmd
+        .args([
+            "mcp",
+            "add",
+            "broken",
+            "--url",
+            "http://127.0.0.1:3845/mcp",
+            "--",
+            "python",
+            "server.py",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "command arguments are not supported when --url is provided",
+        ));
+
+    let servers = load_global_mcp_servers(codex_home.path()).await?;
+    assert!(servers.is_empty());
+
+    Ok(())
+}
