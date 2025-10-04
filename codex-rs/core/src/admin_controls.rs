@@ -151,15 +151,18 @@ impl AdminControls {
         self.pending
             .extract_if(.., |action| matches!(action, PendingAdminAction::Danger(_)))
             .next()
-            .and_then(|action| match action {
-                PendingAdminAction::Danger(pending) => Some(pending),
+            .map(|action| match action {
+                PendingAdminAction::Danger(pending) => pending,
             })
     }
 
     pub fn peek_pending_danger(&self) -> Option<&DangerPending> {
-        self.pending.iter().find_map(|action| match action {
-            PendingAdminAction::Danger(pending) => Some(pending),
-        })
+        self.pending
+            .iter()
+            .map(|action| match action {
+                PendingAdminAction::Danger(pending) => pending,
+            })
+            .next()
     }
 }
 
@@ -233,21 +236,20 @@ pub fn log_admin_event(config: &AdminAuditConfig, payload: AdminAuditPayload) {
 
     let record = AdminAuditRecord::new(payload);
 
-    if let Some(path) = &config.log_file {
-        if let Err(err) = append_record_to_file(path, &record) {
-            warn!(
-                "failed to write admin audit event to {}: {err:?}",
-                path.display()
-            );
-        }
+    if let Some(path) = &config.log_file
+        && let Err(err) = append_record_to_file(path, &record)
+    {
+        warn!(
+            "failed to write admin audit event to {}: {err:?}",
+            path.display()
+        );
     }
 
     if let Some(endpoint) = &config.log_endpoint {
         if Handle::try_current().is_ok() {
             let endpoint = endpoint.clone();
-            let record_for_endpoint = record.clone();
             tokio::spawn(async move {
-                if let Err(err) = send_record_to_endpoint(&endpoint, record_for_endpoint).await {
+                if let Err(err) = send_record_to_endpoint(&endpoint, record).await {
                     warn!("failed to post admin audit event to {endpoint}: {err:?}");
                 }
             });
