@@ -673,6 +673,19 @@ Note this is **not** a general editor setting (like `$EDITOR`), as it only accep
 
 Currently, `"vscode"` is the default, though Codex does not verify VS Code is installed. As such, `file_opener` may default to `"none"` or something else in the future.
 
+## windows
+
+Windows-specific settings that control how the CLI behaves when launched from a Windows shell.
+
+```toml
+[windows]
+prefer_wsl = true
+hide_wsl_notice = false
+```
+
+- `prefer_wsl` (default: `false`) &mdash; when set to `true`, Codex detects WSL and automatically restarts the current command inside the default WSL distribution so that Linux tooling is used without additional aliases. If WSL is unavailable the command continues normally on Windows.
+- `hide_wsl_notice` (default: `false`) &mdash; suppresses the informational message that Codex prints before relaunching inside WSL. Set this to `true` if you prefer silent hand-offs.
+
 ## hide_agent_reasoning
 
 Codex intermittently emits "reasoning" events that show the model's internal "thinking" before it produces a final answer. Some users may find these events distracting, especially in CI logs or minimal terminal output.

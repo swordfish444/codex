@@ -24,8 +24,10 @@ use std::path::PathBuf;
 use supports_color::Stream;
 
 mod mcp_cmd;
+mod windows;
 
 use crate::mcp_cmd::McpCli;
+use windows::maybe_relaunch_in_wsl;
 
 /// Codex CLI
 ///
@@ -258,6 +260,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 &mut interactive.config_overrides,
                 root_config_overrides.clone(),
             );
+            maybe_relaunch_in_wsl(&interactive.config_overrides).await?;
             let exit_info = codex_tui::run_main(interactive, codex_linux_sandbox_exe).await?;
             print_exit_messages(exit_info);
         }
@@ -266,17 +269,21 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 &mut exec_cli.config_overrides,
                 root_config_overrides.clone(),
             );
+            maybe_relaunch_in_wsl(&exec_cli.config_overrides).await?;
             codex_exec::run_main(exec_cli, codex_linux_sandbox_exe).await?;
         }
         Some(Subcommand::McpServer) => {
+            maybe_relaunch_in_wsl(&root_config_overrides).await?;
             codex_mcp_server::run_main(codex_linux_sandbox_exe, root_config_overrides).await?;
         }
         Some(Subcommand::Mcp(mut mcp_cli)) => {
             // Propagate any root-level config overrides (e.g. `-c key=value`).
             prepend_config_flags(&mut mcp_cli.config_overrides, root_config_overrides.clone());
+            maybe_relaunch_in_wsl(&mcp_cli.config_overrides).await?;
             mcp_cli.run().await?;
         }
         Some(Subcommand::AppServer) => {
+            maybe_relaunch_in_wsl(&root_config_overrides).await?;
             codex_app_server::run_main(codex_linux_sandbox_exe, root_config_overrides).await?;
         }
         Some(Subcommand::Resume(ResumeCommand {
@@ -291,6 +298,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 last,
                 config_overrides,
             );
+            maybe_relaunch_in_wsl(&interactive.config_overrides).await?;
             codex_tui::run_main(interactive, codex_linux_sandbox_exe).await?;
         }
         Some(Subcommand::Login(mut login_cli)) => {
@@ -298,6 +306,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 &mut login_cli.config_overrides,
                 root_config_overrides.clone(),
             );
+            maybe_relaunch_in_wsl(&login_cli.config_overrides).await?;
             match login_cli.action {
                 Some(LoginSubcommand::Status) => {
                     run_login_status(login_cli.config_overrides).await;
@@ -329,9 +338,11 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 &mut logout_cli.config_overrides,
                 root_config_overrides.clone(),
             );
+            maybe_relaunch_in_wsl(&logout_cli.config_overrides).await?;
             run_logout(logout_cli.config_overrides).await;
         }
         Some(Subcommand::Completion(completion_cli)) => {
+            maybe_relaunch_in_wsl(&root_config_overrides).await?;
             print_completion(completion_cli);
         }
         Some(Subcommand::Cloud(mut cloud_cli)) => {
@@ -339,6 +350,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 &mut cloud_cli.config_overrides,
                 root_config_overrides.clone(),
             );
+            maybe_relaunch_in_wsl(&cloud_cli.config_overrides).await?;
             codex_cloud_tasks::run_main(cloud_cli, codex_linux_sandbox_exe).await?;
         }
         Some(Subcommand::Debug(debug_args)) => match debug_args.cmd {
@@ -347,6 +359,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                     &mut seatbelt_cli.config_overrides,
                     root_config_overrides.clone(),
                 );
+                maybe_relaunch_in_wsl(&seatbelt_cli.config_overrides).await?;
                 codex_cli::debug_sandbox::run_command_under_seatbelt(
                     seatbelt_cli,
                     codex_linux_sandbox_exe,
@@ -358,6 +371,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                     &mut landlock_cli.config_overrides,
                     root_config_overrides.clone(),
                 );
+                maybe_relaunch_in_wsl(&landlock_cli.config_overrides).await?;
                 codex_cli::debug_sandbox::run_command_under_landlock(
                     landlock_cli,
                     codex_linux_sandbox_exe,
@@ -370,13 +384,16 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 &mut apply_cli.config_overrides,
                 root_config_overrides.clone(),
             );
+            maybe_relaunch_in_wsl(&apply_cli.config_overrides).await?;
             run_apply_command(apply_cli, None).await?;
         }
         Some(Subcommand::ResponsesApiProxy(args)) => {
+            maybe_relaunch_in_wsl(&root_config_overrides).await?;
             tokio::task::spawn_blocking(move || codex_responses_api_proxy::run_main(args))
                 .await??;
         }
         Some(Subcommand::GenerateTs(gen_cli)) => {
+            maybe_relaunch_in_wsl(&root_config_overrides).await?;
             codex_protocol_ts::generate_ts(&gen_cli.out_dir, gen_cli.prettier.as_deref())?;
         }
     }

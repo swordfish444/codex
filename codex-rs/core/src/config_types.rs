@@ -292,6 +292,39 @@ impl Default for Notifications {
     }
 }
 
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct WindowsConfigToml {
+    #[serde(default)]
+    pub prefer_wsl: Option<bool>,
+
+    #[serde(default)]
+    pub hide_wsl_notice: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowsConfig {
+    pub prefer_wsl: bool,
+    pub hide_wsl_notice: bool,
+}
+
+impl Default for WindowsConfig {
+    fn default() -> Self {
+        Self {
+            prefer_wsl: false,
+            hide_wsl_notice: false,
+        }
+    }
+}
+
+impl From<WindowsConfigToml> for WindowsConfig {
+    fn from(value: WindowsConfigToml) -> Self {
+        Self {
+            prefer_wsl: value.prefer_wsl.unwrap_or(false),
+            hide_wsl_notice: value.hide_wsl_notice.unwrap_or(false),
+        }
+    }
+}
+
 /// Collection of settings that are specific to the TUI.
 #[derive(Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct Tui {

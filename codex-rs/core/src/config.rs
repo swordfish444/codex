@@ -17,6 +17,8 @@ use crate::config_types::ShellEnvironmentPolicy;
 use crate::config_types::ShellEnvironmentPolicyToml;
 use crate::config_types::Tui;
 use crate::config_types::UriBasedFileOpener;
+use crate::config_types::WindowsConfig;
+use crate::config_types::WindowsConfigToml;
 use crate::git_info::resolve_root_git_project_for_trust;
 use crate::model_family::ModelFamily;
 use crate::model_family::derive_default_model_family;
@@ -169,6 +171,9 @@ pub struct Config {
     ///
     /// When this program is invoked, arg0 will be set to `codex-linux-sandbox`.
     pub codex_linux_sandbox_exe: Option<PathBuf>,
+
+    /// Windows-specific configuration toggles.
+    pub windows: WindowsConfig,
 
     /// Value to use for `reasoning.effort` when making a request using the
     /// Responses API.
@@ -696,6 +701,10 @@ pub struct ConfigToml {
     /// Collection of settings that are specific to the TUI.
     pub tui: Option<Tui>,
 
+    /// Windows-specific configuration options.
+    #[serde(default)]
+    pub windows: Option<WindowsConfigToml>,
+
     /// When set to `true`, `AgentReasoning` events will be hidden from the
     /// UI/output. Defaults to `false`.
     pub hide_agent_reasoning: Option<bool>,
@@ -978,6 +987,12 @@ impl Config {
             .or(cfg.tools.as_ref().and_then(|t| t.view_image))
             .unwrap_or(true);
 
+        let windows = cfg
+            .windows
+            .clone()
+            .map(WindowsConfig::from)
+            .unwrap_or_default();
+
         let model = model
             .or(config_profile.model)
             .or(cfg.model)
@@ -1063,6 +1078,7 @@ impl Config {
             history,
             file_opener: cfg.file_opener.unwrap_or(UriBasedFileOpener::VsCode),
             codex_linux_sandbox_exe,
+            windows,
 
             hide_agent_reasoning: cfg.hide_agent_reasoning.unwrap_or(false),
             show_raw_agent_reasoning: cfg
@@ -1223,6 +1239,7 @@ pub fn log_dir(cfg: &Config) -> std::io::Result<PathBuf> {
 mod tests {
     use crate::config_types::HistoryPersistence;
     use crate::config_types::Notifications;
+    use crate::config_types::WindowsConfig;
 
     use super::*;
     use pretty_assertions::assert_eq;
@@ -1870,6 +1887,7 @@ model_verbosity = "high"
                 history: History::default(),
                 file_opener: UriBasedFileOpener::VsCode,
                 codex_linux_sandbox_exe: None,
+                windows: WindowsConfig::default(),
                 hide_agent_reasoning: false,
                 show_raw_agent_reasoning: false,
                 model_reasoning_effort: Some(ReasoningEffort::High),
@@ -1931,6 +1949,7 @@ model_verbosity = "high"
             history: History::default(),
             file_opener: UriBasedFileOpener::VsCode,
             codex_linux_sandbox_exe: None,
+            windows: WindowsConfig::default(),
             hide_agent_reasoning: false,
             show_raw_agent_reasoning: false,
             model_reasoning_effort: None,
@@ -2007,6 +2026,7 @@ model_verbosity = "high"
             history: History::default(),
             file_opener: UriBasedFileOpener::VsCode,
             codex_linux_sandbox_exe: None,
+            windows: WindowsConfig::default(),
             hide_agent_reasoning: false,
             show_raw_agent_reasoning: false,
             model_reasoning_effort: None,
@@ -2069,6 +2089,7 @@ model_verbosity = "high"
             history: History::default(),
             file_opener: UriBasedFileOpener::VsCode,
             codex_linux_sandbox_exe: None,
+            windows: WindowsConfig::default(),
             hide_agent_reasoning: false,
             show_raw_agent_reasoning: false,
             model_reasoning_effort: Some(ReasoningEffort::High),
