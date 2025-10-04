@@ -320,57 +320,6 @@ pub fn format_exec_output_structured(exec_output: &ExecToolCallOutput) -> String
     sections.join("\n")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::exec::StreamOutput;
-    use pretty_assertions::assert_eq;
-    use std::time::Duration;
-
-    fn sample_output() -> ExecToolCallOutput {
-        ExecToolCallOutput {
-            exit_code: 0,
-            stdout: StreamOutput::new("stdout".to_string()),
-            stderr: StreamOutput::new("stderr".to_string()),
-            aggregated_output: StreamOutput::new("stdout\nstderr".to_string()),
-            duration: Duration::from_secs_f64(1.2345),
-            timed_out: false,
-        }
-    }
-
-    #[test]
-    fn structured_format_basic() {
-        let formatted = format_exec_output_structured(&sample_output());
-        let expected = "Exit code: 0\nWall time: 1.235 seconds\nOutput:\nstdout\nstderr";
-        assert_eq!(formatted, expected);
-    }
-
-    #[test]
-    fn structured_format_includes_truncation_metadata() {
-        let mut output = sample_output();
-        output.aggregated_output.truncated_after_lines = Some(200);
-        let formatted = format_exec_output_structured(&output);
-        assert!(formatted.contains("Total output lines: 200"));
-    }
-
-    #[test]
-    fn significant_digit_formatting_matches_expectations() {
-        assert_eq!(format_significant_digits(0.0, 4), "0");
-        assert_eq!(format_significant_digits(1.23456, 4), "1.235");
-        assert_eq!(format_significant_digits(12345.0, 4), "1.235e4");
-        assert_eq!(format_significant_digits(0.000123456, 4), "0.0001235");
-    }
-
-    #[test]
-    fn structured_error_includes_metadata() {
-        let error = format_structured_error("unexpected failure");
-        assert_eq!(
-            error,
-            "Exit code: N/A\nWall time: N/A seconds\nError: unexpected failure\nOutput:\n"
-        );
-    }
-}
-
 pub fn format_exec_output_str(exec_output: &ExecToolCallOutput) -> String {
     let ExecToolCallOutput {
         aggregated_output, ..
@@ -447,4 +396,90 @@ pub fn format_exec_output_str(exec_output: &ExecToolCallOutput) -> String {
     result.push_str(tail_part);
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exec::StreamOutput;
+    use pretty_assertions::assert_eq;
+    use std::time::Duration;
+    const TRUNCATED_STRUCTURED_EXPECTED: &str =
+        include_str!("tests/truncated_structured_expected.txt");
+
+    fn sample_output() -> ExecToolCallOutput {
+        ExecToolCallOutput {
+            exit_code: 0,
+            stdout: StreamOutput::new("stdout".to_string()),
+            stderr: StreamOutput::new("stderr".to_string()),
+            aggregated_output: StreamOutput::new("stdout\nstderr".to_string()),
+            duration: Duration::from_secs_f64(1.2345),
+            timed_out: false,
+        }
+    }
+
+    #[test]
+    fn structured_format_basic() {
+        let formatted = format_exec_output_structured(&sample_output());
+        let expected = "Exit code: 0\nWall time: 1.235 seconds\nOutput:\nstdout\nstderr";
+        assert_eq!(formatted, expected);
+    }
+
+    #[test]
+    fn structured_format_includes_truncation_metadata() {
+        let mut output = sample_output();
+        output.aggregated_output.truncated_after_lines = Some(200);
+        let formatted = format_exec_output_structured(&output);
+        assert!(formatted.contains("Total output lines: 200"));
+    }
+
+    #[test]
+    fn significant_digit_formatting_matches_expectations() {
+        assert_eq!(format_significant_digits(0.0, 4), "0");
+        assert_eq!(format_significant_digits(1.23456, 4), "1.235");
+        assert_eq!(format_significant_digits(12345.0, 4), "1.235e4");
+        assert_eq!(format_significant_digits(0.000123456, 4), "0.0001235");
+    }
+
+    #[test]
+    fn structured_error_includes_metadata() {
+        let error = format_structured_error("unexpected failure");
+        assert_eq!(
+            error,
+            "Exit code: N/A\nWall time: N/A seconds\nError: unexpected failure\nOutput:\n"
+        );
+    }
+
+    #[test]
+    fn format_exec_output_uses_legacy_json_formatter() {
+        let output = sample_output();
+        let formatted = format_exec_output(&output, ExecResponseFormat::LegacyJson);
+        assert_eq!(
+            formatted,
+            "{\"output\":\"stdout\\nstderr\",\"metadata\":{\"exit_code\":0,\"duration_seconds\":1.2}}"
+        );
+    }
+
+    #[test]
+    fn format_exec_output_uses_structured_formatter() {
+        let output = sample_output();
+        let formatted = format_exec_output(&output, ExecResponseFormat::StructuredText);
+        assert_eq!(
+            formatted,
+            "Exit code: 0\nWall time: 1.235 seconds\nOutput:\nstdout\nstderr"
+        );
+    }
+
+    #[test]
+    fn format_exec_output_truncates_long_output() {
+        let mut output = sample_output();
+        let mut aggregated = String::new();
+        for i in 0..260 {
+            aggregated.push_str(&format!("L{i:03}\n"));
+        }
+        output.aggregated_output = StreamOutput::new(aggregated);
+
+        let formatted = format_exec_output(&output, ExecResponseFormat::StructuredText);
+        assert_eq!(formatted, TRUNCATED_STRUCTURED_EXPECTED);
+    }
 }
