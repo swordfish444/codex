@@ -407,6 +407,14 @@ mod tests {
     const TRUNCATED_STRUCTURED_EXPECTED: &str =
         include_str!("tests/truncated_structured_expected.txt");
 
+    fn normalize_line_endings(input: &str) -> String {
+        if input.contains('\r') {
+            input.replace('\r', "")
+        } else {
+            input.to_string()
+        }
+    }
+
     fn sample_output() -> ExecToolCallOutput {
         ExecToolCallOutput {
             exit_code: 0,
@@ -480,6 +488,7 @@ mod tests {
         output.aggregated_output = StreamOutput::new(aggregated);
 
         let formatted = format_exec_output(&output, ExecResponseFormat::StructuredText);
-        assert_eq!(formatted, TRUNCATED_STRUCTURED_EXPECTED);
+        let expected = normalize_line_endings(TRUNCATED_STRUCTURED_EXPECTED);
+        assert_eq!(formatted, expected);
     }
 }
