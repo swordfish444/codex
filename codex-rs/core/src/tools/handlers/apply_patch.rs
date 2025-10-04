@@ -9,6 +9,7 @@ use crate::exec::ExecParams;
 use crate::function_tool::FunctionCallError;
 use crate::openai_tools::JsonSchema;
 use crate::tools::ExecResponseFormat;
+use crate::tools::HandleExecRequest;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -77,16 +78,16 @@ impl ToolHandler for ApplyPatchHandler {
             justification: None,
         };
 
-        let content = handle_container_exec_with_params(
-            tool_name.as_str(),
-            exec_params,
-            session,
-            turn,
-            tracker,
-            sub_id.to_string(),
-            call_id.clone(),
+        let content = handle_container_exec_with_params(HandleExecRequest {
+            tool_name: tool_name.as_str(),
+            params: exec_params,
+            sess: session,
+            turn_context: turn,
+            turn_diff_tracker: tracker,
+            sub_id: sub_id.to_string(),
+            call_id: call_id.clone(),
             response_format,
-        )
+        })
         .await?;
 
         Ok(ToolOutput::Function {

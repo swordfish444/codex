@@ -2401,6 +2401,7 @@ mod tests {
     use crate::tasks::SessionTask;
     use crate::tasks::SessionTaskContext;
     use crate::tools::ExecResponseFormat;
+    use crate::tools::HandleExecRequest;
     use crate::tools::MODEL_FORMAT_HEAD_LINES;
     use crate::tools::MODEL_FORMAT_MAX_BYTES;
     use crate::tools::MODEL_FORMAT_MAX_LINES;
@@ -3082,16 +3083,16 @@ mod tests {
         let sub_id = "test-sub".to_string();
         let call_id = "test-call".to_string();
 
-        let resp = handle_container_exec_with_params(
+        let resp = handle_container_exec_with_params(HandleExecRequest {
             tool_name,
             params,
-            &session,
-            &turn_context,
-            &mut turn_diff_tracker,
+            sess: &session,
+            turn_context: &turn_context,
+            turn_diff_tracker: &mut turn_diff_tracker,
             sub_id,
             call_id,
-            ExecResponseFormat::LegacyJson,
-        )
+            response_format: ExecResponseFormat::LegacyJson,
+        })
         .await;
 
         let Err(FunctionCallError::RespondToModel(output)) = resp else {
@@ -3109,16 +3110,16 @@ mod tests {
         // Force DangerFullAccess to avoid platform sandbox dependencies in tests.
         turn_context.sandbox_policy = SandboxPolicy::DangerFullAccess;
 
-        let resp2 = handle_container_exec_with_params(
+        let resp2 = handle_container_exec_with_params(HandleExecRequest {
             tool_name,
-            params2,
-            &session,
-            &turn_context,
-            &mut turn_diff_tracker,
-            "test-sub".to_string(),
-            "test-call-2".to_string(),
-            ExecResponseFormat::LegacyJson,
-        )
+            params: params2,
+            sess: &session,
+            turn_context: &turn_context,
+            turn_diff_tracker: &mut turn_diff_tracker,
+            sub_id: "test-sub".to_string(),
+            call_id: "test-call-2".to_string(),
+            response_format: ExecResponseFormat::LegacyJson,
+        })
         .await;
 
         let output = resp2.expect("expected Ok result");

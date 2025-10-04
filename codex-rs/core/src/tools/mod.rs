@@ -51,16 +51,30 @@ pub(crate) enum ExecResponseFormat {
 }
 
 // TODO(jif) break this down
+pub(crate) struct HandleExecRequest<'a> {
+    pub tool_name: &'a str,
+    pub params: ExecParams,
+    pub sess: &'a Session,
+    pub turn_context: &'a TurnContext,
+    pub turn_diff_tracker: &'a mut TurnDiffTracker,
+    pub sub_id: String,
+    pub call_id: String,
+    pub response_format: ExecResponseFormat,
+}
+
 pub(crate) async fn handle_container_exec_with_params(
-    tool_name: &str,
-    params: ExecParams,
-    sess: &Session,
-    turn_context: &TurnContext,
-    turn_diff_tracker: &mut TurnDiffTracker,
-    sub_id: String,
-    call_id: String,
-    response_format: ExecResponseFormat,
+    request: HandleExecRequest<'_>,
 ) -> Result<String, FunctionCallError> {
+    let HandleExecRequest {
+        tool_name,
+        params,
+        sess,
+        turn_context,
+        turn_diff_tracker,
+        sub_id,
+        call_id,
+        response_format,
+    } = request;
     let otel_event_manager = turn_context.client.get_otel_event_manager();
 
     if params.with_escalated_permissions.unwrap_or(false)
@@ -228,7 +242,7 @@ fn format_unexpected_exec_error(err: CodexErr, response_format: ExecResponseForm
 }
 
 fn format_structured_error(message: &str) -> String {
-    let lines = vec![
+    let lines = [
         "Exit code: N/A".to_string(),
         "Wall time: N/A seconds".to_string(),
         format!("Error: {message}"),
