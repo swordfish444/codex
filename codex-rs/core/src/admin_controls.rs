@@ -3,14 +3,15 @@ use crate::config_types::AdminAuditToml;
 use crate::config_types::AdminConfigToml;
 use crate::exec::ExecParams;
 use crate::exec::SandboxType;
+use crate::path_utils::expand_tilde;
 use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPolicy;
 use chrono::DateTime;
 use chrono::Utc;
+use fd_lock::FdLock;
 use gethostname::gethostname;
+use reqwest::Client;
 use serde::Serialize;
-use serde::ser::SerializeMap;
-use serde::ser::Serializer;
 use std::collections::HashSet;
 use std::fs;
 use std::fs::OpenOptions;
@@ -20,6 +21,9 @@ use std::path::Path;
 use std::path::PathBuf;
 use tokio::runtime::Handle;
 use tracing::warn;
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AdminControls {
@@ -78,30 +82,25 @@ pub enum DangerAuditAction {
     Denied,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "audit_kind", rename_all = "snake_case")]
 pub enum AdminAuditPayload {
-    Danger(DangerAuditDetails),
-    Command(CommandAuditDetails),
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DangerAuditDetails {
-    pub action: DangerAuditAction,
-    pub justification: Option<String>,
-    pub requested_by: DangerRequestSource,
-    pub sandbox: String,
-    pub approval_policy: AskForApproval,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CommandAuditDetails {
-    pub command: Vec<String>,
-    pub command_cwd: String,
-    pub cli_cwd: String,
-    pub sandbox: String,
-    pub sandbox_policy: String,
-    pub escalated: bool,
-    pub justification: Option<String>,
+    Danger {
+        action: DangerAuditAction,
+        justification: Option<String>,
+        requested_by: DangerRequestSource,
+        sandbox_policy: SandboxPolicy,
+        approval_policy: AskForApproval,
+    },
+    Command {
+        command: Vec<String>,
+        command_cwd: PathBuf,
+        cli_cwd: PathBuf,
+        sandbox_type: SandboxType,
+        sandbox_policy: SandboxPolicy,
+        escalated: bool,
+        justification: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -149,22 +148,17 @@ impl AdminControls {
     }
 
     pub fn take_pending_danger(&mut self) -> Option<DangerPending> {
-        if let Some(index) = self
-            .pending
-            .iter()
-            .position(|action| matches!(action, PendingAdminAction::Danger(_)))
-        {
-            match self.pending.remove(index) {
+        self.pending
+            .extract_if(|action| matches!(action, PendingAdminAction::Danger(_)))
+            .next()
+            .and_then(|action| match action {
                 PendingAdminAction::Danger(pending) => Some(pending),
-            }
-        } else {
-            None
-        }
+            })
     }
 
     pub fn peek_pending_danger(&self) -> Option<&DangerPending> {
-        self.pending.first().map(|action| match action {
-            PendingAdminAction::Danger(pending) => pending,
+        self.pending.iter().find_map(|action| match action {
+            PendingAdminAction::Danger(pending) => Some(pending),
         })
     }
 }
@@ -183,7 +177,7 @@ impl AdminAuditConfig {
                 if trimmed.is_empty() {
                     None
                 } else {
-                    Some(expand_path(trimmed)?)
+                    Some(expand_tilde(trimmed)?)
                 }
             }
             None => None,
@@ -214,27 +208,9 @@ impl AdminAuditConfig {
 impl AdminAuditPayload {
     pub fn kind(&self) -> AdminAuditEventKind {
         match self {
-            AdminAuditPayload::Danger(_) => AdminAuditEventKind::Danger,
-            AdminAuditPayload::Command(_) => AdminAuditEventKind::Command,
+            AdminAuditPayload::Danger { .. } => AdminAuditEventKind::Danger,
+            AdminAuditPayload::Command { .. } => AdminAuditEventKind::Command,
         }
-    }
-}
-
-impl Serialize for AdminAuditPayload {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut map = serializer.serialize_map(Some(1))?;
-        match self {
-            AdminAuditPayload::Danger(details) => {
-                map.serialize_entry("audit_danger", details)?;
-            }
-            AdminAuditPayload::Command(details) => {
-                map.serialize_entry("audit_command", details)?;
-            }
-        }
-        map.end()
     }
 }
 
@@ -257,14 +233,29 @@ pub fn log_admin_event(config: &AdminAuditConfig, payload: AdminAuditPayload) {
 
     let record = AdminAuditRecord::new(payload);
 
-    if let Some(path) = &config.log_file
-        && let Err(err) = append_record_to_file(path, &record)
-    {
-        warn!(path = %path.display(), ?err, "failed to write admin audit event");
+    if let Some(path) = &config.log_file {
+        if let Err(err) = append_record_to_file(path, &record) {
+            warn!(
+                "failed to write admin audit event to {}: {err:?}",
+                path.display()
+            );
+        }
     }
 
     if let Some(endpoint) = &config.log_endpoint {
-        send_record_to_endpoint(endpoint, record);
+        if Handle::try_current().is_ok() {
+            let endpoint = endpoint.clone();
+            let record_for_endpoint = record.clone();
+            tokio::spawn(async move {
+                if let Err(err) = send_record_to_endpoint(&endpoint, record_for_endpoint).await {
+                    warn!("failed to post admin audit event to {endpoint}: {err:?}");
+                }
+            });
+        } else {
+            warn!(
+                "admin audit HTTP logging requested for {endpoint}, but no async runtime is available",
+            );
+        }
     }
 }
 
@@ -273,54 +264,29 @@ fn append_record_to_file(path: &Path, record: &AdminAuditRecord) -> io::Result<(
         fs::create_dir_all(parent)?;
     }
 
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    let mut options = OpenOptions::new();
+    options.create(true).append(true).write(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+
+    let file = options.open(path)?;
+    let mut lock = FdLock::new(file);
+    let mut guard = lock.lock()?;
     let line = serde_json::to_string(record).map_err(io::Error::other)?;
-    file.write_all(line.as_bytes())?;
-    file.write_all(b"\n")?;
+    guard.write_all(line.as_bytes())?;
+    guard.write_all(b"\n")?;
+    guard.flush()?;
     Ok(())
 }
 
-fn send_record_to_endpoint(endpoint: &str, record: AdminAuditRecord) {
-    match Handle::try_current() {
-        Ok(handle) => {
-            let client = reqwest::Client::new();
-            let endpoint = endpoint.to_string();
-            handle.spawn(async move {
-                if let Err(err) = client.post(endpoint).json(&record).send().await {
-                    warn!(?err, "failed to post admin audit event");
-                }
-            });
-        }
-        Err(_) => {
-            warn!("admin audit HTTP logging requested but no async runtime is available");
-        }
-    }
-}
-
-fn expand_path(raw: &str) -> io::Result<PathBuf> {
-    if raw == "~" {
-        return dirs::home_dir().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "could not resolve home directory for admin audit log file",
-            )
-        });
-    }
-
-    if let Some(rest) = raw.strip_prefix("~/") {
-        let mut home = dirs::home_dir().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "could not resolve home directory for admin audit log file",
-            )
-        })?;
-        if !rest.is_empty() {
-            home.push(rest);
-        }
-        return Ok(home);
-    }
-
-    Ok(PathBuf::from(raw))
+async fn send_record_to_endpoint(
+    endpoint: &str,
+    record: AdminAuditRecord,
+) -> Result<(), reqwest::Error> {
+    Client::new().post(endpoint).json(&record).send().await?;
+    Ok(())
 }
 
 fn current_username() -> String {
@@ -343,34 +309,18 @@ fn env_var(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|value| !value.is_empty())
 }
 
-fn sandbox_label(policy: &SandboxPolicy) -> &'static str {
-    match policy {
-        SandboxPolicy::DangerFullAccess => "danger-full-access",
-        SandboxPolicy::ReadOnly => "read-only",
-        SandboxPolicy::WorkspaceWrite { .. } => "workspace-write",
-    }
-}
-
-fn sandbox_type_label(sandbox: SandboxType) -> &'static str {
-    match sandbox {
-        SandboxType::None => "none",
-        SandboxType::MacosSeatbelt => "macos-seatbelt",
-        SandboxType::LinuxSeccomp => "linux-seccomp",
-    }
-}
-
 pub fn build_danger_audit_payload(
     pending: &DangerPending,
     action: DangerAuditAction,
     justification: Option<String>,
 ) -> AdminAuditPayload {
-    AdminAuditPayload::Danger(DangerAuditDetails {
+    AdminAuditPayload::Danger {
         action,
         justification,
         requested_by: pending.source,
-        sandbox: sandbox_label(&pending.requested_sandbox).to_string(),
+        sandbox_policy: pending.requested_sandbox.clone(),
         approval_policy: pending.requested_approval,
-    })
+    }
 }
 
 pub fn build_command_audit_payload(
@@ -379,13 +329,118 @@ pub fn build_command_audit_payload(
     sandbox_policy: &SandboxPolicy,
     cli_cwd: &Path,
 ) -> AdminAuditPayload {
-    AdminAuditPayload::Command(CommandAuditDetails {
+    AdminAuditPayload::Command {
         command: params.command.clone(),
-        command_cwd: params.cwd.display().to_string(),
-        cli_cwd: cli_cwd.display().to_string(),
-        sandbox: sandbox_type_label(sandbox_type).to_string(),
-        sandbox_policy: sandbox_label(sandbox_policy).to_string(),
+        command_cwd: params.cwd.clone(),
+        cli_cwd: cli_cwd.to_path_buf(),
+        sandbox_type,
+        sandbox_policy: sandbox_policy.clone(),
         escalated: params.with_escalated_permissions.unwrap_or(false),
         justification: params.justification.clone(),
-    })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn danger_payload_serializes_expected_fields() {
+        let pending = DangerPending {
+            source: DangerRequestSource::Approvals,
+            requested_sandbox: SandboxPolicy::DangerFullAccess,
+            requested_approval: AskForApproval::Never,
+        };
+
+        let payload = build_danger_audit_payload(
+            &pending,
+            DangerAuditAction::Requested,
+            Some("reason".to_string()),
+        );
+        let record = AdminAuditRecord::new(payload);
+        let value = serde_json::to_value(record).expect("serialize record");
+
+        assert_eq!(
+            value.get("audit_kind"),
+            Some(&Value::String("danger".to_string()))
+        );
+        assert_eq!(
+            value.get("action"),
+            Some(&Value::String("requested".to_string()))
+        );
+        assert_eq!(
+            value.get("requested_by"),
+            Some(&Value::String("approvals".to_string()))
+        );
+        assert_eq!(
+            value.get("approval_policy"),
+            Some(&Value::String("never".to_string()))
+        );
+        assert_eq!(
+            value.get("sandbox_policy").and_then(|sp| sp.get("mode")),
+            Some(&Value::String("danger-full-access".to_string()))
+        );
+        assert_eq!(
+            value.get("justification"),
+            Some(&Value::String("reason".to_string()))
+        );
+    }
+
+    #[test]
+    fn command_payload_serializes_expected_fields() {
+        let mut env = HashMap::new();
+        env.insert("PATH".to_string(), "/usr/bin".to_string());
+        let params = ExecParams {
+            command: vec!["echo".to_string(), "hello".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            timeout_ms: Some(1000),
+            env,
+            with_escalated_permissions: Some(true),
+            justification: Some("investigation".to_string()),
+        };
+
+        let sandbox_policy = SandboxPolicy::new_workspace_write_policy();
+        let payload = build_command_audit_payload(
+            &params,
+            SandboxType::MacosSeatbelt,
+            &sandbox_policy,
+            Path::new("/workspace"),
+        );
+        let record = AdminAuditRecord::new(payload);
+        let value = serde_json::to_value(record).expect("serialize record");
+
+        assert_eq!(
+            value.get("audit_kind"),
+            Some(&Value::String("command".to_string()))
+        );
+        assert_eq!(
+            value.get("command"),
+            Some(&serde_json::json!(["echo", "hello"]))
+        );
+        assert_eq!(
+            value.get("command_cwd"),
+            Some(&Value::String("/tmp".to_string()))
+        );
+        assert_eq!(
+            value.get("cli_cwd"),
+            Some(&Value::String("/workspace".to_string()))
+        );
+        assert_eq!(
+            value.get("sandbox_type"),
+            Some(&Value::String("macos-seatbelt".to_string()))
+        );
+        assert_eq!(
+            value.get("sandbox_policy").and_then(|sp| sp.get("mode")),
+            Some(&Value::String("workspace-write".to_string()))
+        );
+        assert_eq!(value.get("escalated"), Some(&Value::Bool(true)));
+        assert_eq!(
+            value.get("justification"),
+            Some(&Value::String("investigation".to_string()))
+        );
+    }
 }

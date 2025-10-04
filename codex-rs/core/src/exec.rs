@@ -27,6 +27,7 @@ use crate::protocol::SandboxPolicy;
 use crate::seatbelt::spawn_command_under_seatbelt;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
+use serde::Serialize;
 
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 
@@ -61,7 +62,8 @@ impl ExecParams {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum SandboxType {
     None,
 

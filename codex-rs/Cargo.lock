@@ -1042,6 +1042,7 @@ dependencies = [
  "env-flags",
  "escargot",
  "eventsource-stream",
+ "fd-lock",
  "futures",
  "gethostname",
  "indexmap 2.10.0",
@@ -1062,6 +1063,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "sha1",
+ "shellexpand",
  "shlex",
  "similar",
  "strum_macros 0.27.2",
@@ -5341,6 +5343,15 @@ name = "shell-words"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24188a676b6ae68c3b2cb3a01be17fbf7240ce009799bb56d5b1409051e78fde"
+
+[[package]]
+name = "shellexpand"
+version = "3.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b1fdf65dd6331831494dd616b30351c38e96e45921a27745cf98490458b90bb"
+dependencies = [
+ "dirs",
+]
 
 [[package]]
 name = "shlex"

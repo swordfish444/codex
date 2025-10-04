@@ -30,6 +30,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
 mod app;
+mod app_admin;
 mod app_backtrack;
 mod app_event;
 mod app_event_sender;
