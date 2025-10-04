@@ -77,20 +77,20 @@ impl ToolHandler for TestSyncHandler {
             ))
         })?;
 
-        if let Some(delay) = args.sleep_before_ms {
-            if delay > 0 {
-                sleep(Duration::from_millis(delay)).await;
-            }
+        if let Some(delay) = args.sleep_before_ms
+            && delay > 0
+        {
+            sleep(Duration::from_millis(delay)).await;
         }
 
         if let Some(barrier) = args.barrier {
             wait_on_barrier(barrier).await?;
         }
 
-        if let Some(delay) = args.sleep_after_ms {
-            if delay > 0 {
-                sleep(Duration::from_millis(delay)).await;
-            }
+        if let Some(delay) = args.sleep_after_ms
+            && delay > 0
+        {
+            sleep(Duration::from_millis(delay)).await;
         }
 
         Ok(ToolOutput::Function {
@@ -147,10 +147,10 @@ async fn wait_on_barrier(args: BarrierArgs) -> Result<(), FunctionCallError> {
 
     if wait_result.is_leader() {
         let mut map = barrier_map().lock().await;
-        if let Some(state) = map.get(&barrier_id) {
-            if Arc::ptr_eq(&state.barrier, &barrier) {
-                map.remove(&barrier_id);
-            }
+        if let Some(state) = map.get(&barrier_id)
+            && Arc::ptr_eq(&state.barrier, &barrier)
+        {
+            map.remove(&barrier_id);
         }
     }
 
