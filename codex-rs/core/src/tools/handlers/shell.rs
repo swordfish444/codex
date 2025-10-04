@@ -5,16 +5,23 @@ use crate::codex::TurnContext;
 use crate::exec::ExecParams;
 use crate::exec_env::create_env;
 use crate::function_tool::FunctionCallError;
+use crate::tools::ExecResponseFormat;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
-use crate::tools::handle_container_exec_with_params;
+use crate::tools::handle_container_exec_with_params_with_format;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 
-pub struct ShellHandler;
+pub struct ShellHandler {
+    response_format: ExecResponseFormat,
+}
 
 impl ShellHandler {
+    pub fn new(response_format: ExecResponseFormat) -> Self {
+        Self { response_format }
+    }
+
     fn to_exec_params(params: ShellToolCallParams, turn_context: &TurnContext) -> ExecParams {
         ExecParams {
             command: params.command,
@@ -63,7 +70,7 @@ impl ToolHandler for ShellHandler {
                         ))
                     })?;
                 let exec_params = Self::to_exec_params(params, turn);
-                let content = handle_container_exec_with_params(
+                let content = handle_container_exec_with_params_with_format(
                     tool_name.as_str(),
                     exec_params,
                     session,
@@ -71,6 +78,7 @@ impl ToolHandler for ShellHandler {
                     tracker,
                     sub_id.to_string(),
                     call_id.clone(),
+                    self.response_format,
                 )
                 .await?;
                 Ok(ToolOutput::Function {
@@ -80,7 +88,7 @@ impl ToolHandler for ShellHandler {
             }
             ToolPayload::LocalShell { params } => {
                 let exec_params = Self::to_exec_params(params, turn);
-                let content = handle_container_exec_with_params(
+                let content = handle_container_exec_with_params_with_format(
                     tool_name.as_str(),
                     exec_params,
                     session,
@@ -88,6 +96,7 @@ impl ToolHandler for ShellHandler {
                     tracker,
                     sub_id.to_string(),
                     call_id.clone(),
+                    self.response_format,
                 )
                 .await?;
                 Ok(ToolOutput::Function {

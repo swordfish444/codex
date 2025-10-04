@@ -187,7 +187,7 @@ fn create_unified_exec_tool() -> ToolSpec {
     })
 }
 
-fn create_shell_tool() -> ToolSpec {
+fn shell_tool_properties() -> BTreeMap<String, JsonSchema> {
     let mut properties = BTreeMap::new();
     properties.insert(
         "command".to_string(),
@@ -222,9 +222,15 @@ fn create_shell_tool() -> ToolSpec {
         },
     );
 
+    properties
+}
+
+fn create_shell_tool_with_metadata(name: &str, description: &str) -> ToolSpec {
+    let properties = shell_tool_properties();
+
     ToolSpec::Function(ResponsesApiTool {
-        name: "shell".to_string(),
-        description: "Runs a shell command and returns its output.".to_string(),
+        name: name.to_string(),
+        description: description.to_string(),
         strict: false,
         parameters: JsonSchema::Object {
             properties,
@@ -232,6 +238,17 @@ fn create_shell_tool() -> ToolSpec {
             additional_properties: Some(false.into()),
         },
     })
+}
+
+fn create_shell_tool() -> ToolSpec {
+    create_shell_tool_with_metadata("shell", "Runs a shell command and returns its output.")
+}
+
+fn create_shell_v2_tool() -> ToolSpec {
+    create_shell_tool_with_metadata(
+        "shell_v2",
+        "Runs a shell command and returns its output with structured metadata.",
+    )
 }
 
 fn create_view_image_tool() -> ToolSpec {
@@ -501,6 +518,7 @@ pub(crate) fn build_specs(
     use crate::exec_command::WRITE_STDIN_TOOL_NAME;
     use crate::exec_command::create_exec_command_tool_for_responses_api;
     use crate::exec_command::create_write_stdin_tool_for_responses_api;
+    use crate::tools::ExecResponseFormat;
     use crate::tools::handlers::ApplyPatchHandler;
     use crate::tools::handlers::ExecStreamHandler;
     use crate::tools::handlers::McpHandler;
@@ -513,7 +531,8 @@ pub(crate) fn build_specs(
 
     let mut builder = ToolRegistryBuilder::new();
 
-    let shell_handler = Arc::new(ShellHandler);
+    let shell_handler = Arc::new(ShellHandler::new(ExecResponseFormat::LegacyJson));
+    let shell_v2_handler = Arc::new(ShellHandler::new(ExecResponseFormat::StructuredText));
     let exec_stream_handler = Arc::new(ExecStreamHandler);
     let unified_exec_handler = Arc::new(UnifiedExecHandler);
     let plan_handler = Arc::new(PlanHandler);
@@ -528,6 +547,8 @@ pub(crate) fn build_specs(
         match &config.shell_type {
             ConfigShellToolType::Default => {
                 builder.push_spec(create_shell_tool());
+                builder.push_spec(create_shell_v2_tool());
+                builder.register_handler("shell_v2", shell_v2_handler.clone());
             }
             ConfigShellToolType::Local => {
                 builder.push_spec(ToolSpec::LocalShell {});
@@ -548,7 +569,8 @@ pub(crate) fn build_specs(
     // Always register shell aliases so older prompts remain compatible.
     builder.register_handler("shell", shell_handler.clone());
     builder.register_handler("container.exec", shell_handler.clone());
-    builder.register_handler("local_shell", shell_handler);
+    builder.register_handler("local_shell", shell_handler.clone());
+    builder.register_handler("shell_v2", shell_v2_handler);
 
     if config.plan_tool {
         builder.push_spec(PLAN_TOOL.clone());
@@ -637,6 +659,23 @@ mod tests {
                 "tool_name mismatch, {name:?}, {expected_name:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_build_specs_with_shell_variants() {
+        let model_family = find_family_for_model("o3").expect("o3 should be a valid model family");
+        let config = ToolsConfig::new(&ToolsConfigParams {
+            model_family: &model_family,
+            include_plan_tool: false,
+            include_apply_patch_tool: false,
+            include_web_search_request: false,
+            use_streamable_shell_tool: false,
+            include_view_image_tool: false,
+            experimental_unified_exec_tool: false,
+        });
+        let (tools, _) = build_specs(&config, Some(HashMap::new())).build();
+
+        assert_eq_tool_names(&tools, &["shell", "shell_v2"]);
     }
 
     #[test]
@@ -1155,6 +1194,21 @@ mod tests {
         assert_eq!(name, "shell");
 
         let expected = "Runs a shell command and returns its output.";
+        assert_eq!(description, expected);
+    }
+
+    #[test]
+    fn test_shell_v2_tool() {
+        let tool = super::create_shell_v2_tool();
+        let ToolSpec::Function(ResponsesApiTool {
+            description, name, ..
+        }) = &tool
+        else {
+            panic!("expected function tool");
+        };
+        assert_eq!(name, "shell_v2");
+
+        let expected = "Runs a shell command and returns its output with structured metadata.";
         assert_eq!(description, expected);
     }
 
