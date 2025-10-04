@@ -8,7 +8,7 @@ use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPolicy;
 use chrono::DateTime;
 use chrono::Utc;
-use fd_lock::FdLock;
+use fd_lock::RwLock;
 use gethostname::gethostname;
 use reqwest::Client;
 use serde::Serialize;
@@ -149,7 +149,7 @@ impl AdminControls {
 
     pub fn take_pending_danger(&mut self) -> Option<DangerPending> {
         self.pending
-            .extract_if(|action| matches!(action, PendingAdminAction::Danger(_)))
+            .extract_if(.., |action| matches!(action, PendingAdminAction::Danger(_)))
             .next()
             .and_then(|action| match action {
                 PendingAdminAction::Danger(pending) => Some(pending),
@@ -272,8 +272,8 @@ fn append_record_to_file(path: &Path, record: &AdminAuditRecord) -> io::Result<(
     }
 
     let file = options.open(path)?;
-    let mut lock = FdLock::new(file);
-    let mut guard = lock.lock()?;
+    let mut lock = RwLock::new(file);
+    let mut guard = lock.write()?;
     let line = serde_json::to_string(record).map_err(io::Error::other)?;
     guard.write_all(line.as_bytes())?;
     guard.write_all(b"\n")?;
