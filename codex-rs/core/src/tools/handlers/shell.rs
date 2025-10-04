@@ -5,10 +5,12 @@ use crate::codex::TurnContext;
 use crate::exec::ExecParams;
 use crate::exec_env::create_env;
 use crate::function_tool::FunctionCallError;
+use crate::tools::ExecResponseFormat;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::handle_container_exec_with_params;
+use crate::tools::handlers::apply_patch::ApplyPatchToolType;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 
@@ -54,6 +56,14 @@ impl ToolHandler for ShellHandler {
             payload,
         } = invocation;
 
+        // When using the freeform apply_patch tool type, shell tool output should also be raw
+        // output, not json-encoded.
+        let response_format = match turn.tools_config.apply_patch_tool_type {
+            Some(ApplyPatchToolType::Freeform) => ExecResponseFormat::StructuredText,
+            Some(ApplyPatchToolType::Function) => ExecResponseFormat::LegacyJson,
+            None => ExecResponseFormat::LegacyJson,
+        };
+
         match payload {
             ToolPayload::Function { arguments } => {
                 let params: ShellToolCallParams =
@@ -71,6 +81,7 @@ impl ToolHandler for ShellHandler {
                     tracker,
                     sub_id.to_string(),
                     call_id.clone(),
+                    response_format,
                 )
                 .await?;
                 Ok(ToolOutput::Function {
@@ -88,6 +99,7 @@ impl ToolHandler for ShellHandler {
                     tracker,
                     sub_id.to_string(),
                     call_id.clone(),
+                    response_format,
                 )
                 .await?;
                 Ok(ToolOutput::Function {

@@ -2400,6 +2400,7 @@ mod tests {
     use crate::state::TaskKind;
     use crate::tasks::SessionTask;
     use crate::tasks::SessionTaskContext;
+    use crate::tools::ExecResponseFormat;
     use crate::tools::MODEL_FORMAT_HEAD_LINES;
     use crate::tools::MODEL_FORMAT_MAX_BYTES;
     use crate::tools::MODEL_FORMAT_MAX_LINES;
@@ -3089,6 +3090,7 @@ mod tests {
             &mut turn_diff_tracker,
             sub_id,
             call_id,
+            ExecResponseFormat::LegacyJson,
         )
         .await;
 
@@ -3115,6 +3117,7 @@ mod tests {
             &mut turn_diff_tracker,
             "test-sub".to_string(),
             "test-call-2".to_string(),
+            ExecResponseFormat::LegacyJson,
         )
         .await;
 

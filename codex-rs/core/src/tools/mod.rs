@@ -44,6 +44,12 @@ pub(crate) const TELEMETRY_PREVIEW_MAX_LINES: usize = 64; // lines
 pub(crate) const TELEMETRY_PREVIEW_TRUNCATION_NOTICE: &str =
     "[... telemetry preview truncated ...]";
 
+#[derive(Clone, Copy)]
+pub(crate) enum ExecResponseFormat {
+    LegacyJson,
+    StructuredText,
+}
+
 // TODO(jif) break this down
 pub(crate) async fn handle_container_exec_with_params(
     tool_name: &str,
@@ -53,6 +59,7 @@ pub(crate) async fn handle_container_exec_with_params(
     turn_diff_tracker: &mut TurnDiffTracker,
     sub_id: String,
     call_id: String,
+    response_format: ExecResponseFormat,
 ) -> Result<String, FunctionCallError> {
     let otel_event_manager = turn_context.client.get_otel_event_manager();
 
@@ -148,7 +155,7 @@ pub(crate) async fn handle_container_exec_with_params(
     match output_result {
         Ok(output) => {
             let ExecToolCallOutput { exit_code, .. } = &output;
-            let content = format_exec_output_apply_patch(&output);
+            let content = format_exec_output_with_style(&output, response_format);
             if *exit_code == 0 {
                 Ok(content)
             } else {
@@ -156,12 +163,14 @@ pub(crate) async fn handle_container_exec_with_params(
             }
         }
         Err(ExecError::Function(err)) => Err(err),
-        Err(ExecError::Codex(CodexErr::Sandbox(SandboxErr::Timeout { output }))) => Err(
-            FunctionCallError::RespondToModel(format_exec_output_apply_patch(&output)),
-        ),
-        Err(ExecError::Codex(err)) => Err(FunctionCallError::RespondToModel(format!(
-            "execution error: {err:?}"
-        ))),
+        Err(ExecError::Codex(CodexErr::Sandbox(SandboxErr::Timeout { output }))) => {
+            Err(FunctionCallError::RespondToModel(
+                format_exec_output_with_style(&output, response_format),
+            ))
+        }
+        Err(ExecError::Codex(err)) => Err(FunctionCallError::RespondToModel(
+            format_unexpected_exec_error(err, response_format),
+        )),
     }
 }
 
@@ -199,6 +208,155 @@ pub fn format_exec_output_apply_patch(exec_output: &ExecToolCallOutput) -> Strin
 
     #[expect(clippy::expect_used)]
     serde_json::to_string(&payload).expect("serialize ExecOutput")
+}
+
+fn format_exec_output_with_style(
+    exec_output: &ExecToolCallOutput,
+    response_format: ExecResponseFormat,
+) -> String {
+    match response_format {
+        ExecResponseFormat::LegacyJson => format_exec_output_apply_patch(exec_output),
+        ExecResponseFormat::StructuredText => format_exec_output_structured(exec_output),
+    }
+}
+
+fn format_unexpected_exec_error(err: CodexErr, response_format: ExecResponseFormat) -> String {
+    match response_format {
+        ExecResponseFormat::LegacyJson => format!("execution error: {err:?}"),
+        ExecResponseFormat::StructuredText => format_structured_error(&format!("{err:?}")),
+    }
+}
+
+fn format_structured_error(message: &str) -> String {
+    let lines = vec![
+        "Exit code: N/A".to_string(),
+        "Wall time: N/A seconds".to_string(),
+        format!("Error: {message}"),
+        "Output:".to_string(),
+        String::new(),
+    ];
+    lines.join("\n")
+}
+
+fn format_wall_time(duration: std::time::Duration) -> String {
+    format_significant_digits(duration.as_secs_f64(), 4)
+}
+
+fn format_significant_digits(value: f64, digits: usize) -> String {
+    if !value.is_finite() {
+        return value.to_string();
+    }
+    if value == 0.0 {
+        return "0".to_string();
+    }
+
+    let abs = value.abs();
+    let initial_exponent = abs.log10().floor() as i32;
+    let rounded_value = if value == 0.0 {
+        0.0
+    } else {
+        let scale = 10_f64.powf((digits as f64 - 1.0) - initial_exponent as f64);
+        (value * scale).round() / scale
+    };
+
+    let abs_rounded = rounded_value.abs();
+    let exponent = if abs_rounded == 0.0 {
+        0
+    } else {
+        abs_rounded.log10().floor() as i32
+    };
+    let use_exp = exponent < -4 || exponent >= digits as i32;
+    if use_exp {
+        return format!("{rounded_value:.prec$e}", prec = digits.saturating_sub(1));
+    }
+
+    let decimal_places = (digits as i32 - exponent - 1).max(0) as usize;
+    let mut s = format!("{rounded_value:.decimal_places$}");
+    if s.contains('.') {
+        while s.ends_with('0') {
+            s.pop();
+        }
+        if s.ends_with('.') {
+            s.pop();
+        }
+    }
+    s
+}
+
+pub fn format_exec_output_structured(exec_output: &ExecToolCallOutput) -> String {
+    let ExecToolCallOutput {
+        exit_code,
+        duration,
+        aggregated_output,
+        ..
+    } = exec_output;
+
+    let mut sections = Vec::new();
+    sections.push(format!("Exit code: {exit_code}"));
+    sections.push(format!(
+        "Wall time: {} seconds",
+        format_wall_time(*duration)
+    ));
+
+    if let Some(total_lines) = aggregated_output.truncated_after_lines {
+        sections.push(format!("Total output lines: {total_lines}"));
+    }
+
+    sections.push("Output:".to_string());
+    sections.push(format_exec_output_str(exec_output));
+
+    sections.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exec::StreamOutput;
+    use pretty_assertions::assert_eq;
+    use std::time::Duration;
+
+    fn sample_output() -> ExecToolCallOutput {
+        ExecToolCallOutput {
+            exit_code: 0,
+            stdout: StreamOutput::new("stdout".to_string()),
+            stderr: StreamOutput::new("stderr".to_string()),
+            aggregated_output: StreamOutput::new("stdout\nstderr".to_string()),
+            duration: Duration::from_secs_f64(1.2345),
+            timed_out: false,
+        }
+    }
+
+    #[test]
+    fn structured_format_basic() {
+        let formatted = format_exec_output_structured(&sample_output());
+        let expected = "Exit code: 0\nWall time: 1.235 seconds\nOutput:\nstdout\nstderr";
+        assert_eq!(formatted, expected);
+    }
+
+    #[test]
+    fn structured_format_includes_truncation_metadata() {
+        let mut output = sample_output();
+        output.aggregated_output.truncated_after_lines = Some(200);
+        let formatted = format_exec_output_structured(&output);
+        assert!(formatted.contains("Total output lines: 200"));
+    }
+
+    #[test]
+    fn significant_digit_formatting_matches_expectations() {
+        assert_eq!(format_significant_digits(0.0, 4), "0");
+        assert_eq!(format_significant_digits(1.23456, 4), "1.235");
+        assert_eq!(format_significant_digits(12345.0, 4), "1.235e4");
+        assert_eq!(format_significant_digits(0.000123456, 4), "0.0001235");
+    }
+
+    #[test]
+    fn structured_error_includes_metadata() {
+        let error = format_structured_error("unexpected failure");
+        assert_eq!(
+            error,
+            "Exit code: N/A\nWall time: N/A seconds\nError: unexpected failure\nOutput:\n"
+        );
+    }
 }
 
 pub fn format_exec_output_str(exec_output: &ExecToolCallOutput) -> String {
