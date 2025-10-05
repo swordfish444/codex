@@ -1,7 +1,6 @@
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
-use std::io::Read;
 use zeroize::Zeroize;
 
 /// Use a generous buffer size to avoid truncation and to allow for longer API
@@ -13,8 +12,66 @@ const AUTH_HEADER_PREFIX: &[u8] = b"Bearer ";
 /// value with the auth token used with `Bearer`. The header value is returned
 /// as a `&'static str` whose bytes are locked in memory to avoid accidental
 /// exposure.
+#[cfg(unix)]
 pub(crate) fn read_auth_header_from_stdin() -> Result<&'static str> {
+    read_auth_header_with(read_from_unix_stdin)
+}
+
+#[cfg(windows)]
+pub(crate) fn read_auth_header_from_stdin() -> Result<&'static str> {
+    use std::io::Read;
+
+    // Use of `stdio::io::stdin()` has the problem mentioned in the docstring on
+    // the UNIX version of `read_from_unix_stdin()`, so this should ultimately
+    // be replaced the low-level Windows equivalent. Because we do not have an
+    // equivalent of mlock() on Windows right now, it is not pressing until we
+    // address that issue.
     read_auth_header_with(|buffer| std::io::stdin().read(buffer))
+}
+
+/// We perform a low-level read with `read(2)` because `stdio::io::stdin()` has
+/// an internal BufReader:
+///
+/// https://github.com/rust-lang/rust/blob/bcbbdcb8522fd3cb4a8dde62313b251ab107694d/library/std/src/io/stdio.rs#L250-L252
+///
+/// that can end up retaining a copy of stdin data in memory with no way to zero
+/// it out, whereas we aim to guarantee there is exactly one copy of the API key
+/// in memory, protected by mlock(2).
+#[cfg(unix)]
+fn read_from_unix_stdin(buffer: &mut [u8]) -> std::io::Result<usize> {
+    use libc::c_void;
+    use libc::read;
+
+    let mut total = 0;
+    while total < buffer.len() {
+        let slice = &mut buffer[total..];
+        let result = unsafe {
+            read(
+                libc::STDIN_FILENO,
+                slice.as_mut_ptr().cast::<c_void>(),
+                slice.len(),
+            )
+        };
+
+        if result == 0 {
+            break;
+        }
+
+        if result < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(err);
+        }
+
+        total += result as usize;
+        if result as usize != slice.len() {
+            break;
+        }
+    }
+
+    Ok(total)
 }
 
 fn read_auth_header_with<F>(read_fn: F) -> Result<&'static str>
