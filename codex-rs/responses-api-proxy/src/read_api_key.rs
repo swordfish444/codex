@@ -1,7 +1,6 @@
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
-use std::io::Read;
 use zeroize::Zeroize;
 
 /// Use a generous buffer size to avoid truncation and to allow for longer API
@@ -13,8 +12,59 @@ const AUTH_HEADER_PREFIX: &[u8] = b"Bearer ";
 /// value with the auth token used with `Bearer`. The header value is returned
 /// as a `&'static str` whose bytes are locked in memory to avoid accidental
 /// exposure.
+#[cfg(unix)]
 pub(crate) fn read_auth_header_from_stdin() -> Result<&'static str> {
+    read_auth_header_with(read_from_unix_stdin)
+}
+
+#[cfg(windows)]
+pub(crate) fn read_auth_header_from_stdin() -> Result<&'static str> {
+    use std::io::Read;
+
+    // Note that stdio::io::stdin() has an internal BufReader:
+    // https://github.com/rust-lang/rust/blob/bcbbdcb8522fd3cb4a8dde62313b251ab107694d/library/std/src/io/stdio.rs#L250-L252
+    // which can end up retaining a copy of stdin data in memory longer than
+    // necessary. This should be replaced with Windows equivalents if this is
+    // a concern, though note we do not have an equivalent of mlock() on
+    // Windows right now, either.
     read_auth_header_with(|buffer| std::io::stdin().read(buffer))
+}
+
+#[cfg(unix)]
+fn read_from_unix_stdin(buffer: &mut [u8]) -> std::io::Result<usize> {
+    use libc::c_void;
+    use libc::read;
+
+    let mut total = 0;
+    while total < buffer.len() {
+        let slice = &mut buffer[total..];
+        let result = unsafe {
+            read(
+                libc::STDIN_FILENO,
+                slice.as_mut_ptr().cast::<c_void>(),
+                slice.len(),
+            )
+        };
+
+        if result == 0 {
+            break;
+        }
+
+        if result < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(err);
+        }
+
+        total += result as usize;
+        if result as usize != slice.len() {
+            break;
+        }
+    }
+
+    Ok(total)
 }
 
 fn read_auth_header_with<F>(read_fn: F) -> Result<&'static str>
