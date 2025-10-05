@@ -622,6 +622,7 @@ impl CodexMessageProcessor {
         let outgoing = self.outgoing.clone();
         let req_id = request_id;
         let sandbox_cwd = self.config.cwd.clone();
+        let windows_config = self.config.windows.clone();
 
         tokio::spawn(async move {
             match codex_core::exec::process_exec_tool_call(
@@ -631,7 +632,7 @@ impl CodexMessageProcessor {
                 sandbox_cwd.as_path(),
                 &codex_linux_sandbox_exe,
                 None,
-                Some(&self.config.windows),
+                Some(&windows_config),
             )
             .await
             {
