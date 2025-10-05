@@ -7,6 +7,7 @@ use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
 
 use crate::exec::SandboxType;
+use crate::windows;
 
 use crate::command_safety::is_dangerous_command::command_might_be_dangerous;
 use crate::command_safety::is_safe_command::is_known_safe_command;
@@ -206,6 +207,8 @@ pub fn get_platform_sandbox() -> Option<SandboxType> {
         Some(SandboxType::MacosSeatbelt)
     } else if cfg!(target_os = "linux") {
         Some(SandboxType::LinuxSeccomp)
+    } else if cfg!(target_os = "windows") {
+        windows::preferred_sandbox()
     } else {
         None
     }

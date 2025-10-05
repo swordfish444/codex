@@ -27,6 +27,7 @@ use crate::protocol::SandboxPolicy;
 use crate::seatbelt::spawn_command_under_seatbelt;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
+use crate::windows;
 
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 
@@ -70,6 +71,9 @@ pub enum SandboxType {
 
     /// Only available on Linux.
     LinuxSeccomp,
+
+    /// Runs commands via WSL on Windows.
+    WindowsWsl,
 }
 
 #[derive(Clone)]
@@ -125,6 +129,25 @@ pub async fn process_exec_tool_call(
                 .ok_or(CodexErr::LandlockSandboxExecutableNotProvided)?;
             let child = spawn_command_under_linux_sandbox(
                 codex_linux_sandbox_exe,
+                command,
+                command_cwd,
+                sandbox_policy,
+                sandbox_cwd,
+                StdioPolicy::RedirectForShellTool,
+                env,
+            )
+            .await?;
+
+            consume_truncated_output(child, timeout_duration, stdout_stream).await
+        }
+        SandboxType::WindowsWsl => {
+            let ExecParams {
+                command,
+                cwd: command_cwd,
+                env,
+                ..
+            } = params;
+            let child = windows::spawn_command_under_windows_wsl(
                 command,
                 command_cwd,
                 sandbox_policy,

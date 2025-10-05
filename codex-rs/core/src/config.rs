@@ -17,6 +17,8 @@ use crate::config_types::ShellEnvironmentPolicy;
 use crate::config_types::ShellEnvironmentPolicyToml;
 use crate::config_types::Tui;
 use crate::config_types::UriBasedFileOpener;
+use crate::config_types::WindowsConfig;
+use crate::config_types::WindowsConfigToml;
 use crate::git_info::resolve_root_git_project_for_trust;
 use crate::model_family::ModelFamily;
 use crate::model_family::derive_default_model_family;
@@ -26,6 +28,7 @@ use crate::model_provider_info::built_in_model_providers;
 use crate::openai_model_info::get_model_info;
 use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPolicy;
+use crate::windows;
 use anyhow::Context;
 use codex_app_server_protocol::Tools;
 use codex_app_server_protocol::UserSavedConfig;
@@ -211,6 +214,9 @@ pub struct Config {
 
     /// Tracks whether the Windows onboarding screen has been acknowledged.
     pub windows_wsl_setup_acknowledged: bool,
+
+    /// Windows specific sandbox preferences.
+    pub windows: WindowsConfig,
 
     /// When true, disables burst-paste detection for typed input entirely.
     /// All characters are inserted as they are received, and no buffering
@@ -767,6 +773,10 @@ pub struct ConfigToml {
 
     /// Tracks whether the Windows onboarding screen has been acknowledged.
     pub windows_wsl_setup_acknowledged: Option<bool>,
+
+    /// Windows specific configuration.
+    #[serde(default)]
+    pub windows: WindowsConfigToml,
 }
 
 impl From<ConfigToml> for UserSavedConfig {
@@ -1008,6 +1018,8 @@ impl Config {
             .or(cfg.tools.as_ref().and_then(|t| t.view_image))
             .unwrap_or(true);
 
+        let windows_config: WindowsConfig = cfg.windows.clone().into();
+
         let model = model
             .or(config_profile.model)
             .or(cfg.model)
@@ -1126,6 +1138,7 @@ impl Config {
             include_view_image_tool,
             active_profile: active_profile_name,
             windows_wsl_setup_acknowledged: cfg.windows_wsl_setup_acknowledged.unwrap_or(false),
+            windows: windows_config,
             disable_paste_burst: cfg.disable_paste_burst.unwrap_or(false),
             tui_notifications: cfg
                 .tui
@@ -1146,6 +1159,7 @@ impl Config {
                 }
             },
         };
+        windows::update_settings(config.windows.clone());
         Ok(config)
     }
 
@@ -1260,6 +1274,7 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    use std::path::PathBuf;
     use std::time::Duration;
     use tempfile::TempDir;
 
@@ -1306,6 +1321,29 @@ persistence = "none"
         let tui = parsed.tui.expect("config should include tui section");
 
         assert_eq!(tui.notifications, Notifications::Enabled(false));
+    }
+
+    #[test]
+    fn windows_config_overrides_parse() {
+        let cfg = r#"
+[windows]
+prefer_wsl = true
+hide_wsl_notice = true
+"#;
+
+        let parsed = toml::from_str::<ConfigToml>(cfg).expect("windows config should parse");
+        assert!(parsed.windows.prefer_wsl);
+        assert!(parsed.windows.hide_wsl_notice);
+
+        let config = Config::load_from_base_config_with_overrides(
+            parsed,
+            ConfigOverrides::default(),
+            PathBuf::from("/tmp"),
+        )
+        .expect("config load should succeed");
+
+        assert!(config.windows.prefer_wsl);
+        assert!(config.windows.hide_wsl_notice);
     }
 
     #[test]
@@ -1919,6 +1957,7 @@ model_verbosity = "high"
                 include_view_image_tool: true,
                 active_profile: Some("o3".to_string()),
                 windows_wsl_setup_acknowledged: false,
+                windows: WindowsConfig::default(),
                 disable_paste_burst: false,
                 tui_notifications: Default::default(),
                 otel: OtelConfig::default(),
@@ -1981,6 +2020,7 @@ model_verbosity = "high"
             include_view_image_tool: true,
             active_profile: Some("gpt3".to_string()),
             windows_wsl_setup_acknowledged: false,
+            windows: WindowsConfig::default(),
             disable_paste_burst: false,
             tui_notifications: Default::default(),
             otel: OtelConfig::default(),
@@ -2058,6 +2098,7 @@ model_verbosity = "high"
             include_view_image_tool: true,
             active_profile: Some("zdr".to_string()),
             windows_wsl_setup_acknowledged: false,
+            windows: WindowsConfig::default(),
             disable_paste_burst: false,
             tui_notifications: Default::default(),
             otel: OtelConfig::default(),
@@ -2121,6 +2162,7 @@ model_verbosity = "high"
             include_view_image_tool: true,
             active_profile: Some("gpt5".to_string()),
             windows_wsl_setup_acknowledged: false,
+            windows: WindowsConfig::default(),
             disable_paste_burst: false,
             tui_notifications: Default::default(),
             otel: OtelConfig::default(),
