@@ -156,17 +156,17 @@ impl App {
             logged = true;
         }
 
-        if let Some(previous) = self.chat_widget.config_mut().admin.take_pending_danger() {
-            if !logged {
-                self.log_danger_event(&previous, DangerAuditAction::Cancelled, None);
-                logged = true;
-            }
+        if let Some(previous) = self.chat_widget.config_mut().admin.take_pending_danger()
+            && !logged
+        {
+            self.log_danger_event(&previous, DangerAuditAction::Cancelled, None);
+            logged = true;
         }
 
-        if let Some(previous) = self.chat_widget.take_pending_danger() {
-            if !logged {
-                self.log_danger_event(&previous, DangerAuditAction::Cancelled, None);
-            }
+        if let Some(previous) = self.chat_widget.take_pending_danger()
+            && !logged
+        {
+            self.log_danger_event(&previous, DangerAuditAction::Cancelled, None);
         }
     }
 

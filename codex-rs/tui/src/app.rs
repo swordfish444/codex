@@ -13,7 +13,6 @@ use crate::resume_picker::ResumeSelection;
 use crate::tui;
 use crate::tui::TuiEvent;
 use codex_ansi_escape::ansi_escape_line;
-use codex_common::approval_presets::ApprovalPreset;
 use codex_core::AuthManager;
 use codex_core::ConversationManager;
 use codex_core::config::Config;
