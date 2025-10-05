@@ -71,6 +71,10 @@ pub struct Cli {
     #[arg(long = "include-plan-tool", default_value_t = false)]
     pub include_plan_tool: bool,
 
+    /// Override parallel tool call behaviour. Defaults to model capability when unset.
+    #[arg(long = "parallel-tool-calls", value_enum)]
+    pub parallel_tool_calls: Option<ParallelToolCalls>,
+
     /// Specifies file where the last message from the agent should be written.
     #[arg(long = "output-last-message", short = 'o', value_name = "FILE")]
     pub last_message_file: Option<PathBuf>,
@@ -110,4 +114,12 @@ pub enum Color {
     Never,
     #[default]
     Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum ParallelToolCalls {
+    Auto,
+    On,
+    Off,
 }

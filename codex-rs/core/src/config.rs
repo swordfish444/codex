@@ -194,6 +194,9 @@ pub struct Config {
 
     pub tools_web_search_request: bool,
 
+    /// Override for whether tool calls run in parallel. When `None`, falls back to model defaults.
+    pub force_parallel_tool_calls: Option<bool>,
+
     pub use_experimental_streamable_shell_tool: bool,
 
     /// If set to `true`, used only the experimental unified exec tool.
@@ -877,6 +880,7 @@ pub struct ConfigOverrides {
     pub include_view_image_tool: Option<bool>,
     pub show_raw_agent_reasoning: Option<bool>,
     pub tools_web_search_request: Option<bool>,
+    pub parallel_tool_calls: Option<bool>,
 }
 
 impl Config {
@@ -905,6 +909,7 @@ impl Config {
             include_view_image_tool,
             show_raw_agent_reasoning,
             tools_web_search_request: override_tools_web_search_request,
+            parallel_tool_calls,
         } = overrides;
 
         let active_profile_name = config_profile_key
@@ -1084,6 +1089,7 @@ impl Config {
             include_plan_tool: include_plan_tool.unwrap_or(false),
             include_apply_patch_tool: include_apply_patch_tool.unwrap_or(false),
             tools_web_search_request,
+            force_parallel_tool_calls: parallel_tool_calls,
             use_experimental_streamable_shell_tool: cfg
                 .experimental_use_exec_command_tool
                 .unwrap_or(false),
@@ -1880,6 +1886,7 @@ model_verbosity = "high"
                 include_plan_tool: false,
                 include_apply_patch_tool: false,
                 tools_web_search_request: false,
+                force_parallel_tool_calls: None,
                 use_experimental_streamable_shell_tool: false,
                 use_experimental_unified_exec_tool: false,
                 use_experimental_use_rmcp_client: false,
@@ -1941,6 +1948,7 @@ model_verbosity = "high"
             include_plan_tool: false,
             include_apply_patch_tool: false,
             tools_web_search_request: false,
+            force_parallel_tool_calls: None,
             use_experimental_streamable_shell_tool: false,
             use_experimental_unified_exec_tool: false,
             use_experimental_use_rmcp_client: false,
@@ -2017,6 +2025,7 @@ model_verbosity = "high"
             include_plan_tool: false,
             include_apply_patch_tool: false,
             tools_web_search_request: false,
+            force_parallel_tool_calls: None,
             use_experimental_streamable_shell_tool: false,
             use_experimental_unified_exec_tool: false,
             use_experimental_use_rmcp_client: false,
@@ -2079,6 +2088,7 @@ model_verbosity = "high"
             include_plan_tool: false,
             include_apply_patch_tool: false,
             tools_web_search_request: false,
+            force_parallel_tool_calls: None,
             use_experimental_streamable_shell_tool: false,
             use_experimental_unified_exec_tool: false,
             use_experimental_use_rmcp_client: false,

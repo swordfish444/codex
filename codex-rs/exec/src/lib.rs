@@ -42,6 +42,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
 use crate::cli::Command as ExecCommand;
+use crate::cli::ParallelToolCalls;
 use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
 use codex_core::default_client::set_default_originator;
@@ -69,6 +70,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         prompt,
         output_schema: output_schema_path,
         include_plan_tool,
+        parallel_tool_calls,
         config_overrides,
     } = cli;
 
@@ -164,6 +166,12 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     };
 
     // Load configuration and determine approval policy
+    let parallel_tool_calls_override = match parallel_tool_calls {
+        Some(ParallelToolCalls::On) => Some(true),
+        Some(ParallelToolCalls::Off) => Some(false),
+        _ => None,
+    };
+
     let overrides = ConfigOverrides {
         model,
         review_model: None,
@@ -181,6 +189,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         include_view_image_tool: None,
         show_raw_agent_reasoning: oss.then_some(true),
         tools_web_search_request: None,
+        parallel_tool_calls: parallel_tool_calls_override,
     };
     // Parse `-c` overrides.
     let cli_kv_overrides = match config_overrides.parse_overrides() {

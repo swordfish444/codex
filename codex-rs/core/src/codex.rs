@@ -260,6 +260,7 @@ pub(crate) struct TurnContext {
     pub(crate) tools_config: ToolsConfig,
     pub(crate) is_review_mode: bool,
     pub(crate) final_output_json_schema: Option<Value>,
+    pub(crate) parallel_tool_calls_override: Option<bool>,
 }
 
 impl TurnContext {
@@ -457,6 +458,7 @@ impl Session {
             cwd,
             is_review_mode: false,
             final_output_json_schema: None,
+            parallel_tool_calls_override: config.force_parallel_tool_calls,
         };
         let services = SessionServices {
             mcp_connection_manager,
@@ -1199,6 +1201,7 @@ async fn submission_loop(
                     cwd: new_cwd.clone(),
                     is_review_mode: false,
                     final_output_json_schema: None,
+                    parallel_tool_calls_override: config.force_parallel_tool_calls,
                 };
 
                 // Install the new persistent context for subsequent tasks/turns.
@@ -1259,6 +1262,7 @@ async fn submission_loop(
                     if let Some(model_info) = get_model_info(&model_family) {
                         per_turn_config.model_context_window = Some(model_info.context_window);
                     }
+                    let per_turn_parallel_override = per_turn_config.force_parallel_tool_calls;
 
                     let otel_event_manager =
                         turn_context.client.get_otel_event_manager().with_model(
@@ -1299,6 +1303,7 @@ async fn submission_loop(
                         cwd,
                         is_review_mode: false,
                         final_output_json_schema,
+                        parallel_tool_calls_override: per_turn_parallel_override,
                     };
 
                     // if the environment context has changed, record it in the conversation history
@@ -1547,6 +1552,7 @@ async fn spawn_review_thread(
             per_turn_config.model_family.slug.as_str(),
         );
 
+    let per_turn_parallel_override = per_turn_config.force_parallel_tool_calls;
     let per_turn_config = Arc::new(per_turn_config);
     let client = ModelClient::new(
         per_turn_config.clone(),
@@ -1569,6 +1575,7 @@ async fn spawn_review_thread(
         cwd: parent_turn_context.cwd.clone(),
         is_review_mode: true,
         final_output_json_schema: None,
+        parallel_tool_calls_override: per_turn_parallel_override,
     };
 
     // Seed the child task with the review prompt as the initial user message.
@@ -1930,7 +1937,9 @@ async fn run_turn(
         .client
         .get_model_family()
         .supports_parallel_tool_calls;
-    let parallel_tool_calls = model_supports_parallel;
+    let parallel_tool_calls = turn_context
+        .parallel_tool_calls_override
+        .unwrap_or(model_supports_parallel);
     let prompt = Prompt {
         input,
         tools: router.specs(),
@@ -2732,6 +2741,7 @@ mod tests {
             tools_config,
             is_review_mode: false,
             final_output_json_schema: None,
+            parallel_tool_calls_override: config.force_parallel_tool_calls,
         };
         let services = SessionServices {
             mcp_connection_manager: McpConnectionManager::default(),
@@ -2805,6 +2815,7 @@ mod tests {
             tools_config,
             is_review_mode: false,
             final_output_json_schema: None,
+            parallel_tool_calls_override: config.force_parallel_tool_calls,
         });
         let services = SessionServices {
             mcp_connection_manager: McpConnectionManager::default(),
