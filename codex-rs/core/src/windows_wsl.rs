@@ -62,15 +62,12 @@ pub(crate) async fn spawn_command_under_windows_wsl(
     }
 
     let exe_path = std::env::current_exe().map_err(|err| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            format!("failed to resolve codex executable path: {err}"),
-        )
+        io::Error::other(format!("failed to resolve codex executable path: {err}"))
     })?;
     let exe_in_wsl = convert_path_to_wsl(exe_path.as_path())?;
     args.push("-e".to_string());
     args.push(exe_in_wsl);
-    args.push("debug".to_string());
+    args.push("sandbox".to_string());
     args.push("landlock".to_string());
 
     for override_value in sandbox_overrides_for_wsl(sandbox_policy)? {
@@ -147,7 +144,7 @@ fn sandbox_mode_label(sandbox_policy: &SandboxPolicy) -> io::Result<String> {
     value
         .get("mode")
         .and_then(JsonValue::as_str)
-        .map(|mode| mode.to_string())
+        .map(ToString::to_string)
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -157,10 +154,8 @@ fn sandbox_mode_label(sandbox_policy: &SandboxPolicy) -> io::Result<String> {
 }
 
 pub(crate) fn convert_path_to_wsl(path: &Path) -> io::Result<String> {
-    if let Some(raw) = path.to_str() {
-        if is_wsl_path(raw) {
-            return Ok(raw.to_string());
-        }
+    if let Some(raw) = path.to_str().filter(|raw| is_wsl_path(raw)) {
+        return Ok(raw.to_string());
     }
 
     let absolute = to_absolute_path(path)?;
@@ -192,20 +187,12 @@ fn run_wslpath(path: &Path) -> io::Result<String> {
         .arg("-a")
         .arg(&raw)
         .output()
-        .map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("failed to invoke wslpath for {raw}: {err}"),
-            )
-        })?;
+        .map_err(|err| io::Error::other(format!("failed to invoke wslpath for {raw}: {err}")))?;
     if !output.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!(
-                "wslpath exited with {} while converting {raw}",
-                output.status
-            ),
-        ));
+        return Err(io::Error::other(format!(
+            "wslpath exited with {} while converting {raw}",
+            output.status
+        )));
     }
     String::from_utf8(output.stdout)
         .map(|out| out.trim().to_string())
