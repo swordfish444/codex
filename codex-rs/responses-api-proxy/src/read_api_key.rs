@@ -221,6 +221,7 @@ fn validate_auth_header_bytes(key_bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
     use std::io;
 
     #[test]
@@ -234,6 +235,22 @@ mod tests {
             buf[..data.len()].copy_from_slice(data);
             sent = true;
             Ok(data.len())
+        })
+        .unwrap();
+
+        assert_eq!(result, "Bearer sk-abc123");
+    }
+
+    #[test]
+    fn reads_key_with_short_reads() {
+        let mut chunks: VecDeque<&[u8]> =
+            VecDeque::from(vec![b"sk-".as_ref(), b"abc".as_ref(), b"123\n".as_ref()]);
+        let result = read_auth_header_with(|buf| match chunks.pop_front() {
+            Some(chunk) if !chunk.is_empty() => {
+                buf[..chunk.len()].copy_from_slice(chunk);
+                Ok(chunk.len())
+            }
+            _ => Ok(0),
         })
         .unwrap();
 
