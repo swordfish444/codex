@@ -41,12 +41,14 @@ use crate::client::ModelClient;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::config::Config;
+use crate::config::derive_platform_sandbox;
 use crate::config_types::ShellEnvironmentPolicy;
 use crate::conversation_history::ConversationHistory;
 use crate::environment_context::EnvironmentContext;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
 use crate::exec::ExecToolCallOutput;
+use crate::exec::SandboxType;
 #[cfg(test)]
 use crate::exec::StreamOutput;
 use crate::exec_command::ExecCommandParams;
@@ -256,6 +258,7 @@ pub(crate) struct TurnContext {
     pub(crate) user_instructions: Option<String>,
     pub(crate) approval_policy: AskForApproval,
     pub(crate) sandbox_policy: SandboxPolicy,
+    pub(crate) platform_sandbox: Option<SandboxType>,
     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,
     pub(crate) tools_config: ToolsConfig,
     pub(crate) is_review_mode: bool,
@@ -438,6 +441,7 @@ impl Session {
             model_reasoning_summary,
             conversation_id,
         );
+        let platform_sandbox = derive_platform_sandbox(&config);
         let turn_context = TurnContext {
             client,
             tools_config: ToolsConfig::new(&ToolsConfigParams {
@@ -453,6 +457,7 @@ impl Session {
             base_instructions,
             approval_policy,
             sandbox_policy,
+            platform_sandbox,
             shell_environment_policy: config.shell_environment_policy.clone(),
             cwd,
             is_review_mode: false,
@@ -470,6 +475,8 @@ impl Session {
                 turn_context.sandbox_policy.clone(),
                 turn_context.cwd.clone(),
                 config.codex_linux_sandbox_exe.clone(),
+                platform_sandbox,
+                config.windows.clone(),
             )),
         };
 
@@ -1206,6 +1213,7 @@ async fn submission_loop(
                     base_instructions: prev.base_instructions.clone(),
                     approval_policy: new_approval_policy,
                     sandbox_policy: new_sandbox_policy.clone(),
+                    platform_sandbox: derive_platform_sandbox(&config),
                     shell_environment_policy: prev.shell_environment_policy.clone(),
                     cwd: new_cwd.clone(),
                     is_review_mode: false,
@@ -1306,6 +1314,7 @@ async fn submission_loop(
                         base_instructions: turn_context.base_instructions.clone(),
                         approval_policy,
                         sandbox_policy,
+                        platform_sandbox: derive_platform_sandbox(&config),
                         shell_environment_policy: turn_context.shell_environment_policy.clone(),
                         cwd,
                         is_review_mode: false,
@@ -1576,6 +1585,7 @@ async fn spawn_review_thread(
         base_instructions: Some(base_instructions.clone()),
         approval_policy: parent_turn_context.approval_policy,
         sandbox_policy: parent_turn_context.sandbox_policy.clone(),
+        platform_sandbox: parent_turn_context.platform_sandbox,
         shell_environment_policy: parent_turn_context.shell_environment_policy.clone(),
         cwd: parent_turn_context.cwd.clone(),
         is_review_mode: true,
@@ -2747,6 +2757,7 @@ mod tests {
             include_view_image_tool: config.include_view_image_tool,
             experimental_unified_exec_tool: config.use_experimental_unified_exec_tool,
         });
+        let platform_sandbox = derive_platform_sandbox(config.as_ref());
         let turn_context = TurnContext {
             client,
             cwd: config.cwd.clone(),
@@ -2754,6 +2765,7 @@ mod tests {
             user_instructions: config.user_instructions.clone(),
             approval_policy: config.approval_policy,
             sandbox_policy: config.sandbox_policy.clone(),
+            platform_sandbox,
             shell_environment_policy: config.shell_environment_policy.clone(),
             tools_config,
             is_review_mode: false,
@@ -2771,6 +2783,8 @@ mod tests {
                 turn_context.sandbox_policy.clone(),
                 turn_context.cwd.clone(),
                 None,
+                platform_sandbox,
+                config.windows.clone(),
             )),
         };
         let session = Session {
@@ -2820,6 +2834,7 @@ mod tests {
             include_view_image_tool: config.include_view_image_tool,
             experimental_unified_exec_tool: config.use_experimental_unified_exec_tool,
         });
+        let platform_sandbox = derive_platform_sandbox(config.as_ref());
         let turn_context = Arc::new(TurnContext {
             client,
             cwd: config.cwd.clone(),
@@ -2827,6 +2842,7 @@ mod tests {
             user_instructions: config.user_instructions.clone(),
             approval_policy: config.approval_policy,
             sandbox_policy: config.sandbox_policy.clone(),
+            platform_sandbox,
             shell_environment_policy: config.shell_environment_policy.clone(),
             tools_config,
             is_review_mode: false,
@@ -2844,6 +2860,8 @@ mod tests {
                 config.sandbox_policy.clone(),
                 config.cwd.clone(),
                 None,
+                platform_sandbox,
+                config.windows.clone(),
             )),
         };
         let session = Arc::new(Session {

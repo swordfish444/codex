@@ -19,6 +19,7 @@ use crate::config_types::Tui;
 use crate::config_types::UriBasedFileOpener;
 use crate::config_types::WindowsConfig;
 use crate::config_types::WindowsConfigToml;
+use crate::exec::SandboxType;
 use crate::git_info::resolve_root_git_project_for_trust;
 use crate::model_family::ModelFamily;
 use crate::model_family::derive_default_model_family;
@@ -28,7 +29,7 @@ use crate::model_provider_info::built_in_model_providers;
 use crate::openai_model_info::get_model_info;
 use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPolicy;
-use crate::windows;
+use crate::windows_wsl;
 use anyhow::Context;
 use codex_app_server_protocol::Tools;
 use codex_app_server_protocol::UserSavedConfig;
@@ -247,6 +248,22 @@ impl Config {
         })?;
 
         Self::load_from_base_config_with_overrides(cfg, overrides, codex_home)
+    }
+
+    pub fn derive_platform_sandbox(&self) -> Option<SandboxType> {
+        derive_platform_sandbox(self)
+    }
+}
+
+pub fn derive_platform_sandbox(config: &Config) -> Option<SandboxType> {
+    if cfg!(target_os = "macos") {
+        Some(SandboxType::MacosSeatbelt)
+    } else if cfg!(target_os = "linux") {
+        Some(SandboxType::LinuxSeccomp)
+    } else if cfg!(target_os = "windows") {
+        windows_wsl::preferred_windows_sandbox(&config.windows)
+    } else {
+        None
     }
 }
 
@@ -1159,7 +1176,6 @@ impl Config {
                 }
             },
         };
-        windows::update_settings(config.windows.clone());
         Ok(config)
     }
 
