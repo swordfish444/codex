@@ -1,5 +1,6 @@
 #![cfg(not(target_os = "windows"))]
 
+use assert_matches::assert_matches;
 use codex_core::model_family::find_family_for_model;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::EventMsg;
@@ -14,6 +15,7 @@ use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_function_call;
 use core_test_support::responses::ev_local_shell_call;
+use core_test_support::responses::ev_response_created;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
@@ -68,10 +70,7 @@ async fn shell_tool_executes_command_and_streams_output() -> anyhow::Result<()> 
     let call_id = "shell-tool-call";
     let command = vec!["/bin/echo", "tool harness"];
     let first_response = sse(vec![
-        serde_json::json!({
-            "type": "response.created",
-            "response": {"id": "resp-1"}
-        }),
+        ev_response_created("resp-1"),
         ev_local_shell_call(call_id, "completed", command),
         ev_completed("resp-1"),
     ]);
@@ -152,10 +151,7 @@ async fn update_plan_tool_emits_plan_update_event() -> anyhow::Result<()> {
     .to_string();
 
     let first_response = sse(vec![
-        serde_json::json!({
-            "type": "response.created",
-            "response": {"id": "resp-1"}
-        }),
+        ev_response_created("resp-1"),
         ev_function_call(call_id, "update_plan", &plan_args),
         ev_completed("resp-1"),
     ]);
@@ -191,9 +187,9 @@ async fn update_plan_tool_emits_plan_update_event() -> anyhow::Result<()> {
             assert_eq!(update.explanation.as_deref(), Some("Tool harness check"));
             assert_eq!(update.plan.len(), 2);
             assert_eq!(update.plan[0].step, "Inspect workspace");
-            assert!(matches!(update.plan[0].status, StepStatus::InProgress));
+            assert_matches!(update.plan[0].status, StepStatus::InProgress);
             assert_eq!(update.plan[1].step, "Report results");
-            assert!(matches!(update.plan[1].status, StepStatus::Pending));
+            assert_matches!(update.plan[1].status, StepStatus::Pending);
             false
         }
         EventMsg::TaskComplete(_) => true,
@@ -247,10 +243,7 @@ async fn update_plan_tool_rejects_malformed_payload() -> anyhow::Result<()> {
     .to_string();
 
     let first_response = sse(vec![
-        serde_json::json!({
-            "type": "response.created",
-            "response": {"id": "resp-1"}
-        }),
+        ev_response_created("resp-1"),
         ev_function_call(call_id, "update_plan", &invalid_args),
         ev_completed("resp-1"),
     ]);
@@ -353,10 +346,7 @@ async fn apply_patch_tool_executes_and_emits_patch_events() -> anyhow::Result<()
 *** End Patch"#;
 
     let first_response = sse(vec![
-        serde_json::json!({
-            "type": "response.created",
-            "response": {"id": "resp-1"}
-        }),
+        ev_response_created("resp-1"),
         ev_apply_patch_function_call(call_id, patch_content),
         ev_completed("resp-1"),
     ]);
@@ -482,10 +472,7 @@ async fn apply_patch_reports_parse_diagnostics() -> anyhow::Result<()> {
 *** End Patch";
 
     let first_response = sse(vec![
-        serde_json::json!({
-            "type": "response.created",
-            "response": {"id": "resp-1"}
-        }),
+        ev_response_created("resp-1"),
         ev_apply_patch_function_call(call_id, patch_content),
         ev_completed("resp-1"),
     ]);
