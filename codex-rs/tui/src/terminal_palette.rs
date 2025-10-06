@@ -596,7 +596,9 @@ mod imp {
     fn query_console_snapshot() -> Option<ConsoleSnapshot> {
         unsafe {
             let handle = GetStdHandle(STD_OUTPUT_HANDLE);
-            if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            // `HANDLE` is an `isize`, so compare against 0 explicitly instead of treating
+            // it like a raw pointer when verifying the console handle succeeded.
+            if handle == 0 || handle == INVALID_HANDLE_VALUE {
                 return None;
             }
 
