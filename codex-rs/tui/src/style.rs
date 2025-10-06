@@ -56,11 +56,11 @@ pub fn user_message_bg(terminal_bg: (u8, u8, u8)) -> Color {
         if let Some(palette) = basic_palette() {
             // On Windows terminals the palette is configurable, so evaluate the actual
             // runtime color table to keep the blended shading aligned with custom themes.
-            closest_runtime_basic_color(target, &palette)
+            closest_runtime_basic_color(target, terminal_bg, &palette)
         } else {
             // Finally, degrade to the well-known ANSI 16-color defaults using a perceptual
             // distance match.
-            closest_basic_color(target)
+            closest_basic_color(target, terminal_bg)
         }
     } else {
         // If the runtime reports no color support at all, keep the default background to
@@ -69,31 +69,56 @@ pub fn user_message_bg(terminal_bg: (u8, u8, u8)) -> Color {
     }
 }
 
-fn closest_runtime_basic_color(target: (u8, u8, u8), palette: &[(u8, u8, u8); 16]) -> Color {
-    palette
-        .iter()
-        .enumerate()
-        .min_by(|(_, a), (_, b)| {
-            perceptual_distance(**a, target)
-                .partial_cmp(&perceptual_distance(**b, target))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .and_then(|(idx, _)| BASIC_TERMINAL_COLORS.get(idx).map(|(color, _)| *color))
-        .unwrap_or(Color::default())
+fn closest_runtime_basic_color(
+    target: (u8, u8, u8),
+    terminal_bg: (u8, u8, u8),
+    palette: &[(u8, u8, u8); 16],
+) -> Color {
+    select_basic_palette_color(
+        target,
+        terminal_bg,
+        palette.iter().enumerate().filter_map(|(idx, rgb)| {
+            BASIC_TERMINAL_COLORS
+                .get(idx)
+                .map(|(color, _)| (*rgb, *color))
+        }),
+    )
 }
 
-fn closest_basic_color(target: (u8, u8, u8)) -> Color {
+fn closest_basic_color(target: (u8, u8, u8), terminal_bg: (u8, u8, u8)) -> Color {
     // Iterate through the baked-in ANSI colors and return whichever one is closest to the
-    // desired RGB shade. This mirrors the logic used for the 256-color lookup but avoids
-    // allocating an array for each call.
-    BASIC_TERMINAL_COLORS
-        .iter()
-        .min_by(|(_, a), (_, b)| {
-            perceptual_distance(*a, target)
-                .partial_cmp(&perceptual_distance(*b, target))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .map(|(color, _)| *color)
+    // desired RGB shade while maintaining contrast with the background.
+    select_basic_palette_color(
+        target,
+        terminal_bg,
+        BASIC_TERMINAL_COLORS
+            .iter()
+            .map(|(color, rgb)| (*rgb, *color)),
+    )
+}
+
+const MIN_PERCEPTUAL_DISTANCE: f32 = 6.0;
+
+fn select_basic_palette_color(
+    target: (u8, u8, u8),
+    terminal_bg: (u8, u8, u8),
+    entries: impl Iterator<Item = ((u8, u8, u8), Color)>,
+) -> Color {
+    let mut best = None;
+    let mut fallback = None;
+    for (rgb, color) in entries {
+        let dist = perceptual_distance(rgb, target);
+        if fallback.is_none_or(|(_, best_dist)| dist < best_dist) {
+            fallback = Some((color, dist));
+        }
+        if perceptual_distance(rgb, terminal_bg) > MIN_PERCEPTUAL_DISTANCE
+            && best.is_none_or(|(_, best_dist)| dist < best_dist)
+        {
+            best = Some((color, dist));
+        }
+    }
+    best.or(fallback)
+        .map(|(color, _)| color)
         .unwrap_or(Color::default())
 }
 
