@@ -510,7 +510,11 @@ mod imp {
     pub(super) fn default_colors() -> Option<DefaultColors> {
         unsafe {
             let handle = GetStdHandle(STD_OUTPUT_HANDLE);
-            if handle == 0 || handle == INVALID_HANDLE_VALUE {
+            // Windows exposes null (0) and INVALID_HANDLE_VALUE (-1) as the two
+            // sentinel return values from GetStdHandle. HANDLE is a raw pointer
+            // so rely on is_null() for the zero check to keep pointer typing
+            // consistent across the windows-sys bindings.
+            if handle.is_null() || handle == INVALID_HANDLE_VALUE {
                 return None;
             }
             let mut info = MaybeUninit::<CONSOLE_SCREEN_BUFFER_INFO>::uninit();
