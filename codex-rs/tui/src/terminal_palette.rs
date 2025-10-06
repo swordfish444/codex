@@ -557,7 +557,7 @@ mod imp {
     fn query_console_snapshot() -> Option<ConsoleSnapshot> {
         unsafe {
             let handle = GetStdHandle(STD_OUTPUT_HANDLE);
-            if handle.is_null() || handle == INVALID_HANDLE_VALUE as HANDLE {
+            if handle.is_null() || std::ptr::eq(handle, INVALID_HANDLE_VALUE) as HANDLE {
                 return None;
             }
 
