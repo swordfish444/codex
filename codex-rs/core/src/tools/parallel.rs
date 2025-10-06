@@ -76,7 +76,7 @@ impl ToolCallRuntime {
         &mut self,
         output: &mut [ProcessedResponseItem],
     ) -> Result<(), CodexErr> {
-        if self.pending_calls.len() > 0 {
+        if !self.pending_calls.is_empty() {
             tracing::info!(
                 "Resolving {} tool calls: {:?}",
                 self.pending_calls.len(),
