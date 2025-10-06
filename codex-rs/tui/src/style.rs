@@ -15,12 +15,6 @@ pub fn user_message_style(terminal_bg: Option<(u8, u8, u8)>) -> Style {
 }
 
 #[allow(clippy::disallowed_methods)]
-/// Derives a background color for the user input field that contrasts with the terminal.
-///
-/// The goal is to blend the user's default terminal background with either black or
-/// white (depending on whether the background is light/dark) so the composer area feels
-/// consistent with the host theme. The function progressively falls back to palettes of
-/// decreasing fidelity depending on what the runtime reports about color support.
 pub fn user_message_bg(terminal_bg: (u8, u8, u8)) -> Color {
     // Determine a reference "top" color to blend toward. For dark backgrounds we lighten
     // the mix with white, and for light backgrounds we darken it with black.
@@ -34,8 +28,6 @@ pub fn user_message_bg(terminal_bg: (u8, u8, u8)) -> Color {
         return Color::default();
     };
 
-    // Blend 10% toward the contrasting top color to create a subtle shading effect that
-    // keeps the composer distinct without overwhelming the terminal theme.
     let target = blend(top, bottom, 0.1);
     if color_level.has_16m {
         // In truecolor terminals we can use the exact RGB value.
@@ -63,8 +55,6 @@ pub fn user_message_bg(terminal_bg: (u8, u8, u8)) -> Color {
             closest_basic_color(target, terminal_bg)
         }
     } else {
-        // If the runtime reports no color support at all, keep the default background to
-        // avoid rendering garbage escape sequences.
         Color::default()
     }
 }

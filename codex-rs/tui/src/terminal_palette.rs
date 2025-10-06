@@ -1,7 +1,3 @@
-/// Returns the cached 256-color palette reported by the active terminal, when available.
-///
-/// Unix terminals often respond to OSC 4 palette dumps while Windows does not, so callers
-/// should always be prepared for this to return `None`.
 pub fn terminal_palette() -> Option<[(u8, u8, u8); 256]> {
     imp::terminal_palette()
 }
@@ -15,7 +11,6 @@ pub fn basic_palette() -> Option<[(u8, u8, u8); 16]> {
     imp::basic_palette()
 }
 
-/// Forces the palette cache to re-run the default color probe for the current terminal.
 pub fn requery_default_colors() {
     imp::requery_default_colors();
 }
@@ -28,19 +23,15 @@ pub struct DefaultColors {
     bg: (u8, u8, u8),
 }
 
-/// Returns the default colors (if known), priming the cache by probing the terminal when
-/// necessary.
 pub fn default_colors() -> Option<DefaultColors> {
     imp::default_colors()
 }
 
 #[allow(dead_code)]
-/// Convenience accessor for only the cached default foreground.
 pub fn default_fg() -> Option<(u8, u8, u8)> {
     default_colors().map(|c| c.fg)
 }
 
-/// Convenience accessor for only the cached default background.
 pub fn default_bg() -> Option<(u8, u8, u8)> {
     default_colors().map(|c| c.bg)
 }
@@ -53,8 +44,6 @@ mod imp {
     use std::sync::Mutex;
     use std::sync::OnceLock;
 
-    /// Lightweight memoization helper storing the last probe result and whether a probe
-    /// has already been attempted.
     struct Cache<T> {
         attempted: bool,
         value: Option<T>,
@@ -87,8 +76,6 @@ mod imp {
 
     fn default_colors_cache() -> &'static Mutex<Cache<DefaultColors>> {
         static CACHE: OnceLock<Mutex<Cache<DefaultColors>>> = OnceLock::new();
-        // Lazily construct a mutex-protected cache so multiple threads can reuse the
-        // expensive OSC probe without data races.
         CACHE.get_or_init(|| Mutex::new(Cache::default()))
     }
 
@@ -112,8 +99,6 @@ mod imp {
 
     pub(super) fn requery_default_colors() {
         if let Ok(mut cache) = default_colors_cache().lock() {
-            // Force the expensive OSC query to run again so palette adjustments in the
-            // user's terminal are picked up immediately.
             cache.refresh_with(|| query_default_colors().unwrap_or_default());
         }
     }
@@ -177,8 +162,6 @@ mod imp {
             }
         }
 
-        // Attempt to parse any trailing bytes that are already buffered, then pull in any
-        // remaining responses until the terminal has been idle briefly.
         remaining = remaining.saturating_sub(apply_palette_responses(&mut buffer, &mut palette));
         remaining = remaining.saturating_sub(drain_remaining(&mut tty, &mut buffer, &mut palette));
 
@@ -213,8 +196,6 @@ mod imp {
         if !stdout_handle.is_terminal() {
             return Ok(None);
         }
-        // Ask for both the default foreground (OSC 10) and background (OSC 11) in a single
-        // write so that we minimize flush latency.
         stdout_handle.write_all(b"\x1b]10;?\x07\x1b]11;?\x07")?;
         stdout_handle.flush()?;
 
@@ -243,8 +224,6 @@ mod imp {
                 Ok(n) => {
                     buffer.extend_from_slice(&chunk[..n]);
                     if fg.is_none() {
-                        // OSC replies can be interleaved; keep checking the buffered text
-                        // until we observe the requested color.
                         fg = parse_osc_color(&buffer, 10);
                     }
                     if bg.is_none() {
@@ -283,8 +262,6 @@ mod imp {
         use std::time::Instant;
 
         let mut chunk = [0u8; 512];
-        // Continue draining until we observe no new data for a short period; this guards
-        // against leaving responses unread when terminals stream slowly.
         let mut idle_deadline = Instant::now() + Duration::from_millis(50);
         let mut newly_filled = 0usize;
 
@@ -349,8 +326,6 @@ mod imp {
     ) -> usize {
         let mut newly_filled = 0;
 
-        // Search for OSC introducers (ESC ]) inside the rolling buffer and peel off
-        // responses as soon as we have a full payload.
         while let Some(start) = buffer.windows(2).position(|window| window == [0x1b, b']']) {
             if start > 0 {
                 buffer.drain(..start);
@@ -362,12 +337,10 @@ mod imp {
             while index < buffer.len() {
                 match buffer[index] {
                     0x07 => {
-                        // BEL terminated response.
                         terminator_len = Some(1);
                         break;
                     }
                     0x1b if index + 1 < buffer.len() && buffer[index + 1] == b'\\' => {
-                        // ESC \ (String Terminator) variant.
                         terminator_len = Some(2);
                         break;
                     }
@@ -389,8 +362,6 @@ mod imp {
             if let Some((slot, color)) = parsed
                 && palette[slot].is_none()
             {
-                // Record the color only if the slot hasn't been filled yet to avoid
-                // clobbering data when terminals echo duplicate responses.
                 palette[slot] = Some(color);
                 newly_filled += 1;
             }
@@ -413,8 +384,6 @@ mod imp {
         if model != "rgb" && model != "rgba" {
             return None;
         }
-        // The OSC payload encodes each color component as hexadecimal strings separated by
-        // '/', so decode them in order.
         let mut components = values.split('/');
         let r = parse_component(components.next()?)?;
         let g = parse_component(components.next()?)?;
@@ -422,7 +391,6 @@ mod imp {
         Some((index, (r, g, b)))
     }
 
-    /// Normalizes a hexadecimal OSC color component (which can be 4-64 bits) to 0-255.
     fn parse_component(component: &str) -> Option<u8> {
         let trimmed = component.trim();
         if trimmed.is_empty() {
@@ -448,8 +416,6 @@ mod imp {
             11 => "\u{1b}]11;",
             _ => return None,
         };
-        // Locate the most recent reply for the requested OSC code in case multiple
-        // sequences are buffered together.
         let start = text.rfind(prefix)?;
         let after_prefix = &text[start + prefix.len()..];
         let end_bel = after_prefix.find('\u{7}');
@@ -476,8 +442,6 @@ mod imp {
         let r = parse_component(parts.next()?)?;
         let g = parse_component(parts.next()?)?;
         let b = parse_component(parts.next()?)?;
-        // Some terminals append an alpha component for rgba; ignore it if present since the
-        // OSC format represents the alpha channel as the next slash-separated part.
         Some((r, g, b))
     }
 }
@@ -524,8 +488,6 @@ mod imp {
         palette: [(u8, u8, u8); 16],
     }
 
-    /// Lightweight memoization helper mirroring the Unix implementation so the Windows probe
-    /// only runs when necessary.
     struct Cache<T> {
         attempted: bool,
         value: Option<T>,
@@ -591,13 +553,9 @@ mod imp {
         }
     }
 
-    /// Queries the Win32 console for the color attribute indices and, when possible, the
-    /// active 16-color palette that modern Windows Terminal exposes for custom themes.
     fn query_console_snapshot() -> Option<ConsoleSnapshot> {
         unsafe {
             let handle = GetStdHandle(STD_OUTPUT_HANDLE);
-            // `HANDLE` is an `isize`, so compare against 0 explicitly instead of treating
-            // it like a raw pointer when verifying the console handle succeeded.
             if handle == 0 || handle == INVALID_HANDLE_VALUE {
                 return None;
             }
