@@ -100,6 +100,7 @@ pub fn find_family_for_model(mut slug: &str) -> Option<ModelFamily> {
             supports_reasoning_summaries: true,
             uses_local_shell_tool: true,
             needs_special_apply_patch_instructions: true,
+            experimental_supported_tools: vec!["subsession".to_string()],
         )
     } else if slug.starts_with("gpt-4.1") {
         model_family!(
@@ -120,7 +121,8 @@ pub fn find_family_for_model(mut slug: &str) -> Option<ModelFamily> {
             base_instructions: GPT_5_CODEX_INSTRUCTIONS.to_string(),
             experimental_supported_tools: vec![
                 "read_file".to_string(),
-                "test_sync_tool".to_string()
+                "test_sync_tool".to_string(),
+                "subsession".to_string(),
             ],
             supports_parallel_tool_calls: true,
         )
@@ -133,7 +135,7 @@ pub fn find_family_for_model(mut slug: &str) -> Option<ModelFamily> {
             reasoning_summary_format: ReasoningSummaryFormat::Experimental,
             base_instructions: GPT_5_CODEX_INSTRUCTIONS.to_string(),
             apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
-            experimental_supported_tools: vec!["read_file".to_string()],
+            experimental_supported_tools: vec!["read_file".to_string(), "subsession".to_string()],
             supports_parallel_tool_calls: true,
         )
 

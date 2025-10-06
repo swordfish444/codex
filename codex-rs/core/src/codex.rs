@@ -96,6 +96,7 @@ use crate::rollout::RolloutRecorderParams;
 use crate::shell;
 use crate::state::ActiveTurn;
 use crate::state::SessionServices;
+use crate::subsessions::SubsessionManager;
 use crate::tasks::CompactTask;
 use crate::tasks::RegularTask;
 use crate::tasks::ReviewTask;
@@ -471,6 +472,7 @@ impl Session {
                 turn_context.cwd.clone(),
                 config.codex_linux_sandbox_exe.clone(),
             )),
+            subsessions: SubsessionManager::new(),
         };
 
         let sess = Arc::new(Session {
@@ -1084,6 +1086,10 @@ impl Session {
     pub async fn interrupt_task(self: &Arc<Self>) {
         info!("interrupt received: abort current task, if any");
         self.abort_all_tasks(TurnAbortReason::Interrupted).await;
+        self.services
+            .subsessions
+            .abort_all_children(Arc::clone(self))
+            .await;
     }
 
     fn interrupt_task_sync(&self) {
@@ -1440,6 +1446,10 @@ async fn submission_loop(
             }
             Op::Shutdown => {
                 sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
+                sess.services
+                    .subsessions
+                    .abort_all_children(Arc::clone(&sess))
+                    .await;
                 info!("Shutting down Codex instance");
 
                 // Gracefully flush and shutdown rollout recorder on session end so tests
@@ -2772,6 +2782,7 @@ mod tests {
                 turn_context.cwd.clone(),
                 None,
             )),
+            subsessions: SubsessionManager::new(),
         };
         let session = Session {
             conversation_id,
@@ -2845,6 +2856,7 @@ mod tests {
                 config.cwd.clone(),
                 None,
             )),
+            subsessions: SubsessionManager::new(),
         };
         let session = Arc::new(Session {
             conversation_id,

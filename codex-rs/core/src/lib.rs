@@ -64,6 +64,7 @@ pub(crate) mod safety;
 pub mod seatbelt;
 pub mod shell;
 pub mod spawn;
+pub(crate) mod subsessions;
 pub mod terminal;
 mod tools;
 pub mod turn_diff_tracker;
