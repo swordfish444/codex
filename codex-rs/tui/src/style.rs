@@ -1,6 +1,7 @@
 use crate::color::blend;
 use crate::color::is_light;
 use crate::color::perceptual_distance;
+use crate::terminal_palette::basic_palette;
 use crate::terminal_palette::terminal_palette;
 use ratatui::style::Color;
 use ratatui::style::Style;
@@ -52,13 +53,33 @@ pub fn user_message_bg(terminal_bg: (u8, u8, u8)) -> Color {
         // perceptually closest to the blended target.
         Color::Indexed(i as u8)
     } else if color_level.has_basic {
-        // Finally, degrade to the basic 16 ANSI colors using a perceptual distance match.
-        closest_basic_color(target)
+        if let Some(palette) = basic_palette() {
+            // On Windows terminals the palette is configurable, so evaluate the actual
+            // runtime color table to keep the blended shading aligned with custom themes.
+            closest_runtime_basic_color(target, &palette)
+        } else {
+            // Finally, degrade to the well-known ANSI 16-color defaults using a perceptual
+            // distance match.
+            closest_basic_color(target)
+        }
     } else {
         // If the runtime reports no color support at all, keep the default background to
         // avoid rendering garbage escape sequences.
         Color::default()
     }
+}
+
+fn closest_runtime_basic_color(target: (u8, u8, u8), palette: &[(u8, u8, u8); 16]) -> Color {
+    palette
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| {
+            perceptual_distance(**a, target)
+                .partial_cmp(&perceptual_distance(**b, target))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .and_then(|(idx, _)| BASIC_TERMINAL_COLORS.get(idx).map(|(color, _)| *color))
+        .unwrap_or(Color::default())
 }
 
 fn closest_basic_color(target: (u8, u8, u8)) -> Color {
