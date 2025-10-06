@@ -452,6 +452,7 @@ mod imp {
     use std::mem::MaybeUninit;
     use std::sync::Mutex;
     use std::sync::OnceLock;
+    use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows_sys::Win32::System::Console::CONSOLE_SCREEN_BUFFER_INFO;
     use windows_sys::Win32::System::Console::CONSOLE_SCREEN_BUFFER_INFOEX;
@@ -556,7 +557,7 @@ mod imp {
     fn query_console_snapshot() -> Option<ConsoleSnapshot> {
         unsafe {
             let handle = GetStdHandle(STD_OUTPUT_HANDLE);
-            if handle == 0 || handle == INVALID_HANDLE_VALUE {
+            if handle.is_null() || handle == INVALID_HANDLE_VALUE as HANDLE {
                 return None;
             }
 
@@ -570,14 +571,16 @@ mod imp {
         }
     }
 
-    unsafe fn query_with_ex(handle: isize) -> Option<ConsoleSnapshot> {
+    unsafe fn query_with_ex(handle: HANDLE) -> Option<ConsoleSnapshot> {
         let mut info = MaybeUninit::<CONSOLE_SCREEN_BUFFER_INFOEX>::zeroed();
         let info_ptr = info.as_mut_ptr();
-        (*info_ptr).cbSize = std::mem::size_of::<CONSOLE_SCREEN_BUFFER_INFOEX>() as u32;
-        if GetConsoleScreenBufferInfoEx(handle, info_ptr) == 0 {
-            return None;
+        unsafe {
+            (*info_ptr).cbSize = std::mem::size_of::<CONSOLE_SCREEN_BUFFER_INFOEX>() as u32;
+            if GetConsoleScreenBufferInfoEx(handle, info_ptr) == 0 {
+                return None;
+            }
         }
-        let info = info.assume_init();
+        let info = unsafe { info.assume_init() };
         let attrs = info.wAttributes as usize;
         let fg_idx = attrs & 0x0f;
         let bg_idx = (attrs >> 4) & 0x0f;
@@ -594,12 +597,14 @@ mod imp {
         })
     }
 
-    unsafe fn query_with_basic_info(handle: isize) -> Option<ConsoleSnapshot> {
+    unsafe fn query_with_basic_info(handle: HANDLE) -> Option<ConsoleSnapshot> {
         let mut info = MaybeUninit::<CONSOLE_SCREEN_BUFFER_INFO>::uninit();
-        if GetConsoleScreenBufferInfo(handle, info.as_mut_ptr()) == 0 {
-            return None;
+        unsafe {
+            if GetConsoleScreenBufferInfo(handle, info.as_mut_ptr()) == 0 {
+                return None;
+            }
         }
-        let info = info.assume_init();
+        let info = unsafe { info.assume_init() };
         let attrs = info.wAttributes as usize;
         let fg_idx = attrs & 0x0f;
         let bg_idx = (attrs >> 4) & 0x0f;
