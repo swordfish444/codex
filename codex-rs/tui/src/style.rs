@@ -24,9 +24,17 @@ pub fn user_message_bg(terminal_bg: (u8, u8, u8)) -> Color {
         (255, 255, 255)
     };
     let bottom = terminal_bg;
-    let Some(color_level) = supports_color::on_cached(supports_color::Stream::Stdout) else {
+    let Some(mut color_level) = supports_color::on_cached(supports_color::Stream::Stdout) else {
         return Color::default();
     };
+
+    #[cfg(windows)]
+    // Windows Terminal has been the default shell application for Windows since October 2022
+    // and has supported truecolor even longer. However it usually does not set COLORTERM to indicate that.
+    // so this is a pretty safe heuristic.
+    if std::env::var_os("WT_SESSION").is_some() {
+        color_level.has_16m = true;
+    }
 
     let target = blend(top, bottom, 0.1);
     if color_level.has_16m {
