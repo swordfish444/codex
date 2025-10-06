@@ -70,6 +70,9 @@ pub enum SandboxType {
 
     /// Only available on Linux.
     LinuxSeccomp,
+
+    /// Only available on Windows.
+    WindowsAppContainer,
 }
 
 #[derive(Clone)]
@@ -93,7 +96,9 @@ pub async fn process_exec_tool_call(
 
     let raw_output_result: std::result::Result<RawExecToolCallOutput, CodexErr> = match sandbox_type
     {
-        SandboxType::None => exec(params, sandbox_policy, stdout_stream.clone()).await,
+        SandboxType::None | SandboxType::WindowsAppContainer => {
+            exec(params, sandbox_policy, stdout_stream.clone()).await
+        }
         SandboxType::MacosSeatbelt => {
             let ExecParams {
                 command,
@@ -198,7 +203,10 @@ pub async fn process_exec_tool_call(
 /// For now, we conservatively check for 'command not found' (exit code 127),
 /// and can add additional cases as necessary.
 fn is_likely_sandbox_denied(sandbox_type: SandboxType, exit_code: i32) -> bool {
-    if sandbox_type == SandboxType::None {
+    if matches!(
+        sandbox_type,
+        SandboxType::None | SandboxType::WindowsAppContainer
+    ) {
         return false;
     }
 
