@@ -242,7 +242,7 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
       ],
       "tools": [],
       "tool_choice": "auto",
-      "parallel_tool_calls": !is_windows,
+      "parallel_tool_calls": false,
       "reasoning": {
         "summary": "auto"
       },
