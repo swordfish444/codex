@@ -27,6 +27,8 @@ use crate::protocol::SandboxPolicy;
 use crate::seatbelt::spawn_command_under_seatbelt;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
+#[cfg(windows)]
+use crate::windows_appcontainer::spawn_command_under_windows_appcontainer;
 
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 
@@ -96,8 +98,31 @@ pub async fn process_exec_tool_call(
 
     let raw_output_result: std::result::Result<RawExecToolCallOutput, CodexErr> = match sandbox_type
     {
-        SandboxType::None | SandboxType::WindowsAppContainer => {
-            exec(params, sandbox_policy, stdout_stream.clone()).await
+        SandboxType::None => exec(params, sandbox_policy, stdout_stream.clone()).await,
+        SandboxType::WindowsAppContainer => {
+            #[cfg(windows)]
+            {
+                let ExecParams {
+                    command,
+                    cwd: command_cwd,
+                    env,
+                    ..
+                } = params;
+                let child = spawn_command_under_windows_appcontainer(
+                    command,
+                    command_cwd,
+                    sandbox_policy,
+                    sandbox_cwd,
+                    StdioPolicy::RedirectForShellTool,
+                    env,
+                )
+                .await?;
+                consume_truncated_output(child, timeout_duration, stdout_stream.clone()).await
+            }
+            #[cfg(not(windows))]
+            {
+                panic!("windows sandboxing is not available on this platform");
+            }
         }
         SandboxType::MacosSeatbelt => {
             let ExecParams {

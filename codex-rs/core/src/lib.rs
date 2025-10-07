@@ -82,6 +82,9 @@ mod tasks;
 mod user_notification;
 pub mod util;
 
+#[cfg(windows)]
+pub mod windows_appcontainer;
+
 pub use apply_patch::CODEX_APPLY_PATCH_ARG1;
 pub use command_safety::is_safe_command;
 pub use safety::get_platform_sandbox;
