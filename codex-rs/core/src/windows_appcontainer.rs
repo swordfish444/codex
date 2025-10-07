@@ -1,9 +1,9 @@
-#![cfg(windows)]
-
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::ffi::c_void;
 use std::io;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::ptr::null_mut;
@@ -21,8 +21,10 @@ use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
 use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::Foundation::GetLastError;
 use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Foundation::HLOCAL;
 use windows::Win32::Foundation::WIN32_ERROR;
-use windows::Win32::Security::Authorization::DACL_SECURITY_INFORMATION;
+use windows::Win32::Security::ACL;
+use windows::Win32::Security::Authorization::ConvertStringSidToSidW;
 use windows::Win32::Security::Authorization::EXPLICIT_ACCESS_W;
 use windows::Win32::Security::Authorization::GetNamedSecurityInfoW;
 use windows::Win32::Security::Authorization::OBJECT_INHERIT_ACE;
@@ -31,13 +33,14 @@ use windows::Win32::Security::Authorization::SET_ACCESS;
 use windows::Win32::Security::Authorization::SUB_CONTAINERS_AND_OBJECTS_INHERIT;
 use windows::Win32::Security::Authorization::SetEntriesInAclW;
 use windows::Win32::Security::Authorization::SetNamedSecurityInfoW;
-use windows::Win32::Security::Authorization::TRUSTEE_FORM;
+use windows::Win32::Security::Authorization::TRUSTEE_IS_SID;
 use windows::Win32::Security::Authorization::TRUSTEE_IS_UNKNOWN;
 use windows::Win32::Security::Authorization::TRUSTEE_W;
-use windows::Win32::Security::ConvertStringSidToSidW;
-use windows::Win32::Security::CreateAppContainerProfile;
-use windows::Win32::Security::DeriveAppContainerSidFromAppContainerName;
+use windows::Win32::Security::DACL_SECURITY_INFORMATION;
 use windows::Win32::Security::FreeSid;
+use windows::Win32::Security::Isolation::CreateAppContainerProfile;
+use windows::Win32::Security::Isolation::DeriveAppContainerSidFromAppContainerName;
+use windows::Win32::Security::PSECURITY_DESCRIPTOR;
 use windows::Win32::Security::PSID;
 use windows::Win32::Security::SECURITY_CAPABILITIES;
 use windows::Win32::Security::SID_AND_ATTRIBUTES;
@@ -45,6 +48,7 @@ use windows::Win32::Storage::FileSystem::FILE_GENERIC_EXECUTE;
 use windows::Win32::Storage::FileSystem::FILE_GENERIC_READ;
 use windows::Win32::Storage::FileSystem::FILE_GENERIC_WRITE;
 use windows::Win32::System::Memory::GetProcessHeap;
+use windows::Win32::System::Memory::HEAP_FLAGS;
 use windows::Win32::System::Memory::HEAP_ZERO_MEMORY;
 use windows::Win32::System::Memory::HeapAlloc;
 use windows::Win32::System::Memory::HeapFree;
@@ -52,7 +56,7 @@ use windows::Win32::System::Memory::LocalFree;
 use windows::Win32::System::Threading::DeleteProcThreadAttributeList;
 use windows::Win32::System::Threading::EXTENDED_STARTUPINFO_PRESENT;
 use windows::Win32::System::Threading::InitializeProcThreadAttributeList;
-use windows::Win32::System::Threading::PROC_THREAD_ATTRIBUTE_LIST;
+use windows::Win32::System::Threading::LPPROC_THREAD_ATTRIBUTE_LIST;
 use windows::Win32::System::Threading::PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES;
 use windows::Win32::System::Threading::UpdateProcThreadAttribute;
 use windows::core::PCWSTR;
@@ -128,7 +132,7 @@ pub async fn spawn_command_under_windows_appcontainer(
     unsafe {
         let std_cmd = cmd.as_std_mut();
         std_cmd.creation_flags(EXTENDED_STARTUPINFO_PRESENT);
-        std_cmd.raw_attribute_list(attribute_list.as_mut_ptr());
+        std_cmd.raw_attribute_list(attribute_list.as_mut_ptr().0);
     }
 
     let child = cmd.spawn();
@@ -165,18 +169,22 @@ fn ensure_appcontainer_profile() -> io::Result<()> {
     unsafe {
         let name = to_wide(WINDOWS_APPCONTAINER_PROFILE_NAME);
         let desc = to_wide(WINDOWS_APPCONTAINER_PROFILE_DESC);
-        let hr = CreateAppContainerProfile(
+        match CreateAppContainerProfile(
             PCWSTR(name.as_ptr()),
             PCWSTR(name.as_ptr()),
             PCWSTR(desc.as_ptr()),
-            null_mut(),
-            0,
-            null_mut(),
-        );
-        if let Err(error) = hr {
-            let already_exists = WIN32_ERROR::from(ERROR_ALREADY_EXISTS);
-            if GetLastError() != already_exists {
-                return Err(io::Error::from_raw_os_error(error.code().0));
+            None,
+        ) {
+            Ok(profile_sid) => {
+                if !profile_sid.is_invalid() {
+                    FreeSid(profile_sid);
+                }
+            }
+            Err(error) => {
+                let already_exists = WIN32_ERROR::from(ERROR_ALREADY_EXISTS);
+                if GetLastError() != already_exists {
+                    return Err(io::Error::from_raw_os_error(error.code().0));
+                }
             }
         }
     }
@@ -198,7 +206,7 @@ impl SidHandle {
 impl Drop for SidHandle {
     fn drop(&mut self) {
         unsafe {
-            if !self.ptr.is_null() {
+            if !self.ptr.is_invalid() {
                 FreeSid(self.ptr);
             }
         }
@@ -207,11 +215,10 @@ impl Drop for SidHandle {
 
 fn derive_appcontainer_sid() -> io::Result<SidHandle> {
     unsafe {
-        let mut sid_ptr = null_mut();
         let name = to_wide(WINDOWS_APPCONTAINER_PROFILE_NAME);
-        DeriveAppContainerSidFromAppContainerName(PCWSTR(name.as_ptr()), &mut sid_ptr)
+        let sid = DeriveAppContainerSidFromAppContainerName(PCWSTR(name.as_ptr()))
             .map_err(|e| io::Error::from_raw_os_error(e.code().0))?;
-        Ok(SidHandle { ptr: sid_ptr })
+        Ok(SidHandle { ptr: sid })
     }
 }
 
@@ -224,11 +231,10 @@ struct CapabilitySid {
 impl CapabilitySid {
     fn new_from_string(value: &str) -> io::Result<Self> {
         unsafe {
-            let mut sid_ptr = null_mut();
+            let mut sid_ptr = PSID::default();
             let wide = to_wide(value);
-            if ConvertStringSidToSidW(PCWSTR(wide.as_ptr()), &mut sid_ptr) == 0 {
-                return Err(io::Error::last_os_error());
-            }
+            ConvertStringSidToSidW(PCWSTR(wide.as_ptr()), &mut sid_ptr)
+                .map_err(|e| io::Error::from_raw_os_error(e.code().0))?;
             Ok(Self { sid: sid_ptr })
         }
     }
@@ -244,8 +250,8 @@ impl CapabilitySid {
 impl Drop for CapabilitySid {
     fn drop(&mut self) {
         unsafe {
-            if !self.sid.is_null() {
-                LocalFree(self.sid as isize);
+            if !self.sid.is_invalid() {
+                let _ = LocalFree(HLOCAL(self.sid.0));
             }
         }
     }
@@ -270,8 +276,8 @@ fn build_capabilities(policy: &SandboxPolicy) -> io::Result<Vec<CapabilitySid>> 
 /// (the AppContainer SID plus capability SIDs) into `CreateProcessW`.
 struct AttributeList<'a> {
     heap: HANDLE,
-    buffer: *mut std::ffi::c_void,
-    list: *mut PROC_THREAD_ATTRIBUTE_LIST,
+    buffer: *mut c_void,
+    list: LPPROC_THREAD_ATTRIBUTE_LIST,
     sec_caps: SECURITY_CAPABILITIES,
     sid_and_attributes: Vec<SID_AND_ATTRIBUTES>,
     #[allow(dead_code)]
@@ -284,16 +290,18 @@ impl<'a> AttributeList<'a> {
     fn new(sid: &'a mut SidHandle, caps: &'a mut Vec<CapabilitySid>) -> io::Result<Self> {
         unsafe {
             let mut list_size = 0usize;
-            InitializeProcThreadAttributeList(null_mut(), 1, 0, &mut list_size);
-            let heap = GetProcessHeap();
-            if heap.is_invalid() {
-                return Err(io::Error::last_os_error());
-            }
+            let _ = InitializeProcThreadAttributeList(
+                LPPROC_THREAD_ATTRIBUTE_LIST::default(),
+                1,
+                0,
+                &mut list_size,
+            );
+            let heap = GetProcessHeap().map_err(|e| io::Error::from_raw_os_error(e.code().0))?;
             let buffer = HeapAlloc(heap, HEAP_ZERO_MEMORY, list_size);
             if buffer.is_null() {
                 return Err(io::Error::last_os_error());
             }
-            let list = buffer as *mut PROC_THREAD_ATTRIBUTE_LIST;
+            let list = LPPROC_THREAD_ATTRIBUTE_LIST(buffer);
             InitializeProcThreadAttributeList(list, 1, 0, &mut list_size)
                 .map_err(|e| io::Error::from_raw_os_error(e.code().0))?;
 
@@ -308,17 +316,17 @@ impl<'a> AttributeList<'a> {
                     sid_and_attributes.as_mut_ptr()
                 },
                 CapabilityCount: sid_and_attributes.len() as u32,
-                Reserved: null_mut(),
+                Reserved: 0,
             };
 
             UpdateProcThreadAttribute(
                 list,
                 0,
-                PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
-                &mut sec_caps as *mut _ as *mut _,
+                PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize,
+                Some(&mut sec_caps as *mut _ as *const std::ffi::c_void),
                 std::mem::size_of::<SECURITY_CAPABILITIES>(),
-                null_mut(),
-                null_mut(),
+                None,
+                None,
             )
             .map_err(|e| io::Error::from_raw_os_error(e.code().0))?;
 
@@ -334,7 +342,7 @@ impl<'a> AttributeList<'a> {
         }
     }
 
-    fn as_mut_ptr(&mut self) -> *mut PROC_THREAD_ATTRIBUTE_LIST {
+    fn as_mut_ptr(&mut self) -> LPPROC_THREAD_ATTRIBUTE_LIST {
         self.list
     }
 }
@@ -342,11 +350,11 @@ impl<'a> AttributeList<'a> {
 impl Drop for AttributeList<'_> {
     fn drop(&mut self) {
         unsafe {
-            if !self.list.is_null() {
+            if !self.list.is_invalid() {
                 DeleteProcThreadAttributeList(self.list);
             }
             if !self.heap.is_invalid() && !self.buffer.is_null() {
-                HeapFree(self.heap, 0, self.buffer);
+                let _ = HeapFree(self.heap, HEAP_FLAGS(0), Some(self.buffer));
             }
         }
     }
@@ -391,8 +399,8 @@ fn grant_path_with_flags(path: &Path, sid: PSID, write: bool) -> io::Result<()> 
 
     let wide = to_wide(path.as_os_str());
     unsafe {
-        let mut existing_dacl = null_mut();
-        let mut security_descriptor = null_mut();
+        let mut existing_dacl: *mut ACL = null_mut();
+        let mut security_descriptor = PSECURITY_DESCRIPTOR::default();
         // Pull the current DACL so we can append our ACE without clobbering any
         // existing inheritance or user-specific access entries.
         let status = GetNamedSecurityInfoW(
@@ -401,42 +409,44 @@ fn grant_path_with_flags(path: &Path, sid: PSID, write: bool) -> io::Result<()> 
             DACL_SECURITY_INFORMATION,
             None,
             None,
-            &mut existing_dacl,
-            null_mut(),
+            Some(&mut existing_dacl),
+            None,
             &mut security_descriptor,
         );
         if status != WIN32_ERROR::from(ERROR_SUCCESS) {
-            if !security_descriptor.is_null() {
-                LocalFree(security_descriptor as isize);
+            if !security_descriptor.is_invalid() {
+                let _ = LocalFree(HLOCAL(security_descriptor.0));
             }
             return Err(io::Error::from_raw_os_error(status.0 as i32));
         }
 
         let permissions = if write {
-            FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE
+            (FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE).0
         } else {
-            FILE_GENERIC_READ | FILE_GENERIC_EXECUTE
+            (FILE_GENERIC_READ | FILE_GENERIC_EXECUTE).0
         };
         let mut explicit = EXPLICIT_ACCESS_W {
             grfAccessPermissions: permissions,
             grfAccessMode: SET_ACCESS,
             grfInheritance: SUB_CONTAINERS_AND_OBJECTS_INHERIT | OBJECT_INHERIT_ACE,
             Trustee: TRUSTEE_W {
-                TrusteeForm: TRUSTEE_FORM::TRUSTEE_IS_SID,
+                TrusteeForm: TRUSTEE_IS_SID,
                 TrusteeType: TRUSTEE_IS_UNKNOWN,
-                ptstrName: PWSTR(sid as *mut _),
+                ptstrName: PWSTR(sid.0.cast()),
                 ..Default::default()
             },
         };
 
-        let mut new_dacl = null_mut();
-        let add_result = SetEntriesInAclW(1, &mut explicit, existing_dacl, &mut new_dacl);
+        let explicit_entries = [explicit];
+        let mut new_dacl: *mut ACL = null_mut();
+        let add_result =
+            SetEntriesInAclW(Some(&explicit_entries), Some(existing_dacl), &mut new_dacl);
         if add_result != WIN32_ERROR::from(ERROR_SUCCESS) {
             if !new_dacl.is_null() {
-                LocalFree(new_dacl as isize);
+                let _ = LocalFree(HLOCAL(new_dacl.cast()));
             }
-            if !security_descriptor.is_null() {
-                LocalFree(security_descriptor as isize);
+            if !security_descriptor.is_invalid() {
+                let _ = LocalFree(HLOCAL(security_descriptor.0));
             }
             return Err(io::Error::from_raw_os_error(add_result.0 as i32));
         }
@@ -452,19 +462,19 @@ fn grant_path_with_flags(path: &Path, sid: PSID, write: bool) -> io::Result<()> 
         );
         if set_result != WIN32_ERROR::from(ERROR_SUCCESS) {
             if !new_dacl.is_null() {
-                LocalFree(new_dacl as isize);
+                let _ = LocalFree(HLOCAL(new_dacl.cast()));
             }
-            if !security_descriptor.is_null() {
-                LocalFree(security_descriptor as isize);
+            if !security_descriptor.is_invalid() {
+                let _ = LocalFree(HLOCAL(security_descriptor.0));
             }
             return Err(io::Error::from_raw_os_error(set_result.0 as i32));
         }
 
         if !new_dacl.is_null() {
-            LocalFree(new_dacl as isize);
+            let _ = LocalFree(HLOCAL(new_dacl.cast()));
         }
-        if !security_descriptor.is_null() {
-            LocalFree(security_descriptor as isize);
+        if !security_descriptor.is_invalid() {
+            let _ = LocalFree(HLOCAL(security_descriptor.0));
         }
     }
 
