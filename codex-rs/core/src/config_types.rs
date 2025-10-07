@@ -40,14 +40,8 @@ impl<'de> Deserialize<'de> for McpServerConfig {
     {
         #[derive(Deserialize)]
         struct RawMcpServerConfig {
-            command: Option<String>,
-            #[serde(default)]
-            args: Option<Vec<String>>,
-            #[serde(default)]
-            env: Option<HashMap<String, String>>,
-
-            url: Option<String>,
-            bearer_token: Option<String>,
+            #[serde(flatten)]
+            transport: RawMcpServerTransportConfig,
 
             #[serde(default)]
             startup_timeout_sec: Option<f64>,
@@ -55,6 +49,31 @@ impl<'de> Deserialize<'de> for McpServerConfig {
             startup_timeout_ms: Option<u64>,
             #[serde(default, with = "option_duration_secs")]
             tool_timeout_sec: Option<Duration>,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum RawMcpServerTransportConfig {
+            Stdio(RawMcpServerStdio),
+            StreamableHttp(RawMcpServerStreamableHttp),
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RawMcpServerStdio {
+            command: String,
+            #[serde(default)]
+            args: Vec<String>,
+            #[serde(default)]
+            env: Option<HashMap<String, String>>,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RawMcpServerStreamableHttp {
+            url: String,
+            #[serde(default)]
+            bearer_token: Option<String>,
         }
 
         let raw = RawMcpServerConfig::deserialize(deserializer)?;
@@ -68,49 +87,14 @@ impl<'de> Deserialize<'de> for McpServerConfig {
             (None, None) => None,
         };
 
-        fn throw_if_set<E, T>(transport: &str, field: &str, value: Option<&T>) -> Result<(), E>
-        where
-            E: SerdeError,
-        {
-            if value.is_none() {
-                return Ok(());
+        let transport = match raw.transport {
+            RawMcpServerTransportConfig::Stdio(RawMcpServerStdio { command, args, env }) => {
+                McpServerTransportConfig::Stdio { command, args, env }
             }
-            Err(E::custom(format!(
-                "{field} is not supported for {transport}",
-            )))
-        }
-
-        let transport = match raw {
-            RawMcpServerConfig {
-                command: Some(command),
-                args,
-                env,
+            RawMcpServerTransportConfig::StreamableHttp(RawMcpServerStreamableHttp {
                 url,
                 bearer_token,
-                ..
-            } => {
-                throw_if_set("stdio", "url", url.as_ref())?;
-                throw_if_set("stdio", "bearer_token", bearer_token.as_ref())?;
-                McpServerTransportConfig::Stdio {
-                    command,
-                    args: args.unwrap_or_default(),
-                    env,
-                }
-            }
-            RawMcpServerConfig {
-                url: Some(url),
-                bearer_token,
-                command,
-                args,
-                env,
-                ..
-            } => {
-                throw_if_set("streamable_http", "command", command.as_ref())?;
-                throw_if_set("streamable_http", "args", args.as_ref())?;
-                throw_if_set("streamable_http", "env", env.as_ref())?;
-                McpServerTransportConfig::StreamableHttp { url, bearer_token }
-            }
-            _ => return Err(SerdeError::custom("invalid transport")),
+            }) => McpServerTransportConfig::StreamableHttp { url, bearer_token },
         };
 
         Ok(Self {
@@ -542,6 +526,17 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_rejects_args_for_http_transport() {
+        toml::from_str::<McpServerConfig>(
+            r#"
+            url = "https://example.com"
+            args = ["hello"]
+        "#,
+        )
+        .expect_err("should reject args for http transport");
+    }
+
+    #[test]
     fn deserialize_rejects_env_for_http_transport() {
         toml::from_str::<McpServerConfig>(
             r#"
@@ -550,6 +545,16 @@ mod tests {
         "#,
         )
         .expect_err("should reject env for http transport");
+    }
+
+    #[test]
+    fn deserialize_rejects_bearer_token_without_url() {
+        toml::from_str::<McpServerConfig>(
+            r#"
+            bearer_token = "secret"
+        "#,
+        )
+        .expect_err("should reject bearer token without url");
     }
 
     #[test]

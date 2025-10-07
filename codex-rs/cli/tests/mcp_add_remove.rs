@@ -154,3 +154,45 @@ async fn add_streamable_http_server_rejects_command_args() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn add_streamable_http_server_rejects_env_flag() -> Result<()> {
+    let codex_home = TempDir::new()?;
+
+    let mut add_cmd = codex_command(codex_home.path())?;
+    add_cmd
+        .args([
+            "mcp",
+            "add",
+            "broken",
+            "--url",
+            "http://127.0.0.1:3945/mcp",
+            "--env",
+            "FOO=bar",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("cannot be used with '--env"));
+
+    let servers = load_global_mcp_servers(codex_home.path()).await?;
+    assert!(servers.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn add_bearer_token_requires_url() -> Result<()> {
+    let codex_home = TempDir::new()?;
+
+    let mut add_cmd = codex_command(codex_home.path())?;
+    add_cmd
+        .args(["mcp", "add", "broken", "--bearer-token", "secret"])
+        .assert()
+        .failure()
+        .stderr(contains("required arguments were not provided"));
+
+    let servers = load_global_mcp_servers(codex_home.path()).await?;
+    assert!(servers.is_empty());
+
+    Ok(())
+}
