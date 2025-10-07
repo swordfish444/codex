@@ -8,7 +8,11 @@ use tracing::trace;
 
 use crate::protocol::SandboxPolicy;
 use crate::spawn::StdioPolicy;
-#[cfg(feature = "windows_appcontainer_command_ext")]
+
+#[cfg(all(
+    feature = "windows_appcontainer_command_ext",
+    feature = "windows_appcontainer_command_ext_raw_attribute",
+))]
 mod imp {
     use super::*;
 
@@ -444,8 +448,30 @@ mod imp {
     }
 }
 
-#[cfg(feature = "windows_appcontainer_command_ext")]
+#[cfg(all(
+    feature = "windows_appcontainer_command_ext",
+    feature = "windows_appcontainer_command_ext_raw_attribute",
+))]
 pub use imp::spawn_command_under_windows_appcontainer;
+
+#[cfg(all(
+    feature = "windows_appcontainer_command_ext",
+    not(feature = "windows_appcontainer_command_ext_raw_attribute"),
+))]
+pub async fn spawn_command_under_windows_appcontainer(
+    command: Vec<String>,
+    command_cwd: PathBuf,
+    _sandbox_policy: &SandboxPolicy,
+    _sandbox_policy_cwd: &Path,
+    _stdio_policy: StdioPolicy,
+    _env: HashMap<String, String>,
+) -> io::Result<Child> {
+    let _ = (command, command_cwd);
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "AppContainer sandboxing requires the `windows_appcontainer_command_ext_raw_attribute` feature, which in turn needs a nightly compiler",
+    ))
+}
 
 #[cfg(not(feature = "windows_appcontainer_command_ext"))]
 pub async fn spawn_command_under_windows_appcontainer(

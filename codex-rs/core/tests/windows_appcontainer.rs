@@ -1,4 +1,8 @@
-#![cfg(all(windows, feature = "windows_appcontainer_command_ext"))]
+#![cfg(all(
+    windows,
+    feature = "windows_appcontainer_command_ext",
+    feature = "windows_appcontainer_command_ext_raw_attribute",
+))]
 
 use codex_core::protocol::SandboxPolicy;
 use codex_core::spawn::StdioPolicy;

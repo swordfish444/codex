@@ -93,6 +93,9 @@ windows = { version = "0.58", features = [
 [features]
 default = []
 windows_appcontainer_command_ext = []
+windows_appcontainer_command_ext_raw_attribute = [
+    "windows_appcontainer_command_ext",
+]
 
 # Build OpenSSL from source for musl builds.
 [target.x86_64-unknown-linux-musl.dependencies]
