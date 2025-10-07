@@ -1,7 +1,7 @@
 //! Root of the `codex-core` library.
 
 #![cfg_attr(
-    all(windows, feature = "windows_appcontainer_command_ext_raw_attribute"),
+    all(windows, feature = "windows_appcontainer_raw_attribute_api"),
     feature(windows_process_extensions_raw_attribute)
 )]
 // Prevent accidental direct writes to stdout/stderr in library code. All

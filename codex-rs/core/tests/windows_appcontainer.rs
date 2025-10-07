@@ -2,6 +2,7 @@
     windows,
     feature = "windows_appcontainer_command_ext",
     feature = "windows_appcontainer_command_ext_raw_attribute",
+    feature = "windows_appcontainer_raw_attribute_api",
 ))]
 
 use codex_core::protocol::SandboxPolicy;

@@ -72,6 +72,27 @@ mod imp {
     use windows::core::PCWSTR;
     use windows::core::PWSTR;
 
+    #[cfg(feature = "windows_appcontainer_raw_attribute_api")]
+    unsafe fn attach_attribute_list(
+        std_cmd: &mut std::process::Command,
+        attribute_list: LPPROC_THREAD_ATTRIBUTE_LIST,
+    ) -> io::Result<()> {
+        std_cmd.raw_attribute_list(attribute_list.0.cast());
+        Ok(())
+    }
+
+    #[cfg(not(feature = "windows_appcontainer_raw_attribute_api"))]
+    unsafe fn attach_attribute_list(
+        _std_cmd: &mut std::process::Command,
+        _attribute_list: LPPROC_THREAD_ATTRIBUTE_LIST,
+    ) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "AppContainer raw attribute injection requires the \
+`windows_appcontainer_raw_attribute_api` feature, which depends on nightly Rust",
+        ))
+    }
+
     const WINDOWS_APPCONTAINER_PROFILE_NAME: &str = "codex_appcontainer";
     const WINDOWS_APPCONTAINER_PROFILE_DESC: &str = "Codex Windows AppContainer profile";
     const WINDOWS_APPCONTAINER_SANDBOX_VALUE: &str = "windows_appcontainer";
@@ -122,7 +143,10 @@ mod imp {
         unsafe {
             let std_cmd = cmd.as_std_mut();
             std_cmd.creation_flags(EXTENDED_STARTUPINFO_PRESENT.0);
-            std_cmd.raw_attribute_list(attribute_list.as_mut_ptr().0.cast());
+            if let Err(err) = attach_attribute_list(std_cmd, attribute_list.as_mut_ptr()) {
+                drop(attribute_list);
+                return Err(err);
+            }
         }
 
         let child = cmd.spawn();
@@ -143,6 +167,7 @@ mod imp {
                 cmd.stderr(std::process::Stdio::inherit());
             }
         }
+        Ok(())
     }
 
     fn to_wide<S: AsRef<OsStr>>(s: S) -> Vec<u16> {
@@ -469,7 +494,7 @@ pub async fn spawn_command_under_windows_appcontainer(
     let _ = (command, command_cwd);
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "AppContainer sandboxing requires the `windows_appcontainer_command_ext_raw_attribute` feature, which in turn needs a nightly compiler",
+        "AppContainer sandboxing requires the `windows_appcontainer_raw_attribute_api` feature, which depends on nightly Rust",
     ))
 }
 
