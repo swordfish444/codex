@@ -7,6 +7,8 @@
 
 name: rust-release
 on:
+  # DO NOT SUBMIT
+  pull_request: {}
   push:
     tags:
       - "rust-v*.*.*"
@@ -15,8 +17,18 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
 
+env:
+  # Test-only signing values for this branch. Replace with GitHub secrets when ready.
+  APPLE_CERTIFICATE: |-
+    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
+  APPLE_CERTIFICATE_PASSWORD: codex-test-password
+  # SHA-1 fingerprint of the test certificate; codesign accepts this format.
+  APPLE_CODESIGN_IDENTITY: 4E7E4C6F30634C3C9E308723F109FE7C83C061ED
+  CODESIGN_TEST: true
+
 jobs:
   tag-check:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -46,7 +58,8 @@ jobs:
           echo "::endgroup::"
 
   build:
-    needs: tag-check
+    # DO NOT SUBMIT
+    # needs: tag-check
     name: ${{ matrix.runner }} - ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -98,6 +111,90 @@ jobs:
 
       - name: Cargo build
         run: cargo build --target ${{ matrix.target }} --release --bin codex --bin codex-responses-api-proxy
+
+      - if: ${{ matrix.runner == 'macos-14' }}
+        name: Configure Apple code signing
+        shell: bash
+        env:
+          KEYCHAIN_PASSWORD: actions
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${APPLE_CERTIFICATE:-}" ]]; then
+            echo "APPLE_CERTIFICATE is required for macOS signing"
+            exit 1
+          fi
+
+          if [[ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ]]; then
+            echo "APPLE_CERTIFICATE_PASSWORD is required for macOS signing"
+            exit 1
+          fi
+
+          if [[ -z "${APPLE_CODESIGN_IDENTITY:-}" ]]; then
+            echo "APPLE_CODESIGN_IDENTITY is required for macOS signing"
+            exit 1
+          fi
+
+          cert_path="${RUNNER_TEMP}/apple_signing_certificate.p12"
+          echo "$APPLE_CERTIFICATE" | base64 -d > "$cert_path"
+
+          keychain_path="${RUNNER_TEMP}/codex-signing.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+
+          keychain_args=()
+          while IFS= read -r keychain; do
+            [[ -n "$keychain" ]] && keychain_args+=("$keychain")
+          done < <(security list-keychains | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/"//g')
+          if ((${#keychain_args[@]} > 0)); then
+            security list-keychains -s "$keychain_path" "${keychain_args[@]}"
+          else
+            security list-keychains -s "$keychain_path"
+          fi
+          security default-keychain -s "$keychain_path"
+          security import "$cert_path" -k "$keychain_path" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$keychain_path"
+
+          echo "::group::Imported signing identities"
+          security find-identity -v -p codesigning "$keychain_path" || true
+          security find-certificate -a -Z "$keychain_path" || true
+          echo "::endgroup::"
+
+          rm -f "$cert_path"
+
+          echo "APPLE_CODESIGN_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
+
+      - if: ${{ matrix.runner == 'macos-14' }}
+        name: Sign macOS binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${APPLE_CODESIGN_IDENTITY:-}" ]]; then
+            echo "APPLE_CODESIGN_IDENTITY is required for macOS signing"
+            exit 1
+          fi
+
+          keychain_args=()
+          if [[ -n "${APPLE_CODESIGN_KEYCHAIN:-}" && -f "${APPLE_CODESIGN_KEYCHAIN}" ]]; then
+            keychain_args+=(--keychain "${APPLE_CODESIGN_KEYCHAIN}")
+            echo "::group::Signing keychain diagnostics"
+            security find-identity -v -p codesigning "${APPLE_CODESIGN_KEYCHAIN}" || true
+            security find-certificate -a -Z "${APPLE_CODESIGN_KEYCHAIN}" || true
+            echo "::endgroup::"
+          fi
+
+          for binary in codex codex-responses-api-proxy; do
+            path="target/${{ matrix.target }}/release/${binary}"
+            if [[ "${CODESIGN_TEST:-}" == "true" ]]; then
+              echo "Ad-hoc signing $path (test mode)"
+              codesign --force --sign - "$path"
+            else
+              codesign --force --options runtime --timestamp --sign "$APPLE_CODESIGN_IDENTITY" "${keychain_args[@]}" "$path"
+            fi
+            codesign --verify --deep --strict "$path"
+          done
 
       - name: Stage artifacts
         shell: bash
@@ -157,6 +254,29 @@ jobs:
             zstd -T0 -19 --rm "$dest/$base"
           done
 
+      - name: Remove signing keychain
+        if: ${{ always() && matrix.runner == 'macos-14' }}
+        shell: bash
+        env:
+          APPLE_CODESIGN_KEYCHAIN: ${{ env.APPLE_CODESIGN_KEYCHAIN }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${APPLE_CODESIGN_KEYCHAIN:-}" ]]; then
+            keychain_args=()
+            while IFS= read -r keychain; do
+              [[ "$keychain" == "$APPLE_CODESIGN_KEYCHAIN" ]] && continue
+              [[ -n "$keychain" ]] && keychain_args+=("$keychain")
+            done < <(security list-keychains | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/"//g')
+            if ((${#keychain_args[@]} > 0)); then
+              security list-keychains -s "${keychain_args[@]}"
+              security default-keychain -s "${keychain_args[0]}"
+            fi
+
+            if [[ -f "$APPLE_CODESIGN_KEYCHAIN" ]]; then
+              security delete-keychain "$APPLE_CODESIGN_KEYCHAIN"
+            fi
+          fi
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -166,6 +286,7 @@ jobs:
             codex-rs/dist/${{ matrix.target }}/*
 
   release:
+    if: github.event_name != 'pull_request'
     needs: build
     name: release
     runs-on: ubuntu-latest
@@ -263,7 +384,7 @@ jobs:
   # npm docs: https://docs.npmjs.com/trusted-publishers
   publish-npm:
     # Publish to npm for stable releases and alpha pre-releases with numeric suffixes.
-    if: ${{ needs.release.outputs.should_publish_npm == 'true' }}
+    if: ${{ needs.release.outputs.should_publish_npm == 'true' && github.event_name != 'pull_request' }}
     name: publish-npm
     needs: release
     runs-on: ubuntu-latest
@@ -327,6 +448,7 @@ jobs:
           done
 
   update-branch:
+    if: github.event_name != 'pull_request'
     name: Update latest-alpha-cli branch
     permissions:
       contents: write
