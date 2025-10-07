@@ -1,8 +1,15 @@
+#![cfg(windows)]
+
+use std::collections::HashMap;
+use std::io;
+use std::path::Path;
+use std::path::PathBuf;
+
+use tokio::process::Child;
 use tracing::trace;
 
 use crate::protocol::SandboxPolicy;
 use crate::spawn::StdioPolicy;
-
 #[cfg(feature = "windows_appcontainer_command_ext")]
 mod imp {
     use super::*;
