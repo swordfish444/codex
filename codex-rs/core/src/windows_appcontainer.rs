@@ -1,5 +1,3 @@
-#![cfg(windows)]
-
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
@@ -120,7 +118,7 @@ mod imp {
         unsafe {
             let std_cmd = cmd.as_std_mut();
             std_cmd.creation_flags(EXTENDED_STARTUPINFO_PRESENT.0);
-            std_cmd.raw_attribute_list(attribute_list.as_mut_ptr().0);
+            std_cmd.raw_attribute_list(attribute_list.as_mut_ptr().0.cast());
         }
 
         let child = cmd.spawn();
@@ -392,7 +390,7 @@ mod imp {
             let explicit = EXPLICIT_ACCESS_W {
                 grfAccessPermissions: permissions,
                 grfAccessMode: SET_ACCESS,
-                grfInheritance: (SUB_CONTAINERS_AND_OBJECTS_INHERIT | OBJECT_INHERIT_ACE).0,
+                grfInheritance: SUB_CONTAINERS_AND_OBJECTS_INHERIT | OBJECT_INHERIT_ACE,
                 Trustee: TRUSTEE_W {
                     TrusteeForm: TRUSTEE_IS_SID,
                     TrusteeType: TRUSTEE_IS_UNKNOWN,

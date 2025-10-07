@@ -1,5 +1,9 @@
 //! Root of the `codex-core` library.
 
+#![cfg_attr(
+    all(windows, feature = "windows_appcontainer_command_ext"),
+    feature(windows_process_extensions_raw_attribute)
+)]
 // Prevent accidental direct writes to stdout/stderr in library code. All
 // user-visible output must go through the appropriate abstraction (e.g.,
 // the TUI or the tracing stack).
