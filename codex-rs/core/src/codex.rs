@@ -1950,6 +1950,7 @@ async fn run_turn(
         parallel_tool_calls,
         base_instructions_override: turn_context.base_instructions.clone(),
         output_schema: turn_context.final_output_json_schema.clone(),
+        is_review_turn: turn_context.is_review_mode,
     };
 
     let mut retries = 0;

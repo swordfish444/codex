@@ -41,6 +41,9 @@ pub struct Prompt {
 
     /// Optional the output schema for the model's response.
     pub output_schema: Option<Value>,
+
+    /// Marks whether this prompt is part of a review turn.
+    pub is_review_turn: bool,
 }
 
 impl Prompt {
