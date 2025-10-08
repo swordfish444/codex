@@ -434,6 +434,7 @@ fn error_event_produces_error() {
         "e1",
         EventMsg::Error(codex_core::protocol::ErrorEvent {
             message: "boom".to_string(),
+            markdown_message: None,
         }),
     ));
     assert_eq!(
@@ -469,6 +470,7 @@ fn error_followed_by_task_complete_produces_turn_failed() {
         "e1",
         EventMsg::Error(ErrorEvent {
             message: "boom".to_string(),
+            markdown_message: None,
         }),
     );
     assert_eq!(

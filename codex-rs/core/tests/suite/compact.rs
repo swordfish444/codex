@@ -583,7 +583,7 @@ async fn auto_compact_stops_after_failed_attempt() {
         .unwrap();
 
     let error_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Error(_))).await;
-    let EventMsg::Error(ErrorEvent { message }) = error_event else {
+    let EventMsg::Error(ErrorEvent { message, .. }) = error_event else {
         panic!("expected error event");
     };
     assert!(

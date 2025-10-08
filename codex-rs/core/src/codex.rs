@@ -48,6 +48,7 @@ use crate::conversation_history::ConversationHistory;
 use crate::environment_context::EnvironmentContext;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
+use crate::error::error_event_from;
 use crate::exec::ExecToolCallOutput;
 #[cfg(test)]
 use crate::exec::StreamOutput;
@@ -388,7 +389,10 @@ impl Session {
                 error!("{message}");
                 post_session_configured_error_events.push(Event {
                     id: INITIAL_SUBMIT_ID.to_owned(),
-                    msg: EventMsg::Error(ErrorEvent { message }),
+                    msg: EventMsg::Error(ErrorEvent {
+                        message,
+                        markdown_message: None,
+                    }),
                 });
                 (McpConnectionManager::default(), Default::default())
             }
@@ -401,7 +405,10 @@ impl Session {
                 error!("{message}");
                 post_session_configured_error_events.push(Event {
                     id: INITIAL_SUBMIT_ID.to_owned(),
-                    msg: EventMsg::Error(ErrorEvent { message }),
+                    msg: EventMsg::Error(ErrorEvent {
+                        message,
+                        markdown_message: None,
+                    }),
                 });
             }
         }
@@ -1458,6 +1465,7 @@ async fn submission_loop(
                         id: sub.id.clone(),
                         msg: EventMsg::Error(ErrorEvent {
                             message: "Failed to shutdown rollout recorder".to_string(),
+                            markdown_message: None,
                         }),
                     };
                     sess.send_event(event).await;
@@ -1841,6 +1849,7 @@ pub(crate) async fn run_task(
                                 message: format!(
                                     "Conversation is still above the token limit after automatic summarization (limit {limit_str}, current {current_tokens}). Please start a new session or trim your input."
                                 ),
+                                markdown_message: None,
                             }),
                         };
                         sess.send_event(event).await;
@@ -1871,9 +1880,7 @@ pub(crate) async fn run_task(
                 info!("Turn error: {e:#}");
                 let event = Event {
                     id: sub_id.clone(),
-                    msg: EventMsg::Error(ErrorEvent {
-                        message: e.to_string(),
-                    }),
+                    msg: EventMsg::Error(error_event_from(&e)),
                 };
                 sess.send_event(event).await;
                 // let the user continue the conversation

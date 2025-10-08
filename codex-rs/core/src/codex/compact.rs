@@ -7,9 +7,9 @@ use crate::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
+use crate::error::error_event_from;
 use crate::protocol::AgentMessageEvent;
 use crate::protocol::CompactedItem;
-use crate::protocol::ErrorEvent;
 use crate::protocol::Event;
 use crate::protocol::EventMsg;
 use crate::protocol::InputItem;
@@ -108,9 +108,7 @@ async fn run_compact_task_inner(
                     .await;
                 let event = Event {
                     id: sub_id.clone(),
-                    msg: EventMsg::Error(ErrorEvent {
-                        message: e.to_string(),
-                    }),
+                    msg: EventMsg::Error(error_event_from(&e)),
                 };
                 sess.send_event(event).await;
                 return;
@@ -131,9 +129,7 @@ async fn run_compact_task_inner(
                 } else {
                     let event = Event {
                         id: sub_id.clone(),
-                        msg: EventMsg::Error(ErrorEvent {
-                            message: e.to_string(),
-                        }),
+                        msg: EventMsg::Error(error_event_from(&e)),
                     };
                     sess.send_event(event).await;
                     return;

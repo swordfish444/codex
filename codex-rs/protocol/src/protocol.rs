@@ -534,6 +534,9 @@ pub struct ExitedReviewModeEvent {
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct ErrorEvent {
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub markdown_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]

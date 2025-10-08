@@ -15,6 +15,7 @@ use codex_core::NewConversation;
 use codex_core::config::Config as CodexConfig;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
+use codex_core::protocol::ErrorEvent;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::ExecApprovalRequestEvent;
@@ -194,10 +195,12 @@ async fn run_codex_tool_session_inner(
                     }
                     EventMsg::Error(err_event) => {
                         // Return a response to conclude the tool call when the Codex session reports an error (e.g., interruption).
-                        let result = json!({
-                            "error": err_event.message,
-                        });
+                        let result = error_result_json(&err_event);
                         outgoing.send_response(request_id.clone(), result).await;
+                        running_requests_id_to_codex_uuid
+                            .lock()
+                            .await
+                            .remove(&request_id);
                         break;
                     }
                     EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
@@ -308,5 +311,43 @@ async fn run_codex_tool_session_inner(
                 break;
             }
         }
+    }
+}
+
+fn error_result_json(err_event: &ErrorEvent) -> serde_json::Value {
+    let mut result = json!({
+        "error": err_event.message.clone(),
+    });
+    if let Some(markdown_message) = &err_event.markdown_message {
+        result["errorMarkdown"] = json!(markdown_message);
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn error_result_without_markdown() {
+        let event = ErrorEvent {
+            message: "raw".to_string(),
+            markdown_message: None,
+        };
+        assert_eq!(error_result_json(&event), json!({ "error": "raw" }));
+    }
+
+    #[test]
+    fn error_result_with_markdown() {
+        let event = ErrorEvent {
+            message: "raw".to_string(),
+            markdown_message: Some("md".to_string()),
+        };
+        assert_eq!(
+            error_result_json(&event),
+            json!({
+                "error": "raw",
+                "errorMarkdown": "md",
+            })
+        );
     }
 }
