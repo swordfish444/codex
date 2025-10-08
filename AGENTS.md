@@ -26,11 +26,8 @@ See `codex-rs/tui/styles.md`.
 
 ### TUI Styling (ratatui)
 
-- Prefer simple conversions: use "text".into() for spans and vec![…].into() for lines.
-  - use Line::from(text) or Span::from(text) only when the target type isn’t obvious from context, or when using .into() would require extra type annotations.
+- Prefer simple conversions when building spans and lines: use `"text".into()` or `vec![...].into()`, reaching for `Line::from(...)` or `Span::from(...)` only when type inference would be ambiguous (e.g., `Paragraph::new` or `Cell::from`).
 - Use concise styling helpers from ratatui’s Stylize trait.
-  - Basic spans: use `"text".into()`, or `vec![...].into()` for lines.
-    - when inference is ambiguous (e.g., Paragraph::new/Cell::from), use Line::from(spans) or Span::from(text).
   - Styled spans: use "text".red(), "text".green(), "text".magenta(), "text".dim(), etc.
   - Prefer these over constructing styles with `Span::styled` and `Style` directly.
     - if the Style is computed at runtime, using `Span::styled` is OK (`Span::from(text).set_style(style)` is also acceptable).
