@@ -80,9 +80,8 @@ impl ChildRecord {
             warn!("subsession cancellation receiver already dropped");
         }
         let mut guard = self.handle.lock().await;
-        if let Some(handle) = guard.take() {
-            handle.abort();
-        }
+        let _ = guard.take();
+        // Drop the handle so the task can observe the cancellation signal and shut down cleanly.
     }
 }
 
@@ -391,7 +390,9 @@ fn build_child_config(
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use tokio::sync::oneshot;
     use tokio::sync::watch;
+    use tokio::time::timeout;
 
     #[tokio::test]
     async fn cancel_pending_children_only_updates_pending_records() {
@@ -425,5 +426,37 @@ mod tests {
             ChildStatus::Done(value) => assert_eq!(value.as_deref(), Some("final")),
             status => panic!("expected done status, got {status:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn send_cancel_allows_task_to_observe_shutdown() {
+        let (cancel_tx, mut cancel_rx) = watch::channel(false);
+        let record = Arc::new(ChildRecord::new(cancel_tx));
+        let (observed_tx, observed_rx) = oneshot::channel();
+
+        let handle = tokio::spawn(async move {
+            loop {
+                if *cancel_rx.borrow() {
+                    let _ = observed_tx.send(());
+                    break;
+                }
+                if cancel_rx.changed().await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        record.set_handle(handle).await;
+        record.send_cancel().await;
+
+        let observed = timeout(Duration::from_millis(200), observed_rx).await;
+        assert!(
+            observed.is_ok(),
+            "task should observe cancellation before the handle is dropped"
+        );
+        assert!(
+            observed.unwrap().is_ok(),
+            "task should report cancellation observation"
+        );
     }
 }
