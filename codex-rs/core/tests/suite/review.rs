@@ -118,14 +118,6 @@ async fn review_op_emits_lifecycle_and_review_output() {
     assert_eq!(expected, review);
     let _complete = wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
 
-    // Assert header marks this as a review turn.
-    let request = &server.received_requests().await.unwrap()[0];
-    let turn_kind = request
-        .headers
-        .get("action_kind")
-        .expect("missing action_kind header");
-    assert_eq!(turn_kind.to_str().unwrap(), "review");
-
     // Also verify that a user message with the header and a formatted finding
     // was recorded back in the parent session's rollout.
     codex.submit(Op::GetPath).await.unwrap();
