@@ -1934,7 +1934,6 @@ async fn run_turn(
     sub_id: String,
     input: Vec<ResponseItem>,
 ) -> CodexResult<TurnRunResult> {
-    /// Resolve the effective `TurnType` to use for a given turn context.
     fn resolve_turn_type(turn_context: &TurnContext) -> TurnType {
         if turn_context.is_review_mode {
             TurnType::Review
