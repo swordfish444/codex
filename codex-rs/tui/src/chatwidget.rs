@@ -1827,9 +1827,7 @@ impl ChatWidget {
             Line::from(vec![
                 "Update available!".bold().cyan(),
                 " ".into(),
-                format!("{current_version} -> {latest_version}.")
-                    .bold()
-                    .into(),
+                format!("{current_version} -> {latest_version}.").bold(),
             ]),
         ];
 
