@@ -51,12 +51,12 @@ impl SubsessionProfile {
         match session_type {
             SessionType::Tester => Self {
                 session_type,
-                developer_instructions: TESTER_PROMPT,
+                developer_instructions: LINTER_FIXER_PROMPT,
                 model_name: Some(GPT_5_CODEX_MEDIUM_MODEL),
             },
             SessionType::Mathematician => Self {
                 session_type,
-                developer_instructions: MATHEMATICIAN_PROMPT,
+                developer_instructions: LINTER_FIXER_PROMPT,
                 model_name: Some(GPT_5_CODEX_MEDIUM_MODEL),
             },
             SessionType::LinterFixer => Self {
@@ -72,6 +72,7 @@ impl SubsessionProfile {
         }
     }
 }
+const MAIN_PROMPT: &str  = include_str!("../../gpt_5_codex_prompt.md");
 
 const TESTER_PROMPT: &str = "\
 You are a focused software testing assistant. Generate precise, minimal, and \
@@ -83,10 +84,7 @@ You are a detail-oriented mathematical reasoning assistant. Solve problems with 
 clear derivations, keep intermediate notes concise, and prefer exact symbolic \
 results when practical.";
 
-const LINTER_FIXER_PROMPT: &str = "\
-You are a linter fixer assistant. Prioritize resolving lint violations with \
-minimal diff footprints while preserving existing behaviors. When suggesting \
-changes, explain the lint concern before the fix.";
+const LINTER_FIXER_PROMPT: &str = include_str!("profiles/linter.md");
 
 const DEFAULT_PROMPT: &str = "\
 You are a compact subsession assistant. Provide direct, implementation-ready \
