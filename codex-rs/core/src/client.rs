@@ -31,6 +31,7 @@ use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
 use crate::client_common::ResponsesApiRequest;
+use crate::client_common::TurnType;
 use crate::client_common::create_reasoning_param_for_request;
 use crate::client_common::create_text_param_for_request;
 use crate::config::Config;
@@ -244,12 +245,7 @@ impl ModelClient {
         let max_attempts = self.provider.request_max_retries();
         for attempt in 0..=max_attempts {
             match self
-                .attempt_stream_responses(
-                    attempt,
-                    &payload_json,
-                    &auth_manager,
-                    prompt.is_review_turn,
-                )
+                .attempt_stream_responses(attempt, &payload_json, &auth_manager, prompt.turn_type)
                 .await
             {
                 Ok(stream) => {
@@ -277,7 +273,7 @@ impl ModelClient {
         attempt: u64,
         payload_json: &Value,
         auth_manager: &Option<Arc<AuthManager>>,
-        is_review_turn: bool,
+        turn_type: TurnType,
     ) -> std::result::Result<ResponseStream, StreamAttemptError> {
         // Always fetch the latest auth in case a prior attempt refreshed the token.
         let auth = auth_manager.as_ref().and_then(|m| m.auth());
@@ -301,7 +297,10 @@ impl ModelClient {
             .header("session_id", self.conversation_id.to_string())
             .header(
                 "action_kind",
-                if is_review_turn { "review" } else { "turn" },
+                match turn_type {
+                    TurnType::Review => "review",
+                    TurnType::Regular => "turn",
+                },
             )
             .header(reqwest::header::ACCEPT, "text/event-stream")
             .json(payload_json);
