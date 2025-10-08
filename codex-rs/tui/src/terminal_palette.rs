@@ -104,6 +104,12 @@ mod imp {
             return Ok(None);
         }
 
+        // Many modern GPU terminals ignore OSC, so only perform the query on
+        // terminals known to support it.
+        if !codex_core::terminal::user_agent().starts_with("iTerm.app") {
+            return Ok(None);
+        }
+
         let mut tty = match OpenOptions::new().read(true).write(true).open("/dev/tty") {
             Ok(file) => file,
             Err(_) => return Ok(None),
