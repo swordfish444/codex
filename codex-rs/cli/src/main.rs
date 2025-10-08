@@ -19,6 +19,7 @@ use codex_exec::Cli as ExecCli;
 use codex_responses_api_proxy::Args as ResponsesApiProxyArgs;
 use codex_tui::AppExitInfo;
 use codex_tui::Cli as TuiCli;
+use codex_tui::UpdateAction;
 use owo_colors::OwoColorize;
 use std::path::PathBuf;
 use supports_color::Stream;
@@ -200,6 +201,7 @@ fn format_exit_messages(exit_info: AppExitInfo, color_enabled: bool) -> Vec<Stri
     let AppExitInfo {
         token_usage,
         conversation_id,
+        ..
     } = exit_info;
 
     if token_usage.is_zero() {
@@ -260,7 +262,13 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 root_config_overrides.clone(),
             );
             let exit_info = codex_tui::run_main(interactive, codex_linux_sandbox_exe).await?;
+            let action = exit_info.update_action;
             print_exit_messages(exit_info);
+            if let Some(action) = action {
+                run_update_action(action)?;
+                // After update completes, exit immediately.
+                return Ok(());
+            }
         }
         Some(Subcommand::Exec(mut exec_cli)) => {
             prepend_config_flags(
@@ -471,6 +479,31 @@ fn print_completion(cmd: CompletionCommand) {
     generate(cmd.shell, &mut app, name, &mut std::io::stdout());
 }
 
+fn run_update_action(action: UpdateAction) -> anyhow::Result<()> {
+    match action {
+        UpdateAction::NpmGlobalLatest => {
+            println!("Updating Codex via npm (global latest)…");
+            let status = std::process::Command::new("npm")
+                .args(["install", "-g", "@openai/codex@latest"])
+                .status()?;
+            if !status.success() {
+                anyhow::bail!("npm update failed with status {status}");
+            }
+        }
+        UpdateAction::BrewUpgrade => {
+            println!("Updating Codex via Homebrew…");
+            let status = std::process::Command::new("brew")
+                .args(["upgrade", "codex"])
+                .status()?;
+            if !status.success() {
+                anyhow::bail!("brew upgrade failed with status {status}");
+            }
+        }
+    }
+    println!("Update complete.");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,6 +542,7 @@ mod tests {
             conversation_id: conversation
                 .map(ConversationId::from_string)
                 .map(Result::unwrap),
+            update_action: None,
         }
     }
 
@@ -517,6 +551,7 @@ mod tests {
         let exit_info = AppExitInfo {
             token_usage: TokenUsage::default(),
             conversation_id: None,
+            update_action: None,
         };
         let lines = format_exit_messages(exit_info, false);
         assert!(lines.is_empty());

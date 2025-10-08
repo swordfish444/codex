@@ -71,6 +71,15 @@ mod text_formatting;
 mod tui;
 mod ui_consts;
 mod version;
+
+/// Update action the CLI should perform after the TUI exits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateAction {
+    /// Update via `npm install -g @openai/codex@latest`.
+    NpmGlobalLatest,
+    /// Update via `brew upgrade codex`.
+    BrewUpgrade,
+}
 mod wrapping;
 
 #[cfg(test)]
@@ -397,6 +406,7 @@ async fn run_ratatui_app(
             return Ok(AppExitInfo {
                 token_usage: codex_core::protocol::TokenUsage::default(),
                 conversation_id: None,
+                update_action: None,
             });
         }
         if should_show_windows_wsl_screen {
@@ -441,6 +451,7 @@ async fn run_ratatui_app(
                 return Ok(AppExitInfo {
                     token_usage: codex_core::protocol::TokenUsage::default(),
                     conversation_id: None,
+                    update_action: None,
                 });
             }
             other => other,

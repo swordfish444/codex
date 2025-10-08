@@ -1,3 +1,4 @@
+use crate::UpdateAction;
 use crate::app_backtrack::BacktrackState;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -43,6 +44,7 @@ use tokio::sync::mpsc::unbounded_channel;
 pub struct AppExitInfo {
     pub token_usage: TokenUsage,
     pub conversation_id: Option<ConversationId>,
+    pub update_action: Option<UpdateAction>,
 }
 
 pub(crate) struct App {
@@ -71,6 +73,9 @@ pub(crate) struct App {
 
     // Esc-backtracking state grouped
     pub(crate) backtrack: crate::app_backtrack::BacktrackState,
+
+    /// Set when the user confirms an update; propagated on exit.
+    pub(crate) pending_update_action: Option<UpdateAction>,
 }
 
 impl App {
@@ -152,7 +157,14 @@ impl App {
             has_emitted_history_lines: false,
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             backtrack: BacktrackState::default(),
+            pending_update_action: None,
         };
+
+        // Show an update approval popup at startup when an update is available.
+        #[cfg(not(debug_assertions))]
+        if let Some(latest_version) = crate::updates::get_upgrade_version(&app.config) {
+            app.chat_widget.open_update_popup(latest_version);
+        }
 
         let tui_events = tui.event_stream();
         tokio::pin!(tui_events);
@@ -171,6 +183,7 @@ impl App {
         Ok(AppExitInfo {
             token_usage: app.token_usage(),
             conversation_id: app.chat_widget.conversation_id(),
+            update_action: app.pending_update_action,
         })
     }
 
@@ -287,6 +300,11 @@ impl App {
                 self.on_conversation_history_for_backtrack(tui, ev).await?;
             }
             AppEvent::ExitRequest => {
+                return Ok(false);
+            }
+            AppEvent::RunUpdateAndExit(action) => {
+                // Record the requested update action and exit.
+                self.pending_update_action = Some(action);
                 return Ok(false);
             }
             AppEvent::CodexOp(op) => self.chat_widget.submit_op(op),

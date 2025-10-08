@@ -95,6 +95,8 @@ use self::session_header::SessionHeader;
 use crate::streaming::controller::StreamController;
 use std::path::Path;
 
+use crate::UpdateAction;
+use crate::version::CODEX_CLI_VERSION;
 use chrono::Local;
 use codex_common::approval_presets::ApprovalPreset;
 use codex_common::approval_presets::builtin_approval_presets;
@@ -1806,6 +1808,78 @@ impl ChatWidget {
             title: Some("Select Approval Mode".to_string()),
             footer_hint: Some(standard_popup_hint_line()),
             items,
+            ..Default::default()
+        });
+    }
+
+    /// Open a simple modal asking to update Codex when an update is available.
+    pub(crate) fn open_update_popup(&mut self, latest_version: String) {
+        use ratatui::style::Stylize as _;
+        use ratatui::text::Line;
+
+        let current_version = CODEX_CLI_VERSION;
+        let title = "Update Approval".to_string();
+
+        // Build header lines with the prompt and version info.
+        let mut header_lines: Vec<Line<'static>> = vec![
+            Line::from("Should I update Codex?".bold()),
+            Line::from(""),
+            Line::from(vec![
+                "Update available!".bold().cyan(),
+                " ".into(),
+                format!("{current_version} -> {latest_version}.")
+                    .bold()
+                    .into(),
+            ]),
+        ];
+
+        // Determine the recommended update method.
+        let exe = std::env::current_exe().unwrap_or_default();
+        let managed_by_npm = std::env::var_os("CODEX_MANAGED_BY_NPM").is_some();
+        let update_action = if managed_by_npm {
+            Some(UpdateAction::NpmGlobalLatest)
+        } else if cfg!(target_os = "macos")
+            && (exe.starts_with("/opt/homebrew") || exe.starts_with("/usr/local"))
+        {
+            Some(UpdateAction::BrewUpgrade)
+        } else {
+            None
+        };
+
+        if update_action.is_none() {
+            header_lines.push(Line::from(""));
+            header_lines.push(Line::from(vec![
+                "See ".into(),
+                "https://github.com/openai/codex/releases/latest"
+                    .cyan()
+                    .underlined(),
+                " for installation options.".into(),
+            ]));
+        }
+
+        let mut items: Vec<SelectionItem> = Vec::new();
+        if let Some(action) = update_action {
+            let action_for_closure = action;
+            items.push(SelectionItem {
+                name: "Yes, update now".to_string(),
+                actions: vec![Box::new(move |tx: &AppEventSender| {
+                    tx.send(AppEvent::RunUpdateAndExit(action_for_closure));
+                })],
+                dismiss_on_select: true,
+                ..Default::default()
+            });
+        }
+        items.push(SelectionItem {
+            name: "No, not now".to_string(),
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some(title),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            header: Box::new(ratatui::widgets::Paragraph::new(header_lines)),
             ..Default::default()
         });
     }

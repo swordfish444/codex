@@ -5,6 +5,7 @@ use codex_core::protocol::ConversationPathResponseEvent;
 use codex_core::protocol::Event;
 use codex_file_search::FileMatch;
 
+use crate::UpdateAction;
 use crate::bottom_pane::ApprovalRequest;
 use crate::history_cell::HistoryCell;
 
@@ -87,4 +88,7 @@ pub(crate) enum AppEvent {
 
     /// Open the approval popup.
     FullScreenApprovalRequest(ApprovalRequest),
+
+    /// User approved to update Codex; run the update and exit.
+    RunUpdateAndExit(UpdateAction),
 }
