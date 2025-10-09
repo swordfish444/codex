@@ -1,3 +1,4 @@
+use crate::executor::SandboxLaunchError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -22,5 +23,16 @@ pub(crate) enum UnifiedExecError {
 impl UnifiedExecError {
     pub(crate) fn create_session(error: anyhow::Error) -> Self {
         Self::CreateSession { pty_error: error }
+    }
+}
+
+impl From<SandboxLaunchError> for UnifiedExecError {
+    fn from(err: SandboxLaunchError) -> Self {
+        match err {
+            SandboxLaunchError::MissingCommandLine => UnifiedExecError::MissingCommandLine,
+            SandboxLaunchError::MissingLinuxSandboxExecutable => {
+                UnifiedExecError::MissingLinuxSandboxExecutable
+            }
+        }
     }
 }

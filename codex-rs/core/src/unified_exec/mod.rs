@@ -6,8 +6,6 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::io::ErrorKind;
 use std::io::Read;
-use std::path::Path;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicBool;
@@ -27,15 +25,11 @@ use crate::exec::SandboxType;
 use crate::exec_command::ExecCommandSession;
 use crate::executor::ExecutionMode;
 use crate::executor::ExecutionRequest;
+use crate::executor::SandboxLaunch;
+use crate::executor::build_launch_for_sandbox;
 use crate::executor::request_retry_without_sandbox;
 use crate::executor::select_sandbox;
-use crate::landlock::create_linux_sandbox_command_args;
 use crate::protocol::ReviewDecision;
-use crate::protocol::SandboxPolicy;
-use crate::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
-use crate::seatbelt::create_seatbelt_command_args;
-use crate::spawn::CODEX_SANDBOX_ENV_VAR;
-use crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use crate::truncate::truncate_middle;
 
 mod errors;
@@ -124,47 +118,6 @@ impl OutputBufferState {
 
 type OutputBuffer = Arc<Mutex<OutputBufferState>>;
 type OutputHandles = (OutputBuffer, Arc<Notify>);
-
-fn build_launch_for_sandbox(
-    sandbox: SandboxType,
-    command: &[String],
-    sandbox_policy: &SandboxPolicy,
-    sandbox_policy_cwd: &Path,
-    codex_linux_sandbox_exe: Option<&PathBuf>,
-) -> Result<(String, Vec<String>, HashMap<String, String>), UnifiedExecError> {
-    let mut env = HashMap::new();
-    if !sandbox_policy.has_full_network_access() {
-        env.insert(
-            CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR.to_string(),
-            "1".to_string(),
-        );
-    }
-
-    match sandbox {
-        SandboxType::None => {
-            let (program, args) = command
-                .split_first()
-                .ok_or(UnifiedExecError::MissingCommandLine)?;
-            Ok((program.clone(), args.to_vec(), env))
-        }
-        SandboxType::MacosSeatbelt => {
-            env.insert(CODEX_SANDBOX_ENV_VAR.to_string(), "seatbelt".to_string());
-            let args =
-                create_seatbelt_command_args(command.to_vec(), sandbox_policy, sandbox_policy_cwd);
-            Ok((MACOS_PATH_TO_SEATBELT_EXECUTABLE.to_string(), args, env))
-        }
-        SandboxType::LinuxSeccomp => {
-            let exe =
-                codex_linux_sandbox_exe.ok_or(UnifiedExecError::MissingLinuxSandboxExecutable)?;
-            let args = create_linux_sandbox_command_args(
-                command.to_vec(),
-                sandbox_policy,
-                sandbox_policy_cwd,
-            );
-            Ok((exe.to_string_lossy().to_string(), args, env))
-        }
-    }
-}
 
 impl ManagedUnifiedExecSession {
     fn new(
@@ -270,7 +223,7 @@ impl UnifiedExecSessionManager {
                 .record_session_approval(execution_request.approval_command.clone());
         }
 
-        let (program, args, env) = build_launch_for_sandbox(
+        let launch = build_launch_for_sandbox(
             sandbox_decision.initial_sandbox,
             &command,
             &context.turn.sandbox_policy,
@@ -278,7 +231,7 @@ impl UnifiedExecSessionManager {
             codex_linux_sandbox_exe.as_ref(),
         )?;
 
-        match create_unified_exec_session(&program, &args, &env).await {
+        match create_unified_exec_session(&launch).await {
             Ok(result) => Ok(result),
             Err(err) if sandbox_decision.escalate_on_failure => {
                 self.retry_without_sandbox(&command, context, err, &otel_event_manager)
@@ -336,14 +289,14 @@ impl UnifiedExecSessionManager {
                     .notify_background_event(context.sub_id, "retrying command without sandbox")
                     .await;
 
-                let (program, args, env) = build_launch_for_sandbox(
+                let launch = build_launch_for_sandbox(
                     SandboxType::None,
                     command,
                     &context.turn.sandbox_policy,
                     &context.turn.cwd,
                     None,
                 )?;
-                create_unified_exec_session(&program, &args, &env).await
+                create_unified_exec_session(&launch).await
             }
             ReviewDecision::Denied | ReviewDecision::Abort => Err(UnifiedExecError::UserRejected),
         }
@@ -501,9 +454,7 @@ impl UnifiedExecSessionManager {
 }
 
 async fn create_unified_exec_session(
-    program: &str,
-    args: &[String],
-    env: &HashMap<String, String>,
+    launch: &SandboxLaunch,
 ) -> Result<
     (
         ExecCommandSession,
@@ -511,7 +462,7 @@ async fn create_unified_exec_session(
     ),
     UnifiedExecError,
 > {
-    if program.is_empty() {
+    if launch.program.is_empty() {
         return Err(UnifiedExecError::MissingCommandLine);
     }
 
@@ -527,11 +478,11 @@ async fn create_unified_exec_session(
         .map_err(UnifiedExecError::create_session)?;
 
     // Safe thanks to the check at the top of the function.
-    let mut command_builder = CommandBuilder::new(program.to_string());
-    for arg in args {
+    let mut command_builder = CommandBuilder::new(launch.program.clone());
+    for arg in &launch.args {
         command_builder.arg(arg.clone());
     }
-    for (key, value) in env {
+    for (key, value) in &launch.env {
         command_builder.env(key.clone(), value.clone());
     }
 

@@ -5,15 +5,92 @@ use crate::executor::ExecutionMode;
 use crate::executor::ExecutionRequest;
 use crate::executor::ExecutorConfig;
 use crate::executor::errors::ExecError;
+use crate::landlock::create_linux_sandbox_command_args;
+use crate::protocol::SandboxPolicy;
 use crate::safety::SafetyCheck;
 use crate::safety::assess_command_safety;
 use crate::safety::assess_patch_safety;
+use crate::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
+use crate::seatbelt::create_seatbelt_command_args;
+use crate::spawn::CODEX_SANDBOX_ENV_VAR;
+use crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_otel::otel_event_manager::OtelEventManager;
 use codex_otel::otel_event_manager::ToolDecisionSource;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ReviewDecision;
+use std::collections::HashMap;
 use std::collections::HashSet;
+use std::path::Path;
 use std::path::PathBuf;
+use thiserror::Error;
+
+#[derive(Debug)]
+pub(crate) struct SandboxLaunch {
+    pub program: String,
+    pub args: Vec<String>,
+    pub env: HashMap<String, String>,
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum SandboxLaunchError {
+    #[error("missing command line for sandbox launch")]
+    MissingCommandLine,
+    #[error("missing codex-linux-sandbox executable path")]
+    MissingLinuxSandboxExecutable,
+}
+
+pub(crate) fn build_launch_for_sandbox(
+    sandbox: SandboxType,
+    command: &[String],
+    sandbox_policy: &SandboxPolicy,
+    sandbox_policy_cwd: &Path,
+    codex_linux_sandbox_exe: Option<&PathBuf>,
+) -> Result<SandboxLaunch, SandboxLaunchError> {
+    let mut env = HashMap::new();
+    if !sandbox_policy.has_full_network_access() {
+        env.insert(
+            CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR.to_string(),
+            "1".to_string(),
+        );
+    }
+
+    match sandbox {
+        SandboxType::None => {
+            let (program, args) = command
+                .split_first()
+                .ok_or(SandboxLaunchError::MissingCommandLine)?;
+            Ok(SandboxLaunch {
+                program: program.clone(),
+                args: args.to_vec(),
+                env,
+            })
+        }
+        SandboxType::MacosSeatbelt => {
+            env.insert(CODEX_SANDBOX_ENV_VAR.to_string(), "seatbelt".to_string());
+            let args =
+                create_seatbelt_command_args(command.to_vec(), sandbox_policy, sandbox_policy_cwd);
+            Ok(SandboxLaunch {
+                program: MACOS_PATH_TO_SEATBELT_EXECUTABLE.to_string(),
+                args,
+                env,
+            })
+        }
+        SandboxType::LinuxSeccomp => {
+            let exe =
+                codex_linux_sandbox_exe.ok_or(SandboxLaunchError::MissingLinuxSandboxExecutable)?;
+            let args = create_linux_sandbox_command_args(
+                command.to_vec(),
+                sandbox_policy,
+                sandbox_policy_cwd,
+            );
+            Ok(SandboxLaunch {
+                program: exe.to_string_lossy().to_string(),
+                args,
+                env,
+            })
+        }
+    }
+}
 
 /// Sandbox placement options selected for an execution run, including whether
 /// to escalate after failures and whether approvals should persist.
