@@ -1,0 +1,18 @@
+---
+source: tui/src/chatwidget/tests.rs
+expression: popup
+---
+  Full access gives Codex full control over this machine.
+  Codex can edit files, run any command, and access the network without
+  asking.
+  Only continue if you completely trust this session.
+  Enable Full Access?
+  Full access is dangerous and bypasses approval prompts.
+
+› 1. Accept full access          Enable full access for this session while
+                                 keeping future warnings.
+  2. Accept and don't ask again  Enable full access and remember this choice
+                                 for future sessions.
+  3. Deny                        Cancel and keep your current approvals
+
+  Press enter to confirm or esc to go back

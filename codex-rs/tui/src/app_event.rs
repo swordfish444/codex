@@ -73,6 +73,20 @@ pub(crate) enum AppEvent {
     /// Update the current sandbox policy in the running app and widget.
     UpdateSandboxPolicy(SandboxPolicy),
 
+    /// Show the confirmation warning before enabling the Full Access preset.
+    OpenFullAccessWarning {
+        approval: AskForApproval,
+        sandbox: SandboxPolicy,
+    },
+
+    /// Update whether the Full Access warning should be skipped.
+    UpdateSkipFullAccessWarning(bool),
+
+    /// Persist the Full Access warning preference to config.toml.
+    PersistSkipFullAccessWarning {
+        skip: bool,
+    },
+
     /// Forwarded conversation history snapshot from the current conversation.
     ConversationHistory(ConversationPathResponseEvent),
 

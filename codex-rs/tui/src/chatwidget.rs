@@ -53,8 +53,12 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
 use ratatui::layout::Layout;
 use ratatui::layout::Rect;
+use ratatui::style::Stylize;
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
+use ratatui::widgets::Wrap;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
 
@@ -1767,6 +1771,91 @@ impl ChatWidget {
         });
     }
 
+    fn approval_preset_actions(
+        &self,
+        approval: AskForApproval,
+        sandbox: SandboxPolicy,
+    ) -> Vec<SelectionAction> {
+        vec![Box::new(move |tx| {
+            tx.send(AppEvent::CodexOp(Op::OverrideTurnContext {
+                cwd: None,
+                approval_policy: Some(approval),
+                sandbox_policy: Some(sandbox.clone()),
+                model: None,
+                effort: None,
+                summary: None,
+            }));
+            tx.send(AppEvent::UpdateAskForApprovalPolicy(approval));
+            tx.send(AppEvent::UpdateSandboxPolicy(sandbox.clone()));
+        })]
+    }
+
+    pub(crate) fn open_full_access_warning(
+        &mut self,
+        approval: AskForApproval,
+        sandbox: SandboxPolicy,
+    ) {
+        let warning_lines = vec![
+            Line::from(
+                "Full access gives Codex full control over this machine."
+                    .bold()
+                    .red(),
+            ),
+            Line::from(
+                "Codex can edit files, run any command, and access the network without asking.",
+            ),
+            Line::from("Only continue if you completely trust this session."),
+        ];
+        let header = Paragraph::new(warning_lines).wrap(Wrap { trim: true });
+
+        let accept_once_actions = self.approval_preset_actions(approval, sandbox.clone());
+
+        let mut accept_and_skip_actions = self.approval_preset_actions(approval, sandbox);
+        accept_and_skip_actions.push(Box::new(|tx| {
+            tx.send(AppEvent::UpdateSkipFullAccessWarning(true));
+        }));
+        accept_and_skip_actions.push(Box::new(|tx| {
+            tx.send(AppEvent::PersistSkipFullAccessWarning { skip: true });
+        }));
+
+        let items = vec![
+            SelectionItem {
+                name: "Accept full access".to_string(),
+                description: Some(
+                    "Enable full access for this session while keeping future warnings."
+                        .to_string(),
+                ),
+                actions: accept_once_actions,
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+            SelectionItem {
+                name: "Accept and don't ask again".to_string(),
+                description: Some(
+                    "Enable full access and remember this choice for future sessions.".to_string(),
+                ),
+                actions: accept_and_skip_actions,
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+            SelectionItem {
+                name: "Deny".to_string(),
+                description: Some("Cancel and keep your current approvals preset.".to_string()),
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+        ];
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Enable Full Access?".to_string()),
+            subtitle: Some("Full access is dangerous and bypasses approval prompts.".to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            header: Box::new(header),
+            ..Default::default()
+        });
+    }
+
     /// Open a popup to choose the approvals mode (ask for approval policy + sandbox policy).
     pub(crate) fn open_approvals_popup(&mut self) {
         let current_approval = self.config.approval_policy;
@@ -1780,18 +1869,18 @@ impl ChatWidget {
             let sandbox = preset.sandbox.clone();
             let name = preset.label.to_string();
             let description = Some(preset.description.to_string());
-            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                tx.send(AppEvent::CodexOp(Op::OverrideTurnContext {
-                    cwd: None,
-                    approval_policy: Some(approval),
-                    sandbox_policy: Some(sandbox.clone()),
-                    model: None,
-                    effort: None,
-                    summary: None,
-                }));
-                tx.send(AppEvent::UpdateAskForApprovalPolicy(approval));
-                tx.send(AppEvent::UpdateSandboxPolicy(sandbox.clone()));
-            })];
+            let requires_warning =
+                preset.id == "full-access" && !self.config.skip_full_access_warning;
+            let actions: Vec<SelectionAction> = if requires_warning {
+                vec![Box::new(move |tx| {
+                    tx.send(AppEvent::OpenFullAccessWarning {
+                        approval,
+                        sandbox: sandbox.clone(),
+                    });
+                })]
+            } else {
+                self.approval_preset_actions(approval, sandbox.clone())
+            };
             items.push(SelectionItem {
                 name,
                 description,
@@ -1818,6 +1907,10 @@ impl ChatWidget {
     /// Set the sandbox policy in the widget's config copy.
     pub(crate) fn set_sandbox_policy(&mut self, policy: SandboxPolicy) {
         self.config.sandbox_policy = policy;
+    }
+
+    pub(crate) fn set_skip_full_access_warning(&mut self, skip: bool) {
+        self.config.skip_full_access_warning = skip;
     }
 
     /// Set the reasoning effort in the widget's config copy.

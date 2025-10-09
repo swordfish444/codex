@@ -309,6 +309,10 @@ pub struct Tui {
     /// Defaults to `false`.
     #[serde(default)]
     pub notifications: Notifications,
+
+    /// Skip the confirmation warning shown before enabling the dangerous Full Access preset.
+    #[serde(default)]
+    pub skip_full_access_warning: bool,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Default)]

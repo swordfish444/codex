@@ -31,6 +31,7 @@ use codex_core::protocol::ReviewFinding;
 use codex_core::protocol::ReviewLineRange;
 use codex_core::protocol::ReviewOutputEvent;
 use codex_core::protocol::ReviewRequest;
+use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::StreamErrorEvent;
 use codex_core::protocol::TaskCompleteEvent;
 use codex_core::protocol::TaskStartedEvent;
@@ -1055,6 +1056,16 @@ fn model_reasoning_selection_popup_snapshot() {
 
     let popup = render_bottom_popup(&chat, 80);
     assert_snapshot!("model_reasoning_selection_popup", popup);
+}
+
+#[test]
+fn full_access_warning_popup_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual();
+
+    chat.open_full_access_warning(AskForApproval::Never, SandboxPolicy::DangerFullAccess);
+
+    let popup = render_bottom_popup(&chat, 80);
+    assert_snapshot!("full_access_warning_popup", popup);
 }
 
 #[test]

@@ -17,6 +17,7 @@ use codex_core::AuthManager;
 use codex_core::ConversationManager;
 use codex_core::config::Config;
 use codex_core::config::persist_model_selection;
+use codex_core::config_edit::persist_overrides;
 use codex_core::model_family::find_family_for_model;
 use codex_core::protocol::SessionSource;
 use codex_core::protocol::TokenUsage;
@@ -368,9 +369,56 @@ impl App {
             }
             AppEvent::UpdateAskForApprovalPolicy(policy) => {
                 self.chat_widget.set_approval_policy(policy);
+                self.config.approval_policy = policy;
             }
             AppEvent::UpdateSandboxPolicy(policy) => {
-                self.chat_widget.set_sandbox_policy(policy);
+                self.chat_widget.set_sandbox_policy(policy.clone());
+                self.config.sandbox_policy = policy;
+            }
+            AppEvent::OpenFullAccessWarning { approval, sandbox } => {
+                self.chat_widget.open_full_access_warning(approval, sandbox);
+            }
+            AppEvent::UpdateSkipFullAccessWarning(skip) => {
+                self.chat_widget.set_skip_full_access_warning(skip);
+                self.config.skip_full_access_warning = skip;
+            }
+            AppEvent::PersistSkipFullAccessWarning { skip } => {
+                let value = if skip { "true" } else { "false" };
+                match persist_overrides(
+                    &self.config.codex_home,
+                    self.active_profile.as_deref(),
+                    &[(&["tui", "skip_full_access_warning"], value)],
+                )
+                .await
+                {
+                    Ok(()) => {
+                        if skip {
+                            self.chat_widget.add_info_message(
+                                "We'll remember that Full Access is trusted on this machine."
+                                    .to_string(),
+                                None,
+                            );
+                        } else {
+                            self.chat_widget.add_info_message(
+                                "Full Access will require confirmation again.".to_string(),
+                                None,
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            error = %err,
+                            "failed to persist skip_full_access_warning preference",
+                        );
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to save Full Access warning preference: {err}",
+                        ));
+                        if skip {
+                            self.chat_widget.set_skip_full_access_warning(false);
+                            self.config.skip_full_access_warning = false;
+                        }
+                    }
+                }
             }
             AppEvent::OpenReviewBranchPicker(cwd) => {
                 self.chat_widget.show_review_branch_picker(&cwd).await;

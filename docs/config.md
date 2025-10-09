@@ -763,6 +763,10 @@ notifications = true
 # You can optionally filter to specific notification types.
 # Available types are "agent-turn-complete" and "approval-requested".
 notifications = [ "agent-turn-complete", "approval-requested" ]
+
+# Skip the confirmation dialog when selecting the "Full Access" approvals preset in the TUI.
+# Defaults to false to keep the extra warning enabled.
+skip_full_access_warning = true
 ```
 
 > [!NOTE]

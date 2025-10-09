@@ -136,6 +136,8 @@ pub struct Config {
     /// TUI notifications preference. When set, the TUI will send OSC 9 notifications on approvals
     /// and turn completions when not focused.
     pub tui_notifications: Notifications,
+    /// Whether to suppress the confirmation dialog before enabling the Full Access preset in the TUI.
+    pub skip_full_access_warning: bool,
 
     /// The directory that should be treated as the current working directory
     /// for the session. All relative paths inside the business-logic layer are
@@ -1181,6 +1183,11 @@ impl Config {
                 .as_ref()
                 .map(|t| t.notifications.clone())
                 .unwrap_or_default(),
+            skip_full_access_warning: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.skip_full_access_warning)
+                .unwrap_or(false),
             otel: {
                 let t: OtelConfigToml = cfg.otel.unwrap_or_default();
                 let log_user_prompt = t.log_user_prompt.unwrap_or(false);
@@ -1355,6 +1362,7 @@ persistence = "none"
         let tui = parsed.tui.expect("config should include tui section");
 
         assert_eq!(tui.notifications, Notifications::Enabled(false));
+        assert!(!tui.skip_full_access_warning);
     }
 
     #[test]
@@ -2081,6 +2089,7 @@ model_verbosity = "high"
                 windows_wsl_setup_acknowledged: false,
                 disable_paste_burst: false,
                 tui_notifications: Default::default(),
+                skip_full_access_warning: false,
                 otel: OtelConfig::default(),
             },
             o3_profile_config
@@ -2144,6 +2153,7 @@ model_verbosity = "high"
             windows_wsl_setup_acknowledged: false,
             disable_paste_burst: false,
             tui_notifications: Default::default(),
+            skip_full_access_warning: false,
             otel: OtelConfig::default(),
         };
 
@@ -2222,6 +2232,7 @@ model_verbosity = "high"
             windows_wsl_setup_acknowledged: false,
             disable_paste_burst: false,
             tui_notifications: Default::default(),
+            skip_full_access_warning: false,
             otel: OtelConfig::default(),
         };
 
@@ -2286,6 +2297,7 @@ model_verbosity = "high"
             windows_wsl_setup_acknowledged: false,
             disable_paste_burst: false,
             tui_notifications: Default::default(),
+            skip_full_access_warning: false,
             otel: OtelConfig::default(),
         };
 
@@ -2399,7 +2411,10 @@ mod notifications_tests {
 
     #[derive(Deserialize, Debug, PartialEq)]
     struct TuiTomlTest {
+        #[serde(default)]
         notifications: Notifications,
+        #[serde(default)]
+        skip_full_access_warning: bool,
     }
 
     #[derive(Deserialize, Debug, PartialEq)]
@@ -2415,6 +2430,7 @@ mod notifications_tests {
         "#;
         let parsed: RootTomlTest = toml::from_str(toml).expect("deserialize notifications=true");
         assert_matches!(parsed.tui.notifications, Notifications::Enabled(true));
+        assert!(!parsed.tui.skip_full_access_warning);
     }
 
     #[test]
@@ -2429,5 +2445,17 @@ mod notifications_tests {
             parsed.tui.notifications,
             Notifications::Custom(ref v) if v == &vec!["foo".to_string()]
         );
+        assert!(!parsed.tui.skip_full_access_warning);
+    }
+
+    #[test]
+    fn test_skip_full_access_warning_true() {
+        let toml = r#"
+            [tui]
+            skip_full_access_warning = true
+        "#;
+        let parsed: RootTomlTest =
+            toml::from_str(toml).expect("deserialize skip_full_access_warning");
+        assert!(parsed.tui.skip_full_access_warning);
     }
 }
