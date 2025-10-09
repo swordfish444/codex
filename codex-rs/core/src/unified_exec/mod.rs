@@ -179,16 +179,17 @@ impl UnifiedExecSessionManager {
         ),
         UnifiedExecError,
     > {
+        let approval_command = command;
         let execution_request = ExecutionRequest {
             params: ExecParams {
-                command: command.clone(),
+                command: approval_command.clone(),
                 cwd: context.turn.cwd.clone(),
                 timeout_ms: None,
                 env: HashMap::new(),
                 with_escalated_permissions: None,
                 justification: None,
             },
-            approval_command: command.clone(),
+            approval_command,
             mode: ExecutionMode::Shell,
             stdout_stream: None,
             use_shell_profile: false,
@@ -224,7 +225,7 @@ impl UnifiedExecSessionManager {
 
         let launch = build_launch_for_sandbox(
             sandbox_decision.initial_sandbox,
-            &command,
+            &execution_request.approval_command,
             &context.turn.sandbox_policy,
             &context.turn.cwd,
             codex_linux_sandbox_exe.as_ref(),
@@ -236,7 +237,7 @@ impl UnifiedExecSessionManager {
                 let approval = request_retry_without_sandbox(
                     context.session,
                     format!("Execution failed: {err}"),
-                    &command,
+                    &execution_request.approval_command,
                     context.turn.cwd.clone(),
                     RetrySandboxContext {
                         sub_id: context.sub_id,
@@ -250,7 +251,7 @@ impl UnifiedExecSessionManager {
                 if approval.is_some() {
                     let retry_launch = build_launch_for_sandbox(
                         crate::exec::SandboxType::None,
-                        &command,
+                        &execution_request.approval_command,
                         &context.turn.sandbox_policy,
                         &context.turn.cwd,
                         None,
