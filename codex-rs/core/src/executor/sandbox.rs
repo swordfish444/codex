@@ -92,6 +92,13 @@ pub(crate) fn build_launch_for_sandbox(
     }
 }
 
+pub(crate) struct RetrySandboxContext<'a> {
+    pub sub_id: &'a str,
+    pub call_id: &'a str,
+    pub tool_name: &'a str,
+    pub otel_event_manager: &'a OtelEventManager,
+}
+
 /// Sandbox placement options selected for an execution run, including whether
 /// to escalate after failures and whether approvals should persist.
 pub(crate) struct SandboxDecision {
@@ -130,27 +137,49 @@ fn should_escalate_on_failure(approval: AskForApproval, sandbox: SandboxType) ->
 
 pub(crate) async fn request_retry_without_sandbox(
     session: &Session,
-    sub_id: &str,
-    call_id: &str,
-    approval_command: Vec<String>,
+    failure_message: impl Into<String>,
+    command: &[String],
     cwd: PathBuf,
-    prompt: Option<String>,
-    tool_name: &str,
-    otel_event_manager: &OtelEventManager,
-) -> ReviewDecision {
+    ctx: RetrySandboxContext<'_>,
+) -> Option<ReviewDecision> {
+    session
+        .notify_background_event(ctx.sub_id, failure_message.into())
+        .await;
+
+    let approval_command = command.to_vec();
     let decision = session
         .request_command_approval(
-            sub_id.to_string(),
-            call_id.to_string(),
-            approval_command,
+            ctx.sub_id.to_string(),
+            ctx.call_id.to_string(),
+            approval_command.clone(),
             cwd,
-            prompt,
+            Some("command failed; retry without sandbox?".to_string()),
         )
         .await;
 
-    otel_event_manager.tool_decision(tool_name, call_id, decision, ToolDecisionSource::User);
+    ctx.otel_event_manager.tool_decision(
+        ctx.tool_name,
+        ctx.call_id,
+        decision,
+        ToolDecisionSource::User,
+    );
 
-    decision
+    match decision {
+        ReviewDecision::Approved | ReviewDecision::ApprovedForSession => {
+            if matches!(decision, ReviewDecision::ApprovedForSession) {
+                session
+                    .services
+                    .executor
+                    .record_session_approval(approval_command);
+            }
+
+            session
+                .notify_background_event(ctx.sub_id, "retrying command without sandbox")
+                .await;
+            Some(decision)
+        }
+        ReviewDecision::Denied | ReviewDecision::Abort => None,
+    }
 }
 
 /// Determines how a command should be sandboxed, prompting the user when

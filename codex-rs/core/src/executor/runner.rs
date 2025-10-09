@@ -18,11 +18,11 @@ use crate::exec::StdoutStream;
 use crate::exec::StreamOutput;
 use crate::exec::process_exec_tool_call;
 use crate::executor::errors::ExecError;
+use crate::executor::sandbox::RetrySandboxContext;
 use crate::executor::sandbox::request_retry_without_sandbox;
 use crate::executor::sandbox::select_sandbox;
 use crate::function_tool::FunctionCallError;
 use crate::protocol::AskForApproval;
-use crate::protocol::ReviewDecision;
 use crate::protocol::SandboxPolicy;
 use crate::shell;
 use crate::tools::context::ExecCommandContext;
@@ -184,46 +184,32 @@ impl Executor {
         stdout_stream: Option<StdoutStream>,
         sandbox_error: SandboxErr,
     ) -> Result<ExecToolCallOutput, ExecError> {
-        session
-            .notify_background_event(
-                &context.sub_id,
-                format!("Execution failed: {sandbox_error}"),
-            )
-            .await;
-        let decision = request_retry_without_sandbox(
+        let approval = request_retry_without_sandbox(
             session,
-            &context.sub_id,
-            &context.call_id,
-            request.approval_command.clone(),
+            format!("Execution failed: {sandbox_error}"),
+            &request.approval_command,
             request.params.cwd.clone(),
-            Some("command failed; retry without sandbox?".to_string()),
-            &context.tool_name,
-            &context.otel_event_manager,
+            RetrySandboxContext {
+                sub_id: &context.sub_id,
+                call_id: &context.call_id,
+                tool_name: &context.tool_name,
+                otel_event_manager: &context.otel_event_manager,
+            },
         )
         .await;
-        match decision {
-            ReviewDecision::Approved | ReviewDecision::ApprovedForSession => {
-                if matches!(decision, ReviewDecision::ApprovedForSession) {
-                    self.approval_cache.insert(request.approval_command.clone());
-                }
-                session
-                    .notify_background_event(&context.sub_id, "retrying command without sandbox")
-                    .await;
+        if approval.is_some() {
+            let retry_output = self
+                .spawn(
+                    request.params.clone(),
+                    SandboxType::None,
+                    config,
+                    stdout_stream,
+                )
+                .await?;
 
-                let retry_output = self
-                    .spawn(
-                        request.params.clone(),
-                        SandboxType::None,
-                        config,
-                        stdout_stream,
-                    )
-                    .await?;
-
-                Ok(retry_output)
-            }
-            ReviewDecision::Denied | ReviewDecision::Abort => {
-                Err(ExecError::rejection("exec command rejected by user"))
-            }
+            Ok(retry_output)
+        } else {
+            Err(ExecError::rejection("exec command rejected by user"))
         }
     }
 

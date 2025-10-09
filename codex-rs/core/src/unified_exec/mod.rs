@@ -21,15 +21,14 @@ use tokio::time::Instant;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::exec::ExecParams;
-use crate::exec::SandboxType;
 use crate::exec_command::ExecCommandSession;
 use crate::executor::ExecutionMode;
 use crate::executor::ExecutionRequest;
+use crate::executor::RetrySandboxContext;
 use crate::executor::SandboxLaunch;
 use crate::executor::build_launch_for_sandbox;
 use crate::executor::request_retry_without_sandbox;
 use crate::executor::select_sandbox;
-use crate::protocol::ReviewDecision;
 use crate::truncate::truncate_middle;
 
 mod errors;
@@ -234,71 +233,34 @@ impl UnifiedExecSessionManager {
         match create_unified_exec_session(&launch).await {
             Ok(result) => Ok(result),
             Err(err) if sandbox_decision.escalate_on_failure => {
-                self.retry_without_sandbox(&command, context, err, &otel_event_manager)
-                    .await
+                let approval = request_retry_without_sandbox(
+                    context.session,
+                    format!("Execution failed: {err}"),
+                    &command,
+                    context.turn.cwd.clone(),
+                    RetrySandboxContext {
+                        sub_id: context.sub_id,
+                        call_id: context.call_id,
+                        tool_name: context.tool_name,
+                        otel_event_manager: &otel_event_manager,
+                    },
+                )
+                .await;
+
+                if approval.is_some() {
+                    let retry_launch = build_launch_for_sandbox(
+                        crate::exec::SandboxType::None,
+                        &command,
+                        &context.turn.sandbox_policy,
+                        &context.turn.cwd,
+                        None,
+                    )?;
+                    create_unified_exec_session(&retry_launch).await
+                } else {
+                    Err(UnifiedExecError::UserRejected)
+                }
             }
             Err(err) => Err(err),
-        }
-    }
-
-    async fn retry_without_sandbox(
-        &self,
-        command: &[String],
-        context: &UnifiedExecContext<'_>,
-        previous_error: UnifiedExecError,
-        otel_event_manager: &codex_otel::otel_event_manager::OtelEventManager,
-    ) -> Result<
-        (
-            ExecCommandSession,
-            tokio::sync::broadcast::Receiver<Vec<u8>>,
-        ),
-        UnifiedExecError,
-    > {
-        context
-            .session
-            .notify_background_event(
-                context.sub_id,
-                format!("Execution failed: {previous_error}"),
-            )
-            .await;
-
-        let decision = request_retry_without_sandbox(
-            context.session,
-            context.sub_id,
-            context.call_id,
-            command.to_vec(),
-            context.turn.cwd.clone(),
-            Some("command failed; retry without sandbox?".to_string()),
-            context.tool_name,
-            otel_event_manager,
-        )
-        .await;
-
-        match decision {
-            ReviewDecision::Approved | ReviewDecision::ApprovedForSession => {
-                if matches!(decision, ReviewDecision::ApprovedForSession) {
-                    context
-                        .session
-                        .services
-                        .executor
-                        .record_session_approval(command.to_vec());
-                }
-
-                context
-                    .session
-                    .notify_background_event(context.sub_id, "retrying command without sandbox")
-                    .await;
-
-                let launch = build_launch_for_sandbox(
-                    SandboxType::None,
-                    command,
-                    &context.turn.sandbox_policy,
-                    &context.turn.cwd,
-                    None,
-                )?;
-                create_unified_exec_session(&launch).await
-            }
-            ReviewDecision::Denied | ReviewDecision::Abort => Err(UnifiedExecError::UserRejected),
         }
     }
 
@@ -602,7 +564,7 @@ mod tests {
             .handle_request(
                 request,
                 UnifiedExecContext {
-                    session: &session,
+                    session,
                     turn: turn.as_ref(),
                     sub_id: "sub",
                     call_id: "call",
