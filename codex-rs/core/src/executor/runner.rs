@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -17,6 +18,7 @@ use crate::exec::StdoutStream;
 use crate::exec::StreamOutput;
 use crate::exec::process_exec_tool_call;
 use crate::executor::errors::ExecError;
+use crate::executor::sandbox::request_retry_without_sandbox;
 use crate::executor::sandbox::select_sandbox;
 use crate::function_tool::FunctionCallError;
 use crate::protocol::AskForApproval;
@@ -24,7 +26,6 @@ use crate::protocol::ReviewDecision;
 use crate::protocol::SandboxPolicy;
 use crate::shell;
 use crate::tools::context::ExecCommandContext;
-use codex_otel::otel_event_manager::ToolDecisionSource;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ExecutorConfig {
@@ -45,6 +46,10 @@ impl ExecutorConfig {
             codex_linux_sandbox_exe,
         }
     }
+
+    pub(crate) fn codex_linux_sandbox_exe(&self) -> Option<PathBuf> {
+        self.codex_linux_sandbox_exe.clone()
+    }
 }
 
 /// Coordinates sandbox selection, backend-specific preparation, and command
@@ -60,6 +65,18 @@ impl Executor {
             approval_cache: ApprovalCache::default(),
             config: Arc::new(RwLock::new(config)),
         }
+    }
+
+    pub(crate) fn approval_cache_snapshot(&self) -> HashSet<Vec<String>> {
+        self.approval_cache.snapshot()
+    }
+
+    pub(crate) fn record_session_approval(&self, command: Vec<String>) {
+        self.approval_cache.insert(command);
+    }
+
+    pub(crate) fn config_snapshot(&self) -> Option<ExecutorConfig> {
+        self.config.read().ok().map(|cfg| cfg.clone())
     }
 
     /// Updates the sandbox policy and working directory used for future
@@ -173,22 +190,17 @@ impl Executor {
                 format!("Execution failed: {sandbox_error}"),
             )
             .await;
-        let decision = session
-            .request_command_approval(
-                context.sub_id.to_string(),
-                context.call_id.to_string(),
-                request.approval_command.clone(),
-                request.params.cwd.clone(),
-                Some("command failed; retry without sandbox?".to_string()),
-            )
-            .await;
-
-        context.otel_event_manager.tool_decision(
-            &context.tool_name,
+        let decision = request_retry_without_sandbox(
+            session,
+            &context.sub_id,
             &context.call_id,
-            decision,
-            ToolDecisionSource::User,
-        );
+            request.approval_command.clone(),
+            request.params.cwd.clone(),
+            Some("command failed; retry without sandbox?".to_string()),
+            &context.tool_name,
+            &context.otel_event_manager,
+        )
+        .await;
         match decision {
             ReviewDecision::Approved | ReviewDecision::ApprovedForSession => {
                 if matches!(decision, ReviewDecision::ApprovedForSession) {

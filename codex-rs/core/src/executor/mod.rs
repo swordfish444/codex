@@ -8,6 +8,8 @@ pub(crate) use runner::ExecutionRequest;
 pub(crate) use runner::Executor;
 pub(crate) use runner::ExecutorConfig;
 pub(crate) use runner::normalize_exec_result;
+pub(crate) use sandbox::request_retry_without_sandbox;
+pub(crate) use sandbox::select_sandbox;
 
 pub(crate) mod linkers {
     use crate::exec::ExecParams;

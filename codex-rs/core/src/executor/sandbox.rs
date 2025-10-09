@@ -13,6 +13,7 @@ use codex_otel::otel_event_manager::ToolDecisionSource;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ReviewDecision;
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 /// Sandbox placement options selected for an execution run, including whether
 /// to escalate after failures and whether approvals should persist.
@@ -48,6 +49,31 @@ fn should_escalate_on_failure(approval: AskForApproval, sandbox: SandboxType) ->
             SandboxType::MacosSeatbelt | SandboxType::LinuxSeccomp
         )
     )
+}
+
+pub(crate) async fn request_retry_without_sandbox(
+    session: &Session,
+    sub_id: &str,
+    call_id: &str,
+    approval_command: Vec<String>,
+    cwd: PathBuf,
+    prompt: Option<String>,
+    tool_name: &str,
+    otel_event_manager: &OtelEventManager,
+) -> ReviewDecision {
+    let decision = session
+        .request_command_approval(
+            sub_id.to_string(),
+            call_id.to_string(),
+            approval_command,
+            cwd,
+            prompt,
+        )
+        .await;
+
+    otel_event_manager.tool_decision(tool_name, call_id, decision, ToolDecisionSource::User);
+
+    decision
 }
 
 /// Determines how a command should be sandboxed, prompting the user when
