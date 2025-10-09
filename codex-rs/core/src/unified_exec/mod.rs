@@ -525,15 +525,22 @@ async fn create_unified_exec_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::codex::Session;
+    #[cfg(unix)]
     use crate::codex::TurnContext;
+    #[cfg(unix)]
     use crate::codex::make_session_and_context;
+    #[cfg(unix)]
     use crate::protocol::AskForApproval;
+    #[cfg(unix)]
     use crate::protocol::SandboxPolicy;
     #[cfg(unix)]
     use core_test_support::skip_if_sandbox;
+    #[cfg(unix)]
     use std::sync::Arc;
 
+    #[cfg(unix)]
     fn test_session_and_turn() -> (Arc<Session>, Arc<TurnContext>) {
         let (session, mut turn) = make_session_and_context();
         turn.approval_policy = AskForApproval::Never;
@@ -545,6 +552,7 @@ mod tests {
         (Arc::new(session), Arc::new(turn))
     }
 
+    #[cfg(unix)]
     async fn run_unified_exec_request(
         session: &Arc<Session>,
         turn: &Arc<TurnContext>,
