@@ -9,6 +9,7 @@ use codex_core::protocol::InputItem;
 use codex_core::protocol::Op;
 use codex_core::protocol::SandboxPolicy;
 use codex_protocol::config_types::ReasoningSummary;
+use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_function_call;
@@ -31,20 +32,18 @@ fn extract_output_text(item: &Value) -> Option<&str> {
     })
 }
 
-fn collect_tool_outputs(bodies: &[Value]) -> Result<HashMap<String, Value>> {
+fn collect_tool_outputs(requests: &[ResponsesRequest]) -> Result<HashMap<String, Value>> {
     let mut outputs = HashMap::new();
-    for body in bodies {
-        if let Some(items) = body.get("input").and_then(Value::as_array) {
-            for item in items {
-                if item.get("type").and_then(Value::as_str) != Some("function_call_output") {
-                    continue;
-                }
-                if let Some(call_id) = item.get("call_id").and_then(Value::as_str) {
-                    let content = extract_output_text(item)
-                        .ok_or_else(|| anyhow::anyhow!("missing tool output content"))?;
-                    let parsed: Value = serde_json::from_str(content)?;
-                    outputs.insert(call_id.to_string(), parsed);
-                }
+    for request in requests {
+        for item in request.input() {
+            if item.get("type").and_then(Value::as_str) != Some("function_call_output") {
+                continue;
+            }
+            if let Some(call_id) = item.get("call_id").and_then(Value::as_str) {
+                let content = extract_output_text(&item)
+                    .ok_or_else(|| anyhow::anyhow!("missing tool output content"))?;
+                let parsed: Value = serde_json::from_str(content)?;
+                outputs.insert(call_id.to_string(), parsed);
             }
         }
     }
@@ -105,7 +104,7 @@ async fn unified_exec_reuses_session_via_stdin() -> Result<()> {
             ev_completed("resp-3"),
         ]),
     ];
-    mount_sse_sequence(&server, responses).await;
+    let response_mock = mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
 
@@ -126,15 +125,10 @@ async fn unified_exec_reuses_session_via_stdin() -> Result<()> {
 
     wait_for_event(&codex, |event| matches!(event, EventMsg::TaskComplete(_))).await;
 
-    let requests = server.received_requests().await.expect("recorded requests");
+    let requests = response_mock.requests();
     assert!(!requests.is_empty(), "expected at least one POST request");
 
-    let bodies = requests
-        .iter()
-        .map(|req| req.body_json::<Value>().expect("request json"))
-        .collect::<Vec<_>>();
-
-    let outputs = collect_tool_outputs(&bodies)?;
+    let outputs = collect_tool_outputs(&requests)?;
 
     let start_output = outputs
         .get(first_call_id)
@@ -240,7 +234,7 @@ PY
             ev_completed("resp-3"),
         ]),
     ];
-    mount_sse_sequence(&server, responses).await;
+    let response_mock = mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
 
@@ -261,15 +255,10 @@ PY
 
     wait_for_event(&codex, |event| matches!(event, EventMsg::TaskComplete(_))).await;
 
-    let requests = server.received_requests().await.expect("recorded requests");
+    let requests = response_mock.requests();
     assert!(!requests.is_empty(), "expected at least one POST request");
 
-    let bodies = requests
-        .iter()
-        .map(|req| req.body_json::<Value>().expect("request json"))
-        .collect::<Vec<_>>();
-
-    let outputs = collect_tool_outputs(&bodies)?;
+    let outputs = collect_tool_outputs(&requests)?;
 
     let start_output = outputs
         .get(first_call_id)
@@ -346,7 +335,7 @@ async fn unified_exec_timeout_and_followup_poll() -> Result<()> {
             ev_completed("resp-3"),
         ]),
     ];
-    mount_sse_sequence(&server, responses).await;
+    let response_mock = mount_sse_sequence(&server, responses).await;
 
     let session_model = session_configured.model.clone();
 
@@ -372,15 +361,10 @@ async fn unified_exec_timeout_and_followup_poll() -> Result<()> {
         }
     }
 
-    let requests = server.received_requests().await.expect("recorded requests");
+    let requests = response_mock.requests();
     assert!(!requests.is_empty(), "expected at least one POST request");
 
-    let bodies = requests
-        .iter()
-        .map(|req| req.body_json::<Value>().expect("request json"))
-        .collect::<Vec<_>>();
-
-    let outputs = collect_tool_outputs(&bodies)?;
+    let outputs = collect_tool_outputs(&requests)?;
 
     let first_output = outputs.get(first_call_id).expect("missing timeout output");
     assert_eq!(first_output["session_id"], "0");

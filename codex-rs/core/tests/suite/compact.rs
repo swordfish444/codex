@@ -15,6 +15,7 @@ use core_test_support::wait_for_event;
 use tempfile::TempDir;
 
 use codex_core::codex::compact::SUMMARIZATION_PROMPT;
+use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_completed_with_tokens;
@@ -72,19 +73,19 @@ async fn summarize_context_three_requests_and_instructions() {
         body.contains("\"text\":\"hello world\"")
             && !body.contains("You have exceeded the maximum number of tokens")
     };
-    mount_sse_once_match(&server, first_matcher, sse1).await;
+    let first_mock = mount_sse_once_match(&server, first_matcher, sse1).await;
 
     let second_matcher = |req: &wiremock::Request| {
         let body = std::str::from_utf8(&req.body).unwrap_or("");
         body.contains("You have exceeded the maximum number of tokens")
     };
-    mount_sse_once_match(&server, second_matcher, sse2).await;
+    let second_mock = mount_sse_once_match(&server, second_matcher, sse2).await;
 
     let third_matcher = |req: &wiremock::Request| {
         let body = std::str::from_utf8(&req.body).unwrap_or("");
         body.contains(&format!("\"text\":\"{THIRD_USER_MSG}\""))
     };
-    mount_sse_once_match(&server, third_matcher, sse3).await;
+    let third_mock = mount_sse_once_match(&server, third_matcher, sse3).await;
 
     // Build config pointing to the mock server and spawn Codex.
     let model_provider = ModelProviderInfo {
@@ -130,16 +131,13 @@ async fn summarize_context_three_requests_and_instructions() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
 
     // Inspect the three captured requests.
-    let requests = server.received_requests().await.unwrap();
-    assert_eq!(requests.len(), 3, "expected exactly three requests");
+    let req1 = first_mock.single_request();
+    let req2 = second_mock.single_request();
+    let req3 = third_mock.single_request();
 
-    let req1 = &requests[0];
-    let req2 = &requests[1];
-    let req3 = &requests[2];
-
-    let body1 = req1.body_json::<serde_json::Value>().unwrap();
-    let body2 = req2.body_json::<serde_json::Value>().unwrap();
-    let body3 = req3.body_json::<serde_json::Value>().unwrap();
+    let body1 = req1.body_json();
+    let body2 = req2.body_json();
+    let body3 = req3.body_json();
 
     // Manual compact should keep the baseline developer instructions.
     let instr1 = body1.get("instructions").and_then(|v| v.as_str()).unwrap();
@@ -288,7 +286,7 @@ async fn auto_compact_runs_after_token_limit_hit() {
             && !body.contains(SECOND_AUTO_MSG)
             && !body.contains("You have exceeded the maximum number of tokens")
     };
-    mount_sse_once_match(&server, first_matcher, sse1).await;
+    let first_mock = mount_sse_once_match(&server, first_matcher, sse1).await;
 
     let second_matcher = |req: &wiremock::Request| {
         let body = std::str::from_utf8(&req.body).unwrap_or("");
@@ -296,13 +294,13 @@ async fn auto_compact_runs_after_token_limit_hit() {
             && body.contains(FIRST_AUTO_MSG)
             && !body.contains("You have exceeded the maximum number of tokens")
     };
-    mount_sse_once_match(&server, second_matcher, sse2).await;
+    let second_mock = mount_sse_once_match(&server, second_matcher, sse2).await;
 
     let third_matcher = |req: &wiremock::Request| {
         let body = std::str::from_utf8(&req.body).unwrap_or("");
         body.contains("You have exceeded the maximum number of tokens")
     };
-    mount_sse_once_match(&server, third_matcher, sse3).await;
+    let third_mock = mount_sse_once_match(&server, third_matcher, sse3).await;
 
     let model_provider = ModelProviderInfo {
         base_url: Some(format!("{}/v1", server.uri())),
@@ -343,36 +341,36 @@ async fn auto_compact_runs_after_token_limit_hit() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
     // wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
 
-    let requests = server.received_requests().await.unwrap();
+    let mut requests = first_mock.requests();
+    requests.extend(second_mock.requests());
+    requests.extend(third_mock.requests());
     assert!(
         requests.len() >= 3,
         "auto compact should add at least a third request, got {}",
         requests.len()
     );
-    let is_auto_compact = |req: &wiremock::Request| {
-        std::str::from_utf8(&req.body)
-            .unwrap_or("")
+    let bodies: Vec<_> = requests.iter().map(ResponsesRequest::body_json).collect();
+    let is_auto_compact = |body: &serde_json::Value| {
+        body.to_string()
             .contains("You have exceeded the maximum number of tokens")
     };
-    let auto_compact_count = requests.iter().filter(|req| is_auto_compact(req)).count();
+    let auto_compact_count = bodies.iter().filter(|body| is_auto_compact(body)).count();
     assert_eq!(
         auto_compact_count, 1,
         "expected exactly one auto compact request"
     );
-    let auto_compact_index = requests
+    let auto_compact_index = bodies
         .iter()
         .enumerate()
-        .find_map(|(idx, req)| is_auto_compact(req).then_some(idx))
+        .find_map(|(idx, body)| is_auto_compact(body).then_some(idx))
         .expect("auto compact request missing");
     assert_eq!(
         auto_compact_index, 2,
         "auto compact should add a third request"
     );
 
-    let body_first = requests[0].body_json::<serde_json::Value>().unwrap();
-    let body3 = requests[auto_compact_index]
-        .body_json::<serde_json::Value>()
-        .unwrap();
+    let body_first = &bodies[0];
+    let body3 = &bodies[auto_compact_index];
     let instructions = body3
         .get("instructions")
         .and_then(|v| v.as_str())
@@ -433,7 +431,7 @@ async fn auto_compact_persists_rollout_entries() {
             && !body.contains(SECOND_AUTO_MSG)
             && !body.contains("You have exceeded the maximum number of tokens")
     };
-    mount_sse_once_match(&server, first_matcher, sse1).await;
+    let first_mock = mount_sse_once_match(&server, first_matcher, sse1).await;
 
     let second_matcher = |req: &wiremock::Request| {
         let body = std::str::from_utf8(&req.body).unwrap_or("");
@@ -441,13 +439,13 @@ async fn auto_compact_persists_rollout_entries() {
             && body.contains(FIRST_AUTO_MSG)
             && !body.contains("You have exceeded the maximum number of tokens")
     };
-    mount_sse_once_match(&server, second_matcher, sse2).await;
+    let second_mock = mount_sse_once_match(&server, second_matcher, sse2).await;
 
     let third_matcher = |req: &wiremock::Request| {
         let body = std::str::from_utf8(&req.body).unwrap_or("");
         body.contains("You have exceeded the maximum number of tokens")
     };
-    mount_sse_once_match(&server, third_matcher, sse3).await;
+    let third_mock = mount_sse_once_match(&server, third_matcher, sse3).await;
 
     let model_provider = ModelProviderInfo {
         base_url: Some(format!("{}/v1", server.uri())),
@@ -595,14 +593,17 @@ async fn auto_compact_stops_after_failed_attempt() {
     );
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
 
-    let requests = server.received_requests().await.unwrap();
+    let mut requests = first_mock.requests();
+    requests.extend(second_mock.requests());
+    requests.extend(third_mock.requests());
     assert_eq!(
         requests.len(),
         3,
         "auto compact should attempt at most one summarization before erroring"
     );
 
-    let last_body = requests[2].body_json::<serde_json::Value>().unwrap();
+    let bodies: Vec<_> = requests.iter().map(ResponsesRequest::body_json).collect();
+    let last_body = &bodies[2];
     let input = last_body
         .get("input")
         .and_then(|v| v.as_array())
@@ -780,7 +781,7 @@ async fn auto_compact_allows_multiple_attempts_when_interleaved_with_other_turn_
         ev_completed_with_tokens("r6", 120),
     ]);
 
-    mount_sse_sequence(&server, vec![sse1, sse2, sse3, sse4, sse5, sse6]).await;
+    let request_log = mount_sse_sequence(&server, vec![sse1, sse2, sse3, sse4, sse5, sse6]).await;
 
     let model_provider = ModelProviderInfo {
         base_url: Some(format!("{}/v1", server.uri())),
@@ -831,12 +832,10 @@ async fn auto_compact_allows_multiple_attempts_when_interleaved_with_other_turn_
         "auto compact should not emit task lifecycle events"
     );
 
-    let request_bodies: Vec<String> = server
-        .received_requests()
-        .await
-        .unwrap()
+    let request_bodies: Vec<String> = request_log
+        .requests()
         .into_iter()
-        .map(|request| String::from_utf8(request.body).unwrap_or_default())
+        .map(|request| request.body_json().to_string())
         .collect();
     assert_eq!(
         request_bodies.len(),

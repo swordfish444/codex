@@ -54,13 +54,13 @@ async fn list_dir_tool_returns_entries() -> anyhow::Result<()> {
         ev_function_call(call_id, "list_dir", &arguments),
         ev_completed("resp-1"),
     ]);
-    responses::mount_sse_once_match(&server, any(), first_response).await;
+    let first_mock = responses::mount_sse_once_match(&server, any(), first_response).await;
 
     let second_response = sse(vec![
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
     ]);
-    responses::mount_sse_once_match(&server, any(), second_response).await;
+    let second_mock = responses::mount_sse_once_match(&server, any(), second_response).await;
 
     let session_model = session_configured.model.clone();
 
@@ -81,30 +81,15 @@ async fn list_dir_tool_returns_entries() -> anyhow::Result<()> {
 
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
 
-    let requests = server.received_requests().await.expect("recorded requests");
-    let request_bodies = requests
-        .iter()
-        .map(|req| req.body_json::<Value>().unwrap())
-        .collect::<Vec<_>>();
-    assert!(
-        !request_bodies.is_empty(),
-        "expected at least one request body"
-    );
+    let mut requests = first_mock.requests();
+    requests.extend(second_mock.requests());
+    assert!(!requests.is_empty(), "expected at least one request body");
 
-    let tool_output_item = request_bodies
-        .iter()
-        .find_map(|body| {
-            body.get("input")
-                .and_then(Value::as_array)
-                .and_then(|items| {
-                    items.iter().find(|item| {
-                        item.get("type").and_then(Value::as_str) == Some("function_call_output")
-                    })
-                })
-        })
-        .unwrap_or_else(|| {
-            panic!("function_call_output item not found in requests: {request_bodies:#?}")
-        });
+    let tool_output_item = requests
+        .into_iter()
+        .flat_map(|request| request.input())
+        .find(|item| item.get("type").and_then(Value::as_str) == Some("function_call_output"))
+        .unwrap_or_else(|| panic!("function_call_output item not found in requests"));
 
     assert_eq!(
         tool_output_item.get("call_id").and_then(Value::as_str),
@@ -159,13 +144,13 @@ async fn list_dir_tool_depth_one_omits_children() -> anyhow::Result<()> {
         ev_function_call(call_id, "list_dir", &arguments),
         ev_completed("resp-1"),
     ]);
-    responses::mount_sse_once_match(&server, any(), first_response).await;
+    let first_mock = responses::mount_sse_once_match(&server, any(), first_response).await;
 
     let second_response = sse(vec![
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
     ]);
-    responses::mount_sse_once_match(&server, any(), second_response).await;
+    let second_mock = responses::mount_sse_once_match(&server, any(), second_response).await;
 
     let session_model = session_configured.model.clone();
 
@@ -186,30 +171,15 @@ async fn list_dir_tool_depth_one_omits_children() -> anyhow::Result<()> {
 
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
 
-    let requests = server.received_requests().await.expect("recorded requests");
-    let request_bodies = requests
-        .iter()
-        .map(|req| req.body_json::<Value>().unwrap())
-        .collect::<Vec<_>>();
-    assert!(
-        !request_bodies.is_empty(),
-        "expected at least one request body"
-    );
+    let mut requests = first_mock.requests();
+    requests.extend(second_mock.requests());
+    assert!(!requests.is_empty(), "expected at least one request body");
 
-    let tool_output_item = request_bodies
-        .iter()
-        .find_map(|body| {
-            body.get("input")
-                .and_then(Value::as_array)
-                .and_then(|items| {
-                    items.iter().find(|item| {
-                        item.get("type").and_then(Value::as_str) == Some("function_call_output")
-                    })
-                })
-        })
-        .unwrap_or_else(|| {
-            panic!("function_call_output item not found in requests: {request_bodies:#?}")
-        });
+    let tool_output_item = requests
+        .into_iter()
+        .flat_map(|request| request.input())
+        .find(|item| item.get("type").and_then(Value::as_str) == Some("function_call_output"))
+        .unwrap_or_else(|| panic!("function_call_output item not found in requests"));
 
     assert_eq!(
         tool_output_item.get("call_id").and_then(Value::as_str),
@@ -271,13 +241,13 @@ async fn list_dir_tool_depth_two_includes_children_only() -> anyhow::Result<()> 
         ev_function_call(call_id, "list_dir", &arguments),
         ev_completed("resp-1"),
     ]);
-    responses::mount_sse_once_match(&server, any(), first_response).await;
+    let first_mock = responses::mount_sse_once_match(&server, any(), first_response).await;
 
     let second_response = sse(vec![
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
     ]);
-    responses::mount_sse_once_match(&server, any(), second_response).await;
+    let second_mock = responses::mount_sse_once_match(&server, any(), second_response).await;
 
     let session_model = session_configured.model.clone();
 
@@ -298,30 +268,15 @@ async fn list_dir_tool_depth_two_includes_children_only() -> anyhow::Result<()> 
 
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
 
-    let requests = server.received_requests().await.expect("recorded requests");
-    let request_bodies = requests
-        .iter()
-        .map(|req| req.body_json::<Value>().unwrap())
-        .collect::<Vec<_>>();
-    assert!(
-        !request_bodies.is_empty(),
-        "expected at least one request body"
-    );
+    let mut requests = first_mock.requests();
+    requests.extend(second_mock.requests());
+    assert!(!requests.is_empty(), "expected at least one request body");
 
-    let tool_output_item = request_bodies
-        .iter()
-        .find_map(|body| {
-            body.get("input")
-                .and_then(Value::as_array)
-                .and_then(|items| {
-                    items.iter().find(|item| {
-                        item.get("type").and_then(Value::as_str) == Some("function_call_output")
-                    })
-                })
-        })
-        .unwrap_or_else(|| {
-            panic!("function_call_output item not found in requests: {request_bodies:#?}")
-        });
+    let tool_output_item = requests
+        .into_iter()
+        .flat_map(|request| request.input())
+        .find(|item| item.get("type").and_then(Value::as_str) == Some("function_call_output"))
+        .unwrap_or_else(|| panic!("function_call_output item not found in requests"));
 
     assert_eq!(
         tool_output_item.get("call_id").and_then(Value::as_str),
@@ -386,13 +341,13 @@ async fn list_dir_tool_depth_three_includes_grandchildren() -> anyhow::Result<()
         ev_function_call(call_id, "list_dir", &arguments),
         ev_completed("resp-1"),
     ]);
-    responses::mount_sse_once_match(&server, any(), first_response).await;
+    let first_mock = responses::mount_sse_once_match(&server, any(), first_response).await;
 
     let second_response = sse(vec![
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
     ]);
-    responses::mount_sse_once_match(&server, any(), second_response).await;
+    let second_mock = responses::mount_sse_once_match(&server, any(), second_response).await;
 
     let session_model = session_configured.model.clone();
 
@@ -413,30 +368,15 @@ async fn list_dir_tool_depth_three_includes_grandchildren() -> anyhow::Result<()
 
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
 
-    let requests = server.received_requests().await.expect("recorded requests");
-    let request_bodies = requests
-        .iter()
-        .map(|req| req.body_json::<Value>().unwrap())
-        .collect::<Vec<_>>();
-    assert!(
-        !request_bodies.is_empty(),
-        "expected at least one request body"
-    );
+    let mut requests = first_mock.requests();
+    requests.extend(second_mock.requests());
+    assert!(!requests.is_empty(), "expected at least one request body");
 
-    let tool_output_item = request_bodies
-        .iter()
-        .find_map(|body| {
-            body.get("input")
-                .and_then(Value::as_array)
-                .and_then(|items| {
-                    items.iter().find(|item| {
-                        item.get("type").and_then(Value::as_str) == Some("function_call_output")
-                    })
-                })
-        })
-        .unwrap_or_else(|| {
-            panic!("function_call_output item not found in requests: {request_bodies:#?}")
-        });
+    let tool_output_item = requests
+        .into_iter()
+        .flat_map(|request| request.input())
+        .find(|item| item.get("type").and_then(Value::as_str) == Some("function_call_output"))
+        .unwrap_or_else(|| panic!("function_call_output item not found in requests"));
 
     assert_eq!(
         tool_output_item.get("call_id").and_then(Value::as_str),

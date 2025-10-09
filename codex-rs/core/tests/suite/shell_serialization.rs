@@ -9,6 +9,7 @@ use codex_core::protocol::Op;
 use codex_core::protocol::SandboxPolicy;
 use codex_protocol::config_types::ReasoningSummary;
 use core_test_support::assert_regex_match;
+use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_function_call;
@@ -49,22 +50,13 @@ async fn submit_turn(test: &TestCodex, prompt: &str, sandbox_policy: SandboxPoli
     Ok(())
 }
 
-fn request_bodies(requests: &[wiremock::Request]) -> Result<Vec<Value>> {
-    requests
-        .iter()
-        .map(|req| Ok(serde_json::from_slice::<Value>(&req.body)?))
-        .collect()
-}
-
-fn find_function_call_output<'a>(bodies: &'a [Value], call_id: &str) -> Option<&'a Value> {
-    for body in bodies {
-        if let Some(items) = body.get("input").and_then(Value::as_array) {
-            for item in items {
-                if item.get("type").and_then(Value::as_str) == Some("function_call_output")
-                    && item.get("call_id").and_then(Value::as_str) == Some(call_id)
-                {
-                    return Some(item);
-                }
+fn find_function_call_output(requests: &[ResponsesRequest], call_id: &str) -> Option<Value> {
+    for request in requests {
+        for item in request.input() {
+            if item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                && item.get("call_id").and_then(Value::as_str) == Some(call_id)
+            {
+                return Some(item);
             }
         }
     }
@@ -99,7 +91,7 @@ async fn shell_output_stays_json_without_freeform_apply_patch() -> Result<()> {
             ev_completed("resp-2"),
         ]),
     ];
-    mount_sse_sequence(&server, responses).await;
+    let response_mock = mount_sse_sequence(&server, responses).await;
 
     submit_turn(
         &test,
@@ -108,12 +100,8 @@ async fn shell_output_stays_json_without_freeform_apply_patch() -> Result<()> {
     )
     .await?;
 
-    let requests = server
-        .received_requests()
-        .await
-        .expect("recorded requests present");
-    let bodies = request_bodies(&requests)?;
-    let output_item = find_function_call_output(&bodies, call_id).expect("shell output present");
+    let requests = response_mock.requests();
+    let output_item = find_function_call_output(&requests, call_id).expect("shell output present");
     let output = output_item
         .get("output")
         .and_then(Value::as_str)
@@ -163,7 +151,7 @@ async fn shell_output_is_structured_with_freeform_apply_patch() -> Result<()> {
             ev_completed("resp-2"),
         ]),
     ];
-    mount_sse_sequence(&server, responses).await;
+    let response_mock = mount_sse_sequence(&server, responses).await;
 
     submit_turn(
         &test,
@@ -172,13 +160,9 @@ async fn shell_output_is_structured_with_freeform_apply_patch() -> Result<()> {
     )
     .await?;
 
-    let requests = server
-        .received_requests()
-        .await
-        .expect("recorded requests present");
-    let bodies = request_bodies(&requests)?;
+    let requests = response_mock.requests();
     let output_item =
-        find_function_call_output(&bodies, call_id).expect("structured output present");
+        find_function_call_output(&requests, call_id).expect("structured output present");
     let output = output_item
         .get("output")
         .and_then(Value::as_str)
@@ -226,7 +210,7 @@ async fn shell_output_reserializes_truncated_content() -> Result<()> {
             ev_completed("resp-2"),
         ]),
     ];
-    mount_sse_sequence(&server, responses).await;
+    let response_mock = mount_sse_sequence(&server, responses).await;
 
     submit_turn(
         &test,
@@ -235,13 +219,9 @@ async fn shell_output_reserializes_truncated_content() -> Result<()> {
     )
     .await?;
 
-    let requests = server
-        .received_requests()
-        .await
-        .expect("recorded requests present");
-    let bodies = request_bodies(&requests)?;
+    let requests = response_mock.requests();
     let output_item =
-        find_function_call_output(&bodies, call_id).expect("truncated output present");
+        find_function_call_output(&requests, call_id).expect("truncated output present");
     let output = output_item
         .get("output")
         .and_then(Value::as_str)

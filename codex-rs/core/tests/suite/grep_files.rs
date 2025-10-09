@@ -9,6 +9,7 @@ use codex_core::protocol::Op;
 use codex_core::protocol::SandboxPolicy;
 use codex_protocol::config_types::ReasoningSummary;
 use core_test_support::responses;
+use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_function_call;
@@ -69,11 +70,13 @@ async fn grep_files_tool_collects_matches() -> Result<()> {
     })
     .to_string();
 
-    mount_tool_sequence(&server, call_id, &arguments, "grep_files").await;
+    let (first_mock, second_mock) =
+        mount_tool_sequence(&server, call_id, &arguments, "grep_files").await;
     submit_turn(&test, "please find uses of needle").await?;
 
-    let bodies = recorded_bodies(&server).await?;
-    let tool_output = find_tool_output(&bodies, call_id).expect("tool output present");
+    let mut requests = first_mock.requests();
+    requests.extend(second_mock.requests());
+    let tool_output = find_tool_output(&requests, call_id).expect("tool output present");
     let payload = tool_output.get("output").expect("output field present");
     let (content_opt, success_opt) = extract_content_and_success(payload);
     let content = content_opt.expect("content present");
@@ -118,11 +121,13 @@ async fn grep_files_tool_reports_empty_results() -> Result<()> {
     })
     .to_string();
 
-    mount_tool_sequence(&server, call_id, &arguments, "grep_files").await;
+    let (first_mock, second_mock) =
+        mount_tool_sequence(&server, call_id, &arguments, "grep_files").await;
     submit_turn(&test, "search again").await?;
 
-    let bodies = recorded_bodies(&server).await?;
-    let tool_output = find_tool_output(&bodies, call_id).expect("tool output present");
+    let mut requests = first_mock.requests();
+    requests.extend(second_mock.requests());
+    let tool_output = find_tool_output(&requests, call_id).expect("tool output present");
     let payload = tool_output.get("output").expect("output field present");
     let (content_opt, success_opt) = extract_content_and_success(payload);
     let content = content_opt.expect("content present");
@@ -174,41 +179,34 @@ async fn mount_tool_sequence(
     call_id: &str,
     arguments: &str,
     tool_name: &str,
-) {
+) -> (responses::ResponseMock, responses::ResponseMock) {
     let first_response = sse(vec![
         ev_response_created("resp-1"),
         ev_function_call(call_id, tool_name, arguments),
         ev_completed("resp-1"),
     ]);
-    responses::mount_sse_once_match(server, any(), first_response).await;
+    let first_mock = responses::mount_sse_once_match(server, any(), first_response).await;
 
     let second_response = sse(vec![
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
     ]);
-    responses::mount_sse_once_match(server, any(), second_response).await;
+    let second_mock = responses::mount_sse_once_match(server, any(), second_response).await;
+
+    (first_mock, second_mock)
 }
 
-#[allow(clippy::expect_used)]
-async fn recorded_bodies(server: &wiremock::MockServer) -> Result<Vec<Value>> {
-    let requests = server.received_requests().await.expect("requests recorded");
-    Ok(requests
-        .iter()
-        .map(|req| req.body_json::<Value>().expect("request json"))
-        .collect())
-}
-
-fn find_tool_output<'a>(requests: &'a [Value], call_id: &str) -> Option<&'a Value> {
-    requests.iter().find_map(|body| {
-        body.get("input")
-            .and_then(Value::as_array)
-            .and_then(|items| {
-                items.iter().find(|item| {
-                    item.get("type").and_then(Value::as_str) == Some("function_call_output")
-                        && item.get("call_id").and_then(Value::as_str) == Some(call_id)
-                })
-            })
-    })
+fn find_tool_output(requests: &[ResponsesRequest], call_id: &str) -> Option<Value> {
+    for request in requests {
+        for item in request.input() {
+            if item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                && item.get("call_id").and_then(Value::as_str) == Some(call_id)
+            {
+                return Some(item);
+            }
+        }
+    }
+    None
 }
 
 fn collect_file_names(content: &str) -> HashSet<String> {
