@@ -84,6 +84,11 @@ impl ToolHandler for UnifiedExecHandler {
             timeout_ms,
         };
 
+        session
+            .services
+            .executor
+            .update_environment(turn.sandbox_policy.clone(), turn.cwd.clone());
+
         let value = session
             .services
             .unified_exec_manager
