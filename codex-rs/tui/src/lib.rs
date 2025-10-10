@@ -104,18 +104,18 @@ fn detect_node_package_manager() -> NodePackageManager {
     }
 
     for var in ["npm_execpath", "NPM_EXECPATH"] {
-        if let Ok(value) = std::env::var(var) {
-            if let Some(package_manager) = parse_hint(&value) {
-                return package_manager;
-            }
+        if let Ok(value) = std::env::var(var)
+            && let Some(package_manager) = parse_hint(&value)
+        {
+            return package_manager;
         }
     }
 
     for var in ["npm_config_user_agent", "NPM_CONFIG_USER_AGENT"] {
-        if let Ok(value) = std::env::var(var) {
-            if let Some(package_manager) = parse_hint(&value) {
-                return package_manager;
-            }
+        if let Ok(value) = std::env::var(var)
+            && let Some(package_manager) = parse_hint(&value)
+        {
+            return package_manager;
         }
     }
 
