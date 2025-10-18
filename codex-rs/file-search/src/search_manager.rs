@@ -32,7 +32,6 @@ impl SearchItem {
     }
 }
 
-
 pub struct SearchManager {
     nucleo: Nucleo<SearchItem>,
     cancel_flag: Arc<AtomicBool>,

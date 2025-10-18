@@ -289,10 +289,16 @@ impl FileSearchManager {
                             break;
                         }
                     } else if timeout_elapsed {
-                        tx.send(AppEvent::FileSearchResult {
-                            query: current_query.clone(),
-                            matches,
-                        });
+                        // Avoid emitting results from a cancelled search. If the
+                        // search was cancelled before producing any output, skip
+                        // this timeout fallback to prevent stale results from
+                        // overwriting a newer search.
+                        if !cancellation_token.load(Ordering::Relaxed) {
+                            tx.send(AppEvent::FileSearchResult {
+                                query: current_query.clone(),
+                                matches,
+                            });
+                        }
                         break;
                     }
                 }
@@ -327,11 +333,12 @@ mod tests {
         while start.elapsed() < Duration::from_secs(2) {
             while let Ok(event) = rx.try_recv() {
                 if let AppEvent::FileSearchResult { matches, .. } = &event
-                    && matches.iter().any(|m| m.path.ends_with("gamma.rs")) {
-                        saw_match = true;
-                        captured.push(format!("{event:?}"));
-                        break;
-                    }
+                    && matches.iter().any(|m| m.path.ends_with("gamma.rs"))
+                {
+                    saw_match = true;
+                    captured.push(format!("{event:?}"));
+                    break;
+                }
                 captured.push(format!("{event:?}"));
             }
             if saw_match {
