@@ -444,8 +444,13 @@ impl BottomPane {
         }
     }
 
-    pub(crate) fn on_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
-        self.composer.on_file_search_result(query, matches);
+    pub(crate) fn on_file_search_result(
+        &mut self,
+        query: String,
+        matches: Vec<FileMatch>,
+        running: bool,
+    ) {
+        self.composer.on_file_search_result(query, matches, running);
         self.request_redraw();
     }
 

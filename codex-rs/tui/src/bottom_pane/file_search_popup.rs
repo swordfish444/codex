@@ -43,8 +43,12 @@ impl FileSearchPopup {
             return;
         }
 
-        // Determine if current matches are still relevant.
-        let keep_existing = query.starts_with(&self.display_query);
+        // Determine if current matches are still relevant. When the new query
+        // either extends or trims the previous display query (backspacing),
+        // keep the existing matches visible until fresher results arrive to
+        // avoid flashing "no matches" despite still-valid entries.
+        let keep_existing =
+            query.starts_with(&self.display_query) || self.display_query.starts_with(query);
 
         self.pending_query.clear();
         self.pending_query.push_str(query);
@@ -70,14 +74,31 @@ impl FileSearchPopup {
 
     /// Replace matches when a `FileSearchResult` arrives.
     /// Replace matches. Only applied when `query` matches `pending_query`.
-    pub(crate) fn set_matches(&mut self, query: &str, matches: Vec<FileMatch>) {
+    pub(crate) fn set_matches(
+        &mut self,
+        query: &str,
+        matches: Vec<FileMatch>,
+        search_running: bool,
+    ) {
         if query != self.pending_query {
             return; // stale
         }
 
+        let display_before = self.display_query.clone();
         self.display_query = query.to_string();
-        self.matches = matches;
-        self.waiting = false;
+
+        // Prefer stability while the search is running or the pattern just changed:
+        // if new matches are empty but we previously had matches and the new query
+        // is a small edit (prefix/suffix/backspace), keep the existing list to avoid
+        // flashing an empty state.
+        let similar_query = query.starts_with(&display_before) || display_before.starts_with(query);
+        if matches.is_empty() && !self.matches.is_empty() && (search_running || similar_query) {
+            // Keep existing matches, only update waiting state.
+            self.waiting = search_running;
+        } else {
+            self.matches = matches;
+            self.waiting = search_running;
+        }
         let len = self.matches.len();
         self.state.clamp_selection(len);
         self.state.ensure_visible(len, len.min(MAX_POPUP_ROWS));

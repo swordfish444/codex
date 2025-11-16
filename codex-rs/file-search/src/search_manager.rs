@@ -213,18 +213,23 @@ fn spawn_walker(
                         Ok(entry) => entry,
                         Err(_) => return ignore::WalkState::Continue,
                     };
-                    if entry.file_type().is_some_and(|ft| ft.is_dir()) {
-                        return ignore::WalkState::Continue;
-                    }
                     let path = entry.path();
                     let rel_path = match path.strip_prefix(search_directory.as_path()) {
                         Ok(rel) => rel,
                         Err(_) => path,
                     };
-                    let Some(path_str) = rel_path.to_str() else {
+                    if rel_path.as_os_str().is_empty() {
+                        return ignore::WalkState::Continue;
+                    }
+                    let Some(mut path_string) = rel_path.to_str().map(|s| s.to_string()) else {
                         return ignore::WalkState::Continue;
                     };
-                    injector.push(SearchItem::new(path_str.to_string()), |item, columns| {
+                    if entry.file_type().is_some_and(|ft| ft.is_dir())
+                        && !path_string.ends_with('/')
+                    {
+                        path_string.push('/');
+                    }
+                    injector.push(SearchItem::new(path_string), |item, columns| {
                         columns[0] = item.path.as_str().into();
                     });
                     ignore::WalkState::Continue

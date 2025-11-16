@@ -154,13 +154,18 @@ pub(crate) fn log_inbound_app_event(event: &AppEvent) {
             });
             LOGGER.write_json_line(value);
         }
-        AppEvent::FileSearchResult { query, matches } => {
+        AppEvent::FileSearchResult {
+            query,
+            matches,
+            running,
+        } => {
             let value = json!({
                 "ts": now_ts(),
                 "dir": "to_tui",
                 "kind": "file_search_result",
                 "query": query,
                 "matches": matches.len(),
+                "running": running,
             });
             LOGGER.write_json_line(value);
         }

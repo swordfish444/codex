@@ -130,3 +130,61 @@ fn search_manager_walk_finds_files() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn search_manager_walk_includes_directories() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let docs_dir = temp_dir.path().join("docs");
+    let nested_dir = docs_dir.join("nested");
+    std::fs::create_dir_all(&nested_dir).unwrap();
+
+    let notify_flag = Arc::new(AtomicUsize::new(0));
+    let notify_counter = Arc::clone(&notify_flag);
+    let notify = Arc::new(move || {
+        notify_counter.fetch_add(1, Ordering::Relaxed);
+    });
+
+    let limit = NonZeroUsize::new(10).unwrap();
+    let threads = NonZeroUsize::new(1).unwrap();
+
+    let mut manager = SearchManager::new(
+        "docs",
+        limit,
+        temp_dir.path(),
+        Vec::new(),
+        threads,
+        false,
+        notify,
+    )
+    .unwrap();
+
+    let start = std::time::Instant::now();
+    let mut found_directory = false;
+
+    loop {
+        let status = manager.tick(Duration::from_millis(20));
+        let _ = notify_flag.swap(0, Ordering::AcqRel);
+        let results = manager.current_results();
+        if results.matches.iter().any(|m| m.path == "docs/") {
+            found_directory = true;
+            break;
+        }
+        if !status.running && start.elapsed() > Duration::from_secs(1) {
+            break;
+        }
+        if start.elapsed() > Duration::from_secs(5) {
+            break;
+        }
+    }
+
+    assert!(
+        found_directory,
+        "expected walker to find directory matches; matches: {:?}",
+        manager
+            .current_results()
+            .matches
+            .iter()
+            .map(|m| m.path.clone())
+            .collect::<Vec<_>>()
+    );
+}

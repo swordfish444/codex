@@ -39,6 +39,7 @@ pub(crate) enum AppEvent {
     FileSearchResult {
         query: String,
         matches: Vec<FileMatch>,
+        running: bool,
     },
 
     /// Result of computing a `/diff` command.

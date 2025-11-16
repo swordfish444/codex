@@ -7,6 +7,7 @@ use nucleo_matcher::pattern::CaseMatching;
 use nucleo_matcher::pattern::Normalization;
 use nucleo_matcher::pattern::Pattern;
 use serde::Serialize;
+use std::borrow::Cow;
 use std::cell::UnsafeCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -202,7 +203,7 @@ pub fn run(
 
         Box::new(move |entry| {
             if let Some(path) = get_file_path(&entry, search_directory) {
-                best_list.insert(path);
+                best_list.insert(path.as_ref());
             }
 
             processed += 1;
@@ -217,18 +218,30 @@ pub fn run(
     fn get_file_path<'a>(
         entry_result: &'a Result<ignore::DirEntry, ignore::Error>,
         search_directory: &std::path::Path,
-    ) -> Option<&'a str> {
+    ) -> Option<Cow<'a, str>> {
         let entry = match entry_result {
             Ok(e) => e,
             Err(_) => return None,
         };
-        if entry.file_type().is_some_and(|ft| ft.is_dir()) {
+        let path = entry.path();
+        let rel_path = match path.strip_prefix(search_directory) {
+            Ok(rel_path) => rel_path,
+            Err(_) => path,
+        };
+        if rel_path.as_os_str().is_empty() {
             return None;
         }
-        let path = entry.path();
-        match path.strip_prefix(search_directory) {
-            Ok(rel_path) => rel_path.to_str(),
-            Err(_) => None,
+        let path_str = rel_path.to_str()?;
+        let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
+        if is_dir {
+            let mut owned = String::with_capacity(path_str.len() + 1);
+            owned.push_str(path_str);
+            if !owned.ends_with('/') {
+                owned.push('/');
+            }
+            Some(Cow::Owned(owned))
+        } else {
+            Some(Cow::Borrowed(path_str))
         }
     }
 
@@ -434,5 +447,46 @@ mod tests {
         ];
 
         assert_eq!(matches, expected);
+    }
+
+    #[test]
+    fn run_includes_directory_matches() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let docs_dir = temp_dir.path().join("docs");
+        std::fs::create_dir_all(docs_dir.join("nested")).unwrap();
+
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let results = run(
+            "docs",
+            NonZero::new(10).unwrap(),
+            temp_dir.path(),
+            Vec::new(),
+            NonZero::new(1).unwrap(),
+            cancel_flag,
+            false,
+        )
+        .unwrap();
+
+        assert!(
+            results.matches.iter().any(|m| m.path == "docs/"),
+            "expected directory match; matches={:?}",
+            results
+                .matches
+                .iter()
+                .map(|m| m.path.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn pattern_matches_directory_without_trailing_slash_in_query() {
+        let pattern = create_pattern("docs");
+        let mut utf32buf = Vec::<char>::new();
+        let haystack: Utf32Str<'_> = Utf32Str::new("docs/", &mut utf32buf);
+        let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
+        assert!(
+            pattern.score(haystack, &mut matcher).is_some(),
+            "expected fuzzy pattern to match directory paths with trailing slash"
+        );
     }
 }

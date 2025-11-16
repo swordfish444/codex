@@ -493,8 +493,13 @@ impl App {
                     self.file_search.on_user_query(query);
                 }
             }
-            AppEvent::FileSearchResult { query, matches } => {
-                self.chat_widget.apply_file_search_result(query, matches);
+            AppEvent::FileSearchResult {
+                query,
+                matches,
+                running,
+            } => {
+                self.chat_widget
+                    .apply_file_search_result(query, matches, running);
             }
             AppEvent::UpdateReasoningEffort(effort) => {
                 self.on_update_reasoning_effort(effort);

@@ -214,6 +214,7 @@ impl FileSearchManager {
                     tx.send(AppEvent::FileSearchResult {
                         query: query.clone(),
                         matches: Vec::new(),
+                        running: false,
                     });
                     return;
                 }
@@ -268,9 +269,16 @@ impl FileSearchManager {
                                 || timeout_elapsed)));
 
                 if should_emit {
+                    // UI-running is more generous than Nucleo's internal running flag.
+                    // When the pattern changes, Nucleo may report running=false while
+                    // it is still settling updated matches; keep the UI in a
+                    // "loading" posture during those transitions to avoid flashing
+                    // an empty "no matches" state.
+                    let ui_running = status.running || flag_was_set || status.changed;
                     tx.send(AppEvent::FileSearchResult {
                         query: current_query.clone(),
                         matches: matches.clone(),
+                        running: ui_running,
                     });
                     sent_once = true;
                     last_sent_paths = paths;
@@ -294,9 +302,11 @@ impl FileSearchManager {
                         // this timeout fallback to prevent stale results from
                         // overwriting a newer search.
                         if !cancellation_token.load(Ordering::Relaxed) {
+                            let ui_running = status.running || flag_was_set || status.changed;
                             tx.send(AppEvent::FileSearchResult {
                                 query: current_query.clone(),
                                 matches,
+                                running: ui_running,
                             });
                         }
                         break;

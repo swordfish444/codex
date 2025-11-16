@@ -333,7 +333,12 @@ impl ChatComposer {
     }
 
     /// Integrate results from an asynchronous file search.
-    pub(crate) fn on_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
+    pub(crate) fn on_file_search_result(
+        &mut self,
+        query: String,
+        matches: Vec<FileMatch>,
+        search_running: bool,
+    ) {
         // Only apply if user is still editing a token starting with `query`.
         let current_opt = Self::current_at_token(&self.textarea);
         let Some(current_token) = current_opt else {
@@ -345,7 +350,7 @@ impl ChatComposer {
         }
 
         if let ActivePopup::File(popup) = &mut self.active_popup {
-            popup.set_matches(&query, matches);
+            popup.set_matches(&query, matches, search_running);
         }
     }
 
