@@ -1,0 +1,13 @@
+diff --git a/rust/private/rustc.bzl b/rust/private/rustc.bzl
+index a28ad50b7..313002aeb 100644
+--- a/rust/private/rustc.bzl
++++ b/rust/private/rustc.bzl
+@@ -1282,7 +1282,7 @@ def rustc_compile_action(
+         toolchain,
+         rust_flags = [],
+         output_hash = None,
+-        force_all_deps_direct = False,
++        force_all_deps_direct = True,
+         crate_info_dict = None,
+         skip_expanding_rustc_env = False,
+         include_coverage = True):
