@@ -1,13 +1,389 @@
+diff --git a/rust/private/clippy.bzl b/rust/private/clippy.bzl
+index 318c05a..136f032 100644
+--- a/rust/private/clippy.bzl
++++ b/rust/private/clippy.bzl
+@@ -129,6 +129,10 @@ def rust_clippy_action(ctx, clippy_executable, process_wrapper, crate_info, conf
+         aliases = crate_info.aliases,
+     )
+ 
++    transitive_crate_dir = ctx.actions.declare_directory(ctx.label.name + "_transitive_crates")
++    transitive_crate_dir_args = ctx.actions.args()
++    transitive_crate_dir_args.add_all([transitive_crate_dir], expand_directories = False, format_each = "-Ldependency=%s")
++
+     # Gather the necessary rust flags to apply lints, if they were provided.
+     clippy_flags = []
+     lint_files = []
+@@ -153,6 +157,7 @@ def rust_clippy_action(ctx, clippy_executable, process_wrapper, crate_info, conf
+         dep_info,
+         build_info,
+         lint_files,
++        transitive_crate_dir,
+     )
+ 
+     if clippy_diagnostics_file:
+@@ -170,6 +175,7 @@ def rust_clippy_action(ctx, clippy_executable, process_wrapper, crate_info, conf
+         feature_configuration = feature_configuration,
+         crate_info = crate_info,
+         dep_info = dep_info,
++        transitive_crate_dir = transitive_crate_dir,
+         linkstamp_outs = linkstamp_outs,
+         ambiguous_libs = ambiguous_libs,
+         output_hash = determine_output_hash(crate_info.root, ctx.label),
+@@ -229,7 +235,7 @@ def rust_clippy_action(ctx, clippy_executable, process_wrapper, crate_info, conf
+         outputs = outputs + [x for x in [clippy_diagnostics_file] if x],
+         env = env,
+         tools = [clippy_executable],
+-        arguments = args.all,
++        arguments = args.all + [transitive_crate_dir_args],
+         mnemonic = "Clippy",
+         progress_message = "Clippy %{label}",
+         toolchain = "@rules_rust//rust:toolchain_type",
+diff --git a/rust/private/rust.bzl b/rust/private/rust.bzl
+index 6ba4c36..af2e092 100644
+--- a/rust/private/rust.bzl
++++ b/rust/private/rust.bzl
+@@ -935,6 +935,7 @@ rust_library = rule(
+     },
+     fragments = ["cpp"],
+     toolchains = [
++        str(Label("@@bazel_lib+//lib:copy_to_directory_toolchain_type")),
+         str(Label("//rust:toolchain_type")),
+         config_common.toolchain_type("@bazel_tools//tools/cpp:toolchain_type", mandatory = False),
+     ],
+@@ -1033,6 +1034,7 @@ rust_static_library = rule(
+     fragments = ["cpp"],
+     cfg = _rust_static_library_transition,
+     toolchains = [
++        str(Label("@@bazel_lib+//lib:copy_to_directory_toolchain_type")),
+         str(Label("//rust:toolchain_type")),
+         config_common.toolchain_type("@bazel_tools//tools/cpp:toolchain_type", mandatory = False),
+     ],
+@@ -1082,6 +1084,7 @@ rust_shared_library = rule(
+     fragments = ["cpp"],
+     cfg = _rust_shared_library_transition,
+     toolchains = [
++        str(Label("@@bazel_lib+//lib:copy_to_directory_toolchain_type")),
+         str(Label("//rust:toolchain_type")),
+         config_common.toolchain_type("@bazel_tools//tools/cpp:toolchain_type", mandatory = False),
+     ],
+@@ -1138,6 +1141,7 @@ rust_proc_macro = rule(
+     ),
+     fragments = ["cpp"],
+     toolchains = [
++        str(Label("@@bazel_lib+//lib:copy_to_directory_toolchain_type")),
+         str(Label("//rust:toolchain_type")),
+         config_common.toolchain_type("@bazel_tools//tools/cpp:toolchain_type", mandatory = False),
+     ],
+@@ -1222,6 +1226,7 @@ rust_binary = rule(
+     fragments = ["cpp"],
+     cfg = _rust_binary_transition,
+     toolchains = [
++        str(Label("@@bazel_lib+//lib:copy_to_directory_toolchain_type")),
+         str(Label("//rust:toolchain_type")),
+         config_common.toolchain_type("@bazel_tools//tools/cpp:toolchain_type", mandatory = False),
+     ],
+@@ -1365,6 +1370,7 @@ rust_binary_without_process_wrapper = rule(
+     executable = True,
+     fragments = ["cpp"],
+     toolchains = [
++        str(Label("@@bazel_lib+//lib:copy_to_directory_toolchain_type")),
+         str(Label("//rust:toolchain_type")),
+         config_common.toolchain_type("@bazel_tools//tools/cpp:toolchain_type", mandatory = False),
+     ],
+@@ -1381,6 +1387,7 @@ rust_library_without_process_wrapper = rule(
+     attrs = dict(_common_attrs_for_binary_without_process_wrapper(_common_attrs).items()),
+     fragments = ["cpp"],
+     toolchains = [
++        str(Label("@@bazel_lib+//lib:copy_to_directory_toolchain_type")),
+         str(Label("//rust:toolchain_type")),
+         config_common.toolchain_type("@bazel_tools//tools/cpp:toolchain_type", mandatory = False),
+     ],
+@@ -1421,6 +1428,7 @@ rust_test_without_process_wrapper_test = rule(
+     fragments = ["cpp"],
+     test = True,
+     toolchains = [
++        str(Label("@@bazel_lib+//lib:copy_to_directory_toolchain_type")),
+         str(Label("//rust:toolchain_type")),
+         config_common.toolchain_type("@bazel_tools//tools/cpp:toolchain_type", mandatory = False),
+     ],
+@@ -1458,6 +1466,7 @@ rust_test = rule(
+     cfg = _rust_test_transition,
+     test = True,
+     toolchains = [
++        str(Label("@@bazel_lib+//lib:copy_to_directory_toolchain_type")),
+         str(Label("//rust:toolchain_type")),
+         config_common.toolchain_type("@bazel_tools//tools/cpp:toolchain_type", mandatory = False),
+     ],
 diff --git a/rust/private/rustc.bzl b/rust/private/rustc.bzl
-index a28ad50b7..313002aeb 100644
+index a28ad50..e81fdd2 100644
 --- a/rust/private/rustc.bzl
 +++ b/rust/private/rustc.bzl
-@@ -1282,7 +1282,7 @@ def rustc_compile_action(
-         toolchain,
-         rust_flags = [],
+@@ -14,6 +14,7 @@
+ 
+ """Functionality for constructing actions that invoke the Rust compiler"""
+ 
++load("@@bazel_lib+//lib:copy_to_directory.bzl", "copy_to_directory_bin_action")
+ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+ load(
+     "@bazel_tools//tools/build_defs/cc:action_names.bzl",
+@@ -697,6 +698,7 @@ def collect_inputs(
+         dep_info,
+         build_info,
+         lint_files,
++        transitive_crate_dir,
+         stamp = False,
+         force_depend_on_objects = False,
+         experimental_use_cc_common_link = False,
+@@ -846,8 +848,26 @@ def collect_inputs(
+     # If stamping is enabled include the volatile and stable status info file
+     stamp_info = [ctx.version_file, ctx.info_file] if stamp else []
+ 
++    transitive_crates = dep_info.transitive_crates.to_list()
++    transitive_crate_files = []
++    for crate in transitive_crates:
++        transitive_crate_files.append(crate.output)
++        if crate.metadata:
++            transitive_crate_files.append(crate.metadata)
++
++    copy_to_directory_bin_action(
++        ctx,
++        name = transitive_crate_dir.basename,
++        dst = transitive_crate_dir,
++        copy_to_directory_bin = ctx.toolchains["@@bazel_lib+//lib:copy_to_directory_toolchain_type"].copy_to_directory_info.bin,
++        files = transitive_crate_files,
++        replace_prefixes = {"**/": ""},
++        hardlink = True,
++        include_external_repositories = ["**"],
++    )
++
+     compile_inputs = depset(
+-        linkstamp_outs + stamp_info,
++        [transitive_crate_dir] + linkstamp_outs + stamp_info,
+         transitive = [
+             nolinkstamp_compile_inputs,
+         ],
+@@ -892,6 +912,7 @@ def construct_arguments(
+         feature_configuration,
+         crate_info,
+         dep_info,
++        transitive_crate_dir = None,
+         linkstamp_outs,
+         ambiguous_libs,
+         output_hash,
+@@ -923,6 +944,7 @@ def construct_arguments(
+         feature_configuration (FeatureConfiguration): Class used to construct command lines from CROSSTOOL features.
+         crate_info (CrateInfo): The CrateInfo provider of the target crate
+         dep_info (DepInfo): The DepInfo provider of the target crate
++        transitive_crate_dir (File): Tree artifact for transitive crate outputs, if provided.
+         linkstamp_outs (list): Linkstamp outputs of native dependencies
+         ambiguous_libs (dict): Ambiguous libs, see `_disambiguate_libs`
+         output_hash (str): The hashed path of the crate root
+@@ -1155,7 +1177,7 @@ def construct_arguments(
+     use_metadata = _depend_on_metadata(crate_info, force_depend_on_objects)
+ 
+     # These always need to be added, even if not linking this crate.
+-    add_crate_link_flags(rustc_flags, dep_info, force_all_deps_direct, use_metadata)
++    add_crate_link_flags(rustc_flags, dep_info, force_all_deps_direct, use_metadata, transitive_crate_dir)
+ 
+     needs_extern_proc_macro_flag = _is_proc_macro(crate_info) and crate_info.edition != "2015"
+     if needs_extern_proc_macro_flag:
+@@ -1359,6 +1381,10 @@ def rustc_compile_action(
+         rust_flags = rust_flags + ctx.attr.lint_config[LintsInfo].rustc_lint_flags
+         lint_files = lint_files + ctx.attr.lint_config[LintsInfo].rustc_lint_files
+ 
++    transitive_crate_dir = ctx.actions.declare_directory(attr.name + "_transitive_crates")
++    transitive_crate_dir_args = ctx.actions.args()
++    transitive_crate_dir_args.add_all([transitive_crate_dir], expand_directories = False, format_each = "-Ldependency=%s")
++
+     compile_inputs, out_dir, build_env_files, build_flags_files, linkstamp_outs, ambiguous_libs = collect_inputs(
+         ctx = ctx,
+         file = ctx.file,
+@@ -1372,6 +1398,7 @@ def rustc_compile_action(
+         build_info = build_info,
+         lint_files = lint_files,
+         stamp = stamp,
++        transitive_crate_dir = transitive_crate_dir,
+         experimental_use_cc_common_link = experimental_use_cc_common_link,
+     )
+ 
+@@ -1410,6 +1437,7 @@ def rustc_compile_action(
+         feature_configuration = feature_configuration,
+         crate_info = crate_info,
+         dep_info = dep_info,
++        transitive_crate_dir = transitive_crate_dir,
+         linkstamp_outs = linkstamp_outs,
+         ambiguous_libs = ambiguous_libs,
+         output_hash = output_hash,
+@@ -1437,6 +1465,7 @@ def rustc_compile_action(
+             feature_configuration = feature_configuration,
+             crate_info = crate_info,
+             dep_info = dep_info,
++            transitive_crate_dir = transitive_crate_dir,
+             linkstamp_outs = linkstamp_outs,
+             ambiguous_libs = ambiguous_libs,
+             output_hash = output_hash,
+@@ -1509,7 +1538,7 @@ def rustc_compile_action(
+             inputs = compile_inputs,
+             outputs = action_outputs,
+             env = env,
+-            arguments = args.all,
++            arguments = args.all + [transitive_crate_dir_args],
+             mnemonic = "Rustc",
+             progress_message = "Compiling Rust {} {}{} ({} file{})".format(
+                 crate_info.type,
+@@ -1527,7 +1556,7 @@ def rustc_compile_action(
+                 inputs = compile_inputs,
+                 outputs = [build_metadata] + [x for x in [rustc_rmeta_output] if x],
+                 env = env,
+-                arguments = args_metadata.all,
++                arguments = args_metadata.all + [transitive_crate_dir_args],
+                 mnemonic = "RustcMetadata",
+                 progress_message = "Compiling Rust metadata {} {}{} ({} file{})".format(
+                     crate_info.type,
+@@ -1547,7 +1576,7 @@ def rustc_compile_action(
+             inputs = compile_inputs,
+             outputs = action_outputs,
+             env = env,
+-            arguments = [args.rustc_path, args.rustc_flags],
++            arguments = [args.rustc_path, args.rustc_flags, transitive_crate_dir_args],
+             mnemonic = "Rustc",
+             progress_message = "Compiling Rust (without process_wrapper) {} {}{} ({} file{})".format(
+                 crate_info.type,
+@@ -2119,7 +2148,7 @@ def _get_dir_names(files):
+         dirs[f.dirname] = None
+     return dirs.keys()
+ 
+-def add_crate_link_flags(args, dep_info, force_all_deps_direct = False, use_metadata = False):
++def add_crate_link_flags(args, dep_info, force_all_deps_direct = False, use_metadata = False, transitive_crate_dir = None):
+     """Adds link flags to an Args object reference
+ 
+     Args:
+@@ -2137,15 +2166,40 @@ def add_crate_link_flags(args, dep_info, force_all_deps_direct = False, use_meta
+         ],
+     ) if force_all_deps_direct else dep_info.direct_crates
+ 
+-    crate_to_link_flags = _crate_to_link_flag_metadata if use_metadata else _crate_to_link_flag
+-    args.add_all(direct_crates, uniquify = True, map_each = crate_to_link_flags)
++    crate_link_flags = []
++    for crate in direct_crates.to_list():
++        crate_link_flags.extend(_crate_to_link_flag_with_dir(crate, use_metadata, transitive_crate_dir))
++    args.add_all(crate_link_flags, uniquify = True)
+ 
+-    args.add_all(
+-        dep_info.transitive_crates,
+-        map_each = _get_crate_dirname,
+-        uniquify = True,
+-        format_each = "-Ldependency=%s",
+-    )
++def _crate_to_link_flag_with_dir(crate, use_metadata, transitive_crate_dir):
++    """A helper macro used by `add_crate_link_flags` for adding crate link flags to a Arg object
++
++    Args:
++        crate (CrateInfo|AliasableDepInfo): A CrateInfo or an AliasableDepInfo provider
++        use_metadata (bool): Whether to prefer metadata outputs for deps.
++        transitive_crate_dir (File): Tree artifact for transitive crate outputs, if provided.
++
++    Returns:
++        list: Link flags for the given provider
++    """
++
++    # This is AliasableDepInfo, we should use the alias as a crate name
++    if hasattr(crate, "dep"):
++        name = crate.name
++        crate_info = crate.dep
++    else:
++        name = crate.name
++        crate_info = crate
++
++    lib_or_meta = crate_info.metadata if use_metadata else crate_info.output
++    if not crate_info.metadata or not crate_info.metadata_supports_pipelining:
++        lib_or_meta = crate_info.output
++
++    lib_path = lib_or_meta.path
++    if transitive_crate_dir:
++        lib_path = "{}/{}".format(transitive_crate_dir.path, lib_or_meta.basename)
++
++    return ["--extern={}={}".format(name, lib_path)]
+ 
+ def _crate_to_link_flag_metadata(crate):
+     """A helper macro used by `add_crate_link_flags` for adding crate link flags to a Arg object
+diff --git a/rust/private/rustdoc.bzl b/rust/private/rustdoc.bzl
+index 0ffe808..adbea70 100644
+--- a/rust/private/rustdoc.bzl
++++ b/rust/private/rustdoc.bzl
+@@ -103,6 +103,10 @@ def rustdoc_compile_action(
+         aliases = crate_info.aliases,
+     )
+ 
++    transitive_crate_dir = ctx.actions.declare_directory(ctx.label.name + "_transitive_crates")
++    transitive_crate_dir_args = ctx.actions.args()
++    transitive_crate_dir_args.add_all([transitive_crate_dir], expand_directories = False, format_each = "-Ldependency=%s")
++
+     compile_inputs, out_dir, build_env_files, build_flags_files, linkstamp_outs, ambiguous_libs = collect_inputs(
+         ctx = ctx,
+         file = ctx.file,
+@@ -115,6 +119,7 @@ def rustdoc_compile_action(
+         dep_info = dep_info,
+         build_info = build_info,
+         lint_files = lint_files,
++        transitive_crate_dir = transitive_crate_dir,
+         # If this is a rustdoc test, we need to depend on rlibs rather than .rmeta.
+         force_depend_on_objects = is_test,
+         include_link_flags = False,
+@@ -136,6 +141,7 @@ def rustdoc_compile_action(
+         feature_configuration = feature_configuration,
+         crate_info = rustdoc_crate_info,
+         dep_info = dep_info,
++        transitive_crate_dir = transitive_crate_dir,
+         linkstamp_outs = linkstamp_outs,
+         ambiguous_libs = ambiguous_libs,
          output_hash = None,
--        force_all_deps_direct = False,
-+        force_all_deps_direct = True,
-         crate_info_dict = None,
-         skip_expanding_rustc_env = False,
-         include_coverage = True):
+@@ -167,7 +173,7 @@ def rustdoc_compile_action(
+         executable = ctx.executable._process_wrapper,
+         inputs = all_inputs,
+         env = env,
+-        arguments = args.all,
++        arguments = args.all + [transitive_crate_dir_args],
+         tools = [toolchain.rust_doc],
+     )
+ 
+diff --git a/rust/private/unpretty.bzl b/rust/private/unpretty.bzl
+index be111c8..dbe672d 100644
+--- a/rust/private/unpretty.bzl
++++ b/rust/private/unpretty.bzl
+@@ -147,6 +147,10 @@ def _rust_unpretty_aspect_impl(target, ctx):
+     )
+     lint_files = []
+ 
++    transitive_crate_dir = ctx.actions.declare_directory(ctx.label.name + "_transitive_crates")
++    transitive_crate_dir_args = ctx.actions.args()
++    transitive_crate_dir_args.add_all([transitive_crate_dir], expand_directories = False, format_each = "-Ldependency=%s")
++
+     compile_inputs, out_dir, build_env_files, build_flags_files, linkstamp_outs, ambiguous_libs = collect_inputs(
+         ctx,
+         ctx.rule.file,
+@@ -160,6 +164,7 @@ def _rust_unpretty_aspect_impl(target, ctx):
+         dep_info,
+         build_info,
+         lint_files,
++        transitive_crate_dir,
+     )
+ 
+     output_groups = {}
+@@ -195,6 +200,7 @@ def _rust_unpretty_aspect_impl(target, ctx):
+             feature_configuration = feature_configuration,
+             crate_info = crate_info,
+             dep_info = dep_info,
++            transitive_crate_dir = transitive_crate_dir,
+             linkstamp_outs = linkstamp_outs,
+             ambiguous_libs = ambiguous_libs,
+             output_hash = determine_output_hash(crate_info.root, ctx.label),
+@@ -217,7 +223,7 @@ def _rust_unpretty_aspect_impl(target, ctx):
+             inputs = compile_inputs,
+             outputs = [unpretty_out],
+             env = env,
+-            arguments = args.all,
++            arguments = args.all + [transitive_crate_dir_args],
+             mnemonic = mnemonic,
+             toolchain = "@rules_rust//rust:toolchain_type",
+         )
