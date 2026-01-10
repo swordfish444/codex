@@ -48,7 +48,7 @@ bazel-test:
     bazel test //... --keep_going
 
 bazel-remote-test:
-    bazel test //... --config=remote --platforms=//:rbe --keep_going
+    bazel test //... --config=remote --platforms=@rbe_platform --keep_going
 
 build-for-release:
     bazel build //codex-rs/cli:release_binaries --config=remote
